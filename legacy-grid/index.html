@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coop field — CatWar</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Общее поле</h1>
+        <p class="sub">10×6 · WASD / стрелки · до трёх котов · без боя</p>
+      </div>
+      <form id="join-form">
+        <label>Комната <input id="room" name="room" maxlength="24" autocomplete="off"></label>
+        <label>Имя <input id="login" name="login" maxlength="24" autocomplete="off" placeholder="Сырь"></label>
+        <button type="submit">Войти</button>
+      </form>
+    </header>
+    <p id="status">Не в комнате. Откройте ту же ссылку во втором браузере.</p>
+    <div id="field-wrap">
+      <div id="location">Расщелина меж скал</div>
+      <table id="cages" aria-label="Поле 10 на 6"></table>
+    </div>
+    <p id="hint">Соседи ходят в реальном времени. Клетка занята — шаг не проходит. QEZX — диагонали.</p>
+    <p id="share"></p>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
