@@ -5,7 +5,8 @@ import { GripHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl } from '@/lib/net/coop';
+import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopFight } from '@/lib/net/coop';
+import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
@@ -50,13 +51,40 @@ const STRIKE_RESPONSE_MS = 170;
 /** Максимум строк в боевом логе (лог теперь последовательный, старые строки вытесняются). */
 const LOG_LIMIT = 100;
 
-/** Строка лога ударов: «Я => Имя (зона) xN» — пишется последовательно, свежая сверху.
- *  Для промахов имя мишени не пишется (target = ''), строка вида «Я => мимо xN». */
+/** Строка лога ударов: «Кто => Кого (зона) xN» — пишется последовательно, свежая сверху.
+ *  Свой кот подписывается «Я». Для промахов имя мишени не пишется (target = ''). */
 interface CombatLogEntry {
   target: string;
   zoneId: string;
   zoneLabel: string;
   count: number;
+  /** Кто бил. Пустое значение в старых сохранениях — свой кот. */
+  actor?: string;
+  /** Оружие, если сервер его прислал. Пусто — удара лапой без когтей. */
+  weapon?: string;
+}
+
+function logActor(entry: CombatLogEntry): string {
+  return entry.actor || 'Я';
+}
+
+function mergeLog(prev: CombatLogEntry[], entry: CombatLogEntry): CombatLogEntry[] {
+  const [top, ...rest] = prev;
+  const same =
+    !!top &&
+    top.target === entry.target &&
+    top.zoneId === entry.zoneId &&
+    logActor(top) === logActor(entry) &&
+    (top.weapon || '') === (entry.weapon || '');
+  if (same && top) return [{ ...top, count: top.count + 1 }, ...rest].slice(0, LOG_LIMIT);
+  return [entry, ...prev].slice(0, LOG_LIMIT);
+}
+
+function formatLogLine(entry: CombatLogEntry): string {
+  const actor = logActor(entry);
+  if (entry.zoneId === 'miss') return `${actor} => мимо x${entry.count}`;
+  const weapon = entry.weapon ? `, ${entry.weapon}` : '';
+  return `${actor} => ${entry.target} (${entry.zoneLabel}${weapon}) x${entry.count}`;
 }
 
 /** Боевое состояние: энергии персонажей и лог ударов (живёт отдельно от настроек). */
@@ -99,6 +127,8 @@ function loadCombat(energyStart: number): CombatState {
               zoneId: l.zoneId,
               zoneLabel: typeof l.zoneLabel === 'string' ? l.zoneLabel : l.zoneId,
               count: Number(l.count) > 0 ? Math.floor(Number(l.count)) : 1,
+              actor: typeof l.actor === 'string' && l.actor ? l.actor : 'Я',
+              weapon: typeof l.weapon === 'string' ? l.weapon : '',
             }))
         : [],
     };
@@ -213,6 +243,12 @@ interface CharRef {
 
 /** Живые соседи с сервера: если кто-то ещё в комнате — рисуем их, иначе локальные манекены. */
 let liveRemotes: DummyConfig[] = [];
+/**
+ * Плавный угол чужой стрелы. d.angle в liveRemotes — последний сетевой угол (клетка
+ * прыгает сразу), а на кадре рисуем display: догоняем его по короткой дуге.
+ * Свою стрелу сюда не кладём.
+ */
+const remoteAim = new Map<string, RemoteAim>();
 
 /** Манекены, добавленные на поле (или другие игроки комнаты). */
 function dummiesOf(s: SimSettings): DummyConfig[] {
@@ -311,6 +347,64 @@ export default function Simulator() {
   const selectedRef = useRef(selectedChar);
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
   const meIdRef = useRef<number | null>(null);
+  /**
+   * Последний угол, уже ушедший в комнату. Пока стрела крутится или ползунок едет,
+   * шлём aim примерно каждые 32 мс, если угол вообще изменился (порога в 2° нет).
+   * На 60 Гц это каждый второй кадр (~33 мс, около 30/с), а не каждый третий:
+   * порог 45 мс попадал только в кадр на 50 мс и давал ступеньку 3.75°.
+   * Отпускание клавиши (force) уходит сразу. Пропущенный внутри окна угол
+   * не теряется: его забирает короткий хвост, без setState.
+   */
+  const aimSyncRef = useRef<{
+    deg: number | null;
+    at: number;
+    pending: number | null;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({ deg: null, at: 0, pending: null, timer: null });
+  const publishAimRef = useRef<(angle: number, force: boolean) => void>(() => {});
+  publishAimRef.current = (angle: number, force: boolean) => {
+    const net = netRef.current;
+    if (!net?.ready || settingsRef.current.controlled !== 'main') return;
+    const deg = Math.round(wrap360(angle) * 10) / 10;
+    const sync = aimSyncRef.current;
+    const now = performance.now();
+    const changed = sync.deg == null || Math.abs(wrap180(deg - sync.deg)) >= 0.05;
+    if (!changed) {
+      sync.pending = null;
+      if (sync.timer) {
+        clearTimeout(sync.timer);
+        sync.timer = null;
+      }
+      return;
+    }
+    const AIM_EMIT_MS = 32;
+    const due = sync.at === 0 || now - sync.at >= AIM_EMIT_MS;
+    if (force || due) {
+      if (sync.timer) {
+        clearTimeout(sync.timer);
+        sync.timer = null;
+      }
+      sync.pending = null;
+      sync.deg = deg;
+      sync.at = now;
+      net.emit('aim', { deg });
+      return;
+    }
+    sync.pending = deg;
+    if (sync.timer) return;
+    const wait = Math.max(0, AIM_EMIT_MS - (now - sync.at));
+    sync.timer = setTimeout(() => {
+      sync.timer = null;
+      const latest = sync.pending;
+      sync.pending = null;
+      const netNow = netRef.current;
+      if (latest == null || !netNow?.ready || settingsRef.current.controlled !== 'main') return;
+      if (sync.deg != null && Math.abs(wrap180(latest - sync.deg)) < 0.05) return;
+      sync.deg = latest;
+      sync.at = performance.now();
+      netNow.emit('aim', { deg: latest });
+    }, wait);
+  };
   const [roomCode, setRoomCode] = useState('demo');
   const [playerName, setPlayerName] = useState('');
   const [netStatus, setNetStatus] = useState('подключение…');
@@ -390,6 +484,57 @@ export default function Simulator() {
     }
   }, [settings, loaded]);
 
+  /** Строка удара из комнаты пишется в тот же боевой лог. Урон цели тоже живёт здесь, не только у бьющего. */
+  const applyNetFight = useCallback((fight: CoopFight) => {
+    const me = meIdRef.current;
+    const actor = fight.attackerId === me ? 'Я' : fight.attacker || 'Кот';
+    const targetName = fight.targetId === me ? 'Я' : fight.name || 'кот';
+    const zoneId = fight.zone || 'hit';
+    const zoneLabel = fight.part || zoneId;
+    const weapon = typeof fight.weapon === 'string' ? fight.weapon : '';
+    const damage = Number(fight.damage);
+    const dmg = Number.isFinite(damage) ? Math.max(0, damage) : 0;
+    setCombat((prev) => {
+      const es = Math.max(1, settingsRef.current.combat.energyStart);
+      let playerEnergy = prev.playerEnergy;
+      const de = { ...prev.dummyEnergy };
+      if (fight.attackerId === me) {
+        playerEnergy = Math.max(0, playerEnergy - settingsRef.current.combat.strikeCost);
+      }
+      if (dmg > 0 && fight.targetId != null) {
+        if (fight.targetId === me) playerEnergy = Math.max(0, playerEnergy - dmg);
+        else {
+          const key = `p${fight.targetId}`;
+          de[key] = Math.max(0, (de[key] ?? es) - dmg);
+        }
+      }
+      const entry: CombatLogEntry = {
+        target: targetName,
+        zoneId,
+        zoneLabel,
+        count: 1,
+        actor,
+        weapon,
+      };
+      return { playerEnergy, dummyEnergy: de, log: mergeLog(prev.log, entry) };
+    });
+    const e = engineRef.current;
+    const s = settingsRef.current;
+    const zone = s.combat.zones.find((z) => z.id === zoneId);
+    const victim =
+      fight.targetId === me
+        ? { col: e.col, row: e.row }
+        : liveRemotes.find((d) => d.id === `p${fight.targetId}`);
+    if (!victim) return;
+    e.labels.push({
+      x: victim.col * s.field.cellW + s.field.cellW / 2,
+      y: victim.row * s.field.cellH + s.field.cellH / 2 - s.field.cellH * 0.35,
+      born: performance.now(),
+      text: dmg > 0 ? `${zoneLabel} -${dmg}%` : zoneLabel,
+      color: zone?.color || '#ffd60a',
+    });
+  }, []);
+
   useEffect(() => {
     if (!loaded) return;
     const room = roomFromUrl();
@@ -421,6 +566,9 @@ export default function Simulator() {
         const cats = field.cats || [];
         const others = cats.filter((c) => c.id !== meIdRef.current);
         liveRemotes = others.map(catToDummy);
+        remoteAim.clear();
+        const seenAt = performance.now();
+        for (const d of liveRemotes) remoteAim.set(d.id, createRemoteAim(d.angle, seenAt));
         setPeerCount(cats.length || 1);
         if (field.room) setRoomCode(field.room);
         if (field.width && field.height) {
@@ -438,6 +586,7 @@ export default function Simulator() {
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
+          remoteAim.delete(`p${cat.id}`);
           liveRemotes = liveRemotes.filter((d) => d.id !== `p${cat.id}`);
           setPeerCount(1 + liveRemotes.length);
           return;
@@ -460,13 +609,25 @@ export default function Simulator() {
           y: typeof cat.y === 'number' ? cat.y : (prev?.row ?? 0) + 1,
           deg: cat.deg ?? prev?.angle,
         });
-        liveRemotes = prev
-          ? liveRemotes.map((d) => (d.id === dummy.id ? { ...d, ...dummy } : d))
-          : [...liveRemotes, dummy];
+        // Сетевой угол пишем в тот же объект, без setState. На кадре рисуем
+        // не его, а сглаженный display: клетка обновляется сразу, стрела — нет.
+        const seenAt = performance.now();
+        remoteAim.set(dummy.id, noteRemoteAim(remoteAim.get(dummy.id), dummy.angle, seenAt, !prev));
+        if (prev) {
+          prev.col = dummy.col;
+          prev.row = dummy.row;
+          prev.angle = dummy.angle;
+          prev.name = dummy.name;
+          prev.sprite = dummy.sprite;
+          return;
+        }
+        liveRemotes = [...liveRemotes, dummy];
         setPeerCount(1 + liveRemotes.length);
       },
+      onFight: (fight) => applyNetFight(fight),
       onInfo: (text) => setNetStatus(text),
-      onNoplace: () => setNetStatus('Комната полная (макс. 3). Смените ?room='),
+      onNoplace: (payload) =>
+        setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
       onClose: () => setNetStatus('Сокет закрыт. Обновите страницу.'),
     });
     netRef.current = client;
@@ -478,10 +639,15 @@ export default function Simulator() {
     share(room, login);
     return () => {
       liveRemotes = [];
+      remoteAim.clear();
+      const sync = aimSyncRef.current;
+      if (sync.timer) clearTimeout(sync.timer);
+      sync.timer = null;
+      sync.pending = null;
       client.close();
       netRef.current = null;
     };
-  }, [loaded]);
+  }, [loaded, applyNetFight]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -575,7 +741,16 @@ export default function Simulator() {
       const requestStep = (dirDeg: number, tc: number, tr: number) => {
         if (netRef.current?.ready && s.controlled === 'main') {
           const dd = dirByDeg(dirDeg);
-          netRef.current.emit('move', { x: dd.dx, y: dd.dy });
+          const deg = Math.round(wrap360(e.angle) * 10) / 10;
+          netRef.current.emit('move', { x: dd.dx, y: dd.dy, deg });
+          const sync = aimSyncRef.current;
+          if (sync.timer) {
+            clearTimeout(sync.timer);
+            sync.timer = null;
+          }
+          sync.pending = null;
+          sync.deg = deg;
+          sync.at = performance.now();
           const sd = slowdownFor(dirDeg, e.angle, s);
           e.step = { dir: dirDeg, sd, start: now, dur: stepDuration(s.character.stepMs, sd) };
           e.lastDir = dirDeg;
@@ -613,11 +788,13 @@ export default function Simulator() {
           e.angle = wrap360(
             e.rotBase + e.rot * ((now - e.rotBaseT) / 1000) * (360 / Math.max(0.1, s.arrow.periodSec)),
           );
+          publishAimRef.current(e.angle, false);
         } else {
           e.rotActive = 0; // в мирном режиме вращение недоступно
         }
       } else if (e.rotActive !== 0) {
         e.rotActive = 0;
+        publishAimRef.current(e.angle, true);
       }
 
       // старт шага при удержании клавиш движения / маршрут по клику: следующий шаг
@@ -680,12 +857,28 @@ export default function Simulator() {
                 changed = true;
               }
             }
+            for (const d of liveRemotes) {
+              const cur = de[d.id] ?? es;
+              const nv = Math.min(es, cur + amt);
+              if (nv !== cur) {
+                de[d.id] = nv;
+                changed = true;
+              }
+            }
             return changed ? { ...prev, playerEnergy: pe, dummyEnergy: de } : prev;
           });
         }
       }
 
       e.labels = e.labels.filter((l) => now - l.born < 900);
+
+      // Чужие стрелы догоняют последний сетевой угол каждый кадр. Свою не трогаем.
+      if (liveRemotes.length > 0) {
+        for (const d of liveRemotes) {
+          const aim = remoteAim.get(d.id);
+          if (aim) stepRemoteAim(aim, now, dt);
+        }
+      }
 
       // «желе» манекенов: дрожь гаснет со временем (у тащимого — медленнее, он «в руке»)
       const dg = dragRef.current;
@@ -1110,7 +1303,8 @@ export default function Simulator() {
         const tpA = posOfChar(d.id, d.col, d.row);
         const ta = anchorAtPx(s, sprT.width / sprT.height, tpA.x, tpA.y, d.scale);
         const tFrac = (combatRef.current.dummyEnergy[d.id] ?? es0) / es0;
-        drawArrowBody(s, ta.k, ta.ax, ta.ay, d.angle, tFrac, s.arrow.showRay);
+        const shown = liveRemotes.length > 0 ? (remoteAim.get(d.id)?.display ?? d.angle) : d.angle;
+        drawArrowBody(s, ta.k, ta.ax, ta.ay, shown, tFrac, s.arrow.showRay);
       }
 
       // стрела своего кота, пока им не управляем: стоит с тем углом, что был оставлен
@@ -1283,8 +1477,11 @@ export default function Simulator() {
   // панель и родителя, из-за чего раньше стрела двигалась рвано.
   const getEngineAngle = useCallback(() => engineRef.current.angle, []);
 
-  const setEngineAngle = useCallback((v: number) => {
-    engineRef.current.angle = wrap360(v);
+  const setEngineAngle = useCallback((v: number, force = false) => {
+    const angle = wrap360(v);
+    engineRef.current.angle = angle;
+    // Пока ползунок едет — тот же ритм, что у J/L. Отпускание и ввод числа — сразу.
+    publishAimRef.current(angle, force);
   }, []);
 
   /* ---------- клавиатура ---------- */
@@ -1600,8 +1797,7 @@ export default function Simulator() {
 
     if (!t) {
       // рядом никого — удар в пустоту, «мимо», имя в лог не пишется
-      entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1 };
-      pushMissLabel();
+      entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
     } else {
       const tCol = t.col;
       const tRow = t.row;
@@ -1621,11 +1817,9 @@ export default function Simulator() {
         if (z) {
           hitDamage = z.damage;
           struck = t;
-          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1 };
-          pushDamageLabel(z, tCol, tRow);
+          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
         } else {
-          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1 };
-          pushMissLabel();
+          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
         }
       } else {
         // Прямая стойка: зона — полоса тела, в которую входит луч стрелы.
@@ -1641,15 +1835,35 @@ export default function Simulator() {
         if (z) {
           hitDamage = z.damage;
           struck = t;
-          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1 };
-          // всплывающий урон над манекеном: «Морда -20%», цветом зоны
-          pushDamageLabel(z, tCol, tRow);
+          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
         } else {
           // луч прошёл мимо тела — «мимо», имя цели не пишется
-          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1 };
-          pushMissLabel();
+          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
         }
       }
+    }
+
+    // Попадание по живому соседу уходит на сервер. Строку лога и урон принесёт fight,
+    // иначе удар останется только в состоянии бьющего.
+    if (
+      hitDamage !== null &&
+      struck &&
+      selfId === 'main' &&
+      struck.id.startsWith('p') &&
+      netRef.current?.ready
+    ) {
+      const target = Number(struck.id.slice(1));
+      if (Number.isInteger(target)) {
+        netRef.current.emit('strike', { target, zone: entry.zoneId, angle: snap.angle });
+        return;
+      }
+    }
+
+    if (hitDamage !== null && struck) {
+      const z = s.combat.zones.find((zz) => zz.id === entry.zoneId);
+      if (z) pushDamageLabel(z, struck.col, struck.row);
+    } else {
+      pushMissLabel();
     }
 
     // энергия и лог обновляются функционально от последнего состояния,
@@ -1670,14 +1884,8 @@ export default function Simulator() {
         else de[struck.id] = Math.max(0, (de[struck.id] ?? es) - hitDamage);
       }
       // лог пишется последовательно: каждый удар — новая строка наверх; счётчик растёт
-      // только когда удар совпал с самой верхней строкой (та же цель и та же зона подряд),
-      // поэтому чередование зон даёт отдельные строки, а не обновление старых счётчиков
-      const [top, ...rest] = prev.log;
-      const log: CombatLogEntry[] =
-        top && top.target === entry.target && top.zoneId === entry.zoneId
-          ? [{ ...top, count: top.count + 1 }, ...rest].slice(0, LOG_LIMIT)
-          : [entry, ...prev.log].slice(0, LOG_LIMIT);
-      return { playerEnergy, dummyEnergy: de, log };
+      // только когда удар совпал с самой верхней строкой (тот же бьющий, цель и зона)
+      return { playerEnergy, dummyEnergy: de, log: mergeLog(prev.log, entry) };
     });
   }, []);
 
@@ -1799,6 +2007,7 @@ export default function Simulator() {
         e.col = ms.col;
         e.row = ms.row;
         e.angle = ms.angle;
+        publishAimRef.current(ms.angle, true);
       }
     } else {
       const d = s.dummies.find((x) => x.id === id);
@@ -2052,15 +2261,17 @@ export default function Simulator() {
                   </span>
                   <span className="text-[10px] text-amber-200/50">I — удар</span>
                 </div>
-                <div className="flex max-h-36 flex-col gap-0.5 overflow-y-auto pr-0.5 [scrollbar-width:thin] [&>*]:shrink-0">
+                <div
+                  id="fightLog"
+                  className="flex max-h-36 flex-col gap-0.5 overflow-y-auto pr-0.5 [scrollbar-width:thin] [&>*]:shrink-0"
+                  aria-live="polite"
+                >
                   {combat.log.length === 0 ? (
                     <div className="text-[10px] text-amber-200/40">ударов ещё не было</div>
                   ) : (
                     combat.log.map((l, i) => (
                       <div key={i} className="truncate text-[11px] text-amber-50">
-                        {l.zoneId === 'miss'
-                          ? `Я => мимо x${l.count}`
-                          : `Я => ${l.target} (${l.zoneLabel}) x${l.count}`}
+                        {formatLogLine(l)}
                       </div>
                     ))
                   )}

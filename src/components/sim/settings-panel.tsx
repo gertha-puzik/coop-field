@@ -41,7 +41,7 @@ interface Props {
   onImport: (json: string) => string | null;
   /** Живой угол стрелы из движка (читается изолированным LiveAngle). */
   getAngle: () => number;
-  onManualAngle: (v: number) => void;
+  onManualAngle: (v: number, force?: boolean) => void;
 }
 
 /* ---------- мелкие контролы ---------- */
@@ -275,7 +275,7 @@ function LiveAngle({
   onManualAngle,
 }: {
   getAngle: () => number;
-  onManualAngle: (v: number) => void;
+  onManualAngle: (v: number, force?: boolean) => void;
 }) {
   const [angle, setAngle] = useState(() => Math.round(wrap360(getAngle())));
   useEffect(() => {
@@ -291,7 +291,7 @@ function LiveAngle({
           value={angle}
           min={0}
           max={360}
-          onChange={(v) => onManualAngle(v)}
+          onChange={(v) => onManualAngle(v, true)}
         />
       </div>
       <Slider
@@ -299,7 +299,8 @@ function LiveAngle({
         min={0}
         max={360}
         step={1}
-        onValueChange={(vals) => onManualAngle(vals[0])}
+        onValueChange={(vals) => onManualAngle(vals[0], false)}
+        onValueCommit={(vals) => onManualAngle(vals[0], true)}
         className="[&_[data-slot=slider-range]]:bg-emerald-600"
       />
       <div className="mt-0.5 text-[10px] text-zinc-500">

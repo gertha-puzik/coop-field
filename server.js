@@ -36,8 +36,32 @@ function isAllowedOrigin(origin) {
 }
 const WIDTH = 10;
 const HEIGHT = 6;
-const MAX_PLAYERS = 3;
+/** Потолок комнаты. Клеток на поле 60, но в одну комнату пускаем не больше этого числа. */
+const MAX_PLAYERS = 30;
 const MOVE_COOLDOWN_MS = 80;
+/**
+ * Короткий предохранитель от пачки aim подряд. Угол в cat.deg пишется сразу.
+ * Если с прошлой рассылки прошло больше этого — пакет уходит сразу.
+ * Более плотный залп не копится в очереди: остаётся последний угол и уходит
+ * по короткому таймеру, так что свежий угол не застревает.
+ * 20 мс — не сглаживание картинки (его делает клиент), а только отсечка всплеска.
+ */
+const AIM_MIN_GAP_MS = 20;
+/** Нижняя граница отклика удара в симе — 30 мс. Кулдаун чуть ниже, чтобы легитимный удар не отбрасывался. */
+const STRIKE_COOLDOWN_MS = 25;
+/**
+ * Зоны abnocw (id → подпись и урон при пресете 0,0). Совпадает с DEFAULT_SETTINGS.combat.zones.
+ * Когтей и зубов нет: weapon в логе пустой.
+ */
+const STRIKE_ZONES = {
+  tail: { part: "Хвост", damage: 2 },
+  paws: { part: "Лапы", damage: 5 },
+  back: { part: "Спина", damage: 12 },
+  muzzle: { part: "Морда", damage: 20 },
+  belly: { part: "Живот", damage: 25 },
+  neck: { part: "Шея", damage: 30 },
+  throat: { part: "Горло", damage: 38 },
+};
 const SPAWNS = [
   [4, 3],
   [5, 3],
@@ -48,7 +72,7 @@ const SPAWNS = [
   [2, 3],
   [7, 3],
 ];
-const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d"];
+const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
 const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka"];
 
@@ -89,12 +113,6 @@ function spawnCell(room) {
     }
   }
   return null;
-}
-
-function degFromDelta(dx, dy) {
-  if (dx === 0 && dy === 0) return 0;
-  // Official 0° faces right; 90° down (screen +y).
-  return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
 function pickSprite(payload, slot) {
@@ -145,6 +163,7 @@ function leave(ws) {
   const cat = room.sockets.get(ws);
   room.sockets.delete(ws);
   if (cat) {
+    clearAimTimer(cat);
     room.cats.delete(cat.id);
     broadcast(room, "move", { id: cat.id, x: 0, y: 0 });
   }
@@ -152,17 +171,22 @@ function leave(ws) {
   if (room.sockets.size === 0) rooms.delete(room.code);
 }
 
+function refuseJoin(ws, room, reason) {
+  send(ws, "info", reason);
+  send(ws, "noplace", { room: room.code, reason });
+}
+
 function join(ws, payload = {}) {
   if (ws.room) leave(ws);
   const room = roomOf(payload.room);
   if (room.cats.size >= MAX_PLAYERS) {
-    send(ws, "info", "В комнате уже 3 кота — клетка не свободна.");
-    send(ws, "noplace", { room: room.code });
+    refuseJoin(ws, room, `В комнате уже ${MAX_PLAYERS} котов — мест нет. Смените ?room=.`);
     return;
   }
   const cell = spawnCell(room);
   if (!cell) {
-    send(ws, "info", "На поле нет свободных клеток.");
+    // Двух котов в одну клетку не ставим: нет свободной клетки — отказ, не очередь.
+    refuseJoin(ws, room, "На поле нет свободных клеток.");
     return;
   }
   const slot = room.cats.size;
@@ -177,6 +201,8 @@ function join(ws, payload = {}) {
     deg: 0,
     size: 3.2,
     lastMove: 0,
+    lastStrike: 0,
+    lastAim: 0,
   };
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
@@ -216,11 +242,186 @@ function move(ws, payload = {}) {
 
   cat.x = nx;
   cat.y = ny;
-  cat.deg = Math.round(degFromDelta(dx, dy) * 100) / 100;
+  // Стрела живёт отдельно от шага: без deg в пакете оставляем последний угол,
+  // а не разворачиваем её по направлению клетки.
+  const sentDeg = normalizeDeg(payload.deg ?? payload.angle);
+  if (sentDeg != null) cat.deg = sentDeg;
+  clearAimTimer(cat);
+  cat.aimDirty = false;
+  cat.lastAim = now;
   cat.lastMove = now;
   const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg };
   send(ws, "update cat", patch);
   broadcast(room, "update cat", patch);
+}
+
+function clearAimTimer(cat) {
+  if (!cat?.aimTimer) return;
+  clearTimeout(cat.aimTimer);
+  cat.aimTimer = null;
+}
+
+function normalizeDeg(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(wrap360(n) * 10) / 10;
+}
+
+/** Запомнить угол сразу. Рассылаем его сразу, а залп теснее AIM_MIN_GAP_MS схлопываем до последнего. */
+function setDeg(ws, deg) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat || deg == null) return;
+  if (deg === cat.deg && !cat.aimDirty) return;
+  cat.deg = deg;
+  const elapsed = Date.now() - (cat.lastAim || 0);
+  if (elapsed >= AIM_MIN_GAP_MS) {
+    clearAimTimer(cat);
+    broadcastDeg(room, cat, ws);
+    return;
+  }
+  cat.aimDirty = true;
+  if (cat.aimTimer) return;
+  cat.aimTimer = setTimeout(() => {
+    cat.aimTimer = null;
+    if (!cat.aimDirty || ws.room !== room) return;
+    broadcastDeg(room, cat, ws);
+  }, AIM_MIN_GAP_MS - elapsed);
+}
+
+function broadcastDeg(room, cat, exceptWs) {
+  cat.aimDirty = false;
+  cat.lastAim = Date.now();
+  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg }, exceptWs);
+}
+
+function aim(ws, payload = {}) {
+  const cat = ws.room && ws.room.sockets.get(ws);
+  if (!cat) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const deg = normalizeDeg(payload.deg ?? payload.angle);
+  if (deg == null) return;
+  setDeg(ws, deg);
+}
+
+function wrap360(a) {
+  return ((a % 360) + 360) % 360;
+}
+
+function wrap180(a) {
+  const x = wrap360(a);
+  return x > 180 ? x - 360 : x;
+}
+
+/** Сосед, на которого точнее указывает стрела. То же правило, что pickStrikeTarget в симе. */
+function aimedNeighbor(room, cat, angle) {
+  if (!Number.isFinite(angle)) return null;
+  let best = null;
+  let bestDiff = Infinity;
+  for (const other of room.cats.values()) {
+    if (other.id === cat.id) continue;
+    const dx = other.x - cat.x;
+    const dy = other.y - cat.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== 1) continue;
+    const phi = wrap360((Math.atan2(dy, dx) * 180) / Math.PI);
+    const diff = Math.abs(wrap180(phi - wrap360(angle)));
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = other;
+    }
+  }
+  return best;
+}
+
+/**
+ * С диагонали зона не берётся из полос тела: морда / хвост / лапы, как в landStrike.
+ * dx, dy — шаг от бьющего к цели, каждый -1 или 1.
+ */
+function diagonalZone(dx, dy) {
+  if (Math.abs(dx) !== 1 || Math.abs(dy) !== 1) return null;
+  if (dy === 1) return "muzzle";
+  if (dx === -1 && dy === -1) return "tail";
+  return "paws";
+}
+
+function resolveZone(raw) {
+  const key = String(raw || "").trim();
+  if (STRIKE_ZONES[key]) return [key, STRIKE_ZONES[key]];
+  const lower = key.toLowerCase();
+  for (const [id, zone] of Object.entries(STRIKE_ZONES)) {
+    if (zone.part.toLowerCase() === lower) return [id, zone];
+  }
+  return null;
+}
+
+/**
+ * Удар. Клиент → ["strike", { target, zone, angle }].
+ * Комнате → ["fight", { attackerId, attacker, targetId, name, part, zone, weapon, damage, isAttacking }].
+ * name / part / weapon / isAttacking — поля боевого лога. isAttacking свой у каждого сокета.
+ * Оружие пустое: когти и зубы в этот обмен не входят, нокаута нет.
+ */
+function strike(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const now = Date.now();
+  if (now - cat.lastStrike < STRIKE_COOLDOWN_MS) return;
+
+  const targetId = Number(payload.target ?? payload.id);
+  const angle = Number(payload.angle);
+  const resolved = resolveZone(payload.zone ?? payload.part);
+  if (!Number.isInteger(targetId) || !resolved || !Number.isFinite(angle)) {
+    cat.lastStrike = now;
+    send(ws, "info", "Удар не разобран.");
+    return;
+  }
+  const [zoneId, zone] = resolved;
+  const target = room.cats.get(targetId);
+  if (!target || target.id === cat.id) {
+    cat.lastStrike = now;
+    send(ws, "info", "Цель не в комнате.");
+    return;
+  }
+  const aimed = aimedNeighbor(room, cat, angle);
+  if (!aimed) {
+    cat.lastStrike = now;
+    send(ws, "info", "Рядом никого.");
+    return;
+  }
+  if (aimed.id !== target.id) {
+    cat.lastStrike = now;
+    send(ws, "info", "Стрела смотрит не на эту цель.");
+    return;
+  }
+  const forced = diagonalZone(target.x - cat.x, target.y - cat.y);
+  if (forced && zoneId !== forced) {
+    cat.lastStrike = now;
+    send(ws, "info", "С этой диагонали бьётся другая часть.");
+    return;
+  }
+
+  cat.lastStrike = now;
+  const entry = {
+    attackerId: cat.id,
+    attacker: cat.login,
+    targetId: target.id,
+    name: target.login,
+    part: zone.part,
+    zone: zoneId,
+    weapon: "",
+    damage: zone.damage,
+  };
+  for (const sock of room.sockets.keys()) {
+    send(sock, "fight", {
+      ...entry,
+      isAttacking: room.sockets.get(sock)?.id === cat.id,
+    });
+  }
 }
 
 function onMessage(ws, raw) {
@@ -234,6 +435,8 @@ function onMessage(ws, raw) {
   const payload = Array.isArray(msg) ? msg[1] : msg;
   if (event === "join" || event === "first") join(ws, payload || {});
   else if (event === "move") move(ws, payload || {});
+  else if (event === "aim") aim(ws, payload || {});
+  else if (event === "strike") strike(ws, payload || {});
 }
 
 const MIME = {
@@ -259,7 +462,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, maxPlayers: MAX_PLAYERS }));
     return;
   }
   let rel = url.pathname === "/" ? "/index.html" : url.pathname;

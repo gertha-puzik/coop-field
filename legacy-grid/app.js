@@ -171,7 +171,8 @@ function onEvent(event, payload) {
   } else if (event === "info") {
     setStatus(String(payload));
   } else if (event === "noplace") {
-    setStatus("Комната полная (макс. 3). Смените ?room=");
+    const reason = payload && typeof payload.reason === "string" ? payload.reason : "";
+    setStatus(reason || "Комната полная (макс. 30). Смените ?room=");
   }
 }
 

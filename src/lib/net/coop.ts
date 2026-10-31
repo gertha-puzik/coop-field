@@ -15,12 +15,32 @@ export type CoopCat = {
   size?: number;
 };
 
+/** Боевой лог комнаты. name / part / weapon / isAttacking — как в журнале удара. */
+export type CoopFight = {
+  attackerId: number;
+  attacker: string;
+  targetId: number;
+  name: string;
+  part: string;
+  zone: string;
+  weapon?: string;
+  damage?: number;
+  /** true только на сокете бьющего. Зритель смотрит на attacker и name. */
+  isAttacking?: boolean;
+};
+
+export type CoopNoplace = {
+  room?: string;
+  reason?: string;
+};
+
 export type CoopHandlers = {
   onYou?: (cat: CoopCat) => void;
   onField?: (field: { width?: number; height?: number; room?: string; cats?: CoopCat[] }) => void;
   onCat?: (cat: Partial<CoopCat> & { id: number }) => void;
+  onFight?: (entry: CoopFight) => void;
   onInfo?: (text: string) => void;
-  onNoplace?: () => void;
+  onNoplace?: (payload?: CoopNoplace) => void;
   onOpen?: () => void;
   onClose?: () => void;
 };
@@ -121,8 +141,9 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (event === "you") handlers.onYou?.(payload as CoopCat);
       else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[] });
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
+      else if (event === "fight") handlers.onFight?.(payload as CoopFight);
       else if (event === "info") handlers.onInfo?.(String(payload));
-      else if (event === "noplace") handlers.onNoplace?.();
+      else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
     };
     ws.onclose = () => handlers.onClose?.();
     ws.onerror = () => {

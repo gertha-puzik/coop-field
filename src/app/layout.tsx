@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Общее поле — симулятор CatWar",
   description:
-    "Canvas-поле abnocw на общем WebSocket: до трёх котов в одной комнате.",
+    "Canvas-поле abnocw на общем WebSocket: до 30 котов в одной комнате.",
 };
 
 export default function RootLayout({
