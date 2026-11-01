@@ -1,0 +1,50 @@
+name: Сервер комнаты на VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server.js"
+      - "scripts/**"
+      - "deploy/vps/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: coop-field-backend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Заливка комнаты и перезапуск
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KEY" ]; then
+            echo "секрет VPS_SSH_KEY пуст" >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          rsync -az -e "$SSH" \
+            server.js \
+            deploy/vps/package.json \
+            deploy/vps/package-lock.json \
+            deploy/vps/apply.sh \
+            "$SSH_USER@$SSH_HOST:incoming/"
+          rsync -az --delete -e "$SSH" \
+            scripts/ \
+            "$SSH_USER@$SSH_HOST:incoming/scripts/"
+          $SSH "$SSH_USER@$SSH_HOST" "bash incoming/apply.sh"

@@ -1,0 +1,17 @@
+{
+  "name": "coop-field-server",
+  "private": true,
+  "version": "0.2.0",
+  "description": "WebSocket room for coop-field. Installed on the VPS, not on Vercel.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test:ws": "node scripts/test-ws.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

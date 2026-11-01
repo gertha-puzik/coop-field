@@ -29,9 +29,16 @@ npm run test:ws
 
 ## Деплой
 
-| Куда | Что |
-|------|-----|
-| Vercel project `coop-field` | только Next-фронт |
-| VPS `/opt/coop-field` + `coop-field.service` | `server.js` (WS + `/health`) |
+Источник выкладки — GitHub-репозиторий [gertha-puzik/coop-field](https://github.com/gertha-puzik/coop-field), ветка `main`.
+Пуш в `main` запускает GitHub Actions. Коммиты только в Cursor на Vercel и VPS сами не уезжают: их нужно отправить в этот GitHub-репозиторий.
 
-Vercel serverless комнату не держит.
+| Workflow | Куда | Когда |
+|----------|------|--------|
+| «Фронтенд на Vercel» | проект Vercel `coop-field` (команда `polexka`) | изменения `src/`, `public/`, Next-конфига или зависимостей фронта |
+| «Сервер комнаты на VPS» | `89.232.184.77`, `/opt/coop-field`, сервис `coop-field` | изменения `server.js`, `scripts/` или `deploy/vps/` |
+
+Фронт — статический Next (`output: "export"`). Секрет репозитория `VERCEL_TOKEN`.
+Комнату Vercel не держит: Actions заходит по SSH пользователем `deploy` и вызывает `deploy/vps/apply.sh`.
+Секрет `VPS_SSH_KEY` — приватный ключ этого пользователя. Если `server.js` и lockfile зависимостей не менялись, сервис не перезапускается.
+
+Прод-сокет: `wss://coop.89-232-184-77.sslip.io`. Сайт: `https://coop-field.vercel.app`.

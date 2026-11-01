@@ -1,0 +1,35 @@
+name: Фронтенд на Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "tsconfig.json"
+      - "vercel.json"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: coop-field-frontend
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_WFMW7Ya5MxMk0LeorKy5SjYL
+      VERCEL_PROJECT_ID: prj_gPVkczSciohffXtx1PGonYM4q1hh
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Публикация production на Vercel
+        run: npx --yes vercel@65.9.0 deploy --prod --yes --non-interactive
