@@ -463,7 +463,65 @@ const rejects = [p, q].filter((ws) =>
 if (rejects.length !== 1) throw new Error(`expected one occupied reject, got ${rejects.length}`);
 console.log("ok: simultaneous move, one cell", `${fp.x}:${fp.y}`, `${fq.x}:${fq.y}`);
 
-for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q]) {
+// Чат комнаты: видят все, пустое молчит, длинное режется, частый отказ, новичок получает журнал.
+const chatRoom = `c${Date.now().toString(36)}`;
+const ca = await client("Альфа", chatRoom);
+const cb = await client("Бета", chatRoom);
+const caYou = (await waitFor(ca, "you"))[1];
+await waitFor(cb, "you");
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "  привет\nкомнате  " }]));
+const chatA = await waitFor(ca, "chat");
+const chatB = await waitFor(cb, "chat");
+for (const [who, msg] of [["A", chatA], ["B", chatB]]) {
+  const row = msg[1];
+  if (row.id !== caYou.id || row.login !== "Альфа") throw new Error(`${who} chat author ${JSON.stringify(row)}`);
+  if (row.text !== "привет комнате") throw new Error(`${who} chat text ${JSON.stringify(row.text)}`);
+  if (!/^#[0-9a-fA-F]{6}$/.test(row.color)) throw new Error(`${who} chat color ${row.color}`);
+  if (typeof row.seq !== "number" || typeof row.ts !== "number") throw new Error(`${who} chat meta ${JSON.stringify(row)}`);
+}
+if (cb.inbox.filter((m) => m[0] === "chat").length !== 1) throw new Error("chat echoed twice");
+ca.send(JSON.stringify(["chat", { text: "   " }]));
+ca.send(JSON.stringify(["chat", ""]));
+await sleep(80);
+if (cb.inbox.some((m) => m[0] === "chat" && m[1].seq !== chatB[1].seq)) {
+  throw new Error(`empty chat leaked ${JSON.stringify(cb.inbox.filter((m) => m[0] === "chat"))}`);
+}
+await sleep(500);
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "я".repeat(250) }]));
+const clipped = (await waitFor(cb, "chat"))[1];
+if (clipped.text !== "я".repeat(200)) throw new Error(`chat clip len ${clipped.text?.length}`);
+await sleep(500);
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "раз" }]));
+ca.send(JSON.stringify(["chat", { text: "два" }]));
+await sleep(200);
+const paced = cb.inbox.filter((m) => m[0] === "chat");
+if (paced.length !== 1 || paced[0][1].text !== "раз") {
+  throw new Error(`chat rate ${JSON.stringify(paced.map((m) => m[1].text))}`);
+}
+if (!ca.inbox.some((m) => m[0] === "info" && String(m[1]).includes("частые"))) {
+  throw new Error(`chat rate info missing ${JSON.stringify(ca.inbox)}`);
+}
+const outsider = await connectBare();
+outsider.send(JSON.stringify(["chat", { text: "мимо" }]));
+const outsiderInfo = await waitFor(outsider, "info");
+if (!String(outsiderInfo[1]).includes("комнату")) throw new Error(`outsider ${outsiderInfo[1]}`);
+await sleep(40);
+if (cb.inbox.some((m) => m[0] === "chat" && m[1].text === "мимо")) throw new Error("outsider reached the room");
+const cc = await client("Гамма", chatRoom);
+const chatlog = (await waitFor(cc, "chatlog"))[1];
+const logged = chatlog.map((row) => row.text);
+if (logged.join("|") !== ["привет комнате", "я".repeat(200), "раз"].join("|")) {
+  throw new Error(`chatlog ${JSON.stringify(logged)}`);
+}
+console.log("ok: chat", logged.length, "lines, clip 200, rate, history");
+
+for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider]) {
   try {
     ws.close();
   } catch {
