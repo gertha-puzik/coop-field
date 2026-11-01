@@ -173,7 +173,7 @@ export interface SimSettings {
   arrowNorm?: boolean;
   /** Внутренний маркер миграции: дефолты обновлены (спрайт Блестяшка, цвет #73a13a, мишень Пухляшик). */
   presetMigrated?: boolean;
-  /** Внутренний маркер миграции: базовый урон в горло приведён к калибровке 0,0 → 38%. */
+  /** Внутренний маркер миграции: горло уже приведено к текущей базе урона 0,0. */
   throatBaseMigrated?: boolean;
 }
 
@@ -230,7 +230,7 @@ export const DEFAULT_SETTINGS: SimSettings = {
     anchorOffsetY: -1,
     showOrbit: false,
     showWindowArc: false,
-    showRay: true,
+    showRay: false,
   },
   slowdown: {
     // Окна «без замедления» (калибровка по референсу): вправо — [313°..43°],
@@ -255,7 +255,7 @@ export const DEFAULT_SETTINGS: SimSettings = {
     showSpeedBadge: false,
   },
   hud: {
-    show: true,
+    show: false,
   },
   dummies: [
     { id: 'd1', name: 'Пухляшик', sprite: 'puhlyashik', col: 6, row: 3, scale: 100, angle: 0, present: true, visible: false },
@@ -274,25 +274,27 @@ export const DEFAULT_SETTINGS: SimSettings = {
     regenIntervalSec: 5,
     damageLevel: 0,
     showLog: true,
-    // Зоны — полосы тела спрайта в px (тело приведено к 100×150, морда смотрит влево):
-    // голова 0–55, горло/шея 55–72, живот/спина 72–106, лапы/хвост 106–150.
-    // Спрайт ровно 100×150, кот сидит мордой влево: хвост — правый низ, лапы — левый низ.
+    // Полосы тела в px (0 — верх спрайта, 150 — низ). Стороны как на схеме:
+    // хвост/спина/шея — правая, лапы/живот/горло — левая, морда — обе.
+    // Урон строки совпадает со схемой; у Хвоста, Спины, Живота и Шеи он и раньше был таким.
     zones: [
-      { id: 'tail',   name: 'Хвост', color: '#ff9f0a', damage: 2,  py0: 106, py1: 150, side: 'right' },
-      { id: 'paws',   name: 'Лапы',  color: '#2dd4bf', damage: 5,  py0: 106, py1: 150, side: 'left' },
-      { id: 'back',   name: 'Спина', color: '#4cd964', damage: 12, py0: 72,  py1: 106, side: 'right' },
-      { id: 'muzzle', name: 'Морда', color: '#ffd60a', damage: 20, py0: 0,   py1: 55,  side: 'both' },
-      { id: 'belly',  name: 'Живот', color: '#ff6fa5', damage: 25, py0: 72,  py1: 106, side: 'left' },
-      { id: 'neck',   name: 'Шея',   color: '#bf5af2', damage: 30, py0: 55,  py1: 72,  side: 'right' },
-      { id: 'throat', name: 'Горло', color: '#64d2ff', damage: 38, py0: 55,  py1: 72,  side: 'left' },
+      { id: 'tail',   name: 'Хвост', color: '#ff9f0a', damage: 2,  py0: 94, py1: 150, side: 'right' },
+      { id: 'paws',   name: 'Лапы',  color: '#2dd4bf', damage: 6,  py0: 94, py1: 150, side: 'left' },
+      { id: 'back',   name: 'Спина', color: '#4cd964', damage: 12, py0: 69, py1: 94,  side: 'right' },
+      { id: 'muzzle', name: 'Морда', color: '#ffd60a', damage: 18, py0: 64, py1: 0,   side: 'both' },
+      { id: 'belly',  name: 'Живот', color: '#ff6fa5', damage: 25, py0: 69, py1: 94,  side: 'left' },
+      { id: 'neck',   name: 'Шея',   color: '#bf5af2', damage: 30, py0: 64, py1: 69,  side: 'right' },
+      { id: 'throat', name: 'Горло', color: '#64d2ff', damage: 42, py0: 64, py1: 69,  side: 'left' },
     ],
   },
+  // Свежий конфиг уже на текущей базе горла: повторная загрузка не переписывает строку.
+  throatBaseMigrated: true,
 };
 
 // ---------------- Пресеты урона игрока ----------------
 
-/** Урон в горло при уровне игрока 0,0 (калибровка по референсу). */
-export const THROAT_BASE_DAMAGE = 38;
+/** Урон в горло при уровне игрока 0,0 — как в дефолтной строке зоны «Горло». */
+export const THROAT_BASE_DAMAGE = 42;
 /** Прибавка урона в горло за каждый шаг уровня 0,1. */
 export const THROAT_DAMAGE_STEP = 3.67;
 /** Базовый урон по зонам при уровне 0,0 — точка отсчёта пропорций пресетов. */
@@ -302,7 +304,7 @@ export const BASE_ZONE_DAMAGE: Record<string, number> = Object.fromEntries(
 /** Уровни пресетов: 0,0 … 0,9. */
 export const DAMAGE_LEVELS: readonly number[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-/** Урон в горло для уровня k (0..9 → 0,0..0,9): 38% + 3,67% за каждые 0,1, округление до целых. */
+/** Урон в горло для уровня k (0..9 → 0,0..0,9): база + 3,67% за каждые 0,1, округление до целых. */
 export function throatDamageFor(level: number): number {
   return Math.round(THROAT_BASE_DAMAGE + THROAT_DAMAGE_STEP * level);
 }
@@ -668,8 +670,8 @@ export function mergeSettings(raw: any): SimSettings {
     if (out.arrow.color === '#219c4a') out.arrow.color = '#73a13a';
   }
   out.presetMigrated = true;
-  // Разовая миграция: базовый урон в горло приведён к калибровке «0,0 урона → 38%»
-  // (раньше в дефолте было 42%). Ручные правки остальных зон не трогаем.
+  // Разовая миграция старых сохранений без маркера: горло к текущей базе 0,0.
+  // Уже сохранённые зоны (в том числе ручной урон) не затираем, если маркер стоит.
   if (raw != null && raw.throatBaseMigrated !== true) {
     out.combat.zones = out.combat.zones.map((z) =>
       z.id === 'throat' ? { ...z, damage: throatDamageFor(0) } : z,

@@ -59,12 +59,12 @@ const CHAT_HISTORY = 40;
  */
 const STRIKE_ZONES = {
   tail: { part: "Хвост", damage: 2 },
-  paws: { part: "Лапы", damage: 5 },
+  paws: { part: "Лапы", damage: 6 },
   back: { part: "Спина", damage: 12 },
-  muzzle: { part: "Морда", damage: 20 },
+  muzzle: { part: "Морда", damage: 18 },
   belly: { part: "Живот", damage: 25 },
   neck: { part: "Шея", damage: 30 },
-  throat: { part: "Горло", damage: 38 },
+  throat: { part: "Горло", damage: 42 },
 };
 const SPAWNS = [
   [4, 3],
