@@ -40,3 +40,7 @@ jobs:
         run: npm run typecheck
       - name: Версия ws в двух lockfile
         run: node scripts/check-ws-versions.mjs
+      # Интеграционный тест: сервер поднимается сам, проверяет очередь шагов
+      # (каждый ход получает ответ, гонки за клетку, переполнение очереди).
+      - name: Очередь шагов на сервере
+        run: node scripts/test-move-queue.mjs

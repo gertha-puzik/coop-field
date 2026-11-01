@@ -39,6 +39,14 @@ import {
 const STORAGE_KEY = 'catwar-battle-sim-v4';
 /** Отдельное хранилище боевого состояния (энергия + лог ударов). */
 const COMBAT_KEY = 'catwar-battle-sim-combat-v1';
+/** Пауза на новые шаги после отката предикта (чуть выше серверного кулдауна 80мс):
+ *  мгновенный перешаг после отката уходил в серверный кулдаун и терялся. */
+const NET_ROLLBACK_LOCK_MS = 90;
+/** Темп достройки чужого шага: не быстрее одной клетки в это время.
+ *  Пачка кадров после лага не превращается в спринт через всё поле. */
+const REMOTE_STEP_MS = 60;
+/** Дальше этого отставания чужого кота не анимируем — сразу ставим в клетку сервера. */
+const REMOTE_BACKLOG_MAX = 4;
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -188,6 +196,8 @@ interface Engine {
   hover: { c: number; r: number } | null;
   lastSpeed: number;
   lastDir: number | null;
+  /** performance.now(), до которого новые шаги подавлены после отката предикта. */
+  moveLockUntil: number;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -266,7 +276,7 @@ function rememberRemoteCell(map: Map<string, RemoteDraw>, id: string, col: numbe
   enqueueRemoteCell(vis, { col, row });
 }
 
-function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>) {
+function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>, now: number) {
   for (const d of remotes) {
     let vis = map.get(d.id);
     if (!vis) {
@@ -274,7 +284,19 @@ function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>) {
       map.set(d.id, vis);
       continue;
     }
-    advanceRemoteDraw(vis);
+    if (vis.queue.length > REMOTE_BACKLOG_MAX) {
+      // Кот отстал на несколько шагов (лаг вкладки/сети): не прогоняем его
+      // спринтом через занятые клетки, а сразу ставим в последнюю клетку сервера.
+      const last = vis.queue[vis.queue.length - 1];
+      vis.col = last.col;
+      vis.row = last.row;
+      vis.queue = [];
+      continue;
+    }
+    if (now - vis.lastStepAt >= REMOTE_STEP_MS) {
+      advanceRemoteDraw(vis);
+      vis.lastStepAt = now;
+    }
   }
 }
 
@@ -540,6 +562,9 @@ export default function Simulator() {
     hover: null,
     lastSpeed: 100,
     lastDir: null,
+    /** performance.now(), до которого новые шаги подавлены: пауза после отката
+     *  предикта, чтобы перешаг не уходил в серверный кулдаун и не терялся. */
+    moveLockUntil: 0,
   });
 
   /* ---------- загрузка / сохранение настроек ---------- */
@@ -702,6 +727,9 @@ export default function Simulator() {
               engineRef.current.row = verdict.cell.row;
               engineRef.current.path = [];
               engineRef.current.step = null;
+              // Короткая пауза на новый шаг: мгновенный перешаг после отката
+              // уходил в серверный кулдаун и терялся — снова откат и телепорт.
+              engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
             } else if (verdict.type === 'place') {
               engineRef.current.col = verdict.cell.col;
               engineRef.current.row = verdict.cell.row;
@@ -752,7 +780,7 @@ export default function Simulator() {
       onInfo: (text) => {
         setNetStatus(text);
         // Совместимость со старым сервером без refuse-кодов: откат предикта по тексту.
-        if (!text.includes('Клетка занята') && !text.includes('Край поля')) return;
+        if (!text.includes('Клетка занята') && !text.includes('Край поля') && !text.includes('Слишком быстро')) return;
         const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
@@ -760,12 +788,13 @@ export default function Simulator() {
         }
         engineRef.current.path = [];
         engineRef.current.step = null;
+        engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
       },
       onRefuse: (refuse) => {
         if (refuse?.text) setNetStatus(refuse.text);
         // Основной путь — код отказа: редактура русских текстов на сервере
         // больше не ломает откат предикта.
-        if (refuse?.code !== 'cell_busy' && refuse?.code !== 'edge') return;
+        if (refuse?.code !== 'cell_busy' && refuse?.code !== 'edge' && refuse?.code !== 'cooldown') return;
         const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
@@ -773,6 +802,7 @@ export default function Simulator() {
         }
         engineRef.current.path = [];
         engineRef.current.step = null;
+        engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
       },
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
@@ -888,7 +918,7 @@ export default function Simulator() {
     let prev = performance.now();
 
     const update = (now: number, dt: number) => {
-      stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current);
+      stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current, now);
       const s = settingsRef.current;
       const e = engineRef.current;
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
@@ -950,6 +980,7 @@ export default function Simulator() {
 
       startStepRef.current = (dir: number) => {
         if (e.step) return; // предыдущий шаг ещё в кулдауне — спам не ускоряет движение
+        if (performance.now() < e.moveLockUntil) return; // только что был откат — даём серверу догнать
         const self = s.controlled;
         const mp = self === 'main' ? null : mainSavedRef.current;
         const d = dirByDeg(dir);

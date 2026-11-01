@@ -45,7 +45,11 @@ const WIDTH = 10;
 const HEIGHT = 6;
 /** Потолок комнаты. Клеток на поле 60, но в одну комнату пускаем не больше этого числа. */
 const MAX_PLAYERS = 30;
+/** Кулдаун шага на сервере. Ходы, пришедшие раньше, не теряются — встают
+ *  в очередь MOVE_QUEUE_MAX и применяются ровно в момент снятия кулдауна. */
 const MOVE_COOLDOWN_MS = 80;
+/** Глубина очереди шагов: залипшая клавиша не должна превращаться в длинный буфер. */
+const MOVE_QUEUE_MAX = 3;
 /** Кулдаун на повторный join: самое дорогое событие (снимок field всей комнате). */
 const JOIN_COOLDOWN_MS = 1000;
 /** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
@@ -182,6 +186,8 @@ function leave(ws) {
   room.sockets.delete(ws);
   if (cat) {
     clearAimTimer(cat);
+    clearMoveTimer(cat);
+    cat.moveQueue = [];
     room.cats.delete(cat.id);
     broadcast(room, "move", { id: cat.id, x: 0, y: 0 });
     console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
@@ -229,6 +235,9 @@ function join(ws, payload = {}) {
     lastStrike: 0,
     lastAim: 0,
     lastChat: 0,
+    // Шаги, ждущие снятия кулдауна (см. queueMove), и их таймер.
+    moveQueue: [],
+    moveTimer: null,
   };
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
@@ -246,18 +255,39 @@ function move(ws, payload = {}) {
     send(ws, "info", "Сначала зайдите в комнату.");
     return;
   }
+  const step = parseMove(payload);
+  if (!step) return;
   const now = Date.now();
-  if (now - cat.lastMove < MOVE_COOLDOWN_MS) return;
+  if (now - cat.lastMove < MOVE_COOLDOWN_MS) {
+    // Раньше такой шаг глотался молча: клиент уже нарисовал его, эха нет —
+    // предикт расходился с сервером и следующий эхо откатывал кота на клетку
+    // назад (телепорт). Теперь шаг встаёт в короткую очередь и обязательно
+    // выполняется или честно отказывается.
+    queueMove(ws, cat, payload);
+    return;
+  }
+  applyMove(ws, cat, payload);
+}
 
+/** Нормализация хода: {-1..1, -1..1}, не (0,0), числа конечны. */
+function parseMove(payload = {}) {
   let dx = Number(payload.x);
   let dy = Number(payload.y);
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
   dx = Math.max(-1, Math.min(1, Math.trunc(dx)));
   dy = Math.max(-1, Math.min(1, Math.trunc(dy)));
-  if (dx === 0 && dy === 0) return;
+  if (dx === 0 && dy === 0) return null;
+  return { dx, dy };
+}
 
-  const nx = cat.x + dx;
-  const ny = cat.y + dy;
+function applyMove(ws, cat, payload) {
+  const room = ws.room;
+  if (!room || room.sockets.get(ws) !== cat) return;
+  const step = parseMove(payload);
+  if (!step) return;
+  const now = Date.now();
+  const nx = cat.x + step.dx;
+  const ny = cat.y + step.dy;
   if (nx < 1 || nx > WIDTH || ny < 1 || ny > HEIGHT) {
     send(ws, "info", "Край поля.");
     // refuse — тот же отказ, но с кодом: клиент откатывает предикт по коду,
@@ -287,6 +317,39 @@ function move(ws, payload = {}) {
   // перепрыгивал клетку.
   send(ws, "update cat", patch);
   broadcast(room, "update cat", patch, ws);
+}
+
+function clearMoveTimer(cat) {
+  if (!cat?.moveTimer) return;
+  clearTimeout(cat.moveTimer);
+  cat.moveTimer = null;
+}
+
+/** Разогнать очередь шагов: каждый — в момент снятия кулдауна. */
+function pumpMoveQueue(ws, cat) {
+  if (cat.moveTimer) return;
+  const wait = MOVE_COOLDOWN_MS - (Date.now() - cat.lastMove);
+  cat.moveTimer = setTimeout(() => {
+    cat.moveTimer = null;
+    const room = ws.room;
+    if (!room || room.sockets.get(ws) !== cat) return;
+    const next = cat.moveQueue.shift();
+    if (next === undefined) return;
+    applyMove(ws, cat, next);
+    if (cat.moveQueue.length > 0) pumpMoveQueue(ws, cat);
+  }, Math.max(0, wait));
+}
+
+/** Шаг раньше кулдауна: в очередь, а не в мусорку. */
+function queueMove(ws, cat, payload) {
+  if (cat.moveQueue.length >= MOVE_QUEUE_MAX) {
+    // Залп длиннее очереди — честный отказ, клиент откатит предикт.
+    send(ws, "info", "Слишком быстро.");
+    send(ws, "refuse", { code: "cooldown", text: "Слишком быстро." });
+    return;
+  }
+  cat.moveQueue.push(payload);
+  pumpMoveQueue(ws, cat);
 }
 
 /**

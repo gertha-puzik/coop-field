@@ -21,6 +21,8 @@ export type RemoteDraw = {
   col: number;
   row: number;
   queue: Cell[];
+  /** performance.now() последней дорисованной клетки — темп достройки шага. */
+  lastStepAt: number;
 };
 
 export function sameCell(a: Cell | null | undefined, b: Cell | null | undefined): boolean {
@@ -62,7 +64,7 @@ export function rejectOwnMove(book: MoveBook): Cell | null {
 }
 
 export function seedRemoteDraw(cell: Cell): RemoteDraw {
-  return { col: cell.col, row: cell.row, queue: [] };
+  return { col: cell.col, row: cell.row, queue: [], lastStepAt: 0 };
 }
 
 /** Следующая серверная клетка. Повтор той же клетки очередь не удлиняет. */
