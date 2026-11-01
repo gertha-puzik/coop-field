@@ -49,6 +49,10 @@ const MOVE_COOLDOWN_MS = 80;
 const AIM_MIN_GAP_MS = 20;
 /** Нижняя граница отклика удара в симе — 30 мс. Кулдаун чуть ниже, чтобы легитимный удар не отбрасывался. */
 const STRIKE_COOLDOWN_MS = 25;
+/** Одно сообщение комнате. Длиннее обрезается, чаще этого интервала — отказ. */
+const CHAT_MAX_LEN = 200;
+const CHAT_COOLDOWN_MS = 450;
+const CHAT_HISTORY = 40;
 /**
  * Зоны abnocw (id → подпись и урон при пресете 0,0). Совпадает с DEFAULT_SETTINGS.combat.zones.
  * Когтей и зубов нет: weapon в логе пустой.
@@ -91,7 +95,7 @@ function roomOf(code) {
     .replace(/[^a-z0-9_-]/g, "")
     .slice(0, 24) || "demo";
   if (!rooms.has(key)) {
-    rooms.set(key, { code: key, cats: new Map(), sockets: new Map() });
+    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0 });
   }
   return rooms.get(key);
 }
@@ -203,12 +207,14 @@ function join(ws, payload = {}) {
     lastMove: 0,
     lastStrike: 0,
     lastAim: 0,
+    lastChat: 0,
   };
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
   ws.room = room;
   send(ws, "you", publicCat(cat));
   send(ws, "field", fieldPayload(room));
+  if (room.chat?.length) send(ws, "chatlog", room.chat);
   broadcast(room, "move", publicCat(cat), ws);
 }
 
@@ -250,9 +256,32 @@ function move(ws, payload = {}) {
   cat.aimDirty = false;
   cat.lastAim = now;
   cat.lastMove = now;
-  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg };
+  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite };
   send(ws, "update cat", patch);
   broadcast(room, "update cat", patch);
+}
+
+/**
+ * Смена скина. Клиент → ["sprite", { sprite }].
+ * Остальным в комнате сразу → ["update cat", { id, x, y, deg, sprite, login }].
+ * Клетка не меняется. Неизвестный id спрайта молча отбрасывается.
+ */
+function setSprite(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const sprite = String(payload.sprite || "").trim();
+  if (!SPRITES.includes(sprite) || sprite === cat.sprite) return;
+  cat.sprite = sprite;
+  broadcast(
+    room,
+    "update cat",
+    { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite, login: cat.login },
+    ws,
+  );
 }
 
 function clearAimTimer(cat) {
@@ -292,7 +321,7 @@ function setDeg(ws, deg) {
 function broadcastDeg(room, cat, exceptWs) {
   cat.aimDirty = false;
   cat.lastAim = Date.now();
-  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg }, exceptWs);
+  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite }, exceptWs);
 }
 
 function aim(ws, payload = {}) {
@@ -424,6 +453,56 @@ function strike(ws, payload = {}) {
   }
 }
 
+function clipChars(text, max) {
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  return chars.slice(0, max).join("");
+}
+
+function sanitizeChat(raw) {
+  const text = String(raw ?? "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clipChars(text, CHAT_MAX_LEN);
+}
+
+/**
+ * Чат комнаты. Клиент → ["chat", { text }].
+ * Всем в комнате, включая отправителя → ["chat", { seq, id, login, color, text, ts }].
+ * Новичку после field приходит ["chatlog", те же объекты], не больше CHAT_HISTORY.
+ */
+function chat(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const source = typeof payload === "string" ? payload : payload?.text ?? payload?.message ?? "";
+  const text = sanitizeChat(String(source).slice(0, 2000));
+  if (!text) return;
+  const now = Date.now();
+  if (now - (cat.lastChat || 0) < CHAT_COOLDOWN_MS) {
+    send(ws, "info", "Сообщения слишком частые.");
+    return;
+  }
+  cat.lastChat = now;
+  if (!room.chat) room.chat = [];
+  room.chatSeq = (room.chatSeq || 0) + 1;
+  const entry = {
+    seq: room.chatSeq,
+    id: cat.id,
+    login: cat.login,
+    color: cat.color,
+    text,
+    ts: now,
+  };
+  room.chat.push(entry);
+  if (room.chat.length > CHAT_HISTORY) room.chat.splice(0, room.chat.length - CHAT_HISTORY);
+  broadcast(room, "chat", entry);
+}
+
 function onMessage(ws, raw) {
   let msg;
   try {
@@ -437,6 +516,8 @@ function onMessage(ws, raw) {
   else if (event === "move") move(ws, payload || {});
   else if (event === "aim") aim(ws, payload || {});
   else if (event === "strike") strike(ws, payload || {});
+  else if (event === "chat") chat(ws, payload ?? {});
+  else if (event === "sprite") setSprite(ws, payload || {});
 }
 
 const MIME = {

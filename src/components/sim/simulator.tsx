@@ -5,8 +5,10 @@ import { GripHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopFight } from '@/lib/net/coop';
+import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
+import { RoomChat } from './room-chat';
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
+import { keyAction } from '@/lib/sim/keys';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
@@ -409,6 +411,9 @@ export default function Simulator() {
   const [playerName, setPlayerName] = useState('');
   const [netStatus, setNetStatus] = useState('подключение…');
   const [peerCount, setPeerCount] = useState(1);
+  const [netReady, setNetReady] = useState(false);
+  const [meId, setMeId] = useState<number | null>(null);
+  const [chatLines, setChatLines] = useState<CoopChatMessage[]>([]);
   useEffect(() => {
     selectedRef.current = selectedChar;
   }, [selectedChar]);
@@ -556,6 +561,8 @@ export default function Simulator() {
       onOpen: () => setNetStatus('соединение есть, заходим…'),
       onYou: (cat) => {
         meIdRef.current = cat.id;
+        setMeId(cat.id);
+        setNetReady(true);
         const e = engineRef.current;
         if (typeof cat.x === 'number') e.col = Math.max(0, cat.x - 1);
         if (typeof cat.y === 'number') e.row = Math.max(0, cat.y - 1);
@@ -625,11 +632,24 @@ export default function Simulator() {
         setPeerCount(1 + liveRemotes.length);
       },
       onFight: (fight) => applyNetFight(fight),
+      onChat: (message) => {
+        setChatLines((prev) => {
+          if (prev.some((line) => line.seq === message.seq)) return prev;
+          return [...prev, message].slice(-80);
+        });
+      },
+      onChatLog: (messages) => setChatLines(messages.slice(-80)),
       onInfo: (text) => setNetStatus(text),
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
-      onClose: () => setNetStatus('Сокет закрыт. Обновите страницу.'),
+      onClose: () => {
+        setNetReady(false);
+        setNetStatus('Сокет закрыт. Обновите страницу.');
+      },
     });
+    setChatLines([]);
+    setNetReady(false);
+    setMeId(null);
     netRef.current = client;
     client.connect({
       room,
@@ -648,6 +668,12 @@ export default function Simulator() {
       netRef.current = null;
     };
   }, [loaded, applyNetFight]);
+
+  /** Скин своего кота уходит в комнату сразу, без повторного входа. */
+  useEffect(() => {
+    if (!loaded || !netReady) return;
+    netRef.current?.emit('sprite', { sprite: settings.character.sprite });
+  }, [loaded, netReady, settings.character.sprite]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -1487,42 +1513,36 @@ export default function Simulator() {
   /* ---------- клавиатура ---------- */
 
   useEffect(() => {
-    const codeToDir: Record<string, number> = {
-      KeyD: 0,
-      KeyX: 45,
-      KeyS: 90,
-      KeyZ: 135,
-      KeyA: 180,
-      KeyQ: 225,
-      KeyW: 270,
-      KeyE: 315,
-    };
     const isForm = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
       return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     };
     const down = (ev: KeyboardEvent) => {
       if (isForm(ev.target)) return;
+      const action = keyAction(ev);
       const t = ev.target as HTMLElement | null;
-      if (t && t.tagName === 'BUTTON' && (ev.code === 'Space' || ev.code === 'Enter')) t.blur();
+      if (t && t.tagName === 'BUTTON' && (action?.type === 'chat' || ev.code === 'Space' || ev.key === ' ')) t.blur();
       // автоповтор ОС игнорируем: каждое физическое нажатие — ровно одно срабатывание;
       // темп движения ограничен только замедлением (спам не превышает скорость шага)
       if (ev.repeat) return;
-      if (ev.code === 'KeyJ') {
+      if (!action) return;
+      if (action.type === 'rot') {
         ev.preventDefault();
-        engineRef.current.rot = -1; // против часовой
+        engineRef.current.rot = action.sign;
         return;
       }
-      if (ev.code === 'KeyL') {
-        ev.preventDefault();
-        engineRef.current.rot = 1; // по часовой
+      if (action.type === 'chat') {
+        if (t?.tagName === 'BODY' || t?.tagName === 'CANVAS') {
+          ev.preventDefault();
+          document.getElementById('roomChatInput')?.focus();
+        }
         return;
       }
-      if (ev.code === 'KeyB') {
+      if (action.type === 'battle') {
         setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: !p.arrow.battleMode } }));
         return;
       }
-      if (ev.code === 'KeyI') {
+      if (action.type === 'strike') {
         ev.preventDefault();
         const e = engineRef.current;
         e.strikeHeld = true;
@@ -1530,27 +1550,27 @@ export default function Simulator() {
         doStrikeRef.current?.();
         return;
       }
-      const dir = codeToDir[ev.code];
-      if (dir !== undefined) {
-        ev.preventDefault();
-        const e = engineRef.current;
-        if (!e.held.includes(dir)) {
-          e.held.push(dir);
-          e.path = [];
-        }
-        // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
-        // чем разрешает замедление, двигаться нельзя
-        startStepRef.current?.(dir);
+      ev.preventDefault();
+      const e = engineRef.current;
+      if (!e.held.includes(action.dir)) {
+        e.held.push(action.dir);
+        e.path = [];
       }
+      // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
+      // чем разрешает замедление, двигаться нельзя
+      startStepRef.current?.(action.dir);
     };
     const up = (ev: KeyboardEvent) => {
       const e = engineRef.current;
-      if (ev.code === 'KeyJ' && e.rot === -1) e.rot = 0;
-      if (ev.code === 'KeyL' && e.rot === 1) e.rot = 0;
-      if (ev.code === 'KeyI') e.strikeHeld = false;
-      const dir = codeToDir[ev.code];
-      if (dir !== undefined) {
-        e.held = e.held.filter((d) => d !== dir);
+      const action = keyAction(ev);
+      if (!action) return;
+      if (action.type === 'rot') {
+        if (action.sign === -1 && e.rot === -1) e.rot = 0;
+        if (action.sign === 1 && e.rot === 1) e.rot = 0;
+      } else if (action.type === 'strike') {
+        e.strikeHeld = false;
+      } else if (action.type === 'move') {
+        e.held = e.held.filter((d) => d !== action.dir);
       }
     };
     const blur = () => {
@@ -2156,11 +2176,18 @@ export default function Simulator() {
     [],
   );
 
+  const sendChat = useCallback((text: string) => {
+    const net = netRef.current;
+    if (!net?.ready) return false;
+    net.emit('chat', { text });
+    return true;
+  }, []);
+
   const fieldW = settings.field.cols * settings.field.cellW;
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#14161a] text-zinc-100">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-800 bg-[#191c21] px-4 py-2.5">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#14161a] text-zinc-100">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-800 bg-[#191c21] px-4 py-2.5">
         <div>
           <h1 className="text-base font-bold leading-tight">Общее поле</h1>
           <p className="text-[11px] text-zinc-500">
@@ -2223,10 +2250,10 @@ export default function Simulator() {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col gap-4 p-4 lg:flex-row">
-        <section className="min-w-0 flex-1" aria-label="Игровое поле">
-          <div className="relative rounded-xl border border-zinc-800 bg-[#20242a] p-3">
-            <div className="overflow-x-auto">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:flex-row lg:overflow-hidden lg:p-4">
+        <section className="flex h-full min-h-0 w-full shrink-0 flex-col gap-2 lg:h-auto lg:w-auto lg:flex-1">
+          <div className="relative min-h-48 min-w-0 flex-1">
+            <div role="region" aria-label="Игровое поле" className="absolute inset-0 overflow-auto rounded-xl border border-zinc-800 bg-[#20242a] p-3">
               <canvas
                 ref={canvasRef}
                 className="block h-auto w-full cursor-crosshair rounded-lg"
@@ -2242,7 +2269,7 @@ export default function Simulator() {
             {settings.arrow.battleMode && settings.combat.showLog ? (
               <div
                 ref={logBoxRef}
-                className={`pointer-events-auto absolute w-64 rounded-lg border border-amber-950/70 bg-[#40301f]/90 p-2 shadow-xl ${
+                className={`pointer-events-auto absolute z-10 w-64 rounded-lg border border-amber-950/70 bg-[#40301f]/90 p-2 shadow-xl ${
                   logPos ? '' : 'bottom-6 right-6'
                 }`}
                 style={logPos ? { left: logPos.x, top: logPos.y } : undefined}
@@ -2279,11 +2306,12 @@ export default function Simulator() {
               </div>
             ) : null}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
-            <span>W A S D — шаг (зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
+            <span>W A S D — шаг (те же клавиши на русской: ц ф ы в; зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
             <span>Q E Z X — диагонали</span>
             <span>ЛКМ — маршрут · манекен — тянуть</span>
             <span>B — бой</span>
+            <span>Enter — чат</span>
             <span>I — удар</span>
             <span>J — стрела против часовой</span>
             <span>L — по часовой</span>
@@ -2291,9 +2319,10 @@ export default function Simulator() {
               Скорость = 100% − замедление · замедление фиксируется в момент прыжка
             </span>
           </div>
+          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
         </section>
 
-        <aside className="w-full shrink-0 lg:max-h-[calc(100vh-120px)] lg:w-[400px] lg:overflow-y-auto lg:pr-1">
+        <aside className="w-full shrink-0 lg:min-h-0 lg:w-[400px] lg:overflow-y-auto lg:pr-1">
           <SettingsPanel
             settings={settings}
             patchField={patchField}

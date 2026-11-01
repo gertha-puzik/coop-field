@@ -34,11 +34,23 @@ export type CoopNoplace = {
   reason?: string;
 };
 
+/** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
+export type CoopChatMessage = {
+  seq: number;
+  id: number;
+  login: string;
+  color?: string;
+  text: string;
+  ts: number;
+};
+
 export type CoopHandlers = {
   onYou?: (cat: CoopCat) => void;
   onField?: (field: { width?: number; height?: number; room?: string; cats?: CoopCat[] }) => void;
   onCat?: (cat: Partial<CoopCat> & { id: number }) => void;
   onFight?: (entry: CoopFight) => void;
+  onChat?: (message: CoopChatMessage) => void;
+  onChatLog?: (messages: CoopChatMessage[]) => void;
   onInfo?: (text: string) => void;
   onNoplace?: (payload?: CoopNoplace) => void;
   onOpen?: () => void;
@@ -84,6 +96,21 @@ export function spriteOf(cat: { id?: number; sprite?: string; login?: string }):
   if (hit) return hit.id;
   const n = Number(cat.id) || 0;
   return SPRITES[Math.abs(n) % SPRITES.length].id;
+}
+
+function asChat(payload: unknown): CoopChatMessage | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as Partial<CoopChatMessage>;
+  if (typeof row.text !== "string" || !row.text) return null;
+  if (typeof row.seq !== "number" || typeof row.id !== "number") return null;
+  return {
+    seq: row.seq,
+    id: row.id,
+    login: typeof row.login === "string" ? row.login : "",
+    color: typeof row.color === "string" ? row.color : undefined,
+    text: row.text,
+    ts: typeof row.ts === "number" ? row.ts : Date.now(),
+  };
 }
 
 export function catToDummy(cat: CoopCat): DummyConfig {
@@ -142,7 +169,13 @@ export function createCoopClient(handlers: CoopHandlers) {
       else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[] });
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
       else if (event === "fight") handlers.onFight?.(payload as CoopFight);
-      else if (event === "info") handlers.onInfo?.(String(payload));
+      else if (event === "chat") {
+        const row = asChat(payload);
+        if (row) handlers.onChat?.(row);
+      } else if (event === "chatlog") {
+        if (!Array.isArray(payload)) return;
+        handlers.onChatLog?.(payload.map(asChat).filter((row): row is CoopChatMessage => row != null));
+      } else if (event === "info") handlers.onInfo?.(String(payload));
       else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
     };
     ws.onclose = () => handlers.onClose?.();
