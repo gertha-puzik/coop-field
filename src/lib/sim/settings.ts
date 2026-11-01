@@ -82,8 +82,13 @@ export interface DummyConfig {
   scale: number;
   /** Постоянный угол стрелы, ° (мишень в боевом режиме сразу и не следит за игроком). */
   angle: number;
-  /** Добавлен на поле / убран. */
+  /** Добавлен на поле / убран. Убранная модель не занимает клетку. */
   present: boolean;
+  /**
+   * Рисовать модель на поле. По умолчанию выключено: клетка всё равно занята,
+   * удар по ней проходит. Флаг локальный, по сети не уходит.
+   */
+  visible: boolean;
 }
 
 export interface SimSettings {
@@ -157,7 +162,7 @@ export interface SimSettings {
     regenAmount: number;
     /** Интервал тика восстановления, секунд. */
     regenIntervalSec: number;
-    /** Показывать окно лога «Бой» на поле. */
+    /** Показывать лог «Бой» над полем, справа от чата. */
     showLog: boolean;
     /** Уровень урона игрока (выбранный пресет 0,0–0,9). Сам движок читает урон из зон. */
     damageLevel: number;
@@ -253,11 +258,11 @@ export const DEFAULT_SETTINGS: SimSettings = {
     show: true,
   },
   dummies: [
-    { id: 'd1', name: 'Пухляшик', sprite: 'puhlyashik', col: 6, row: 3, scale: 100, angle: 0, present: true },
-    { id: 'd2', name: 'Пузатик', sprite: 'puzatik', col: 8, row: 3, scale: 100, angle: 0, present: true },
-    { id: 'd3', name: 'Пламя Раздора', sprite: 'razdora', col: 1, row: 1, scale: 100, angle: 0, present: true },
-    { id: 'd4', name: 'Похититель Пламени', sprite: 'pohititel', col: 3, row: 1, scale: 100, angle: 0, present: true },
-    { id: 'd5', name: 'Сырстяшка', sprite: 'syrstyashka', col: 4, row: 3, scale: 100, angle: 0, present: true },
+    { id: 'd1', name: 'Пухляшик', sprite: 'puhlyashik', col: 6, row: 3, scale: 100, angle: 0, present: true, visible: false },
+    { id: 'd2', name: 'Пузатик', sprite: 'puzatik', col: 8, row: 3, scale: 100, angle: 0, present: true, visible: false },
+    { id: 'd3', name: 'Пламя Раздора', sprite: 'razdora', col: 1, row: 1, scale: 100, angle: 0, present: true, visible: false },
+    { id: 'd4', name: 'Похититель Пламени', sprite: 'pohititel', col: 3, row: 1, scale: 100, angle: 0, present: true, visible: false },
+    { id: 'd5', name: 'Сырстяшка', sprite: 'syrstyashka', col: 4, row: 3, scale: 100, angle: 0, present: true, visible: false },
   ],
   controlled: 'main',
   combat: {
@@ -536,6 +541,7 @@ function mergeDummies(rawD: unknown, rawC: any, d: DummyConfig[]): DummyConfig[]
       scale: num(r?.scale, dz.scale, 60, 100),
       angle: num(r?.angle, dz.angle, 0, 359),
       present: typeof r?.present === 'boolean' ? r.present : dz.present,
+      visible: typeof r?.visible === 'boolean' ? r.visible : dz.visible,
     };
   });
 }
