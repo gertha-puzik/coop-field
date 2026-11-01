@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
@@ -352,6 +352,9 @@ export default function Simulator() {
   }, [combat]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Рамка поля: по ней канвас вписывается в оставшееся место, без внутреннего скролла. */
+  const fieldFrameRef = useRef<HTMLDivElement | null>(null);
+  const [fieldFit, setFieldFit] = useState<{ w: number; h: number } | null>(null);
   const spritesRef = useRef<Partial<Record<SpriteId, HTMLImageElement>>>({});
   /** Белые силуэты спрайтов (для подсветки выбранного персонажа на поле). */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
@@ -2127,6 +2130,42 @@ export default function Simulator() {
   }, []);
 
   const fieldW = settings.field.cols * settings.field.cellW;
+  const fieldH = settings.field.rows * settings.field.cellH;
+
+  // Канвас рисуется в пикселях клеток (10×100 на 6×150). На широком экране
+  // CSS-размер вписывается в рамку целиком — и по ширине, и по высоте.
+  // На узком высота следует за шириной, а страница прокручивается вместе с полем.
+  useLayoutEffect(() => {
+    const frame = fieldFrameRef.current;
+    if (!frame) return;
+    const mq = window.matchMedia('(min-width: 64rem)');
+    const fit = () => {
+      const cs = getComputedStyle(frame);
+      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      const availW = Math.max(0, frame.clientWidth - padX);
+      const availH = Math.max(0, frame.clientHeight - padY);
+      let w = Math.min(availW, fieldW);
+      let h = fieldH * (w / Math.max(1, fieldW));
+      if (mq.matches && availH > 0 && h > availH) {
+        h = Math.min(availH, fieldH);
+        w = fieldW * (h / Math.max(1, fieldH));
+      }
+      const nextW = Math.max(1, Math.floor(w));
+      const nextH = Math.max(1, Math.floor(h));
+      setFieldFit((prev) =>
+        prev && Math.abs(prev.w - nextW) <= 1 && Math.abs(prev.h - nextH) <= 1 ? prev : { w: nextW, h: nextH },
+      );
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(frame);
+    mq.addEventListener('change', fit);
+    return () => {
+      ro.disconnect();
+      mq.removeEventListener('change', fit);
+    };
+  }, [fieldW, fieldH]);
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#14161a] text-zinc-100">
@@ -2194,7 +2233,7 @@ export default function Simulator() {
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:flex-row lg:overflow-hidden lg:p-4">
-        <section className="flex w-full min-w-0 shrink-0 flex-col gap-2 lg:h-auto lg:min-h-0 lg:w-auto lg:flex-1 lg:shrink">
+        <section className="flex w-full min-w-0 shrink-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:w-auto lg:flex-1 lg:shrink">
           <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-stretch">
             <div className="min-w-0 md:flex-1">
               <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
@@ -2205,12 +2244,21 @@ export default function Simulator() {
               </div>
             ) : null}
           </div>
-          <div className="relative h-[min(56dvh,720px)] min-h-56 w-full shrink-0 lg:h-auto lg:min-h-48 lg:flex-1">
-            <div role="region" aria-label="Игровое поле" className="absolute inset-0 overflow-auto rounded-xl border border-zinc-800 bg-[#20242a] p-3">
+          <div className="relative w-full min-w-0 shrink-0 lg:min-h-0 lg:flex-1">
+            <div
+              ref={fieldFrameRef}
+              role="region"
+              aria-label="Игровое поле"
+              className="overflow-hidden rounded-xl border border-zinc-800 bg-[#20242a] p-3 lg:absolute lg:inset-0"
+            >
               <canvas
                 ref={canvasRef}
-                className="block h-auto w-full cursor-crosshair rounded-lg"
-                style={{ maxWidth: `${fieldW}px` }}
+                className="mx-auto block max-w-full cursor-crosshair rounded-lg"
+                style={
+                  fieldFit
+                    ? { width: fieldFit.w, height: fieldFit.h }
+                    : { width: '100%', maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
+                }
                 onPointerMove={onMove}
                 onPointerDown={onPointerDown}
                 onPointerUp={onUp}
