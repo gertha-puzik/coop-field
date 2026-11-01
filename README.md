@@ -46,11 +46,37 @@ npm run test:ws
 
 | Workflow | Куда | Когда |
 |----------|------|--------|
-| «Фронтенд на Vercel» | проект Vercel `coop-field` (команда `polexka`) | изменения `src/`, `public/`, Next-конфига или зависимостей фронта |
+| «Фронтенд на Vercel и VPS» | проект Vercel `coop-field` (команда `polexka`) и каталог `/opt/coop-field/www` на `89.232.184.77` | изменения `src/`, `public/`, Next-конфига или зависимостей фронта |
 | «Сервер комнаты на VPS» | `89.232.184.77`, `/opt/coop-field`, сервис `coop-field` | изменения `server.js`, `scripts/` или `deploy/vps/` |
 
 Фронт — статический Next (`output: "export"`). Секрет репозитория `VERCEL_TOKEN`.
+Тот же workflow собирает `out/` в Actions и заливает его пользователем `deploy` в `/opt/coop-field/www`. Next на VPS не ставится, сервис `coop-field` из-за этой заливки не перезапускается. `--delete` у фронта действует только внутри `www/`, у комнаты — только у `incoming/scripts/`.
+
+Сайты: `https://coop-field.vercel.app` и `https://abnocw.89-232-184-77.sslip.io`. Прод-сокет: `wss://coop.89-232-184-77.sslip.io`. С хоста `abnocw` клиент сам берёт этот сокет, без `?ws=`.
+
 Комнату Vercel не держит: Actions заходит по SSH пользователем `deploy` и вызывает `deploy/vps/apply.sh`.
 Секрет `VPS_SSH_KEY` — приватный ключ этого пользователя. Если `server.js` и lockfile зависимостей не менялись, сервис не перезапускается.
 
-Прод-сокет: `wss://coop.89-232-184-77.sslip.io`. Сайт: `https://coop-field.vercel.app`.
+### Один раз на VPS, от root
+
+У `deploy` есть только `systemctl restart` и `status` сервиса `coop-field`. Nginx он не перечитывает. Пока отдельный сайт не подключён, `https://abnocw.89-232-184-77.sslip.io` не откроется. Vhost `coop.89-232-184-77.sslip.io` не менять: там остаётся сокет.
+
+```bash
+sudo mkdir -p /opt/coop-field/www
+sudo chown deploy:deploy /opt/coop-field/www
+sudo chmod 755 /opt/coop-field /opt/coop-field/www
+```
+
+Подключить [`deploy/vps/nginx-www.conf`](deploy/vps/nginx-www.conf) отдельным сайтом nginx (`server_name abnocw.89-232-184-77.sslip.io`, корень `/opt/coop-field/www`, пока только порт 80). Затем:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Своего HTTPS у нового имени нет. Сертификат комнаты — Let's Encrypt только на `coop.89-232-184-77.sslip.io`, он не покрывает `abnocw`. Если его выпускал certbot:
+
+```bash
+sudo certbot --nginx -d abnocw.89-232-184-77.sslip.io
+```
+
+Если certbot на сервере нет, выпустить сертификат тем же способом, что и для комнаты, на имя `abnocw.89-232-184-77.sslip.io` и указать его в этом server. Файлы в `www` при пуше в `main` заливаются сами. Сначала дождаться `/opt/coop-field/www/index.html`, потом проверять сайт.

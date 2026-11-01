@@ -556,6 +556,40 @@ for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
 }
 console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy");
 
+function handshake(origin) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url, { headers: { Origin: origin } });
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        /* already closed */
+      }
+      resolve(ok);
+    };
+    ws.once("open", () => finish(true));
+    ws.once("unexpected-response", () => finish(false));
+    ws.once("error", () => finish(false));
+    setTimeout(() => finish(false), 1500);
+  });
+}
+
+const originCases = [
+  ["https://abnocw.89-232-184-77.sslip.io", true],
+  ["https://coop.89-232-184-77.sslip.io", true],
+  ["https://coop-field.vercel.app", true],
+  ["https://coop-field-git-foo.vercel.app", true],
+  ["https://evil.example", false],
+];
+for (const [origin, expectOpen] of originCases) {
+  const opened = await handshake(origin);
+  if (opened !== expectOpen) throw new Error(`origin ${origin} opened=${opened} expected=${expectOpen}`);
+}
+console.log("ok: origins");
+
 for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider, sa, sb, skinJoiner]) {
   try {
     ws.close();

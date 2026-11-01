@@ -6,6 +6,8 @@ set -euo pipefail
 
 IN="${INCOMING:-$HOME/incoming}"
 APP=/opt/coop-field
+# $APP/www — статический фронт. Этот скрипт его не копирует и не удаляет.
+# nginx не перечитывается. Перезапуск ниже — только при смене server.js или lockfile.
 export PATH="$APP/.node/bin:$PATH"
 NPM="$APP/.node/bin/npm"
 

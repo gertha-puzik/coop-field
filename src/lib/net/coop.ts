@@ -88,6 +88,8 @@ export function wsUrl(): string {
   if (hostname === "coop.89-232-184-77.sslip.io") {
     return `wss://${host}`;
   }
+  // abnocw.89-232-184-77.sslip.io и vercel.app ходят на сокет комнаты,
+  // а не на wss своего имени. Локальный хост разобран выше.
   return PRODUCTION_WS;
 }
 
