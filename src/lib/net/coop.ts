@@ -44,6 +44,19 @@ export type CoopChatMessage = {
   ts: number;
 };
 
+/** Структурированный отказ сервера: код вместо разбора русского текста info. */
+export type CoopRefuse = {
+  code?: string;
+  text?: string;
+};
+
+/** Информация о закрытии сокета: retrying = клиент сам переподключается. */
+export type CoopCloseInfo = {
+  retrying: boolean;
+  /** Порядковый номер следующей попытки (для подписи в статусе). */
+  attempt: number;
+};
+
 export type CoopHandlers = {
   onYou?: (cat: CoopCat) => void;
   onField?: (field: { width?: number; height?: number; room?: string; cats?: CoopCat[] }) => void;
@@ -52,9 +65,10 @@ export type CoopHandlers = {
   onChat?: (message: CoopChatMessage) => void;
   onChatLog?: (messages: CoopChatMessage[]) => void;
   onInfo?: (text: string) => void;
+  onRefuse?: (refuse: CoopRefuse) => void;
   onNoplace?: (payload?: CoopNoplace) => void;
   onOpen?: () => void;
-  onClose?: () => void;
+  onClose?: (info: CoopCloseInfo) => void;
 };
 
 function isLocalHost(hostname: string) {
@@ -76,9 +90,19 @@ export function nameFromUrl(): string {
 export function wsUrl(): string {
   if (typeof window === "undefined") return PRODUCTION_WS;
   const params = new URLSearchParams(window.location.search);
-  const override = params.get("ws");
-  if (override) return override;
   const { hostname, protocol, host } = window.location;
+  // ?ws= — только для локальной отладки и только со страниц localhost.
+  // В продакшене произвольный адрес запрещён: ссылка вида
+  // ?ws=wss://attacker.example иначе уводила бы сокет и логин на чужой сервер.
+  const override = params.get("ws");
+  if (override && isLocalHost(hostname)) {
+    try {
+      const parsed = new URL(override);
+      if (parsed.protocol === "ws:" || parsed.protocol === "wss:") return override;
+    } catch {
+      /* некорректный адрес игнорируем, дальше — обычный выбор сокета */
+    }
+  }
   if (isLocalHost(hostname)) {
     if (host.includes(":3780")) {
       return `${protocol === "https:" ? "wss:" : "ws:"}//${host}`;
@@ -115,6 +139,16 @@ function asChat(payload: unknown): CoopChatMessage | null {
   };
 }
 
+function asRefuse(payload: unknown): CoopRefuse | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as Partial<CoopRefuse>;
+  if (typeof row.code !== "string" && typeof row.text !== "string") return null;
+  return {
+    code: typeof row.code === "string" ? row.code : undefined,
+    text: typeof row.text === "string" ? row.text : undefined,
+  };
+}
+
 export function catToDummy(cat: CoopCat): DummyConfig {
   return {
     id: `p${cat.id}`,
@@ -130,8 +164,17 @@ export function catToDummy(cat: CoopCat): DummyConfig {
   };
 }
 
+/** Пауза до первого переподключения. */
+const RECONNECT_BASE_MS = 1000;
+/** Потолок паузы между попытками. */
+const RECONNECT_MAX_MS = 30_000;
+
 export function createCoopClient(handlers: CoopHandlers) {
   let ws: WebSocket | null = null;
+  let joinParams: { room?: string; login?: string; sprite?: string } | null = null;
+  let manualClose = false;
+  let attempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const emit = (event: string, payload?: unknown) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -139,26 +182,50 @@ export function createCoopClient(handlers: CoopHandlers) {
     }
   };
 
-  const connect = (join: { room?: string; login?: string; sprite?: string }) => {
-    if (ws) {
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onclose = null;
-      ws.onerror = null;
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
+  const clearReconnect = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
+  };
+
+  /**
+   * Экспоненциальный backoff с джиттером: 1–2–4–8–16–30 с, случайный разброс ±25%
+   * развозит одновременные переподключения целой комнаты после общего обрыва.
+   */
+  const scheduleReconnect = () => {
+    if (manualClose || !joinParams) return;
+    const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** Math.min(attempt, 5));
+    const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+    attempt += 1;
+    clearReconnect();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      openSocket();
+    }, delay);
+  };
+
+  const detach = (sock: WebSocket) => {
+    sock.onopen = null;
+    sock.onmessage = null;
+    sock.onclose = null;
+    sock.onerror = null;
+  };
+
+  const openSocket = () => {
     ws = new WebSocket(wsUrl());
     ws.onopen = () => {
+      attempt = 0;
       handlers.onOpen?.();
-      emit("join", {
-        room: join.room || "demo",
-        login: join.login || "",
-        sprite: join.sprite,
-      });
+      // Каждый успешный open — повторный join теми же параметрами:
+      // сервер вернёт you/field и клиент догонит состояние комнаты.
+      if (joinParams) {
+        emit("join", {
+          room: joinParams.room || "demo",
+          login: joinParams.login || "",
+          sprite: joinParams.sprite,
+        });
+      }
     };
     ws.onmessage = (ev) => {
       let msg: unknown;
@@ -180,19 +247,51 @@ export function createCoopClient(handlers: CoopHandlers) {
         if (!Array.isArray(payload)) return;
         handlers.onChatLog?.(payload.map(asChat).filter((row): row is CoopChatMessage => row != null));
       } else if (event === "info") handlers.onInfo?.(String(payload));
-      else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
+      else if (event === "refuse") {
+        const row = asRefuse(payload);
+        if (row) handlers.onRefuse?.(row);
+      } else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
     };
-    ws.onclose = () => handlers.onClose?.();
+    ws.onclose = () => {
+      ws = null;
+      handlers.onClose?.({ retrying: !manualClose && !!joinParams, attempt: attempt + 1 });
+      scheduleReconnect();
+    };
     ws.onerror = () => {
       /* onclose follows */
     };
+  };
+
+  const connect = (join: { room?: string; login?: string; sprite?: string }) => {
+    joinParams = join;
+    manualClose = false;
+    clearReconnect();
+    if (ws) {
+      detach(ws);
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      ws = null;
+    }
+    openSocket();
   };
 
   return {
     emit,
     connect,
     close() {
-      ws?.close();
+      manualClose = true;
+      clearReconnect();
+      if (ws) {
+        detach(ws);
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+      }
       ws = null;
     },
     get ready() {

@@ -8,6 +8,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT) || 3780;
+// На VPS порт задаёт systemd-юнит: Environment=PORT=8787 (образец — deploy/vps/coop-field.service).
+// Локальный запуск без переменных слушает 3780 — на него настроен клиент разработки.
+/** 1 = требовать заголовок Origin (не-браузерные клиенты без Origin не пускаются).
+ *  По умолчанию 0: скрипты тестов (scripts/test-ws.mjs) подключаются без Origin. */
+const REQUIRE_ORIGIN = process.env.REQUIRE_ORIGIN === "1";
 const WS_HOSTNAME = "coop.89-232-184-77.sslip.io";
 const FRONT_HOSTNAME = "abnocw.89-232-184-77.sslip.io";
 const DEFAULT_ORIGINS = [
@@ -26,7 +31,7 @@ function allowedOrigins() {
 }
 
 function isAllowedOrigin(origin) {
-  if (!origin) return true;
+  if (!origin) return !REQUIRE_ORIGIN;
   if (allowedOrigins().has(origin)) return true;
   try {
     const { hostname, protocol } = new URL(origin);
@@ -41,6 +46,13 @@ const HEIGHT = 6;
 /** Потолок комнаты. Клеток на поле 60, но в одну комнату пускаем не больше этого числа. */
 const MAX_PLAYERS = 30;
 const MOVE_COOLDOWN_MS = 80;
+/** Кулдаун на повторный join: самое дорогое событие (снимок field всей комнате). */
+const JOIN_COOLDOWN_MS = 1000;
+/** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
+const HEARTBEAT_MS = 30_000;
+/** Потолок входящего кадра: протокол состоит из коротких JSON-строк,
+ *  дефолтные 100 МиБ библиотеки ws здесь только помогали расходу памяти. */
+const MAX_PAYLOAD = 4 * 1024;
 /**
  * Короткий предохранитель от пачки aim подряд. Угол в cat.deg пишется сразу.
  * Если с прошлой рассылки прошло больше этого — пакет уходит сразу.
@@ -172,6 +184,7 @@ function leave(ws) {
     clearAimTimer(cat);
     room.cats.delete(cat.id);
     broadcast(room, "move", { id: cat.id, x: 0, y: 0 });
+    console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
   }
   ws.room = null;
   if (room.sockets.size === 0) rooms.delete(room.code);
@@ -183,6 +196,12 @@ function refuseJoin(ws, room, reason) {
 }
 
 function join(ws, payload = {}) {
+  const now = Date.now();
+  if (now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
+    send(ws, "info", "Слишком часто. Подождите секунду.");
+    return;
+  }
+  ws.lastJoin = now;
   if (ws.room) leave(ws);
   const room = roomOf(payload.room);
   if (room.cats.size >= MAX_PLAYERS) {
@@ -196,7 +215,7 @@ function join(ws, payload = {}) {
     return;
   }
   const slot = room.cats.size;
-  const login = String(payload.login || NAMES[slot] || `Кот ${slot + 1}`).slice(0, 24);
+  const login = uniqueLogin(room, sanitizeLogin(payload.login, NAMES[slot] || `Кот ${slot + 1}`));
   const cat = {
     id: nextId++,
     login,
@@ -241,10 +260,14 @@ function move(ws, payload = {}) {
   const ny = cat.y + dy;
   if (nx < 1 || nx > WIDTH || ny < 1 || ny > HEIGHT) {
     send(ws, "info", "Край поля.");
+    // refuse — тот же отказ, но с кодом: клиент откатывает предикт по коду,
+    // а не по подстроке русского текста (текст менять можно свободно).
+    send(ws, "refuse", { code: "edge", text: "Край поля." });
     return;
   }
   if (occupied(room, nx, ny, cat.id)) {
     send(ws, "info", "Клетка занята.");
+    send(ws, "refuse", { code: "cell_busy", text: "Клетка занята." });
     return;
   }
 
@@ -458,6 +481,13 @@ function strike(ws, payload = {}) {
   }
 }
 
+/**
+ * Невидимые и bidi-символы: нулевая ширина даёт подмену имён («Сы\u200Bрь» выглядит
+ * как «Сырь»), bidi-управляющие переворачивают строку чата. Вырезаем и из логина,
+ * и из текста сообщений. Составные эмодзи (ZWJ) тоже распадаются — осознанная цена.
+ */
+const INVISIBLE_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+
 function clipChars(text, max) {
   const chars = Array.from(text);
   if (chars.length <= max) return text;
@@ -466,10 +496,35 @@ function clipChars(text, max) {
 
 function sanitizeChat(raw) {
   const text = String(raw ?? "")
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(INVISIBLE_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
   return clipChars(text, CHAT_MAX_LEN);
+}
+
+/** Логин: только видимые символы, одинарные пробелы, не длиннее 24 код-поинтов. */
+function sanitizeLogin(raw, fallback) {
+  const text = clipChars(
+    String(raw ?? "")
+      .replace(INVISIBLE_RE, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    24,
+  );
+  return text || fallback;
+}
+
+/** Имя, не совпадающее с уже сидящими в комнате (без учёта регистра):
+ *  «Альфа» и «альфа» в одном чате — это одна и та же персона для читающего. */
+function uniqueLogin(room, base) {
+  const taken = new Set();
+  for (const cat of room.cats.values()) taken.add(cat.login.toLowerCase());
+  if (!taken.has(base.toLowerCase())) return base;
+  const stem = clipChars(base, 21);
+  for (let n = 2; ; n++) {
+    const candidate = `${stem} ${n}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
 }
 
 /**
@@ -485,7 +540,8 @@ function chat(ws, payload = {}) {
     return;
   }
   const source = typeof payload === "string" ? payload : payload?.text ?? payload?.message ?? "";
-  const text = sanitizeChat(String(source).slice(0, 2000));
+  // Предрез по код-поинтам, а не по UTF-16: slice(0, 2000) мог разрезать суррогатную пару.
+  const text = sanitizeChat(clipChars(String(source), 2000));
   if (!text) return;
   const now = Date.now();
   if (now - (cat.lastChat || 0) < CHAT_COOLDOWN_MS) {
@@ -571,14 +627,38 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({
   server,
+  maxPayload: MAX_PAYLOAD,
   verifyClient(info) {
     const origin = info.origin || "";
     const ok = isAllowedOrigin(origin);
-    if (!ok) console.warn("ws origin rejected:", origin);
+    if (!ok) console.warn("ws origin rejected:", origin || "(нет Origin)");
     return ok;
   },
 });
-wss.on("connection", (ws) => {
+
+/**
+ * Heartbeat: обрыв без FIN (мобильная сеть, уход вкладки в сон) иначе держал бы
+ * клетку и слот комнаты до таймаута nginx. Пинг раз в 30 с; если pong не пришёл
+ * с прошлого пинга — terminate(), его close-обработчик вызовет leave() и освободит клетку.
+ */
+const hb = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_MS);
+hb.unref();
+
+wss.on("connection", (ws, req) => {
+  ws.isAlive = true;
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+  console.log(`ws open ${req.socket.remoteAddress || "?"} origin=${req.headers.origin || "-"}`);
   ws.on("message", (raw) => onMessage(ws, raw));
   ws.on("close", () => leave(ws));
   ws.on("error", () => leave(ws));

@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "node server.js",
     "start:web": "next start -p 3000",
-    "test:ws": "node scripts/test-ws.mjs"
+    "test:ws": "node scripts/test-ws.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"

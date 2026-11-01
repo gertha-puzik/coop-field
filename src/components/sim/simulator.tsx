@@ -250,33 +250,28 @@ interface CharRef {
   scale: number;
 }
 
-/** Живые соседи с сервера: если кто-то ещё в комнате — рисуем их, иначе локальные манекены. */
-let liveRemotes: DummyConfig[] = [];
 /**
- * Плавный угол чужой стрелы. d.angle в liveRemotes — последний сетевой угол,
- * а на кадре рисуем display: догоняем его по короткой дуге.
- * Свою стрелу сюда не кладём.
- * Клетка чужого кота на сервере лежит в d.col/d.row (препятствие и цель удара).
- * На экране — remoteDraw: за кадр не больше одного шага, пачка update не склеивается.
+ * Живые соседи с сервера и их отрисовка. Состояние живёт в refs внутри компонента
+ * (liveRemotesRef, remoteAimRef, remoteDrawRef), а не в модульных переменных:
+ * два экземпляра Simulator не должны делить состояние, а cleanup одного
+ * не должен обнулять поле другого.
  */
-const remoteAim = new Map<string, RemoteAim>();
-const remoteDraw = new Map<string, RemoteDraw>();
 
-function rememberRemoteCell(id: string, col: number, row: number) {
-  const vis = remoteDraw.get(id);
+function rememberRemoteCell(map: Map<string, RemoteDraw>, id: string, col: number, row: number) {
+  const vis = map.get(id);
   if (!vis) {
-    remoteDraw.set(id, seedRemoteDraw({ col, row }));
+    map.set(id, seedRemoteDraw({ col, row }));
     return;
   }
   enqueueRemoteCell(vis, { col, row });
 }
 
-function stepRemoteDraws() {
-  for (const d of liveRemotes) {
-    let vis = remoteDraw.get(d.id);
+function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>) {
+  for (const d of remotes) {
+    let vis = map.get(d.id);
     if (!vis) {
       vis = seedRemoteDraw({ col: d.col, row: d.row });
-      remoteDraw.set(d.id, vis);
+      map.set(d.id, vis);
       continue;
     }
     advanceRemoteDraw(vis);
@@ -284,9 +279,23 @@ function stepRemoteDraws() {
 }
 
 /** Манекены, добавленные на поле (или другие игроки комнаты). */
-function dummiesOf(s: SimSettings): DummyConfig[] {
-  if (liveRemotes.length > 0) return liveRemotes;
+function dummiesOf(s: SimSettings, remotes: DummyConfig[]): DummyConfig[] {
+  if (remotes.length > 0) return remotes;
   return s.dummies.filter((d) => d.present);
+}
+
+/** Энергии чужих котов копятся только по текущим обитателям комнаты:
+ *  ключи ушедших игроков не оседают в localStorage навсегда. */
+function pruneRemoteEnergy(
+  de: Record<string, number>,
+  s: SimSettings,
+  remotes: DummyConfig[],
+): Record<string, number> {
+  const keep = new Set(s.dummies.map((d) => d.id));
+  for (const d of remotes) keep.add(d.id);
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(de)) if (keep.has(k)) out[k] = v;
+  return out;
 }
 
 /** Рисуется ли манекен. Скрытая мишень остаётся препятствием и целью удара.
@@ -311,8 +320,9 @@ function othersOf(
   s: SimSettings,
   selfId: string,
   mainPos: { col: number; row: number } | null,
+  remotes: DummyConfig[],
 ): CharRef[] {
-  const list: CharRef[] = dummiesOf(s)
+  const list: CharRef[] = dummiesOf(s, remotes)
     .filter((d) => d.id !== selfId)
     .map((d) => ({ id: d.id, name: d.name, col: d.col, row: d.row, sprite: d.sprite, scale: d.scale }));
   if (selfId !== 'main' && mainPos) {
@@ -335,8 +345,9 @@ function isBlockedCell(
   mainPos: { col: number; row: number } | null,
   c: number,
   r: number,
+  remotes: DummyConfig[],
 ): boolean {
-  return othersOf(s, selfId, mainPos).some((t) => t.col === c && t.row === r);
+  return othersOf(s, selfId, mainPos, remotes).some((t) => t.col === c && t.row === r);
 }
 
 /** Кого заденет удар из клетки (col,row) под углом angle: единственный соседний персонаж,
@@ -348,10 +359,11 @@ function pickStrikeTarget(
   angle: number,
   selfId: string,
   mainPos: { col: number; row: number } | null,
+  remotes: DummyConfig[],
 ): CharRef | null {
   let best: CharRef | null = null;
   let bestDiff = Infinity;
-  for (const t of othersOf(s, selfId, mainPos)) {
+  for (const t of othersOf(s, selfId, mainPos, remotes)) {
     const dx = t.col - col;
     const dy = t.row - row;
     if (Math.max(Math.abs(dx), Math.abs(dy)) !== 1) continue;
@@ -406,6 +418,13 @@ export default function Simulator() {
     server: { col: number; row: number } | null;
     pending: { col: number; row: number }[];
   }>({ server: null, pending: [] });
+  /** Живые соседи с сервера: если кто-то ещё в комнате — рисуем их, иначе локальные
+   *  манекены. Всё в refs, не в модуле: два экземпляра Simulator не делят состояние. */
+  const liveRemotesRef = useRef<DummyConfig[]>([]);
+  /** Плавный угол чужой стрелы: d.angle — последний сетевой угол, на кадре рисуем display. */
+  const remoteAimRef = useRef(new Map<string, RemoteAim>());
+  /** Экранная дорисовка чужих клеток: за кадр не больше одного шага. */
+  const remoteDrawRef = useRef(new Map<string, RemoteDraw>());
   /** Спрайт, который не удалось декодировать: кота всё равно рисуем заглушкой. */
   const brokenSpritesRef = useRef<Set<SpriteId>>(new Set());
   /**
@@ -423,49 +442,53 @@ export default function Simulator() {
     timer: ReturnType<typeof setTimeout> | null;
   }>({ deg: null, at: 0, pending: null, timer: null });
   const publishAimRef = useRef<(angle: number, force: boolean) => void>(() => {});
-  publishAimRef.current = (angle: number, force: boolean) => {
-    const net = netRef.current;
-    if (!net?.ready || settingsRef.current.controlled !== 'main') return;
-    const deg = Math.round(wrap360(angle) * 10) / 10;
-    const sync = aimSyncRef.current;
-    const now = performance.now();
-    const changed = sync.deg == null || Math.abs(wrap180(deg - sync.deg)) >= 0.05;
-    if (!changed) {
-      sync.pending = null;
-      if (sync.timer) {
-        clearTimeout(sync.timer);
-        sync.timer = null;
+  // Присвоение — в эффекте, а не в теле рендера: мутация ref во время render —
+  // антипаттерн React (конкурентный режим рендерит компонент повторно).
+  useEffect(() => {
+    publishAimRef.current = (angle: number, force: boolean) => {
+      const net = netRef.current;
+      if (!net?.ready || settingsRef.current.controlled !== 'main') return;
+      const deg = Math.round(wrap360(angle) * 10) / 10;
+      const sync = aimSyncRef.current;
+      const now = performance.now();
+      const changed = sync.deg == null || Math.abs(wrap180(deg - sync.deg)) >= 0.05;
+      if (!changed) {
+        sync.pending = null;
+        if (sync.timer) {
+          clearTimeout(sync.timer);
+          sync.timer = null;
+        }
+        return;
       }
-      return;
-    }
-    const AIM_EMIT_MS = 32;
-    const due = sync.at === 0 || now - sync.at >= AIM_EMIT_MS;
-    if (force || due) {
-      if (sync.timer) {
-        clearTimeout(sync.timer);
-        sync.timer = null;
+      const AIM_EMIT_MS = 32;
+      const due = sync.at === 0 || now - sync.at >= AIM_EMIT_MS;
+      if (force || due) {
+        if (sync.timer) {
+          clearTimeout(sync.timer);
+          sync.timer = null;
+        }
+        sync.pending = null;
+        sync.deg = deg;
+        sync.at = now;
+        net.emit('aim', { deg });
+        return;
       }
-      sync.pending = null;
-      sync.deg = deg;
-      sync.at = now;
-      net.emit('aim', { deg });
-      return;
-    }
-    sync.pending = deg;
-    if (sync.timer) return;
-    const wait = Math.max(0, AIM_EMIT_MS - (now - sync.at));
-    sync.timer = setTimeout(() => {
-      sync.timer = null;
-      const latest = sync.pending;
-      sync.pending = null;
-      const netNow = netRef.current;
-      if (latest == null || !netNow?.ready || settingsRef.current.controlled !== 'main') return;
-      if (sync.deg != null && Math.abs(wrap180(latest - sync.deg)) < 0.05) return;
-      sync.deg = latest;
-      sync.at = performance.now();
-      netNow.emit('aim', { deg: latest });
-    }, wait);
-  };
+      sync.pending = deg;
+      if (sync.timer) return;
+      const wait = Math.max(0, AIM_EMIT_MS - (now - sync.at));
+      sync.timer = setTimeout(() => {
+        sync.timer = null;
+        const latest = sync.pending;
+        sync.pending = null;
+        const netNow = netRef.current;
+        if (latest == null || !netNow?.ready || settingsRef.current.controlled !== 'main') return;
+        if (sync.deg != null && Math.abs(wrap180(latest - sync.deg)) < 0.05) return;
+        sync.deg = latest;
+        sync.at = performance.now();
+        netNow.emit('aim', { deg: latest });
+      }, wait);
+    };
+  });
   const [roomCode, setRoomCode] = useState('demo');
   const [playerName, setPlayerName] = useState('');
   const [netStatus, setNetStatus] = useState('подключение…');
@@ -558,7 +581,7 @@ export default function Simulator() {
     setCombat((prev) => {
       const es = Math.max(1, settingsRef.current.combat.energyStart);
       let playerEnergy = prev.playerEnergy;
-      const de = { ...prev.dummyEnergy };
+      const de = pruneRemoteEnergy(prev.dummyEnergy, settingsRef.current, liveRemotesRef.current);
       if (fight.attackerId === me) {
         playerEnergy = Math.max(0, playerEnergy - settingsRef.current.combat.strikeCost);
       }
@@ -585,7 +608,7 @@ export default function Simulator() {
     const victim =
       fight.targetId === me
         ? { col: e.col, row: e.row }
-        : liveRemotes.find((d) => d.id === `p${fight.targetId}`);
+        : liveRemotesRef.current.find((d) => d.id === `p${fight.targetId}`);
     if (!victim) return;
     e.labels.push({
       x: victim.col * s.field.cellW + s.field.cellW / 2,
@@ -633,12 +656,12 @@ export default function Simulator() {
       onField: (field) => {
         const cats = field.cats || [];
         const others = cats.filter((c) => c.id !== meIdRef.current);
-        liveRemotes = others.map(catToDummy);
-        remoteAim.clear();
-        remoteDraw.clear();
-        for (const d of liveRemotes) remoteDraw.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
+        liveRemotesRef.current = others.map(catToDummy);
+        remoteAimRef.current.clear();
+        remoteDrawRef.current.clear();
+        for (const d of liveRemotesRef.current) remoteDrawRef.current.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
         const seenAt = performance.now();
-        for (const d of liveRemotes) remoteAim.set(d.id, createRemoteAim(d.angle, seenAt));
+        for (const d of liveRemotesRef.current) remoteAimRef.current.set(d.id, createRemoteAim(d.angle, seenAt));
         setPeerCount(cats.length || 1);
         if (field.room) setRoomCode(field.room);
         if (field.width && field.height) {
@@ -659,10 +682,10 @@ export default function Simulator() {
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
-          remoteAim.delete(`p${cat.id}`);
-          remoteDraw.delete(`p${cat.id}`);
-          liveRemotes = liveRemotes.filter((d) => d.id !== `p${cat.id}`);
-          setPeerCount(1 + liveRemotes.length);
+          remoteAimRef.current.delete(`p${cat.id}`);
+          remoteDrawRef.current.delete(`p${cat.id}`);
+          liveRemotesRef.current = liveRemotesRef.current.filter((d) => d.id !== `p${cat.id}`);
+          setPeerCount(1 + liveRemotesRef.current.length);
           return;
         }
         if (cat.id === meIdRef.current) {
@@ -690,7 +713,7 @@ export default function Simulator() {
           }
           return;
         }
-        const prev = liveRemotes.find((d) => d.id === `p${cat.id}`);
+        const prev = liveRemotesRef.current.find((d) => d.id === `p${cat.id}`);
         const dummy = catToDummy({
           id: cat.id,
           login: cat.login || prev?.name,
@@ -701,9 +724,9 @@ export default function Simulator() {
         });
         // Сетевой угол пишем в тот же объект, без setState. На кадре рисуем
         // не его, а сглаженный display. Клетка сервера — в col/row сразу,
-        // картинка догоняет её по одной за кадр (remoteDraw).
+        // картинка догоняет её по одной за кадр (remoteDrawRef.current).
         const seenAt = performance.now();
-        remoteAim.set(dummy.id, noteRemoteAim(remoteAim.get(dummy.id), dummy.angle, seenAt, !prev));
+        remoteAimRef.current.set(dummy.id, noteRemoteAim(remoteAimRef.current.get(dummy.id), dummy.angle, seenAt, !prev));
         if (prev) {
           const moved = prev.col !== dummy.col || prev.row !== dummy.row;
           prev.col = dummy.col;
@@ -711,12 +734,12 @@ export default function Simulator() {
           prev.angle = dummy.angle;
           prev.name = dummy.name;
           prev.sprite = dummy.sprite;
-          if (moved) rememberRemoteCell(prev.id, dummy.col, dummy.row);
+          if (moved) rememberRemoteCell(remoteDrawRef.current, prev.id, dummy.col, dummy.row);
           return;
         }
-        rememberRemoteCell(dummy.id, dummy.col, dummy.row);
-        liveRemotes = [...liveRemotes, dummy];
-        setPeerCount(1 + liveRemotes.length);
+        rememberRemoteCell(remoteDrawRef.current, dummy.id, dummy.col, dummy.row);
+        liveRemotesRef.current = [...liveRemotesRef.current, dummy];
+        setPeerCount(1 + liveRemotesRef.current.length);
       },
       onFight: (fight) => applyNetFight(fight),
       onChat: (message) => {
@@ -728,7 +751,21 @@ export default function Simulator() {
       onChatLog: (messages) => setChatLines(messages.slice(-80)),
       onInfo: (text) => {
         setNetStatus(text);
+        // Совместимость со старым сервером без refuse-кодов: откат предикта по тексту.
         if (!text.includes('Клетка занята') && !text.includes('Край поля')) return;
+        const cell = rejectOwnMove(netMovesRef.current);
+        if (cell) {
+          engineRef.current.col = cell.col;
+          engineRef.current.row = cell.row;
+        }
+        engineRef.current.path = [];
+        engineRef.current.step = null;
+      },
+      onRefuse: (refuse) => {
+        if (refuse?.text) setNetStatus(refuse.text);
+        // Основной путь — код отказа: редактура русских текстов на сервере
+        // больше не ломает откат предикта.
+        if (refuse?.code !== 'cell_busy' && refuse?.code !== 'edge') return;
         const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
@@ -739,9 +776,15 @@ export default function Simulator() {
       },
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
-      onClose: () => {
+      onClose: (info) => {
         setNetReady(false);
-        setNetStatus('Сокет закрыт. Обновите страницу.');
+        // При обрыве клиент сам переподключается с backoff и повторным join:
+        // движение в это время заблокировано (requestStep), состояние вернут you/field.
+        if (info?.retrying) {
+          setNetStatus(`Связь потеряна — переподключаемся (попытка ${info.attempt})…`);
+        } else {
+          setNetStatus('Сокет закрыт. Обновите страницу.');
+        }
       },
     });
     setChatLines([]);
@@ -755,9 +798,9 @@ export default function Simulator() {
     });
     share(room, login);
     return () => {
-      liveRemotes = [];
-      remoteAim.clear();
-      remoteDraw.clear();
+      liveRemotesRef.current = [];
+      remoteAimRef.current.clear();
+      remoteDrawRef.current.clear();
       netMovesRef.current = { server: null, pending: [] };
       const sync = aimSyncRef.current;
       if (sync.timer) clearTimeout(sync.timer);
@@ -845,7 +888,7 @@ export default function Simulator() {
     let prev = performance.now();
 
     const update = (now: number, dt: number) => {
-      stepRemoteDraws();
+      stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current);
       const s = settingsRef.current;
       const e = engineRef.current;
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
@@ -876,13 +919,17 @@ export default function Simulator() {
       // шаг начинается только после завершения кулдауна предыдущего — правила замедления
       // действуют всегда, и спам кнопок не может их «пересилить»
       const requestStep = (dirDeg: number, tc: number, tr: number) => {
-        if (netRef.current?.ready && s.controlled === 'main') {
+        if (s.controlled === 'main') {
+          const net = netRef.current;
+          // В комнате без связи шагов нет: локальное движение превратило бы кота
+          // в «зомби», которого никто, кроме нас, не видит.
+          if (!net?.ready) return 'blocked';
           const book = netMovesRef.current;
           // Пока сервер не назвал клетку, шаг не рисуем: иначе «you» вернёт кота на спавн.
           if (!book.server) return 'wait';
           const dd = dirByDeg(dirDeg);
           const deg = Math.round(wrap360(e.angle) * 10) / 10;
-          netRef.current.emit('move', { x: dd.dx, y: dd.dy, deg });
+          net.emit('move', { x: dd.dx, y: dd.dy, deg });
           const sync = aimSyncRef.current;
           if (sync.timer) {
             clearTimeout(sync.timer);
@@ -909,7 +956,7 @@ export default function Simulator() {
         const tc = e.col + d.dx;
         const tr = e.row + d.dy;
         // клетки остальных персонажей — физические препятствия: шагнуть в них нельзя
-        if (isBlockedCell(s, self, mp, tc, tr)) return;
+        if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current)) return;
         if (tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows) requestStep(d.deg, tc, tr);
       };
 
@@ -947,12 +994,12 @@ export default function Simulator() {
           const d = dirByDeg(e.held[e.held.length - 1]);
           const tc = e.col + d.dx;
           const tr = e.row + d.dy;
-          if (!isBlockedCell(s, self, mp, tc, tr) && tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows)
+          if (!isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current) && tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows)
             requestStep(d.deg, tc, tr);
         } else if (e.path.length > 0) {
           const nx = e.path[0];
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
-          if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r)) {
+          if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current)) {
             const mode = requestStep(d.deg, nx.c, nx.r);
             if (mode === 'local' || mode === 'net') e.path.shift();
           } else {
@@ -997,7 +1044,7 @@ export default function Simulator() {
                 changed = true;
               }
             }
-            for (const d of liveRemotes) {
+            for (const d of liveRemotesRef.current) {
               const cur = de[d.id] ?? es;
               const nv = Math.min(es, cur + amt);
               if (nv !== cur) {
@@ -1013,9 +1060,9 @@ export default function Simulator() {
       e.labels = e.labels.filter((l) => now - l.born < 900);
 
       // Чужие стрелы догоняют последний сетевой угол каждый кадр. Свою не трогаем.
-      if (liveRemotes.length > 0) {
-        for (const d of liveRemotes) {
-          const aim = remoteAim.get(d.id);
+      if (liveRemotesRef.current.length > 0) {
+        for (const d of liveRemotesRef.current) {
+          const aim = remoteAimRef.current.get(d.id);
           if (aim) stepRemoteAim(aim, now, dt);
         }
       }
@@ -1315,11 +1362,11 @@ export default function Simulator() {
       const posOfChar = (id: string, col: number, row: number): { x: number; y: number } => {
         if (drag && drag.key === id) return { x: drag.x, y: drag.y };
         if (id === s.controlled) return { x: e.col * s.field.cellW, y: e.row * s.field.cellH };
-        const vis = id.startsWith('p') ? remoteDraw.get(id) : undefined;
+        const vis = id.startsWith('p') ? remoteDrawRef.current.get(id) : undefined;
         if (vis) return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH };
         return { x: col * s.field.cellW, y: row * s.field.cellH };
       };
-      const dummies = dummiesOf(s).filter(
+      const dummies = dummiesOf(s, liveRemotesRef.current).filter(
         (d) => d.col >= 0 && d.col < s.field.cols && d.row >= 0 && d.row < s.field.rows,
       );
       const drawChar = (
@@ -1411,7 +1458,7 @@ export default function Simulator() {
         } else {
           continue;
         }
-        if (liveRemotes.length > 0) {
+        if (liveRemotesRef.current.length > 0) {
           const th = (s.field.cellH - 10) * (d.scale / 100);
           const nameX = sprT ? tp.x + (sprT.width / sprT.height) * th * 0.5 : tp.x + s.field.cellW / 2;
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
@@ -1466,7 +1513,7 @@ export default function Simulator() {
         const tpA = posOfChar(d.id, d.col, d.row);
         const ta = anchorAtPx(s, sprT ? sprT.width / sprT.height : 2 / 3, tpA.x, tpA.y, d.scale);
         const tFrac = (combatRef.current.dummyEnergy[d.id] ?? es0) / es0;
-        const shown = liveRemotes.length > 0 ? (remoteAim.get(d.id)?.display ?? d.angle) : d.angle;
+        const shown = liveRemotesRef.current.length > 0 ? (remoteAimRef.current.get(d.id)?.display ?? d.angle) : d.angle;
         drawArrowBody(s, ta.k, ta.ax, ta.ay, shown, tFrac, s.arrow.showRay);
       }
 
@@ -1490,7 +1537,7 @@ export default function Simulator() {
       // (только для прямой стойки: с диагонали зону задаёт правило окон)
       if (s.arrow.battleMode && s.arrow.showRay) {
         const mpAim = selfId === 'main' ? null : mainSavedRef.current;
-        const tm = pickStrikeTarget(s, e.col, e.row, e.angle, selfId, mpAim);
+        const tm = pickStrikeTarget(s, e.col, e.row, e.angle, selfId, mpAim, liveRemotesRef.current);
         const diagM = !!tm && Math.abs(tm.col - e.col) === 1 && Math.abs(tm.row - e.row) === 1;
         const sprTm = tm ? (spritesRef.current[tm.sprite] ?? null) : null;
         const sprSelf = spritesRef.current[cfgSelf ? cfgSelf.sprite : s.character.sprite] ?? null;
@@ -1618,8 +1665,8 @@ export default function Simulator() {
           jelly: Object.fromEntries(
             Object.entries(jellyRef.current).map(([k2, v]) => [k2, Math.round((v ?? 0) * 100) / 100]),
           ),
-          dummies: dummiesOf(settingsRef.current).map((d) => {
-            const vis = remoteDraw.get(d.id);
+          dummies: dummiesOf(settingsRef.current, liveRemotesRef.current).map((d) => {
+            const vis = remoteDrawRef.current.get(d.id);
             return {
               id: d.id,
               col: d.col,
@@ -1751,7 +1798,7 @@ export default function Simulator() {
    *  Управляемый манекен проверяется по его фактической клетке (движок), остальные — по настройкам. */
   const hitTargetAt = (s: SimSettings, mx: number, my: number): DummyConfig | null => {
     const e = engineRef.current;
-    for (const d of dummiesOf(s)) {
+    for (const d of dummiesOf(s, liveRemotesRef.current)) {
       if (!dummyIsDrawn(d, s.controlled)) continue;
       const sprT = spritesRef.current[d.sprite] ?? null;
       const pos =
@@ -1808,7 +1855,7 @@ export default function Simulator() {
     const { mx, my } = canvasPoint(ev);
     const t = hitTargetAt(s, mx, my);
     if (!t) return;
-    if (liveRemotes.length > 0) return; // чужих игроков не таскаем
+    if (liveRemotesRef.current.length > 0) return; // чужих игроков не таскаем
     if (t.id === s.controlled) return; // активную (управляемую) модель перетаскивать нельзя
     const sprT = spritesRef.current[t.sprite] ?? null;
     const pos = { x: t.col * s.field.cellW, y: t.row * s.field.cellH };
@@ -1853,7 +1900,7 @@ export default function Simulator() {
     const occupied = (cc: number, cr: number) => {
       if (dg.key !== s.controlled && e.col === cc && e.row === cr) return true;
       if (s.controlled !== 'main' && mp && mp.col === cc && mp.row === cr) return true;
-      return dummiesOf(s).some((d) => d.id !== dg.key && d.col === cc && d.row === cr);
+      return dummiesOf(s, liveRemotesRef.current).some((d) => d.id !== dg.key && d.col === cc && d.row === cr);
     };
     if (occupied(c, r)) {
       search: for (let rad = 1; rad <= 4; rad++) {
@@ -1908,7 +1955,7 @@ export default function Simulator() {
       r,
       s.field.cols,
       s.field.rows,
-      othersOf(s, s.controlled, mp).map((t) => ({ c: t.col, r: t.row })),
+      othersOf(s, s.controlled, mp, liveRemotesRef.current).map((t) => ({ c: t.col, r: t.row })),
     );
   };
 
@@ -1937,7 +1984,7 @@ export default function Simulator() {
 
     /** Кого задел удар: единственный соседний персонаж, а если соседних несколько —
      *  тот, на который точнее наведена стрела. null — рядом никого. */
-    const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp);
+    const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp, liveRemotesRef.current);
     /** Поражённый персонаж (для списания его энергии; null — попадания не было). */
     let struck: CharRef | null = null;
     /** Урон по цели этим ударом (null — попадания не было). */
@@ -2041,7 +2088,7 @@ export default function Simulator() {
     setCombat((prev) => {
       const es = Math.max(1, s.combat.energyStart);
       let playerEnergy = prev.playerEnergy;
-      const de = { ...prev.dummyEnergy };
+      const de = pruneRemoteEnergy(prev.dummyEnergy, s, liveRemotesRef.current);
       // энергия тратится только при попадании в зону удара — промах бесплатен;
       // платит тот, кем управляем (свой кот — playerEnergy, манекен — своя энергия)
       if (hitDamage !== null) {
@@ -2065,6 +2112,9 @@ export default function Simulator() {
     if (!s.arrow.battleMode) return;
     // удар не проходит, пока стрела вращается (J/L) — сначала нужно остановить стрелу
     if (e.rot !== 0 || e.rotActive !== 0) return;
+    // В комнате без связи удар по чужим котам локально не моделируется:
+    // иначе получился бы «зомби»-урон, которого нет у остальных.
+    if (s.controlled === 'main' && liveRemotesRef.current.length > 0 && !netRef.current?.ready) return;
     const now = performance.now();
     const resp = strikeResponseMs(s);
     // удары не чаще, чем раз в отклик (170 мс по умолчанию): ни спам, ни удержание

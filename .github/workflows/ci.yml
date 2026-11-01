@@ -1,0 +1,42 @@
+name: Проверки
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "server.js"
+      - "package.json"
+      - "package-lock.json"
+      - "deploy/vps/**"
+      - "tsconfig.json"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Типы и зависимости
+    runs-on: ubuntu-latest
+    steps:
+      # actions закреплены SHA коммитов, а не плавающими тегами v4 (цепочка поставки)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Установка зависимостей
+        run: npm ci
+      # next.config.ts держит typescript.ignoreBuildErrors: true, поэтому типовая
+      # защита фронта живёт здесь — ошибка типов падает в CI, а не молчит в сборке
+      - name: Проверка типов
+        run: npm run typecheck
+      - name: Версия ws в двух lockfile
+        run: node scripts/check-ws-versions.mjs

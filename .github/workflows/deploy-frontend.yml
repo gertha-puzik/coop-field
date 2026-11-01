@@ -30,7 +30,8 @@ jobs:
       VERCEL_PROJECT_ID: prj_gPVkczSciohffXtx1PGonYM4q1hh
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      # SHA-пины вместо плавающих тегов v4 (цепочка поставки)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Публикация production на Vercel
         run: npx --yes vercel@65.9.0 deploy --prod --yes --non-interactive
 
@@ -41,8 +42,8 @@ jobs:
       group: coop-field-frontend-vps
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
