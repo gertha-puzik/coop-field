@@ -175,6 +175,11 @@ export interface SimSettings {
   presetMigrated?: boolean;
   /** Внутренний маркер миграции: горло уже приведено к текущей базе урона 0,0. */
   throatBaseMigrated?: boolean;
+  /**
+   * Внутренний маркер миграции: пиксельные полосы зон уже сверены со старой таблицей.
+   * После записи повторная загрузка не возвращает прежние границы.
+   */
+  strikeBandsMigrated?: boolean;
 }
 
 export interface DirMeta {
@@ -287,8 +292,10 @@ export const DEFAULT_SETTINGS: SimSettings = {
       { id: 'throat', name: 'Горло', color: '#64d2ff', damage: 42, py0: 64, py1: 69,  side: 'left' },
     ],
   },
-  // Свежий конфиг уже на текущей базе горла: повторная загрузка не переписывает строку.
+  // Свежий конфиг уже на текущей базе горла и на текущих полосах:
+  // повторная загрузка не переписывает строки.
   throatBaseMigrated: true,
+  strikeBandsMigrated: true,
 };
 
 // ---------------- Пресеты урона игрока ----------------
@@ -570,6 +577,46 @@ function slowdownIsLegacy(sd: unknown): boolean {
   return slowdownMatches(sd, LEGACY_SLOWDOWN_V1) || slowdownMatches(sd, LEGACY_SLOWDOWN_V2);
 }
 
+/**
+ * Полосы и базовый урон до коммита 1070273.
+ * Голова 0–55, горло/шея 55–72, живот/спина 72–106, лапы/хвост 106–150.
+ * Урон в этой таблице менялся только у Лап (5 → 6), Морды (20 → 18) и Горла (38 → 42).
+ */
+const LEGACY_STRIKE_BANDS: Record<string, { py0: number; py1: number; damage?: number }> = {
+  tail: { py0: 106, py1: 150 },
+  paws: { py0: 106, py1: 150, damage: 5 },
+  back: { py0: 72, py1: 106 },
+  muzzle: { py0: 0, py1: 55, damage: 20 },
+  belly: { py0: 72, py1: 106 },
+  neck: { py0: 55, py1: 72 },
+  throat: { py0: 55, py1: 72, damage: 38 },
+};
+
+/** Та же полоса, что у старого дефолта, в любом порядке концов. */
+function samePixelBand(py0: number, py1: number, ref: { py0: number; py1: number }): boolean {
+  return (py0 === ref.py0 && py1 === ref.py1) || (py0 === ref.py1 && py1 === ref.py0);
+}
+
+/**
+ * Подменяет пиксели зоны, если они всё ещё старый дефолт. Ручной диапазон остаётся.
+ * Урон Лапы/Морды/Горла двигаем только вместе с такой полосой и только со старого
+ * базового числа на пресете 0,0 — выбранный пресет и ручной урон не затираем.
+ * Сторону не трогаем.
+ */
+function migrateLegacyStrikeBands(combat: SimSettings['combat']): SimSettings['combat'] {
+  const freshById = new Map(DEFAULT_SETTINGS.combat.zones.map((z) => [z.id, z]));
+  const zones = combat.zones.map((z) => {
+    const legacy = LEGACY_STRIKE_BANDS[z.id];
+    const fresh = freshById.get(z.id);
+    if (!legacy || !fresh || !samePixelBand(z.py0, z.py1, legacy)) return z;
+    const damage =
+      combat.damageLevel === 0 && legacy.damage != null && z.damage === legacy.damage ? fresh.damage : z.damage;
+    if (z.py0 === fresh.py0 && z.py1 === fresh.py1 && z.damage === damage) return z;
+    return { ...z, py0: fresh.py0, py1: fresh.py1, damage };
+  });
+  return { ...combat, zones };
+}
+
 /** Склейка боевого блока с дефолтами (устойчиво к старым версиям без combat). */
 function mergeCombat(rawC: any, d: SimSettings['combat']): SimSettings['combat'] {
   const num = (v: unknown, def: number, min: number, max: number) => {
@@ -679,6 +726,14 @@ export function mergeSettings(raw: any): SimSettings {
     out.combat.damageLevel = 0;
   }
   out.throatBaseMigrated = true;
+  // Сохранённые полосы раньше специально не затирались, поэтому у того, кто уже
+  // открывал поле, схема остаётся на 0–55 / 55–72 / 72–106 / 106–150. Если границы
+  // совпали с той таблицей — ставим текущие. Чужие числа не трогаем. Маркер уходит
+  // в localStorage вместе с новыми py, и следующая загрузка их не откатывает.
+  if (raw != null && raw.strikeBandsMigrated !== true) {
+    out.combat = migrateLegacyStrikeBands(out.combat);
+  }
+  out.strikeBandsMigrated = true;
   return out;
 }
 

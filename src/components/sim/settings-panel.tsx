@@ -345,6 +345,21 @@ function ZoneTarget({
   const yOf = (py: number) => BY + (Math.max(0, Math.min(150, py)) / 150) * BH;
   const sideLabel = (z: StrikeZone) =>
     z.side === 'both' ? 'вся ширина' : z.side === 'left' ? 'левая половина' : 'правая половина';
+  // Деления оси — реальные края полос, а не сетка 30/60/90/120: иначе схема
+  // выглядит разрезанной по старым границам, хотя полосы уже другие.
+  const ticks = Array.from(
+    new Set([
+      0,
+      150,
+      ...zones.flatMap((z) => [Math.min(z.py0, z.py1), Math.max(z.py0, z.py1)]),
+    ]),
+  ).sort((a, b) => a - b);
+  const tickSide: Array<'left' | 'right'> = [];
+  for (let i = 0; i < ticks.length; i++) {
+    const crowded =
+      i > 0 && yOf(ticks[i]) - yOf(ticks[i - 1]) < 12 && tickSide[i - 1] === 'left';
+    tickSide.push(crowded ? 'right' : 'left');
+  }
 
   return (
     <svg
@@ -396,6 +411,11 @@ function ZoneTarget({
           return (
             <g
               key={z.id}
+              data-zone-id={z.id}
+              data-py0={z.py0}
+              data-py1={z.py1}
+              data-damage={z.damage}
+              data-side={z.side}
               onMouseEnter={() => onHover(z.id)}
               onMouseLeave={() => onHover(null)}
               style={{ cursor: 'default' }}
@@ -414,12 +434,12 @@ function ZoneTarget({
                   strokeWidth={active ? 1.4 : 0.8}
                 />
               ))}
-              {bh >= 13 ? (
+              {bh >= 7 ? (
                 <text
                   x={tx}
-                  y={by + bh / 2 + (bh >= 26 ? -3.5 : 3)}
+                  y={by + bh / 2 + (bh >= 26 ? -3.5 : 2.4)}
                   textAnchor="middle"
-                  fontSize="9.5"
+                  fontSize={bh >= 13 ? 9.5 : 7}
                   fontWeight={600}
                   fill={textOn(z.color)}
                   style={{ pointerEvents: 'none' }}
@@ -443,30 +463,45 @@ function ZoneTarget({
             </g>
           );
         })}
-        {/* линии сетки каждые 30 px тела (поверх полос) */}
-        {[30, 60, 90, 120].map((py) => (
-          <line
-            key={py}
-            x1={BX}
-            x2={BX + BW}
-            y1={yOf(py)}
-            y2={yOf(py)}
-            stroke="rgba(255,255,255,0.16)"
-            strokeDasharray="2 5"
-          />
-        ))}
+        {/* края текущих полос, а не фиксированная сетка 30/60/90/120 */}
+        {ticks
+          .filter((py) => py > 0 && py < 150)
+          .map((py) => (
+            <line
+              key={py}
+              x1={BX}
+              x2={BX + BW}
+              y1={yOf(py)}
+              y2={yOf(py)}
+              stroke="rgba(255,255,255,0.55)"
+              strokeWidth={1}
+              style={{ pointerEvents: 'none' }}
+            />
+          ))}
         {/* разделитель половин (слева/справа) */}
         <line x1={midX} x2={midX} y1={BY} y2={BY + BH} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 5" />
       </g>
-      {/* деления вертикальной оси: пиксели тела */}
-      {[0, 30, 60, 90, 120, 150].map((py) => (
-        <g key={py}>
-          <line x1={BX - 4} x2={BX} y1={yOf(py)} y2={yOf(py)} stroke="rgba(255,255,255,0.25)" />
-          <text x={BX - 7} y={yOf(py) + 2.5} textAnchor="end" fontSize="7.5" fill="#71717a">
-            {py}
-          </text>
-        </g>
-      ))}
+      {/* деления вертикальной оси: края полос в пикселях тела */}
+      {ticks.map((py, i) => {
+        const right = tickSide[i] === 'right';
+        const y = yOf(py);
+        const x1 = right ? BX + BW : BX - 4;
+        const x2 = right ? BX + BW + 4 : BX;
+        return (
+          <g key={`${py}-${right ? 'r' : 'l'}`}>
+            <line x1={x1} x2={x2} y1={y} y2={y} stroke="rgba(255,255,255,0.45)" />
+            <text
+              x={right ? BX + BW + 7 : BX - 7}
+              y={y + 2.5}
+              textAnchor={right ? 'start' : 'end'}
+              fontSize="7.5"
+              fill="#d4d4d8"
+            >
+              {py}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
