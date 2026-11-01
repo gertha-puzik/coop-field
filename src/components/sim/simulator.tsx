@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { CharacterPicker, type CharacterChoice } from './character-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
 import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
@@ -341,6 +342,10 @@ function strikeResponseMs(s: SimSettings): number {
 export default function Simulator() {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
+  /** Пока false — экран выбора, сокет не открыт и поле не рисуется. */
+  const [entered, setEntered] = useState(false);
+  const enteredRef = useRef(false);
+  const pendingJoinRef = useRef<{ room: string; login: string; sprite: SpriteId } | null>(null);
   const [combat, setCombat] = useState<CombatState>(() => defaultCombat(100));
   const settingsRef = useRef(settings);
   useEffect(() => {
@@ -356,13 +361,8 @@ export default function Simulator() {
   const fieldFrameRef = useRef<HTMLDivElement | null>(null);
   const [fieldFit, setFieldFit] = useState<{ w: number; h: number } | null>(null);
   const spritesRef = useRef<Partial<Record<SpriteId, HTMLImageElement>>>({});
-  /** Белые силуэты спрайтов (для подсветки выбранного персонажа на поле). */
+  /** Белые силуэты спрайтов: тонкая обводка своего кота. */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
-  /** Выделенный в панели «Персонажи» персонаж: 'main' — свой кот, иначе id манекена.
-   *  Выделение только подсвечивает модель на поле и открывает доп-окно настроек,
-   *  управлением не управляет. */
-  const [selectedChar, setSelectedChar] = useState<string>('main');
-  const selectedRef = useRef(selectedChar);
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
@@ -430,9 +430,6 @@ export default function Simulator() {
   const [netReady, setNetReady] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
   const [chatLines, setChatLines] = useState<CoopChatMessage[]>([]);
-  useEffect(() => {
-    selectedRef.current = selectedChar;
-  }, [selectedChar]);
   const startStepRef = useRef<((dir: number) => void) | null>(null);
   const doStrikeRef = useRef<(() => void) | null>(null);
   /** Где стоит свой кот, пока управление передано манекену (null — кот под управлением). */
@@ -557,11 +554,13 @@ export default function Simulator() {
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !entered) return;
     const room = roomFromUrl();
-    const login = nameFromUrl();
+    const pending = pendingJoinRef.current;
+    const login = (pending?.login || nameFromUrl() || '').trim();
+    if (!login) return;
     setRoomCode(room);
-    if (login) setPlayerName(login);
+    setPlayerName(login);
     const share = (nextRoom: string, nextName: string) => {
       try {
         const url = new URL(window.location.href);
@@ -670,7 +669,7 @@ export default function Simulator() {
     client.connect({
       room,
       login,
-      sprite: settingsRef.current.character.sprite,
+      sprite: pending?.sprite || settingsRef.current.character.sprite,
     });
     share(room, login);
     return () => {
@@ -683,7 +682,7 @@ export default function Simulator() {
       client.close();
       netRef.current = null;
     };
-  }, [loaded, applyNetFight]);
+  }, [loaded, entered, applyNetFight]);
 
   /** Скин своего кота уходит в комнату сразу, без повторного входа. */
   useEffect(() => {
@@ -708,8 +707,7 @@ export default function Simulator() {
       img.src = sp.src;
       img.onload = () => {
         spritesRef.current[sp.id] = img;
-        // светлый силуэт того же спрайта: для тонкой обводки активного кота
-        // и мягкой подсветки модели, выбранной в панели
+        // светлый силуэт того же спрайта: тонкая обводка своего кота
         const wc = document.createElement('canvas');
         wc.width = img.naturalWidth;
         wc.height = img.naturalHeight;
@@ -1297,7 +1295,7 @@ export default function Simulator() {
           posOfChar(d.id, d.col, d.row),
           d.scale,
           d.id,
-          selectedRef.current === d.id,
+          false,
           whiteSpritesRef.current[d.sprite] ?? null,
           d.id === s.controlled,
         );
@@ -1328,7 +1326,7 @@ export default function Simulator() {
           { x: cellX, y: cellY },
           s.character.spriteScale,
           null,
-          selectedRef.current === 'main',
+          false,
           whiteSpritesRef.current[s.character.sprite] ?? null,
           selfId === 'main',
         );
@@ -1522,7 +1520,7 @@ export default function Simulator() {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [entered]);
 
   /* ---------- ручной угол стрелы ---------- */
 
@@ -1546,6 +1544,7 @@ export default function Simulator() {
       return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     };
     const down = (ev: KeyboardEvent) => {
+      if (!enteredRef.current) return;
       if (isForm(ev.target)) return;
       const action = keyAction(ev);
       const t = ev.target as HTMLElement | null;
@@ -2029,53 +2028,6 @@ export default function Simulator() {
     setSettings((s) => ({ ...s, dummies: s.dummies.map((d) => (d.id === id ? { ...d, ...p } : d)) }));
   }, []);
 
-  /** Передача управления: 'main' — вернуться к своему коту, иначе зайти за манекена.
-   *  Позиция и угол уходящего персонажа сохраняются (кот — в памяти, манекен — в настройки),
-   *  новый управляемый персонаж встаёт на свою клетку со своей стрелой. */
-  const switchControl = useCallback((id: string) => {
-    if (liveRemotes.length > 0 && id !== 'main') return;
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    const cur = s.controlled;
-    if (id === cur) return;
-    if (cur === 'main') {
-      // свой кот «замерает» на месте: запоминаем, где он стоит и куда смотрит стрела
-      mainSavedRef.current = { col: e.col, row: e.row, angle: e.angle };
-    } else {
-      // манекен при уходе сохраняет куда дотащили/довели его и куда повернули стрелу
-      setSettings((p) => ({
-        ...p,
-        dummies: p.dummies.map((d) =>
-          d.id === cur ? { ...d, col: e.col, row: e.row, angle: Math.round(wrap360(e.angle)) } : d,
-        ),
-      }));
-    }
-    if (id === 'main') {
-      const ms = mainSavedRef.current;
-      if (ms) {
-        e.col = ms.col;
-        e.row = ms.row;
-        e.angle = ms.angle;
-        publishAimRef.current(ms.angle, true);
-      }
-    } else {
-      const d = s.dummies.find((x) => x.id === id);
-      if (!d) return;
-      e.col = d.col;
-      e.row = d.row;
-      e.angle = d.angle;
-    }
-    e.step = null;
-    e.path = [];
-    e.held.length = 0;
-    e.rot = 0;
-    e.rotActive = 0;
-    e.strikeHeld = false;
-    // выделение следует за переходом: доп-окно настроек откроется для нового персонажа
-    setSelectedChar(id);
-    setSettings((p) => ({ ...p, controlled: id }));
-  }, []);
-
   const onResetAll = useCallback(() => {
     setSettings(JSON.parse(JSON.stringify(DEFAULT_SETTINGS)));
     setCombat(defaultCombat(DEFAULT_SETTINGS.combat.energyStart));
@@ -2129,6 +2081,25 @@ export default function Simulator() {
     return true;
   }, []);
 
+  /** Подтверждение экрана выбора: только после этого открываем сокет и поле. */
+  const enterField = useCallback((choice: CharacterChoice) => {
+    const login = choice.name.trim().slice(0, 24);
+    if (!login) return;
+    const sprite = SPRITES.some((sp) => sp.id === choice.sprite) ? choice.sprite : settingsRef.current.character.sprite;
+    const scale = Math.min(100, Math.max(60, Math.round(choice.scale)));
+    const room = roomFromUrl();
+    pendingJoinRef.current = { room, login, sprite };
+    enteredRef.current = true;
+    setSettings((s) => ({
+      ...s,
+      controlled: 'main',
+      character: { ...s.character, sprite, spriteScale: scale },
+    }));
+    setPlayerName(login);
+    setRoomCode(room);
+    setEntered(true);
+  }, []);
+
   const fieldW = settings.field.cols * settings.field.cellW;
   const fieldH = settings.field.rows * settings.field.cellH;
 
@@ -2165,7 +2136,22 @@ export default function Simulator() {
       ro.disconnect();
       mq.removeEventListener('change', fit);
     };
-  }, [fieldW, fieldH]);
+  }, [fieldW, fieldH, entered]);
+
+  if (!entered) {
+    return (
+      <div className="h-dvh bg-[#14161a] text-zinc-100">
+        {loaded ? (
+          <CharacterPicker
+            initialSprite={settings.character.sprite}
+            initialName={nameFromUrl().slice(0, 24)}
+            initialScale={settings.character.spriteScale}
+            onConfirm={enterField}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#14161a] text-zinc-100">
@@ -2295,10 +2281,6 @@ export default function Simulator() {
             patchHud={patchHud}
             patchCombat={patchCombat}
             patchZone={patchZone}
-            patchDummy={patchDummy}
-            onSwitchControl={switchControl}
-            selectedChar={selectedChar}
-            onSelectChar={setSelectedChar}
             onResetCombat={onResetCombat}
             onResetAll={onResetAll}
             onExport={onExport}

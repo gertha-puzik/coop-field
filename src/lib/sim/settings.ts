@@ -49,7 +49,16 @@ export interface StrikeZone {
 export type WindowKey = '0' | '45' | '90' | '135' | '180' | '225' | '270' | '315';
 
 /** Идентификатор спрайта персонажа. */
-export type SpriteId = 'puhlyashik' | 'blestyashka' | 'puzatik' | 'razdora' | 'pohititel' | 'syrstyashka';
+export type SpriteId =
+  | 'puhlyashik'
+  | 'blestyashka'
+  | 'puzatik'
+  | 'razdora'
+  | 'pohititel'
+  | 'syrstyashka'
+  | 'ryzhiy'
+  | 'trehcvetny'
+  | 'serebristyy';
 
 export interface SpriteMeta {
   id: SpriteId;
@@ -57,7 +66,7 @@ export interface SpriteMeta {
   src: string;
 }
 
-/** Доступные спрайты персонажа (выбор в панели «Персонажи»). */
+/** Доступные спрайты персонажа (экран выбора перед полем). */
 export const SPRITES: SpriteMeta[] = [
   { id: 'puhlyashik', name: 'Пухляшик', src: '/sprites/puhlyashik.png' },
   { id: 'blestyashka', name: 'Блестяшка', src: '/sprites/blestyashka.png' },
@@ -65,6 +74,9 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'razdora', name: 'Пламя Раздора', src: '/sprites/razdora.png' },
   { id: 'pohititel', name: 'Похититель Пламени', src: '/sprites/pohititel.png' },
   { id: 'syrstyashka', name: 'Сырстяшка', src: '/sprites/syrstyashka.png' },
+  { id: 'ryzhiy', name: 'Рыжий', src: '/sprites/ryzhiy.png' },
+  { id: 'trehcvetny', name: 'Трёхцветный', src: '/sprites/trehcvetny.png' },
+  { id: 'serebristyy', name: 'Серебристый', src: '/sprites/serebristyy.png' },
 ];
 
 /** Настройки отдельного персонажа-мишени (манекена) на поле. */

@@ -546,7 +546,15 @@ const skinJoiner = await client("Гамма", skinRoom);
 const skinField = (await waitFor(skinJoiner, "field"))[1];
 const worn = (skinField.cats || []).find((c) => c.id === skinYou.id);
 if (!worn || worn.sprite !== "puzatik") throw new Error(`sprite not in field ${JSON.stringify(worn)}`);
-console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite);
+for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
+  sb.inbox.length = 0;
+  sa.send(JSON.stringify(["sprite", { sprite: id }]));
+  const seen = await waitFor(sb, "update cat");
+  if (seen[1].sprite !== id || seen[1].x !== skinYou.x || seen[1].y !== skinYou.y) {
+    throw new Error(`sprite ${id} ${JSON.stringify(seen[1])}`);
+  }
+}
+console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy");
 
 for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider, sa, sb, skinJoiner]) {
   try {

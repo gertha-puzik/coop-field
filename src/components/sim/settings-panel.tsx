@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import type { DirectionWindow, DummyConfig, SimSettings, SlowdownTier, SpriteMeta, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
+import type { DirectionWindow, SimSettings, SlowdownTier, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
 import {
   DAMAGE_LEVELS,
   DIRECTIONS,
@@ -27,14 +27,6 @@ interface Props {
   patchHud: (p: Partial<SimSettings['hud']>) => void;
   patchCombat: (p: Partial<SimSettings['combat']>) => void;
   patchZone: (i: number, p: Partial<StrikeZone>) => void;
-  /** Правка настроек одного манекена (имя, клетка, рост, стрела, убрать/добавить). */
-  patchDummy: (id: string, p: Partial<DummyConfig>) => void;
-  /** Зайти за персонажа: 'main' — свой кот, иначе id манекена. */
-  onSwitchControl: (id: 'main' | string) => void;
-  /** Какой персонаж выделен в панели (подсвечен на поле): 'main' или id манекена. */
-  selectedChar: string;
-  /** Выделить персонажа (открывает его доп-окно настроек). */
-  onSelectChar: (id: string) => void;
   onResetCombat: () => void;
   onResetAll: () => void;
   onExport: () => string;
@@ -195,70 +187,14 @@ function ColorInput({
   );
 }
 
-/* ---------- карточки персонажей ---------- */
-
-/** Карточка персонажа в панели: клик выделяет модель на поле (белая подсветка)
- *  и открывает её доп-окно настроек. Бейджи: «ИГРАЕТЕ» — за него сейчас управление,
- *  «УБРАН» — модель снята с поля. */
-function CharCard({
-  label,
-  sprite,
-  selected,
-  playing,
-  present = true,
-  onClick,
-}: {
-  label: string;
-  sprite: SpriteMeta | undefined;
-  selected: boolean;
-  playing: boolean;
-  present?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={present ? 'Выделить персонажа' : 'Модель убрана с поля'}
-      className={`relative flex w-[78px] flex-col items-center gap-1 rounded-lg border px-1.5 pb-1.5 pt-2 transition-colors ${
-        selected ? 'border-white bg-white/10' : 'border-zinc-700 bg-zinc-900/40 hover:border-zinc-500'
-      } ${present ? '' : 'opacity-45'}`}
-    >
-      <img
-        src={sprite?.src}
-        alt={label}
-        className={`h-12 w-auto object-contain ${selected ? 'drop-shadow-[0_0_6px_rgba(255,255,255,0.75)]' : ''}`}
-        draggable={false}
-      />
-      <span
-        className={`w-full truncate text-center text-[10.5px] font-medium ${
-          selected ? 'text-white' : 'text-zinc-300'
-        }`}
-      >
-        {label}
-      </span>
-      {playing ? (
-        <span className="absolute -top-1.5 right-1 rounded bg-amber-600 px-1 py-px text-[8.5px] font-bold tracking-wide text-white">
-          ИГРАЕТЕ
-        </span>
-      ) : !present ? (
-        <span className="absolute -top-1.5 right-1 rounded bg-zinc-600 px-1 py-px text-[8.5px] font-bold tracking-wide text-zinc-100">
-          УБРАН
-        </span>
-      ) : null}
-    </button>
-  );
-}
-
 /* ---------- разделы настроек ---------- */
 
 /** Идентификатор раздела настроек (квадратик-иконка в переключателе). */
-type TabId = 'field' | 'character' | 'arrow' | 'slowdown' | 'combat' | 'config';
+type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config';
 
 /** Разделы: квадратик с иконкой темы, клик открывает содержимое. */
 const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'field', icon: '#', label: 'Поле' },
-  { id: 'character', icon: '🐱', label: 'Персонажи' },
   { id: 'arrow', icon: '🏹', label: 'Стрела' },
   { id: 'slowdown', icon: '⛔', label: 'Замедление' },
   { id: 'combat', icon: '💥', label: 'Удары и энергия' },
@@ -515,9 +451,6 @@ export function SettingsPanel(props: Props) {
   /** Открытый раздел (квадратик-иконка сверху). */
   const [tab, setTab] = useState<TabId>('field');
   const activeTab = TABS.find((t) => t.id === tab) ?? TABS[0];
-  /** Выделенный персонаж (подсвечен на поле) и его конфиг, если это манекен. */
-  const selChar = props.selectedChar;
-  const selDummy = s.dummies.find((d) => d.id === selChar) ?? null;
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -587,215 +520,6 @@ export function SettingsPanel(props: Props) {
           onChange={(v) => props.patchField({ bgColorAlt: v })}
         />
         <ColorInput label="Линии сетки" value={s.field.gridColor} onChange={(v) => props.patchField({ gridColor: v })} />
-            </>
-          )}
-          {tab === 'character' && (
-            <>
-        <div className="py-1.5">
-          <div className="mb-1.5 text-xs text-zinc-300">
-            Персонажи: клик по карточке выделит модель белым на поле и откроет её доп-окно настроек
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <CharCard
-              label="Свой кот"
-              sprite={SPRITES.find((sp) => sp.id === s.character.sprite)}
-              selected={selChar === 'main'}
-              playing={s.controlled === 'main'}
-              onClick={() => props.onSelectChar('main')}
-            />
-            {s.dummies.map((d) => (
-              <CharCard
-                key={d.id}
-                label={d.name}
-                sprite={SPRITES.find((sp) => sp.id === d.sprite)}
-                selected={selChar === d.id}
-                playing={s.controlled === d.id}
-                present={d.present}
-                onClick={() => props.onSelectChar(d.id)}
-              />
-            ))}
-          </div>
-        </div>
-        {selChar === 'main' ? (
-          <div className="rounded-lg border border-white/25 bg-white/[0.04] p-2.5">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-white">Свой кот — настройки</span>
-              {s.controlled === 'main' ? (
-                <span className="rounded border border-amber-700/60 bg-amber-950/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-200">
-                  Вы играете
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  className="h-7 shrink-0 bg-emerald-600 text-[11px] text-white hover:bg-emerald-500"
-                  onClick={() => props.onSwitchControl('main')}
-                >
-                  Вернуться к своему коту
-                </Button>
-              )}
-            </div>
-            <div className="py-1.5">
-              <div className="mb-1.5 text-xs text-zinc-300">Спрайт персонажа</div>
-              <div className="flex gap-2">
-                {SPRITES.map((sp) => {
-                  const active = s.character.sprite === sp.id;
-                  return (
-                    <button
-                      key={sp.id}
-                      type="button"
-                      onClick={() => props.patchCharacter({ sprite: sp.id })}
-                      className={`flex flex-1 flex-col items-center gap-1 rounded-lg border px-2 pb-1.5 pt-2 transition-colors ${
-                        active
-                          ? 'border-emerald-500 bg-emerald-950/40'
-                          : 'border-zinc-700 bg-zinc-900/40 hover:border-zinc-500'
-                      }`}
-                    >
-                      <img
-                        src={sp.src}
-                        alt={sp.name}
-                        className="h-16 w-auto object-contain"
-                        draggable={false}
-                      />
-                      <span className={`text-[11px] font-medium ${active ? 'text-emerald-400' : 'text-zinc-300'}`}>
-                        {sp.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <SlideNum
-              label="Базовое время шага"
-              value={s.character.stepMs}
-              min={100}
-              max={3000}
-              step={10}
-              suffix="мс"
-              hint="Интервал движения при зажатой клавише (ещё растягивается замедлением); новое нажатие срабатывает сразу, но не раньше, чем завершится предыдущий шаг, — спам не может превысить скорость, разрешённую замедлением."
-              onChange={(v) => props.patchCharacter({ stepMs: v })}
-            />
-            <SlideNum
-              label="Размер модельки"
-              value={s.character.spriteScale}
-              min={60}
-              max={100}
-              step={1}
-              suffix="%"
-              onChange={(v) => props.patchCharacter({ spriteScale: v })}
-            />
-            <div className="text-[10px] leading-snug text-zinc-500">
-              Спрайт закреплён за левым верхним углом клетки: при увеличении размера моделька «растёт» вправо-вниз, точка
-              закрепления остаётся на месте. Персонаж перемещается мгновенно: сразу оказывается в целевой клетке, время
-              шага работает как кулдаун до следующего прыжка.
-            </div>
-          </div>
-        ) : selDummy ? (
-          <div className="rounded-lg border border-white/25 bg-white/[0.04] p-2.5">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="truncate text-xs font-semibold text-white">{selDummy.name} — настройки</span>
-              {s.controlled === selDummy.id ? (
-                <span className="shrink-0 rounded border border-amber-700/60 bg-amber-950/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-200">
-                  Вы играете
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  disabled={!selDummy.present}
-                  title={
-                    selDummy.present
-                      ? 'Управление перейдёт этому персонажу'
-                      : 'Сначала верните модель на поле'
-                  }
-                  className="h-7 shrink-0 bg-emerald-600 text-[11px] text-white hover:bg-emerald-500"
-                  onClick={() => props.onSwitchControl(selDummy.id)}
-                >
-                  Зайти за персонажа
-                </Button>
-              )}
-            </div>
-            {s.controlled === selDummy.id ? (
-              <div className="mb-1">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-full text-[11px]"
-                  onClick={() => props.onSwitchControl('main')}
-                >
-                  Вернуться к своему коту
-                </Button>
-              </div>
-            ) : null}
-            <div className="flex items-center justify-between gap-3 py-1.5">
-              <div>
-                <div className="text-xs text-zinc-300">
-                  {selDummy.present ? 'Убрать модель с поля' : 'Вернуть модель на поле'}
-                </div>
-                <div className="text-[10px] leading-tight text-zinc-500">
-                  {s.controlled === selDummy.id
-                    ? 'Нельзя убрать модель, за которую вы сейчас играете, — сначала вернитесь к своему коту.'
-                    : 'Убранная модель исчезает с поля, но её настройки сохраняются.'}
-                </div>
-              </div>
-              <Switch
-                checked={selDummy.present}
-                disabled={s.controlled === selDummy.id}
-                onCheckedChange={(v) => props.patchDummy(selDummy.id, { present: v })}
-                className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-zinc-700"
-              />
-            </div>
-            <Toggle
-              label="Видимость мишени"
-              checked={selDummy.visible}
-              hint="По умолчанию выключено. Скрытая модель не рисуется, но клетка занята и удар по ней проходит. Тот, за кого вы играете, виден всегда. Чужих котов в комнате это не прячет."
-              onChange={(v) => props.patchDummy(selDummy.id, { visible: v })}
-            />
-            <div className="py-1.5">
-              <div className="mb-1 text-xs text-zinc-300">Имя персонажа</div>
-              <Input
-                className="h-7 text-xs"
-                value={selDummy.name}
-                maxLength={28}
-                onChange={(e) => props.patchDummy(selDummy.id, { name: e.target.value })}
-              />
-              <div className="mt-0.5 text-[10px] leading-tight text-zinc-500">
-                Показывается на карточке и в логе ударов; закрепляется, пока не смените.
-              </div>
-            </div>
-            <SlideNum
-              label="Рост модельки"
-              value={selDummy.scale}
-              min={60}
-              max={100}
-              step={1}
-              suffix="%"
-              onChange={(v) => props.patchDummy(selDummy.id, { scale: v })}
-            />
-            <div className="py-1.5">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="text-xs text-zinc-300">Клетка (колонка, ряд)</span>
-                <div className="flex items-center gap-1">
-                  <NumInput
-                    value={selDummy.col}
-                    min={0}
-                    max={s.field.cols - 1}
-                    onChange={(v) => props.patchDummy(selDummy.id, { col: v })}
-                    className="w-16"
-                  />
-                  <NumInput
-                    value={selDummy.row}
-                    min={0}
-                    max={s.field.rows - 1}
-                    onChange={(v) => props.patchDummy(selDummy.id, { row: v })}
-                    className="w-16"
-                  />
-                </div>
-              </div>
-              <div className="text-[10px] leading-tight text-zinc-500">
-                Клетки с нуля; манекена можно и просто перетащить мышью с зажатой ЛКМ.
-              </div>
-            </div>
-          </div>
-        ) : null}
             </>
           )}
           {tab === 'arrow' && (
@@ -902,6 +626,16 @@ export function SettingsPanel(props: Props) {
           )}
           {tab === 'slowdown' && (
             <>
+        <SlideNum
+          label="Базовое время шага"
+          value={s.character.stepMs}
+          min={100}
+          max={3000}
+          step={10}
+          suffix="мс"
+          hint="Интервал движения при зажатой клавише (ещё растягивается замедлением); новое нажатие срабатывает сразу, но не раньше, чем завершится предыдущий шаг, — спам не может превысить скорость, разрешённую замедлением."
+          onChange={(v) => props.patchCharacter({ stepMs: v })}
+        />
         <div className="mb-1 text-[11px] leading-snug text-zinc-400">
           Окно — диапазон углов стрелы, при котором прыжок в этом направлении идёт без замедления. Углы: 0°=вправо,
           90°=вниз, окно идёт от «от» до «до» по часовой.
@@ -1057,7 +791,7 @@ export function SettingsPanel(props: Props) {
           onChange={(v) => props.patchCombat({ regenIntervalSec: v })}
         />
         <div className="text-[10px] leading-snug text-zinc-500">
-          Мишени (персонажи-манекены, настраиваются в разделе «Персонажи») всегда в боевом режиме: сквозь них нельзя
+          Мишени (локальные манекены) всегда в боевом режиме: сквозь них нельзя
           пройти, бить можно любого; если рядом стоят несколько — удар идёт в ту, на которую точнее наведена стрела. У
           каждой своя энергия и своя стрела.
         </div>
