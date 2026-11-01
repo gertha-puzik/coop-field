@@ -2252,6 +2252,7 @@ export default function Simulator() {
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:flex-row lg:overflow-hidden lg:p-4">
         <section className="flex h-full min-h-0 w-full shrink-0 flex-col gap-2 lg:h-auto lg:w-auto lg:flex-1">
+          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
           <div className="relative min-h-48 min-w-0 flex-1">
             <div role="region" aria-label="Игровое поле" className="absolute inset-0 overflow-auto rounded-xl border border-zinc-800 bg-[#20242a] p-3">
               <canvas
@@ -2319,7 +2320,6 @@ export default function Simulator() {
               Скорость = 100% − замедление · замедление фиксируется в момент прыжка
             </span>
           </div>
-          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
         </section>
 
         <aside className="w-full shrink-0 lg:min-h-0 lg:w-[400px] lg:overflow-y-auto lg:pr-1">
