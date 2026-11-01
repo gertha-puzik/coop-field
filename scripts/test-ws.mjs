@@ -463,7 +463,92 @@ const rejects = [p, q].filter((ws) =>
 if (rejects.length !== 1) throw new Error(`expected one occupied reject, got ${rejects.length}`);
 console.log("ok: simultaneous move, one cell", `${fp.x}:${fp.y}`, `${fq.x}:${fq.y}`);
 
-for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q]) {
+// Чат комнаты: видят все, пустое молчит, длинное режется, частый отказ, новичок получает журнал.
+const chatRoom = `c${Date.now().toString(36)}`;
+const ca = await client("Альфа", chatRoom);
+const cb = await client("Бета", chatRoom);
+const caYou = (await waitFor(ca, "you"))[1];
+await waitFor(cb, "you");
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "  привет\nкомнате  " }]));
+const chatA = await waitFor(ca, "chat");
+const chatB = await waitFor(cb, "chat");
+for (const [who, msg] of [["A", chatA], ["B", chatB]]) {
+  const row = msg[1];
+  if (row.id !== caYou.id || row.login !== "Альфа") throw new Error(`${who} chat author ${JSON.stringify(row)}`);
+  if (row.text !== "привет комнате") throw new Error(`${who} chat text ${JSON.stringify(row.text)}`);
+  if (!/^#[0-9a-fA-F]{6}$/.test(row.color)) throw new Error(`${who} chat color ${row.color}`);
+  if (typeof row.seq !== "number" || typeof row.ts !== "number") throw new Error(`${who} chat meta ${JSON.stringify(row)}`);
+}
+if (cb.inbox.filter((m) => m[0] === "chat").length !== 1) throw new Error("chat echoed twice");
+ca.send(JSON.stringify(["chat", { text: "   " }]));
+ca.send(JSON.stringify(["chat", ""]));
+await sleep(80);
+if (cb.inbox.some((m) => m[0] === "chat" && m[1].seq !== chatB[1].seq)) {
+  throw new Error(`empty chat leaked ${JSON.stringify(cb.inbox.filter((m) => m[0] === "chat"))}`);
+}
+await sleep(500);
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "я".repeat(250) }]));
+const clipped = (await waitFor(cb, "chat"))[1];
+if (clipped.text !== "я".repeat(200)) throw new Error(`chat clip len ${clipped.text?.length}`);
+await sleep(500);
+ca.inbox.length = 0;
+cb.inbox.length = 0;
+ca.send(JSON.stringify(["chat", { text: "раз" }]));
+ca.send(JSON.stringify(["chat", { text: "два" }]));
+await sleep(200);
+const paced = cb.inbox.filter((m) => m[0] === "chat");
+if (paced.length !== 1 || paced[0][1].text !== "раз") {
+  throw new Error(`chat rate ${JSON.stringify(paced.map((m) => m[1].text))}`);
+}
+if (!ca.inbox.some((m) => m[0] === "info" && String(m[1]).includes("частые"))) {
+  throw new Error(`chat rate info missing ${JSON.stringify(ca.inbox)}`);
+}
+const outsider = await connectBare();
+outsider.send(JSON.stringify(["chat", { text: "мимо" }]));
+const outsiderInfo = await waitFor(outsider, "info");
+if (!String(outsiderInfo[1]).includes("комнату")) throw new Error(`outsider ${outsiderInfo[1]}`);
+await sleep(40);
+if (cb.inbox.some((m) => m[0] === "chat" && m[1].text === "мимо")) throw new Error("outsider reached the room");
+const cc = await client("Гамма", chatRoom);
+const chatlog = (await waitFor(cc, "chatlog"))[1];
+const logged = chatlog.map((row) => row.text);
+if (logged.join("|") !== ["привет комнате", "я".repeat(200), "раз"].join("|")) {
+  throw new Error(`chatlog ${JSON.stringify(logged)}`);
+}
+console.log("ok: chat", logged.length, "lines, clip 200, rate, history");
+
+// Скин меняется на месте и виден другому сокету. Себе эхо не шлём.
+const skinRoom = `s${Date.now().toString(36)}`;
+const sa = await client("Альфа", skinRoom);
+const sb = await client("Бета", skinRoom);
+const skinYou = (await waitFor(sa, "you"))[1];
+await waitFor(sb, "you");
+sa.inbox.length = 0;
+sb.inbox.length = 0;
+sa.send(JSON.stringify(["sprite", { sprite: "puzatik" }]));
+const skinSeen = await waitFor(sb, "update cat");
+if (skinSeen[1].id !== skinYou.id) throw new Error(`sprite id ${JSON.stringify(skinSeen[1])}`);
+if (skinSeen[1].sprite !== "puzatik") throw new Error(`sprite ${skinSeen[1].sprite}`);
+if (skinSeen[1].x !== skinYou.x || skinSeen[1].y !== skinYou.y) {
+  throw new Error(`sprite moved the cat ${JSON.stringify(skinSeen[1])}`);
+}
+if (sa.inbox.some((m) => m[0] === "update cat")) throw new Error("sprite echoed to the wearer");
+sa.send(JSON.stringify(["sprite", { sprite: "not-a-cat" }]));
+sa.send(JSON.stringify(["sprite", { sprite: "puzatik" }]));
+await sleep(80);
+const skinPatches = sb.inbox.filter((m) => m[0] === "update cat");
+if (skinPatches.length !== 1) throw new Error(`sprite spam ${JSON.stringify(skinPatches)}`);
+const skinJoiner = await client("Гамма", skinRoom);
+const skinField = (await waitFor(skinJoiner, "field"))[1];
+const worn = (skinField.cats || []).find((c) => c.id === skinYou.id);
+if (!worn || worn.sprite !== "puzatik") throw new Error(`sprite not in field ${JSON.stringify(worn)}`);
+console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite);
+
+for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider, sa, sb, skinJoiner]) {
   try {
     ws.close();
   } catch {
