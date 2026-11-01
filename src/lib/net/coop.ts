@@ -123,6 +123,8 @@ export function catToDummy(cat: CoopCat): DummyConfig {
     scale: 100,
     angle: Number.isFinite(Number(cat.deg)) ? Number(cat.deg) : 0,
     present: true,
+    // Чужой кот — не локальная мишень: рисуем всегда, флаг по сети не шлём.
+    visible: true,
   };
 }
 

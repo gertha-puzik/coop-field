@@ -708,6 +708,12 @@ export function SettingsPanel(props: Props) {
                 className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-zinc-700"
               />
             </div>
+            <Toggle
+              label="Видимость мишени"
+              checked={selDummy.visible}
+              hint="По умолчанию выключено. Скрытая модель не рисуется, но клетка занята и удар по ней проходит. Тот, за кого вы играете, виден всегда. Чужих котов в комнате это не прячет."
+              onChange={(v) => props.patchDummy(selDummy.id, { visible: v })}
+            />
             <div className="py-1.5">
               <div className="mb-1 text-xs text-zinc-300">Имя персонажа</div>
               <Input
@@ -1155,9 +1161,9 @@ export function SettingsPanel(props: Props) {
           промах.
         </div>
         <Toggle
-          label="Окно лога «Бой» на поле"
+          label="Лог «Бой» над полем"
           checked={s.combat.showLog}
-          hint="Строки вида «Я => Имя (зона) xN», свежая сверху."
+          hint="Справа от чата. Строки вида «Я => Имя (зона) xN», свежая сверху."
           onChange={(v) => props.patchCombat({ showLog: v })}
         />
         <div className="pt-1">

@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GripHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
 import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
+import { FightLog } from './fight-log';
 import { RoomChat } from './room-chat';
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import { keyAction } from '@/lib/sim/keys';
@@ -30,8 +30,6 @@ import {
 const STORAGE_KEY = 'catwar-battle-sim-v4';
 /** Отдельное хранилище боевого состояния (энергия + лог ударов). */
 const COMBAT_KEY = 'catwar-battle-sim-combat-v1';
-/** Хранилище позиции окна боевого лога (после перетаскивания). */
-const LOG_POS_KEY = 'catwar-battle-sim-log-pos-v1';
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -256,6 +254,21 @@ const remoteAim = new Map<string, RemoteAim>();
 function dummiesOf(s: SimSettings): DummyConfig[] {
   if (liveRemotes.length > 0) return liveRemotes;
   return s.dummies.filter((d) => d.present);
+}
+
+/** Рисуется ли манекен. Скрытая мишень остаётся препятствием и целью удара.
+ *  Тот, кем управляем, виден всегда. Чужие коты (id «p…») не прячутся:
+ *  флаг видимости локальный и по сети не уходит. */
+function dummyIsDrawn(d: DummyConfig, controlled: string): boolean {
+  if (d.id === controlled || d.id.startsWith('p')) return true;
+  return d.visible;
+}
+
+/** То же для цели удара (свой кот, манекен или чужой id). */
+function strikeTargetDrawn(s: SimSettings, id: string, controlled: string): boolean {
+  if (id === 'main' || id === controlled || id.startsWith('p')) return true;
+  const d = s.dummies.find((x) => x.id === id);
+  return d ? d.visible : true;
 }
 
 /** Все персонажи, кроме самого (selfId): манекены на поле + свой кот, когда управление
@@ -692,8 +705,8 @@ export default function Simulator() {
       img.src = sp.src;
       img.onload = () => {
         spritesRef.current[sp.id] = img;
-        // белый силуэт того же спрайта: рисуется чуть крупнее за моделькой —
-        // получается ровная белая подсветка по контуру персонажа
+        // светлый силуэт того же спрайта: для тонкой обводки активного кота
+        // и мягкой подсветки модели, выбранной в панели
         const wc = document.createElement('canvas');
         wc.width = img.naturalWidth;
         wc.height = img.naturalHeight;
@@ -701,7 +714,7 @@ export default function Simulator() {
         if (wctx) {
           wctx.drawImage(img, 0, 0);
           wctx.globalCompositeOperation = 'source-in';
-          wctx.fillStyle = '#ffffff';
+          wctx.fillStyle = '#f4f4f5';
           wctx.fillRect(0, 0, wc.width, wc.height);
         }
         whiteSpritesRef.current[sp.id] = wc;
@@ -1222,25 +1235,34 @@ export default function Simulator() {
         ctx.ellipse(pos.x + twd / 2, pos.y + th - 4, twd * 0.34, 5.5, 0, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         ctx.fill();
-        // белая подсветка выбранного персонажа: слегка увеличенный белый силуэт,
-        // нарисованный за моделькой, даёт мягкий светлый ореол по контуру
+        // подсветка модели, выбранной в панели (не той, за которую играют):
+        // слегка увеличенный светлый силуэт за спрайтом
         const glow = (gx: number, gy: number) => {
-          if (!selected || !whiteC) return;
+          if (!selected || active || !whiteC) return;
           const g = 6; // насколько подсветка шире модельки, px
           ctx.save();
           ctx.globalAlpha = 0.55;
           ctx.drawImage(whiteC, gx - g, gy - g, twd + g * 2, th + g * 2);
           ctx.restore();
         };
-        // контур активной модели (за которую сейчас играют): белый силуэт с лёгкой
-        // растушёвкой (blur) — мягкая светящаяся обводка, облегающая край спрайта
+        // тонкая обводка того, кем управляем: светлый силуэт со сдвигом 1.5 px
+        // по контуру спрайта, без растушёвки. Чужих и манекенов не обводим.
         const contour = (gx: number, gy: number) => {
           if (!active || !whiteC) return;
-          const g = 5; // насколько контур шире модельки, px
+          const o = 1.5;
           ctx.save();
-          ctx.filter = 'blur(3px)';
-          ctx.globalAlpha = 0.85;
-          ctx.drawImage(whiteC, gx - g, gy - g, twd + g * 2, th + g * 2);
+          ctx.globalAlpha = 0.9;
+          const shifts: Array<[number, number]> = [
+            [o, 0],
+            [-o, 0],
+            [0, o],
+            [0, -o],
+            [o, o],
+            [o, -o],
+            [-o, o],
+            [-o, -o],
+          ];
+          for (const [ox, oy] of shifts) ctx.drawImage(whiteC, gx + ox, gy + oy, twd, th);
           ctx.restore();
         };
         // «желе»: сплющивание-растяжение (объём сохраняется) с лёгким поворотом
@@ -1262,8 +1284,9 @@ export default function Simulator() {
         }
       };
 
-      // манекены-мишени (каждый со своим спрайтом и ростом)
+      // манекены-мишени (каждый со своим спрайтом и ростом). Скрытая мишень не рисуется.
       for (const d of dummies) {
+        if (!dummyIsDrawn(d, s.controlled)) continue;
         const sprT = spritesRef.current[d.sprite] ?? null;
         if (!sprT) continue;
         drawChar(
@@ -1324,6 +1347,7 @@ export default function Simulator() {
       const es0 = Math.max(1, s.combat.energyStart);
       for (const d of dummies) {
         if (d.id === selfId) continue; // за этого манекена играем — его стрела живая
+        if (!dummyIsDrawn(d, selfId)) continue;
         const sprT = spritesRef.current[d.sprite] ?? null;
         if (!sprT) continue;
         const tpA = posOfChar(d.id, d.col, d.row);
@@ -1357,7 +1381,7 @@ export default function Simulator() {
         const diagM = !!tm && Math.abs(tm.col - e.col) === 1 && Math.abs(tm.row - e.row) === 1;
         const sprTm = tm ? (spritesRef.current[tm.sprite] ?? null) : null;
         const sprSelf = spritesRef.current[cfgSelf ? cfgSelf.sprite : s.character.sprite] ?? null;
-        if (tm && !diagM && sprSelf && sprTm) {
+        if (tm && !diagM && sprSelf && sprTm && strikeTargetDrawn(s, tm.id, selfId)) {
           const am = anchorOf(s, sprSelf.width / sprSelf.height, e.col, e.row, scaleSelf);
           const bmp = posOfChar(tm.id, tm.col, tm.row);
           const bm = spriteBoxOf(s, sprTm.width / sprTm.height, tm.col, tm.row, tm.scale);
@@ -1401,9 +1425,10 @@ export default function Simulator() {
         ctx.textBaseline = 'middle';
         ctx.fillText(text, bx, by + 9.5);
       };
-      // панельки энергии: манекен в боережиме всегда (панелька видна всегда),
-      // панелька своего кота — когда включён боережим
+      // панельки энергии: у видимого манекена всегда, у своего кота — в боережиме.
+      // Скрытая мишень без панельки, чтобы клетка выглядела пустой.
       for (const d of dummies) {
+        if (!dummyIsDrawn(d, selfId)) continue;
         const tpE = posOfChar(d.id, d.col, d.row);
         drawEnergyBadge(
           tpE.x,
@@ -1603,6 +1628,7 @@ export default function Simulator() {
   const hitTargetAt = (s: SimSettings, mx: number, my: number): DummyConfig | null => {
     const e = engineRef.current;
     for (const d of dummiesOf(s)) {
+      if (!dummyIsDrawn(d, s.controlled)) continue;
       const sprT = spritesRef.current[d.sprite] ?? null;
       const pos =
         d.id === s.controlled
@@ -2093,89 +2119,6 @@ export default function Simulator() {
     e.row = Math.floor(s.field.rows / 2);
   }, []);
 
-  /* ---------- перетаскивание окна боевого лога ---------- */
-
-  const [logPos, setLogPos] = useState<{ x: number; y: number } | null>(null);
-  const logBoxRef = useRef<HTMLDivElement | null>(null);
-  /** Активное перетаскивание: смещение курсора внутри окна + кэш геометрии на время drag'а. */
-  const logDragRef = useRef<{
-    dx: number;
-    dy: number;
-    hostRect: DOMRect;
-    boxW: number;
-    boxH: number;
-  } | null>(null);
-
-  // восстановление сохранённой позиции окна (SSR-безопасно, один раз)
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LOG_POS_KEY);
-      if (!raw) return;
-      const p = JSON.parse(raw) as { x?: unknown; y?: unknown };
-      if (Number.isFinite(p?.x) && Number.isFinite(p?.y)) {
-        setLogPos({ x: Number(p.x), y: Number(p.y) });
-      }
-    } catch {
-      /* повреждённая позиция — используем дефолтную */
-    }
-  }, []);
-
-  const onLogDragStart = useCallback((ev: React.PointerEvent<HTMLDivElement>) => {
-    const box = logBoxRef.current;
-    const host = box?.offsetParent as HTMLElement | null;
-    if (!box || !host || ev.button !== 0) return;
-    const br = box.getBoundingClientRect();
-    const hostRect = host.getBoundingClientRect();
-    // фиксируем текущее положение окна сразу, чтобы первый же pointermove
-    // не дёрнул окно к левому верхнему углу (left/top ещё пустые)
-    const startX = br.left - hostRect.left;
-    const startY = br.top - hostRect.top;
-    box.style.left = `${startX}px`;
-    box.style.top = `${startY}px`;
-    logDragRef.current = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, hostRect, boxW: br.width, boxH: br.height };
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-    ev.preventDefault();
-  }, []);
-
-  const onLogDragMove = useCallback((ev: React.PointerEvent<HTMLDivElement>) => {
-    const drag = logDragRef.current;
-    const box = logBoxRef.current;
-    if (!drag || !box) return;
-    const { hostRect, boxW, boxH, dx, dy } = drag;
-    const x = Math.round(Math.min(Math.max(ev.clientX - hostRect.left - dx, 0), Math.max(0, hostRect.width - boxW)));
-    const y = Math.round(Math.min(Math.max(ev.clientY - hostRect.top - dy, 0), Math.max(0, hostRect.height - boxH)));
-    // положение обновляется прямо в DOM, без setState: React не перерисовывается,
-    // и окно движется синхронно с курсором, без отрывистых рывков
-    box.style.left = `${x}px`;
-    box.style.top = `${y}px`;
-  }, []);
-
-  const onLogDragEnd = useCallback(
-    (ev: React.PointerEvent<HTMLDivElement>) => {
-      if (!logDragRef.current) return;
-      logDragRef.current = null;
-      try {
-        ev.currentTarget.releasePointerCapture(ev.pointerId);
-      } catch {
-        /* захват мог уже сняться */
-      }
-      const box = logBoxRef.current;
-      if (!box) return;
-      // итоговую позицию фиксируем в состоянии и хранилище одним действием в конце
-      const pos = {
-        x: Math.round(parseFloat(box.style.left) || 0),
-        y: Math.round(parseFloat(box.style.top) || 0),
-      };
-      setLogPos(pos);
-      try {
-        localStorage.setItem(LOG_POS_KEY, JSON.stringify(pos));
-      } catch {
-        /* хранилище может быть недоступно */
-      }
-    },
-    [],
-  );
-
   const sendChat = useCallback((text: string) => {
     const net = netRef.current;
     if (!net?.ready) return false;
@@ -2251,9 +2194,18 @@ export default function Simulator() {
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:flex-row lg:overflow-hidden lg:p-4">
-        <section className="flex h-full min-h-0 w-full shrink-0 flex-col gap-2 lg:h-auto lg:w-auto lg:flex-1">
-          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
-          <div className="relative min-h-48 min-w-0 flex-1">
+        <section className="flex w-full min-w-0 shrink-0 flex-col gap-2 lg:h-auto lg:min-h-0 lg:w-auto lg:flex-1 lg:shrink">
+          <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-stretch">
+            <div className="min-w-0 md:flex-1">
+              <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
+            </div>
+            {settings.arrow.battleMode && settings.combat.showLog ? (
+              <div className="flex min-h-0 min-w-0 flex-col overflow-hidden md:w-80 md:shrink-0">
+                <FightLog lines={combat.log.map(formatLogLine)} />
+              </div>
+            ) : null}
+          </div>
+          <div className="relative h-[min(56dvh,720px)] min-h-56 w-full shrink-0 lg:h-auto lg:min-h-48 lg:flex-1">
             <div role="region" aria-label="Игровое поле" className="absolute inset-0 overflow-auto rounded-xl border border-zinc-800 bg-[#20242a] p-3">
               <canvas
                 ref={canvasRef}
@@ -2267,45 +2219,6 @@ export default function Simulator() {
                 onClick={onClick}
               />
             </div>
-            {settings.arrow.battleMode && settings.combat.showLog ? (
-              <div
-                ref={logBoxRef}
-                className={`pointer-events-auto absolute z-10 w-64 rounded-lg border border-amber-950/70 bg-[#40301f]/90 p-2 shadow-xl ${
-                  logPos ? '' : 'bottom-6 right-6'
-                }`}
-                style={logPos ? { left: logPos.x, top: logPos.y } : undefined}
-              >
-                <div
-                  className="-mx-1 -mt-1 mb-1 flex cursor-move touch-none select-none items-center justify-between gap-2 rounded px-2 py-1.5"
-                  onPointerDown={onLogDragStart}
-                  onPointerMove={onLogDragMove}
-                  onPointerUp={onLogDragEnd}
-                  onPointerCancel={onLogDragEnd}
-                  title="Потяните заголовок, чтобы переместить окно"
-                >
-                  <span className="flex items-center gap-1 text-xs font-bold tracking-wide text-amber-100">
-                    <GripHorizontal className="size-3.5 text-amber-200/60" />
-                    Бой
-                  </span>
-                  <span className="text-[10px] text-amber-200/50">I — удар</span>
-                </div>
-                <div
-                  id="fightLog"
-                  className="flex max-h-36 flex-col gap-0.5 overflow-y-auto pr-0.5 [scrollbar-width:thin] [&>*]:shrink-0"
-                  aria-live="polite"
-                >
-                  {combat.log.length === 0 ? (
-                    <div className="text-[10px] text-amber-200/40">ударов ещё не было</div>
-                  ) : (
-                    combat.log.map((l, i) => (
-                      <div key={i} className="truncate text-[11px] text-amber-50">
-                        {formatLogLine(l)}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
             <span>W A S D — шаг (те же клавиши на русской: ц ф ы в; зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
