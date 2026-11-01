@@ -15,7 +15,7 @@
 
 | Часть | Где код | Куда выкладывается |
 | --- | --- | --- |
-| Фронт | `src/`, `public/`, Next-конфиг | Vercel, проект `coop-field`, команда `polexka`. Сайт: https://coop-field.vercel.app |
+| Фронт | `src/`, `public/`, Next-конфиг | Vercel, проект `coop-field`, команда `polexka`. Сайт: https://coop-field.vercel.app. Та же статика на VPS: https://coop.89-232-184-77.sslip.io , каталог `/opt/coop-field/www` |
 | Комната | `server.js`, `deploy/vps/` | VPS `89.232.184.77`, каталог `/opt/coop-field`, systemd `coop-field`. Сокет: `wss://coop.89-232-184-77.sslip.io` |
 
 Vercel не держит долгий WebSocket. Комнату туда не переносить и не «упрощать» до serverless.
@@ -94,10 +94,24 @@ npm run test:ws
 
 | Workflow | Когда стартует | Что делает |
 | --- | --- | --- |
-| «Фронтенд на Vercel» | `src/`, `public/`, Next-конфиг, корневые `package.json` / lockfile, сам workflow | `vercel deploy --prod` в проект `coop-field` |
+| «Фронтенд на Vercel и VPS» | `src/`, `public/`, Next-конфиг, корневые `package.json` / lockfile, сам workflow | `vercel deploy --prod` в проект `coop-field` и rsync статического `out/` в `/opt/coop-field/www`. Сервис `coop-field` не перезапускается |
 | «Сервер комнаты на VPS» | `server.js`, `scripts/`, `deploy/vps/`, сам workflow | rsync пользователем `deploy` и `deploy/vps/apply.sh` |
 
 Правки только `AGENTS.md` и `README.md` выкладку не запускают.
+
+Фронт собирается в Actions (`npm run build` → `out/`). Next на VPS не ставится. Каталог `/opt/coop-field/www` отдельный: rsync комнаты его не трогает (`--delete` там только у `scripts/` в `incoming/scripts/`), rsync фронта с `--delete` чистит только `www/`.
+
+Один раз на сервере, от root (у `deploy` нет sudo на nginx):
+
+```bash
+sudo mkdir -p /opt/coop-field/www
+sudo chown deploy:deploy /opt/coop-field/www
+sudo chmod 755 /opt/coop-field /opt/coop-field/www
+```
+
+В уже существующий `server` nginx для `coop.89-232-184-77.sslip.io` вставить [`deploy/vps/nginx-www.conf`](deploy/vps/nginx-www.conf) вместо location, который проксирует весь HTTP на комнату. `listen` и сертификаты не менять. Дождаться `index.html` в `www` (workflow или ручной запуск), затем `sudo nginx -t && sudo systemctl reload nginx`. Сокет по пути `/` и `/health` остаются на `127.0.0.1:8787`. Пока фрагмент не вставлен, снаружи страницу по-прежнему отдаёт комната из своего `public/`, каталог `www` снаружи не виден. Выкладка файлов nginx не перечитывает и комнату не роняет.
+
+Клиент с хоста `coop.89-232-184-77.sslip.io` уже берёт `wss://` того же хоста, без `?ws=`. Origin этого сайта комнате уже разрешён.
 
 Секреты репозитория, их нет в git:
 

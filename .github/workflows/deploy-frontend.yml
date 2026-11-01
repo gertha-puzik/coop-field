@@ -1,4 +1,4 @@
-name: Фронтенд на Vercel
+name: Фронтенд на Vercel и VPS
 
 on:
   push:
@@ -15,16 +15,16 @@ on:
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
 
-concurrency:
-  group: coop-field-frontend
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
 jobs:
-  deploy:
+  vercel:
+    name: Публикация на Vercel
     runs-on: ubuntu-latest
+    concurrency:
+      group: coop-field-frontend-vercel
+      cancel-in-progress: true
     env:
       VERCEL_ORG_ID: team_WFMW7Ya5MxMk0LeorKy5SjYL
       VERCEL_PROJECT_ID: prj_gPVkczSciohffXtx1PGonYM4q1hh
@@ -33,3 +33,48 @@ jobs:
       - uses: actions/checkout@v4
       - name: Публикация production на Vercel
         run: npx --yes vercel@65.9.0 deploy --prod --yes --non-interactive
+
+  vps:
+    name: Статика на VPS
+    runs-on: ubuntu-latest
+    concurrency:
+      group: coop-field-frontend-vps
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Сборка статического экспорта
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -f out/index.html
+      - name: Заливка каталога www
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KEY" ]; then
+            echo "секрет VPS_SSH_KEY пуст" >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www && test -w /opt/coop-field/www"; then
+            echo "нет записи в /opt/coop-field/www. Один раз от root: mkdir, chown deploy:deploy. См. README." >&2
+            exit 1
+          fi
+          # --delete только внутри www. Код комнаты в /opt/coop-field этим rsync не затрагивается.
+          rsync -az --delete -e "$SSH" \
+            out/ \
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www/"
+          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www"
+          echo "статика в /opt/coop-field/www. nginx отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."

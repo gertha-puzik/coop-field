@@ -44,6 +44,7 @@ jobs:
             deploy/vps/package-lock.json \
             deploy/vps/apply.sh \
             "$SSH_USER@$SSH_HOST:incoming/"
+          # --delete только у scripts/ в incoming. /opt/coop-field/www — статика фронта, её не трогать.
           rsync -az --delete -e "$SSH" \
             scripts/ \
             "$SSH_USER@$SSH_HOST:incoming/scripts/"

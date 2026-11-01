@@ -46,11 +46,31 @@ npm run test:ws
 
 | Workflow | Куда | Когда |
 |----------|------|--------|
-| «Фронтенд на Vercel» | проект Vercel `coop-field` (команда `polexka`) | изменения `src/`, `public/`, Next-конфига или зависимостей фронта |
+| «Фронтенд на Vercel и VPS» | проект Vercel `coop-field` (команда `polexka`) и каталог `/opt/coop-field/www` на `89.232.184.77` | изменения `src/`, `public/`, Next-конфига или зависимостей фронта |
 | «Сервер комнаты на VPS» | `89.232.184.77`, `/opt/coop-field`, сервис `coop-field` | изменения `server.js`, `scripts/` или `deploy/vps/` |
 
 Фронт — статический Next (`output: "export"`). Секрет репозитория `VERCEL_TOKEN`.
+Тот же workflow собирает `out/` в Actions и заливает его пользователем `deploy` в `/opt/coop-field/www`. Next на VPS не ставится, сервис `coop-field` из-за этой заливки не перезапускается. `--delete` у фронта действует только внутри `www/`, у комнаты — только у `incoming/scripts/`.
+
+Сайты: `https://coop-field.vercel.app` и `https://coop.89-232-184-77.sslip.io`. Прод-сокет: `wss://coop.89-232-184-77.sslip.io`. С хоста комнаты клиент сам берёт этот сокет, без `?ws=`.
+
 Комнату Vercel не держит: Actions заходит по SSH пользователем `deploy` и вызывает `deploy/vps/apply.sh`.
 Секрет `VPS_SSH_KEY` — приватный ключ этого пользователя. Если `server.js` и lockfile зависимостей не менялись, сервис не перезапускается.
 
-Прод-сокет: `wss://coop.89-232-184-77.sslip.io`. Сайт: `https://coop-field.vercel.app`.
+### Один раз на VPS, от root
+
+У `deploy` есть только `systemctl restart` и `status` сервиса `coop-field`. Nginx он не перечитывает. Пока фрагмент ниже не вставлен, `https://coop.89-232-184-77.sslip.io` по-прежнему отдаёт комната из своего `public/`, а новый каталог снаружи не виден.
+
+```bash
+sudo mkdir -p /opt/coop-field/www
+sudo chown deploy:deploy /opt/coop-field/www
+sudo chmod 755 /opt/coop-field /opt/coop-field/www
+```
+
+В уже существующий `server` nginx для `coop.89-232-184-77.sslip.io` вставить [`deploy/vps/nginx-www.conf`](deploy/vps/nginx-www.conf) вместо location, который проксирует весь HTTP на комнату. `listen` и сертификаты не менять. Сначала дождаться файла `/opt/coop-field/www/index.html` (push в `main` или ручной запуск workflow), затем:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+После этого корень сайта — статика из `www`, WebSocket на `/` и `/health` остаются на комнате `127.0.0.1:8787`.
