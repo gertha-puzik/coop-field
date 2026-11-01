@@ -77,4 +77,4 @@ jobs:
             out/ \
             "$SSH_USER@$SSH_HOST:/opt/coop-field/www/"
           $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www"
-          echo "статика в /opt/coop-field/www. nginx отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."
+          echo "статика в /opt/coop-field/www. сайт abnocw.89-232-184-77.sslip.io отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."

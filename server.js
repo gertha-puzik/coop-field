@@ -9,10 +9,12 @@ const PUBLIC = path.join(__dirname, "public");
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT) || 3780;
 const WS_HOSTNAME = "coop.89-232-184-77.sslip.io";
+const FRONT_HOSTNAME = "abnocw.89-232-184-77.sslip.io";
 const DEFAULT_ORIGINS = [
   "http://localhost:3780",
   "http://127.0.0.1:3780",
   `https://${WS_HOSTNAME}`,
+  `https://${FRONT_HOSTNAME}`,
 ];
 
 function allowedOrigins() {

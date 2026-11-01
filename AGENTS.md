@@ -15,7 +15,7 @@
 
 | Часть | Где код | Куда выкладывается |
 | --- | --- | --- |
-| Фронт | `src/`, `public/`, Next-конфиг | Vercel, проект `coop-field`, команда `polexka`. Сайт: https://coop-field.vercel.app. Та же статика на VPS: https://coop.89-232-184-77.sslip.io , каталог `/opt/coop-field/www` |
+| Фронт | `src/`, `public/`, Next-конфиг | Vercel, проект `coop-field`, команда `polexka`. Сайт: https://coop-field.vercel.app. Та же статика на VPS: https://abnocw.89-232-184-77.sslip.io , каталог `/opt/coop-field/www` |
 | Комната | `server.js`, `deploy/vps/` | VPS `89.232.184.77`, каталог `/opt/coop-field`, systemd `coop-field`. Сокет: `wss://coop.89-232-184-77.sslip.io` |
 
 Vercel не держит долгий WebSocket. Комнату туда не переносить и не «упрощать» до serverless.
@@ -73,7 +73,7 @@ npm run test:ws
 - Поле 10 на 6. Координаты клеток в протоколе с 1, не с 0.
 - Когти, зубы и нокаут по сети не синхронизируются.
 - Локальные манекены живут только пока игрок в комнате один.
-- WebSocket принимает origin с localhost, с `https://coop.89-232-184-77.sslip.io` и с `https://coop-field*.vercel.app`. Новый сайт добавляй через переменную `ALLOWED_ORIGINS` на сервисе, не открывай сокет всем origin.
+- WebSocket принимает origin с localhost, с `https://coop.89-232-184-77.sslip.io`, с `https://abnocw.89-232-184-77.sslip.io` и с `https://coop-field*.vercel.app`. Другой сайт добавляй через переменную `ALLOWED_ORIGINS` на сервисе, не открывай сокет всем origin.
 - Тексты интерфейса и сообщения комнаты — по-русски.
 
 Если меняешь событие, поле или отказ — правь вместе `server.js`, `src/lib/net/coop.ts` и `scripts/test-ws.mjs`, затем прогони `npm run test:ws`.
@@ -101,7 +101,7 @@ npm run test:ws
 
 Фронт собирается в Actions (`npm run build` → `out/`). Next на VPS не ставится. Каталог `/opt/coop-field/www` отдельный: rsync комнаты его не трогает (`--delete` там только у `scripts/` в `incoming/scripts/`), rsync фронта с `--delete` чистит только `www/`.
 
-Один раз на сервере, от root (у `deploy` нет sudo на nginx):
+Один раз на сервере, от root (у `deploy` нет sudo на nginx). Vhost комнаты `coop.89-232-184-77.sslip.io` не переписывать: сокет остаётся там.
 
 ```bash
 sudo mkdir -p /opt/coop-field/www
@@ -109,9 +109,21 @@ sudo chown deploy:deploy /opt/coop-field/www
 sudo chmod 755 /opt/coop-field /opt/coop-field/www
 ```
 
-В уже существующий `server` nginx для `coop.89-232-184-77.sslip.io` вставить [`deploy/vps/nginx-www.conf`](deploy/vps/nginx-www.conf) вместо location, который проксирует весь HTTP на комнату. `listen` и сертификаты не менять. Дождаться `index.html` в `www` (workflow или ручной запуск), затем `sudo nginx -t && sudo systemctl reload nginx`. Сокет по пути `/` и `/health` остаются на `127.0.0.1:8787`. Пока фрагмент не вставлен, снаружи страницу по-прежнему отдаёт комната из своего `public/`, каталог `www` снаружи не виден. Выкладка файлов nginx не перечитывает и комнату не роняет.
+Подключить [`deploy/vps/nginx-www.conf`](deploy/vps/nginx-www.conf) отдельным сайтом nginx. В файле уже `server_name abnocw.89-232-184-77.sslip.io` и корень `/opt/coop-field/www`, слушает только 80. Точный каталог сайтов на сервере в git не лежит.
 
-Клиент с хоста `coop.89-232-184-77.sslip.io` уже берёт `wss://` того же хоста, без `?ws=`. Origin этого сайта комнате уже разрешён.
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+HTTPS само не появится. Сертификат комнаты выпущен Let's Encrypt только на `coop.89-232-184-77.sslip.io` и к новому имени не подходит. Если комнатный сертификат выпускал certbot:
+
+```bash
+sudo certbot --nginx -d abnocw.89-232-184-77.sslip.io
+```
+
+Если certbot нет, тем же способом, которым выпущен сертификат комнаты, выпустить сертификат именно на `abnocw.89-232-184-77.sslip.io` и повесить его на этот server. Чужой сертификат не подставлять.
+
+Пока server нет, `https://abnocw.89-232-184-77.sslip.io` не откроется. Выкладка файлов в `www` при пуше в `main` идёт сама, nginx не перечитывает и комнату не роняет. Клиент с хоста `abnocw` берёт сокет `wss://coop.89-232-184-77.sslip.io` без `?ws=`. Origin этого сайта комнате разрешён вместе со старым origin комнаты.
 
 Секреты репозитория, их нет в git:
 
