@@ -366,6 +366,17 @@ export default function Simulator() {
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
+   * Своя клетка на сервере и шаги, которые уже нарисовали, но ещё не подтвердили.
+   * Кот шагает сразу, не дожидаясь RTT. Отказ («клетка занята» / «край поля»)
+   * возвращает его на последнюю подтверждённую клетку.
+   */
+  const netMovesRef = useRef<{
+    server: { col: number; row: number } | null;
+    pending: { col: number; row: number }[];
+  }>({ server: null, pending: [] });
+  /** Спрайт, который не удалось декодировать: кота всё равно рисуем заглушкой. */
+  const brokenSpritesRef = useRef<Set<SpriteId>>(new Set());
+  /**
    * Последний угол, уже ушедший в комнату. Пока стрела крутится или ползунок едет,
    * шлём aim примерно каждые 32 мс, если угол вообще изменился (порога в 2° нет).
    * На 60 Гц это каждый второй кадр (~33 мс, около 30/с), а не каждый третий:
@@ -579,8 +590,11 @@ export default function Simulator() {
         setMeId(cat.id);
         setNetReady(true);
         const e = engineRef.current;
-        if (typeof cat.x === 'number') e.col = Math.max(0, cat.x - 1);
-        if (typeof cat.y === 'number') e.row = Math.max(0, cat.y - 1);
+        const col = typeof cat.x === 'number' ? Math.max(0, cat.x - 1) : e.col;
+        const row = typeof cat.y === 'number' ? Math.max(0, cat.y - 1) : e.row;
+        e.col = col;
+        e.row = row;
+        netMovesRef.current = { server: { col, row }, pending: [] };
         setNetStatus(`Вы — ${cat.login || 'кот'} (#${cat.id})`);
         if (cat.login) setPlayerName(cat.login);
       },
@@ -600,9 +614,12 @@ export default function Simulator() {
           }));
         }
         const me = cats.find((c) => c.id === meIdRef.current);
-        if (me) {
-          engineRef.current.col = Math.max(0, me.x - 1);
-          engineRef.current.row = Math.max(0, me.y - 1);
+        if (me && netMovesRef.current.pending.length === 0) {
+          const col = Math.max(0, me.x - 1);
+          const row = Math.max(0, me.y - 1);
+          engineRef.current.col = col;
+          engineRef.current.row = row;
+          netMovesRef.current.server = { col, row };
         }
         setNetStatus(`Вы в комнате ${field.room || room} · ${cats.length} на поле`);
       },
@@ -614,8 +631,26 @@ export default function Simulator() {
           return;
         }
         if (cat.id === meIdRef.current) {
-          if (typeof cat.x === 'number') engineRef.current.col = Math.max(0, cat.x - 1);
-          if (typeof cat.y === 'number') engineRef.current.row = Math.max(0, cat.y - 1);
+          if (typeof cat.x === 'number' && typeof cat.y === 'number') {
+            const col = Math.max(0, cat.x - 1);
+            const row = Math.max(0, cat.y - 1);
+            const book = netMovesRef.current;
+            book.server = { col, row };
+            const head = book.pending[0];
+            if (head && head.col === col && head.row === row) {
+              book.pending.shift();
+            } else if (head) {
+              // Сервер поставил другую клетку — догоняем его и забываем неподтверждённые шаги.
+              book.pending = [];
+              engineRef.current.col = col;
+              engineRef.current.row = row;
+              engineRef.current.path = [];
+              engineRef.current.step = null;
+            } else if (engineRef.current.col !== col || engineRef.current.row !== row) {
+              engineRef.current.col = col;
+              engineRef.current.row = row;
+            }
+          }
           const path = engineRef.current.path;
           if (path.length > 0 && path[0].c === engineRef.current.col && path[0].r === engineRef.current.row) {
             path.shift();
@@ -654,7 +689,18 @@ export default function Simulator() {
         });
       },
       onChatLog: (messages) => setChatLines(messages.slice(-80)),
-      onInfo: (text) => setNetStatus(text),
+      onInfo: (text) => {
+        setNetStatus(text);
+        if (!text.includes('Клетка занята') && !text.includes('Край поля')) return;
+        const cell = netMovesRef.current.server;
+        netMovesRef.current.pending = [];
+        if (cell) {
+          engineRef.current.col = cell.col;
+          engineRef.current.row = cell.row;
+        }
+        engineRef.current.path = [];
+        engineRef.current.step = null;
+      },
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
       onClose: () => {
@@ -675,6 +721,7 @@ export default function Simulator() {
     return () => {
       liveRemotes = [];
       remoteAim.clear();
+      netMovesRef.current = { server: null, pending: [] };
       const sync = aimSyncRef.current;
       if (sync.timer) clearTimeout(sync.timer);
       sync.timer = null;
@@ -702,10 +749,11 @@ export default function Simulator() {
   /* ---------- спрайты ---------- */
 
   useEffect(() => {
+    let cancelled = false;
     for (const sp of SPRITES) {
       const img = new Image();
-      img.src = sp.src;
-      img.onload = () => {
+      const store = () => {
+        if (cancelled || spritesRef.current[sp.id]) return;
         spritesRef.current[sp.id] = img;
         // светлый силуэт того же спрайта: тонкая обводка своего кота
         const wc = document.createElement('canvas');
@@ -720,7 +768,18 @@ export default function Simulator() {
         }
         whiteSpritesRef.current[sp.id] = wc;
       };
+      // Обработчик до src: у уже лежащего в кэше PNG load бывает синхронным,
+      // и назначенный после src onload его не видит — кот остаётся без картинки.
+      img.onload = store;
+      img.onerror = () => {
+        if (!cancelled) brokenSpritesRef.current.add(sp.id);
+      };
+      img.src = sp.src;
+      if (img.complete && img.naturalWidth > 0) store();
     }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ---------- геометрия ---------- */
@@ -780,6 +839,9 @@ export default function Simulator() {
       // действуют всегда, и спам кнопок не может их «пересилить»
       const requestStep = (dirDeg: number, tc: number, tr: number) => {
         if (netRef.current?.ready && s.controlled === 'main') {
+          const book = netMovesRef.current;
+          // Пока сервер не назвал клетку, шаг не рисуем: иначе «you» вернёт кота на спавн.
+          if (!book.server) return 'wait';
           const dd = dirByDeg(dirDeg);
           const deg = Math.round(wrap360(e.angle) * 10) / 10;
           netRef.current.emit('move', { x: dd.dx, y: dd.dy, deg });
@@ -791,10 +853,10 @@ export default function Simulator() {
           sync.pending = null;
           sync.deg = deg;
           sync.at = performance.now();
-          const sd = slowdownFor(dirDeg, e.angle, s);
-          e.step = { dir: dirDeg, sd, start: now, dur: stepDuration(s.character.stepMs, sd) };
-          e.lastDir = dirDeg;
-          e.lastSpeed = speedFor(sd);
+          // Клетка на экране меняется сразу. Сервер остаётся источником правды:
+          // подтверждение снимет шаг с очереди, отказ вернёт на book.server.
+          book.pending.push({ col: tc, row: tr });
+          beginStep(dirDeg, tc, tr);
           return 'net';
         }
         beginStep(dirDeg, tc, tr);
@@ -854,7 +916,7 @@ export default function Simulator() {
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
           if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r)) {
             const mode = requestStep(d.deg, nx.c, nx.r);
-            if (mode === 'local') e.path.shift();
+            if (mode === 'local' || mode === 'net') e.path.shift();
           } else {
             e.path = [];
           }
@@ -1288,27 +1350,37 @@ export default function Simulator() {
       // манекены-мишени (каждый со своим спрайтом и ростом). Скрытая мишень не рисуется.
       for (const d of dummies) {
         if (!dummyIsDrawn(d, s.controlled)) continue;
-        const sprT = spritesRef.current[d.sprite] ?? null;
-        if (!sprT) continue;
-        drawChar(
-          sprT,
-          posOfChar(d.id, d.col, d.row),
-          d.scale,
-          d.id,
-          false,
-          whiteSpritesRef.current[d.sprite] ?? null,
-          d.id === s.controlled,
-        );
+        const sprT = brokenSpritesRef.current.has(d.sprite) ? null : (spritesRef.current[d.sprite] ?? null);
+        const tp = posOfChar(d.id, d.col, d.row);
+        if (sprT) {
+          drawChar(
+            sprT,
+            tp,
+            d.scale,
+            d.id,
+            false,
+            whiteSpritesRef.current[d.sprite] ?? null,
+            d.id === s.controlled,
+          );
+        } else if (d.id.startsWith('p')) {
+          // PNG ещё не пришёл или битый — кот всё равно стоит на клетке, не пропадает.
+          ctx.beginPath();
+          ctx.arc(tp.x + s.field.cellW / 2, tp.y + s.field.cellH * 0.55, 18, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.35)';
+          ctx.fill();
+        } else {
+          continue;
+        }
         if (liveRemotes.length > 0) {
-          const tp = posOfChar(d.id, d.col, d.row);
           const th = (s.field.cellH - 10) * (d.scale / 100);
+          const nameX = sprT ? tp.x + (sprT.width / sprT.height) * th * 0.5 : tp.x + s.field.cellW / 2;
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillText(d.name, tp.x + (sprT.width / sprT.height) * th * 0.5 + 1, tp.y - 16);
+          ctx.fillText(d.name, nameX + 1, tp.y - 16);
           ctx.fillStyle = '#f4f4f5';
-          ctx.fillText(d.name, tp.x + (sprT.width / sprT.height) * th * 0.5, tp.y - 17);
+          ctx.fillText(d.name, nameX, tp.y - 17);
         }
       }
 
@@ -1349,10 +1421,10 @@ export default function Simulator() {
       for (const d of dummies) {
         if (d.id === selfId) continue; // за этого манекена играем — его стрела живая
         if (!dummyIsDrawn(d, selfId)) continue;
-        const sprT = spritesRef.current[d.sprite] ?? null;
-        if (!sprT) continue;
+        const sprT = brokenSpritesRef.current.has(d.sprite) ? null : (spritesRef.current[d.sprite] ?? null);
+        if (!sprT && !d.id.startsWith('p')) continue;
         const tpA = posOfChar(d.id, d.col, d.row);
-        const ta = anchorAtPx(s, sprT.width / sprT.height, tpA.x, tpA.y, d.scale);
+        const ta = anchorAtPx(s, sprT ? sprT.width / sprT.height : 2 / 3, tpA.x, tpA.y, d.scale);
         const tFrac = (combatRef.current.dummyEnergy[d.id] ?? es0) / es0;
         const shown = liveRemotes.length > 0 ? (remoteAim.get(d.id)?.display ?? d.angle) : d.angle;
         drawArrowBody(s, ta.k, ta.ax, ta.ay, shown, tFrac, s.arrow.showRay);
