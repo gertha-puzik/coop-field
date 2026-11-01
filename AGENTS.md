@@ -43,7 +43,8 @@ npm run test:ws
 ## Карта кода
 
 - `src/app/page.tsx` — страница, рисует симулятор.
-- `src/components/sim/simulator.tsx` — канвас, клавиши, бой, подключение к комнате.
+- `src/components/sim/simulator.tsx` — канвас, клавиши, бой, чат, подключение к комнате.
+- `src/components/sim/room-chat.tsx` — панель чата под полем.
 - `src/components/sim/settings-panel.tsx` — панель настроек.
 - `src/lib/sim/settings.ts` — математика боя, зоны, спрайты, замедление. Углы: 0° вправо, дальше по часовой.
 - `src/lib/sim/remote-aim.ts` — чужой прицел по сети.
@@ -59,10 +60,11 @@ npm run test:ws
 
 Сообщения — JSON-массив `[событие, данные]`.
 
-Клиент шлёт: `join` (или `first`), `move`, `aim`, `strike`.
-Сервер шлёт: `you`, `field`, `update cat`, `fight`, `info`, `noplace`.
+Клиент шлёт: `join` (или `first`), `move`, `aim`, `strike`, `sprite`, `chat`.
+Сервер шлёт: `you`, `field`, `update cat`, `fight`, `info`, `noplace`, `chat`, `chatlog`.
 
 `strike` с клиента: `{ target, zone, angle }`. Сервер отвечает всей комнате `fight`.
+`sprite` меняет скин сразу у всех. `chat` — строка в панели под полем: Enter пишет, Esc возвращает на поле. История новичку приходит как `chatlog`, не больше 40 строк. Пустое сообщение отбрасывается, длиннее 200 символов обрезается, чаще чем раз в 450 мс — отказ.
 
 Это нельзя ломать молча:
 
