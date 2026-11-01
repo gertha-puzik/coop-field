@@ -521,7 +521,34 @@ if (logged.join("|") !== ["привет комнате", "я".repeat(200), "ра
 }
 console.log("ok: chat", logged.length, "lines, clip 200, rate, history");
 
-for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider]) {
+// Скин меняется на месте и виден другому сокету. Себе эхо не шлём.
+const skinRoom = `s${Date.now().toString(36)}`;
+const sa = await client("Альфа", skinRoom);
+const sb = await client("Бета", skinRoom);
+const skinYou = (await waitFor(sa, "you"))[1];
+await waitFor(sb, "you");
+sa.inbox.length = 0;
+sb.inbox.length = 0;
+sa.send(JSON.stringify(["sprite", { sprite: "puzatik" }]));
+const skinSeen = await waitFor(sb, "update cat");
+if (skinSeen[1].id !== skinYou.id) throw new Error(`sprite id ${JSON.stringify(skinSeen[1])}`);
+if (skinSeen[1].sprite !== "puzatik") throw new Error(`sprite ${skinSeen[1].sprite}`);
+if (skinSeen[1].x !== skinYou.x || skinSeen[1].y !== skinYou.y) {
+  throw new Error(`sprite moved the cat ${JSON.stringify(skinSeen[1])}`);
+}
+if (sa.inbox.some((m) => m[0] === "update cat")) throw new Error("sprite echoed to the wearer");
+sa.send(JSON.stringify(["sprite", { sprite: "not-a-cat" }]));
+sa.send(JSON.stringify(["sprite", { sprite: "puzatik" }]));
+await sleep(80);
+const skinPatches = sb.inbox.filter((m) => m[0] === "update cat");
+if (skinPatches.length !== 1) throw new Error(`sprite spam ${JSON.stringify(skinPatches)}`);
+const skinJoiner = await client("Гамма", skinRoom);
+const skinField = (await waitFor(skinJoiner, "field"))[1];
+const worn = (skinField.cats || []).find((c) => c.id === skinYou.id);
+if (!worn || worn.sprite !== "puzatik") throw new Error(`sprite not in field ${JSON.stringify(worn)}`);
+console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite);
+
+for (const ws of [a, b, c, d, left, right, overflow, first, second, spinner, watcher, ...held, ...burst, ...guardBurst, again, p, q, ca, cb, cc, outsider, sa, sb, skinJoiner]) {
   try {
     ws.close();
   } catch {

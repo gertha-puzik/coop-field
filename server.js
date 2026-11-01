@@ -256,9 +256,32 @@ function move(ws, payload = {}) {
   cat.aimDirty = false;
   cat.lastAim = now;
   cat.lastMove = now;
-  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg };
+  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite };
   send(ws, "update cat", patch);
   broadcast(room, "update cat", patch);
+}
+
+/**
+ * Смена скина. Клиент → ["sprite", { sprite }].
+ * Остальным в комнате сразу → ["update cat", { id, x, y, deg, sprite, login }].
+ * Клетка не меняется. Неизвестный id спрайта молча отбрасывается.
+ */
+function setSprite(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const sprite = String(payload.sprite || "").trim();
+  if (!SPRITES.includes(sprite) || sprite === cat.sprite) return;
+  cat.sprite = sprite;
+  broadcast(
+    room,
+    "update cat",
+    { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite, login: cat.login },
+    ws,
+  );
 }
 
 function clearAimTimer(cat) {
@@ -298,7 +321,7 @@ function setDeg(ws, deg) {
 function broadcastDeg(room, cat, exceptWs) {
   cat.aimDirty = false;
   cat.lastAim = Date.now();
-  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg }, exceptWs);
+  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite }, exceptWs);
 }
 
 function aim(ws, payload = {}) {
@@ -494,6 +517,7 @@ function onMessage(ws, raw) {
   else if (event === "aim") aim(ws, payload || {});
   else if (event === "strike") strike(ws, payload || {});
   else if (event === "chat") chat(ws, payload ?? {});
+  else if (event === "sprite") setSprite(ws, payload || {});
 }
 
 const MIME = {

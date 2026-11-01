@@ -8,6 +8,7 @@ import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId,
 import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
 import { RoomChat } from './room-chat';
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
+import { keyAction } from '@/lib/sim/keys';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
@@ -667,6 +668,12 @@ export default function Simulator() {
       netRef.current = null;
     };
   }, [loaded, applyNetFight]);
+
+  /** Скин своего кота уходит в комнату сразу, без повторного входа. */
+  useEffect(() => {
+    if (!loaded || !netReady) return;
+    netRef.current?.emit('sprite', { sprite: settings.character.sprite });
+  }, [loaded, netReady, settings.character.sprite]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -1506,48 +1513,36 @@ export default function Simulator() {
   /* ---------- клавиатура ---------- */
 
   useEffect(() => {
-    const codeToDir: Record<string, number> = {
-      KeyD: 0,
-      KeyX: 45,
-      KeyS: 90,
-      KeyZ: 135,
-      KeyA: 180,
-      KeyQ: 225,
-      KeyW: 270,
-      KeyE: 315,
-    };
     const isForm = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
       return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     };
     const down = (ev: KeyboardEvent) => {
       if (isForm(ev.target)) return;
+      const action = keyAction(ev);
       const t = ev.target as HTMLElement | null;
-      if (t && t.tagName === 'BUTTON' && (ev.code === 'Space' || ev.code === 'Enter')) t.blur();
+      if (t && t.tagName === 'BUTTON' && (action?.type === 'chat' || ev.code === 'Space' || ev.key === ' ')) t.blur();
       // автоповтор ОС игнорируем: каждое физическое нажатие — ровно одно срабатывание;
       // темп движения ограничен только замедлением (спам не превышает скорость шага)
       if (ev.repeat) return;
-      if (ev.code === 'KeyJ') {
+      if (!action) return;
+      if (action.type === 'rot') {
         ev.preventDefault();
-        engineRef.current.rot = -1; // против часовой
+        engineRef.current.rot = action.sign;
         return;
       }
-      if (ev.code === 'KeyL') {
-        ev.preventDefault();
-        engineRef.current.rot = 1; // по часовой
+      if (action.type === 'chat') {
+        if (t?.tagName === 'BODY' || t?.tagName === 'CANVAS') {
+          ev.preventDefault();
+          document.getElementById('roomChatInput')?.focus();
+        }
         return;
       }
-      const focusChat = ev.code === 'Enter' && (t?.tagName === 'BODY' || t?.tagName === 'CANVAS');
-      if (focusChat) {
-        ev.preventDefault();
-        document.getElementById('roomChatInput')?.focus();
-        return;
-      }
-      if (ev.code === 'KeyB') {
+      if (action.type === 'battle') {
         setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: !p.arrow.battleMode } }));
         return;
       }
-      if (ev.code === 'KeyI') {
+      if (action.type === 'strike') {
         ev.preventDefault();
         const e = engineRef.current;
         e.strikeHeld = true;
@@ -1555,27 +1550,27 @@ export default function Simulator() {
         doStrikeRef.current?.();
         return;
       }
-      const dir = codeToDir[ev.code];
-      if (dir !== undefined) {
-        ev.preventDefault();
-        const e = engineRef.current;
-        if (!e.held.includes(dir)) {
-          e.held.push(dir);
-          e.path = [];
-        }
-        // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
-        // чем разрешает замедление, двигаться нельзя
-        startStepRef.current?.(dir);
+      ev.preventDefault();
+      const e = engineRef.current;
+      if (!e.held.includes(action.dir)) {
+        e.held.push(action.dir);
+        e.path = [];
       }
+      // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
+      // чем разрешает замедление, двигаться нельзя
+      startStepRef.current?.(action.dir);
     };
     const up = (ev: KeyboardEvent) => {
       const e = engineRef.current;
-      if (ev.code === 'KeyJ' && e.rot === -1) e.rot = 0;
-      if (ev.code === 'KeyL' && e.rot === 1) e.rot = 0;
-      if (ev.code === 'KeyI') e.strikeHeld = false;
-      const dir = codeToDir[ev.code];
-      if (dir !== undefined) {
-        e.held = e.held.filter((d) => d !== dir);
+      const action = keyAction(ev);
+      if (!action) return;
+      if (action.type === 'rot') {
+        if (action.sign === -1 && e.rot === -1) e.rot = 0;
+        if (action.sign === 1 && e.rot === 1) e.rot = 0;
+      } else if (action.type === 'strike') {
+        e.strikeHeld = false;
+      } else if (action.type === 'move') {
+        e.held = e.held.filter((d) => d !== action.dir);
       }
     };
     const blur = () => {
@@ -2312,7 +2307,7 @@ export default function Simulator() {
             ) : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
-            <span>W A S D — шаг (зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
+            <span>W A S D — шаг (те же клавиши на русской: ц ф ы в; зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
             <span>Q E Z X — диагонали</span>
             <span>ЛКМ — маршрут · манекен — тянуть</span>
             <span>B — бой</span>
