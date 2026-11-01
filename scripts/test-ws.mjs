@@ -577,6 +577,38 @@ function handshake(origin) {
   });
 }
 
+// Одно движение — одно update cat шагнувшему и одно зрителю.
+// Раньше broadcast без except дублировал эхо шагнувшему: в HAR пары с dt ~0.1 мс.
+{
+  const echoRoom = `e${Date.now().toString(36)}`;
+  const mover = await client("Эхо", echoRoom);
+  const watcher = await client("Зритель", echoRoom);
+  const moverYou = (await waitFor(mover, "you"))[1];
+  await waitFor(watcher, "you");
+  mover.inbox.length = 0;
+  watcher.inbox.length = 0;
+  mover.send(JSON.stringify(["move", { x: 0, y: 1 }]));
+  await waitFor(mover, "update cat");
+  await waitFor(watcher, "update cat");
+  await sleep(40);
+  const selfEcho = mover.inbox.filter((m) => m[0] === "update cat" && m[1].id === moverYou.id);
+  const peerEcho = watcher.inbox.filter((m) => m[0] === "update cat" && m[1].id === moverYou.id);
+  if (selfEcho.length !== 1) throw new Error(`mover echo ×${selfEcho.length}, expected 1`);
+  if (peerEcho.length !== 1) throw new Error(`peer echo ×${peerEcho.length}, expected 1`);
+  if (selfEcho[0][1].x !== moverYou.x || selfEcho[0][1].y !== moverYou.y + 1) {
+    throw new Error(`echo cell ${selfEcho[0][1].x}:${selfEcho[0][1].y}`);
+  }
+  mover.send(JSON.stringify(["move", { x: 0, y: 1 }]));
+  await sleep(40);
+  const paced = mover.inbox.filter((m) => m[0] === "update cat" && m[1].id === moverYou.id);
+  if (paced.length !== 1 || paced[0][1].y !== moverYou.y + 1) {
+    throw new Error(`cooldown let a second step through: ${JSON.stringify(paced.map((m) => m[1]))}`);
+  }
+  console.log("ok: one move echo, cooldown drops the double");
+  mover.close();
+  watcher.close();
+}
+
 const originCases = [
   ["https://abnocw.89-232-184-77.sslip.io", true],
   ["https://coop.89-232-184-77.sslip.io", true],

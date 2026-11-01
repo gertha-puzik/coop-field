@@ -6,6 +6,14 @@ import { CharacterPicker, type CharacterChoice } from './character-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
 import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
+import {
+  advanceRemoteDraw,
+  applyOwnMoveAck,
+  enqueueRemoteCell,
+  rejectOwnMove,
+  seedRemoteDraw,
+  type RemoteDraw,
+} from '@/lib/net/move-book';
 import { FightLog } from './fight-log';
 import { RoomChat } from './room-chat';
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
@@ -245,11 +253,35 @@ interface CharRef {
 /** Живые соседи с сервера: если кто-то ещё в комнате — рисуем их, иначе локальные манекены. */
 let liveRemotes: DummyConfig[] = [];
 /**
- * Плавный угол чужой стрелы. d.angle в liveRemotes — последний сетевой угол (клетка
- * прыгает сразу), а на кадре рисуем display: догоняем его по короткой дуге.
+ * Плавный угол чужой стрелы. d.angle в liveRemotes — последний сетевой угол,
+ * а на кадре рисуем display: догоняем его по короткой дуге.
  * Свою стрелу сюда не кладём.
+ * Клетка чужого кота на сервере лежит в d.col/d.row (препятствие и цель удара).
+ * На экране — remoteDraw: за кадр не больше одного шага, пачка update не склеивается.
  */
 const remoteAim = new Map<string, RemoteAim>();
+const remoteDraw = new Map<string, RemoteDraw>();
+
+function rememberRemoteCell(id: string, col: number, row: number) {
+  const vis = remoteDraw.get(id);
+  if (!vis) {
+    remoteDraw.set(id, seedRemoteDraw({ col, row }));
+    return;
+  }
+  enqueueRemoteCell(vis, { col, row });
+}
+
+function stepRemoteDraws() {
+  for (const d of liveRemotes) {
+    let vis = remoteDraw.get(d.id);
+    if (!vis) {
+      vis = seedRemoteDraw({ col: d.col, row: d.row });
+      remoteDraw.set(d.id, vis);
+      continue;
+    }
+    advanceRemoteDraw(vis);
+  }
+}
 
 /** Манекены, добавленные на поле (или другие игроки комнаты). */
 function dummiesOf(s: SimSettings): DummyConfig[] {
@@ -603,6 +635,8 @@ export default function Simulator() {
         const others = cats.filter((c) => c.id !== meIdRef.current);
         liveRemotes = others.map(catToDummy);
         remoteAim.clear();
+        remoteDraw.clear();
+        for (const d of liveRemotes) remoteDraw.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
         const seenAt = performance.now();
         for (const d of liveRemotes) remoteAim.set(d.id, createRemoteAim(d.angle, seenAt));
         setPeerCount(cats.length || 1);
@@ -626,6 +660,7 @@ export default function Simulator() {
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
           remoteAim.delete(`p${cat.id}`);
+          remoteDraw.delete(`p${cat.id}`);
           liveRemotes = liveRemotes.filter((d) => d.id !== `p${cat.id}`);
           setPeerCount(1 + liveRemotes.length);
           return;
@@ -634,21 +669,19 @@ export default function Simulator() {
           if (typeof cat.x === 'number' && typeof cat.y === 'number') {
             const col = Math.max(0, cat.x - 1);
             const row = Math.max(0, cat.y - 1);
-            const book = netMovesRef.current;
-            book.server = { col, row };
-            const head = book.pending[0];
-            if (head && head.col === col && head.row === row) {
-              book.pending.shift();
-            } else if (head) {
+            const verdict = applyOwnMoveAck(netMovesRef.current, { col, row }, {
+              col: engineRef.current.col,
+              row: engineRef.current.row,
+            });
+            if (verdict.type === 'reject') {
               // Сервер поставил другую клетку — догоняем его и забываем неподтверждённые шаги.
-              book.pending = [];
-              engineRef.current.col = col;
-              engineRef.current.row = row;
+              engineRef.current.col = verdict.cell.col;
+              engineRef.current.row = verdict.cell.row;
               engineRef.current.path = [];
               engineRef.current.step = null;
-            } else if (engineRef.current.col !== col || engineRef.current.row !== row) {
-              engineRef.current.col = col;
-              engineRef.current.row = row;
+            } else if (verdict.type === 'place') {
+              engineRef.current.col = verdict.cell.col;
+              engineRef.current.row = verdict.cell.row;
             }
           }
           const path = engineRef.current.path;
@@ -667,17 +700,21 @@ export default function Simulator() {
           deg: cat.deg ?? prev?.angle,
         });
         // Сетевой угол пишем в тот же объект, без setState. На кадре рисуем
-        // не его, а сглаженный display: клетка обновляется сразу, стрела — нет.
+        // не его, а сглаженный display. Клетка сервера — в col/row сразу,
+        // картинка догоняет её по одной за кадр (remoteDraw).
         const seenAt = performance.now();
         remoteAim.set(dummy.id, noteRemoteAim(remoteAim.get(dummy.id), dummy.angle, seenAt, !prev));
         if (prev) {
+          const moved = prev.col !== dummy.col || prev.row !== dummy.row;
           prev.col = dummy.col;
           prev.row = dummy.row;
           prev.angle = dummy.angle;
           prev.name = dummy.name;
           prev.sprite = dummy.sprite;
+          if (moved) rememberRemoteCell(prev.id, dummy.col, dummy.row);
           return;
         }
+        rememberRemoteCell(dummy.id, dummy.col, dummy.row);
         liveRemotes = [...liveRemotes, dummy];
         setPeerCount(1 + liveRemotes.length);
       },
@@ -692,8 +729,7 @@ export default function Simulator() {
       onInfo: (text) => {
         setNetStatus(text);
         if (!text.includes('Клетка занята') && !text.includes('Край поля')) return;
-        const cell = netMovesRef.current.server;
-        netMovesRef.current.pending = [];
+        const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
           engineRef.current.row = cell.row;
@@ -721,6 +757,7 @@ export default function Simulator() {
     return () => {
       liveRemotes = [];
       remoteAim.clear();
+      remoteDraw.clear();
       netMovesRef.current = { server: null, pending: [] };
       const sync = aimSyncRef.current;
       if (sync.timer) clearTimeout(sync.timer);
@@ -808,6 +845,7 @@ export default function Simulator() {
     let prev = performance.now();
 
     const update = (now: number, dt: number) => {
+      stepRemoteDraws();
       const s = settingsRef.current;
       const e = engineRef.current;
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
@@ -1277,6 +1315,8 @@ export default function Simulator() {
       const posOfChar = (id: string, col: number, row: number): { x: number; y: number } => {
         if (drag && drag.key === id) return { x: drag.x, y: drag.y };
         if (id === s.controlled) return { x: e.col * s.field.cellW, y: e.row * s.field.cellH };
+        const vis = id.startsWith('p') ? remoteDraw.get(id) : undefined;
+        if (vis) return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH };
         return { x: col * s.field.cellW, y: row * s.field.cellH };
       };
       const dummies = dummiesOf(s).filter(
@@ -1578,7 +1618,17 @@ export default function Simulator() {
           jelly: Object.fromEntries(
             Object.entries(jellyRef.current).map(([k2, v]) => [k2, Math.round((v ?? 0) * 100) / 100]),
           ),
-          dummies: dummiesOf(settingsRef.current).map((d) => ({ id: d.id, col: d.col, row: d.row })),
+          dummies: dummiesOf(settingsRef.current).map((d) => {
+            const vis = remoteDraw.get(d.id);
+            return {
+              id: d.id,
+              col: d.col,
+              row: d.row,
+              drawCol: vis?.col ?? d.col,
+              drawRow: vis?.row ?? d.row,
+              queued: vis?.queue.length ?? 0,
+            };
+          }),
         };
       };
     }

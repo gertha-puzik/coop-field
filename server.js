@@ -259,8 +259,11 @@ function move(ws, payload = {}) {
   cat.lastAim = now;
   cat.lastMove = now;
   const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite };
+  // Шагнувшему — одно эхо. Второй экземпляр той же клетки (broadcast без except)
+  // клиент читал как отказ предикта: спрайт шагал назад и следующим кадром
+  // перепрыгивал клетку.
   send(ws, "update cat", patch);
-  broadcast(room, "update cat", patch);
+  broadcast(room, "update cat", patch, ws);
 }
 
 /**
