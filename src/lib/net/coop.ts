@@ -43,6 +43,9 @@ export type CoopDummyState = CoopDummyPos & { on: boolean; sprite: string; grab?
 /** Состояние боевой мишени «РАБ»: включена/выключена (позиция фиксирована). */
 export type CoopRabState = { on: boolean };
 
+/** Чужой удар по мишени РАБ: зона/название полосы и урон для всплывающей подписи и качания «желе». */
+export type CoopRabHit = { zone: string; part: string; damage: number };
+
 /** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
 export type CoopChatMessage = {
   seq: number;
@@ -95,6 +98,8 @@ export type CoopHandlers = {
   onDummyDrop?: () => void;
   /** Мишень РАБ включили/выключили (уходит и включившему). */
   onRabState?: (state: CoopRabState) => void;
+  /** Кто-то другой ударил мишень РАБ — показать качание и урон (бьющему эхо не приходит). */
+  onRabHit?: (info: CoopRabHit) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -317,6 +322,15 @@ export function createCoopClient(handlers: CoopHandlers) {
       } else if (event === "rabState") {
         const row = payload as { on?: unknown } | null;
         if (row && typeof row === "object") handlers.onRabState?.({ on: !!row.on });
+      } else if (event === "rabHit") {
+        const row = payload as { zone?: unknown; part?: unknown; damage?: unknown } | null;
+        if (row && typeof row === "object") {
+          handlers.onRabHit?.({
+            zone: typeof row.zone === "string" ? row.zone : "",
+            part: typeof row.part === "string" ? row.part : "",
+            damage: Number.isFinite(Number(row.damage)) ? Number(row.damage) : 0,
+          });
+        }
       }
     };
     ws.onclose = () => {

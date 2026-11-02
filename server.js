@@ -96,7 +96,7 @@ const SPAWNS = [
 ];
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
-const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "serebristyy", "evr", "drel", "maslina", "buran"];
+const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak"];
 /**
  * Манекен «ПОЧУХАТЬ»: общий предмет комнаты, не персонаж. Не в боевом режиме,
  * но клетка под ним непроходима. Позиция в клеточных долях (x — по ширине,
@@ -759,6 +759,27 @@ function rabToggle(ws, payload = {}) {
   broadcast(room, "rabState", { on });
 }
 
+/**
+ * Удар по мишени РАБ. Клиент → ["rabHit", { zone, part, damage }].
+ * Остальным в комнате → ["rabHit", { zone, part, damage }]: качание «желе» и
+ * всплывающий урон над мишенью. Бьющему эхо не уходит — он уже анимировал удар
+ * локально в момент попадания. Урон зажимаем 0..100, строки режем.
+ */
+function rabHit(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!cat) return;
+  const zone = String(payload.zone || "").trim().slice(0, 32);
+  const part = String(payload.part || "").trim().slice(0, 32);
+  if (!zone && !part) return;
+  const dmgRaw = Number(payload.damage);
+  const damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : 0;
+  for (const sock of room.sockets.keys()) {
+    if (sock === ws) continue;
+    send(sock, "rabHit", { zone, part, damage });
+  }
+}
+
 function onMessage(ws, raw) {
   let msg;
   try {
@@ -779,6 +800,7 @@ function onMessage(ws, raw) {
   else if (event === "dummyGrab") dummyGrab(ws);
   else if (event === "dummyDrop") dummyDrop(ws);
   else if (event === "rab") rabToggle(ws, payload || {});
+  else if (event === "rabHit") rabHit(ws, payload || {});
 }
 
 const MIME = {

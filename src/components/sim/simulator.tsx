@@ -1077,6 +1077,23 @@ export default function Simulator() {
         // Авторитет сервера: подтверждает optimistic-тумблер мишени РАБ.
         applyRab(state.on);
       },
+      onRabHit: (info) => {
+        // Чужой удар по РАБу — та же анимация, что видит бьющий: качание «желе»
+        // и всплывающий урон над мишенью. Свой удар анимируется локально в момент
+        // попадания (эхо сервером не возвращается), так что задвоения нет.
+        const s = settingsRef.current;
+        const e = engineRef.current;
+        const zone = s.combat.zones.find((z) => z.id === info.zone);
+        const dmg = Math.max(0, Math.round(Number(info.damage) || 0));
+        e.labels.push({
+          x: RAB_POS.col * s.field.cellW + s.field.cellW / 2,
+          y: RAB_POS.row * s.field.cellH + s.field.cellH / 2 - s.field.cellH * 0.35,
+          born: performance.now(),
+          text: `${info.part || info.zone || 'удар'} -${dmg}%`,
+          color: zone?.color || '#ffd60a',
+        });
+        jellyRef.current[RAB_ID] = 1;
+      },
       onClose: (info) => {
         setNetReady(false);
         // При обрыве клиент сам переподключается с backoff и повторным join:
@@ -2563,8 +2580,18 @@ export default function Simulator() {
     if (hitDamage !== null && struck) {
       const z = s.combat.zones.find((zz) => zz.id === entry.zoneId);
       if (z) pushDamageLabel(z, struck.col, struck.row);
-      // Попадание по мишени РАБ качает её «желе» — видно всем, удар пришёлся.
-      if (struck.id === RAB_ID) jellyRef.current[RAB_ID] = 1;
+      // Попадание по мишени РАБ качает её «желе»; бьющий анимирует локально,
+      // остальных догоняет rabHit от сервера — анимация видна всей комнате.
+      if (struck.id === RAB_ID) {
+        jellyRef.current[RAB_ID] = 1;
+        if (netRef.current?.ready) {
+          netRef.current.emit('rabHit', {
+            zone: entry.zoneId,
+            part: entry.zoneLabel,
+            damage: hitDamage,
+          });
+        }
+      }
     } else {
       pushMissLabel();
     }

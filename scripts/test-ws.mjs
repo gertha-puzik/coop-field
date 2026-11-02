@@ -552,7 +552,7 @@ const skinJoiner = await client("Гамма", skinRoom);
 const skinField = (await waitFor(skinJoiner, "field"))[1];
 const worn = (skinField.cats || []).find((c) => c.id === skinYou.id);
 if (!worn || worn.sprite !== "puzatik") throw new Error(`sprite not in field ${JSON.stringify(worn)}`);
-for (const id of ["ryzhiy", "trehcvetny", "serebristyy", "maslina", "buran"]) {
+for (const id of ["ryzhiy", "trehcvetny", "serebristyy", "maslina", "buran", "sumrak"]) {
   sb.inbox.length = 0;
   sa.send(JSON.stringify(["sprite", { sprite: id }]));
   const seen = await waitFor(sb, "update cat");
@@ -560,7 +560,7 @@ for (const id of ["ryzhiy", "trehcvetny", "serebristyy", "maslina", "buran"]) {
     throw new Error(`sprite ${id} ${JSON.stringify(seen[1])}`);
   }
 }
-console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy maslina buran");
+console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy maslina buran sumrak");
 
 // Манекен «ПОЧУХАТЬ»: включение видно всем (и включившему), движение тащащему
 // не эхоится, чужие получают dummyMove, новичку состояние приходит в field,
@@ -645,6 +645,28 @@ const rsOff = await waitFor(ra, "rabState");
 const rsOffB = await waitFor(rb, "rabState");
 if (rsOff[1].on !== false || rsOffB[1].on !== false) throw new Error("rabState off failed");
 console.log("ok: rab", "on/spawn-skip/field/off");
+
+// Удар по РАБ: rabHit уходит остальным (качание + урон), бьющему эхо не приходит,
+// мусор нормализуется (урон зажат, строки подрезаны), без зоны/названия — молчок.
+const rhRoom = `t${Date.now().toString(36)}h`;
+const ha = await client("Альфа", rhRoom);
+const hb = await client("Бета", rhRoom);
+await waitFor(ha, "you");
+await waitFor(hb, "you");
+ha.inbox.length = 0;
+hb.inbox.length = 0;
+ha.send(JSON.stringify(["rabHit", { zone: "throat", part: "Горло", damage: 999 }]));
+const rhB = await waitFor(hb, "rabHit");
+if (rhB[1].zone !== "throat" || rhB[1].part !== "Горло" || rhB[1].damage !== 100) {
+  throw new Error(`rabHit ${JSON.stringify(rhB[1])}`);
+}
+if (ha.inbox.some((m) => m[0] === "rabHit")) throw new Error("rabHit echoed to the striker");
+hb.inbox.length = 0;
+ha.send(JSON.stringify(["rabHit", { zone: "", part: "", damage: -5 }]));
+ha.send(JSON.stringify(["rabHit", {}]));
+await sleep(80);
+if (hb.inbox.some((m) => m[0] === "rabHit")) throw new Error("rabHit empty relayed");
+console.log("ok: rabHit", "relay/clamp/no-echo/no-empty");
 
 function handshake(origin) {
   return new Promise((resolve) => {
