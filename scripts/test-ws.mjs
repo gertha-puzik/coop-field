@@ -562,6 +562,55 @@ for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
 }
 console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy");
 
+// Общая мишень комнаты: включение видно всем (и включившему), движение тащащему
+// не эхоится, чужие получают targetMove, новичку позиция приходит в field.
+const tgtRoom = `t${Date.now().toString(36)}g`;
+const ta = await client("Альфа", tgtRoom);
+const tb = await client("Бета", tgtRoom);
+await waitFor(ta, "you");
+await waitFor(tb, "you");
+ta.inbox.length = 0;
+tb.inbox.length = 0;
+ta.send(JSON.stringify(["target", { on: true }]));
+const stA = await waitFor(ta, "targetState");
+const stB = await waitFor(tb, "targetState");
+for (const [who, st] of [["A", stA], ["B", stB]]) {
+  if (st[1].on !== true) throw new Error(`${who} targetState.on ${JSON.stringify(st[1])}`);
+  if (!Number.isFinite(st[1].x) || !Number.isFinite(st[1].y)) {
+    throw new Error(`${who} targetState coords ${JSON.stringify(st[1])}`);
+  }
+}
+ta.inbox.length = 0;
+tb.inbox.length = 0;
+ta.send(JSON.stringify(["targetMove", { x: 2.5, y: 1.25 }]));
+const mvB = await waitFor(tb, "targetMove");
+if (mvB[1].x !== 2.5 || mvB[1].y !== 1.25) throw new Error(`targetMove ${JSON.stringify(mvB[1])}`);
+await sleep(80);
+if (ta.inbox.some((m) => m[0] === "targetMove")) throw new Error("targetMove echoed to the dragger");
+// Грубые координаты зажимаются сервером в пределы поля.
+ta.send(JSON.stringify(["targetMove", { x: 99, y: -5 }]));
+const clamped = await waitFor(tb, "targetMove");
+if (clamped[1].x < 0 || clamped[1].x > 9 || clamped[1].y < 0 || clamped[1].y > 5) {
+  throw new Error(`targetMove clamp ${JSON.stringify(clamped[1])}`);
+}
+ta.send(JSON.stringify(["target", { on: false }]));
+const offA = await waitFor(ta, "targetState");
+const offB = await waitFor(tb, "targetState");
+if (offA[1].on !== false || offB[1].on !== false) throw new Error("targetState off failed");
+// Повторное включение: мишень снова в дефолтной клетке, видна новичку в field.
+ta.send(JSON.stringify(["target", { on: true }]));
+await waitFor(ta, "targetState");
+await waitFor(tb, "targetState");
+const tc = await client("Гамма", tgtRoom);
+const fieldT = (await waitFor(tc, "field"))[1];
+// В field мишень — {x,y} или null: есть объект — значит включена.
+if (!fieldT.target || !Number.isFinite(fieldT.target.x) || !Number.isFinite(fieldT.target.y)) {
+  throw new Error(`field target ${JSON.stringify(fieldT.target)}`);
+}
+ta.send(JSON.stringify(["target", { on: false }]));
+await waitFor(ta, "targetState");
+console.log("ok: target", "on/move/clamp/off/field");
+
 function handshake(origin) {
   return new Promise((resolve) => {
     const ws = new WebSocket(url, { headers: { Origin: origin } });

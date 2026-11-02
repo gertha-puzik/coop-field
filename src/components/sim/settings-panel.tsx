@@ -18,6 +18,9 @@ import {
 
 interface Props {
   settings: SimSettings;
+  /** Мишень «ПОХУЯШ» включена в комнате (состояние комнаты, не локальная настройка). */
+  targetOn: boolean;
+  onToggleTarget: (on: boolean) => void;
   patchField: (p: Partial<SimSettings['field']>) => void;
   patchCharacter: (p: Partial<SimSettings['character']>) => void;
   patchArrow: (p: Partial<SimSettings['arrow']>) => void;
@@ -486,6 +489,12 @@ export function SettingsPanel(props: Props) {
         <div className="px-3 py-2">
           {tab === 'field' && (
             <>
+        <Toggle
+          label="Включить мишень"
+          hint="Мишень «ПОХУЯШ» на поле. Видно всем, тащить может любой игрок — движение видно в реальном времени."
+          checked={props.targetOn}
+          onChange={(v) => props.onToggleTarget(v)}
+        />
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 py-1">
           {(
             [

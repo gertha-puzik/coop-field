@@ -58,7 +58,10 @@ export type SpriteId =
   | 'syrstyashka'
   | 'ryzhiy'
   | 'trehcvetny'
-  | 'serebristyy';
+  | 'serebristyy'
+  | 'evr'
+  | 'drel'
+  | 'pohuyash';
 
 export interface SpriteMeta {
   id: SpriteId;
@@ -74,10 +77,26 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'razdora', name: 'Пламя Раздора', src: '/sprites/razdora.png' },
   { id: 'pohititel', name: 'Похититель Пламени', src: '/sprites/pohititel.png' },
   { id: 'syrstyashka', name: 'Сырстяшка', src: '/sprites/syrstyashka.png' },
-  { id: 'ryzhiy', name: 'Рыжий', src: '/sprites/ryzhiy.png' },
-  { id: 'trehcvetny', name: 'Трёхцветный', src: '/sprites/trehcvetny.png' },
-  { id: 'serebristyy', name: 'Серебристый', src: '/sprites/serebristyy.png' },
+  { id: 'ryzhiy', name: 'Сырь', src: '/sprites/ryzhiy.png' },
+  { id: 'trehcvetny', name: 'Негрик', src: '/sprites/trehcvetny.png' },
+  { id: 'serebristyy', name: 'ВП', src: '/sprites/serebristyy.png' },
+  { id: 'evr', name: 'Эвр', src: '/sprites/evr.png' },
+  { id: 'drel', name: 'Дрель', src: '/sprites/drel.png' },
 ];
+
+/**
+ * Мишень «ПОХУЯШ»: общий предмет комнаты, не персонаж. В выбор котов не входит,
+ * включается тумблером «Включить мишень» (раздел «Поле»); позиция живёт на сервере,
+ * тащить может любой игрок, движение видно всем в реальном времени.
+ */
+export const TARGET_SPRITE: SpriteMeta = {
+  id: 'pohuyash',
+  name: 'ПОХУЯШ',
+  src: '/sprites/pohuyash.png',
+};
+
+/** Все спрайты, которые нужно предзагрузить для поля: персонажи + мишень. */
+export const FIELD_SPRITES: SpriteMeta[] = [...SPRITES, TARGET_SPRITE];
 
 /** Настройки отдельного персонажа-мишени (манекена) на поле. */
 export interface DummyConfig {

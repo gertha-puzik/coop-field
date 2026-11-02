@@ -96,7 +96,14 @@ const SPAWNS = [
 ];
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
-const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "serebristyy"];
+const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "serebristyy", "evr", "drel"];
+/**
+ * Общая мишень комнаты («ПОХУЯШ»). Позиция в клеточных долях (x — по ширине,
+ * y — по высоте, 0 — левый верх спрайта), чтобы поле любого клиента с любым
+ * размером клетки рисовало её в одном и том же месте. Живёт в состоянии комнаты:
+ * включается любым игроком, тащить может любой, координаты видны всем в реальном времени.
+ */
+const TARGET_DEFAULT = { x: 4, y: 2 };
 
 const rooms = new Map();
 let nextId = 1001;
@@ -113,7 +120,7 @@ function roomOf(code) {
     .replace(/[^a-z0-9_-]/g, "")
     .slice(0, 24) || "demo";
   if (!rooms.has(key)) {
-    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0 });
+    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0, target: null, targetLast: null });
   }
   return rooms.get(key);
 }
@@ -170,6 +177,7 @@ function fieldPayload(room) {
     users,
     cats: [...room.cats.values()].map(publicCat),
     location: { name: "Расщелина меж скал", bg: 71085 },
+    target: room.target ? { ...room.target } : null,
   };
 }
 
@@ -633,6 +641,53 @@ function chat(ws, payload = {}) {
   broadcast(room, "chat", entry);
 }
 
+/**
+ * Общая мишень комнаты. Клиент → ["target", { on }].
+ * Включение ставит мишень в дефолтную клетку, выключение убирает; новое состояние
+ * уходит всей комнате (и включившему тоже) одним пакетом targetState.
+ */
+function targetToggle(ws, payload = {}) {
+  const room = ws.room;
+  if (!room) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const on = !!payload.on;
+  if (on) {
+    // Включение возвращает мишень туда, где её выключили (или в дефолт).
+    if (!room.target) room.target = room.targetLast ? { ...room.targetLast } : { ...TARGET_DEFAULT };
+  } else {
+    if (room.target) room.targetLast = { ...room.target };
+    room.target = null;
+  }
+  const state = { on, x: room.target?.x ?? TARGET_DEFAULT.x, y: room.target?.y ?? TARGET_DEFAULT.y };
+  broadcast(room, "targetState", state);
+}
+
+/** Округление координат мишени до сотых: точности перетаскивания хватает, пакет короче. */
+function normTargetCoord(value, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(Math.min(max, Math.max(0, n)) * 100) / 100;
+}
+
+/**
+ * Перетаскивание мишени. Клиент → ["targetMove", { x, y }] — координаты в клеточных
+ * долях, уже зажатые клиентом; сервер перепроверяет и рассылает остальным
+ * ["targetMove", { x, y }]. Отправителю эхо не нужно: он уже нарисовал позицию.
+ */
+function targetMove(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat || !room.target) return;
+  const x = normTargetCoord(payload.x, WIDTH - 1);
+  const y = normTargetCoord(payload.y, HEIGHT - 1);
+  if (x == null || y == null) return;
+  room.target.x = x;
+  room.target.y = y;
+  broadcast(room, "targetMove", { x, y }, ws);
+}
+
 function onMessage(ws, raw) {
   let msg;
   try {
@@ -648,6 +703,8 @@ function onMessage(ws, raw) {
   else if (event === "strike") strike(ws, payload || {});
   else if (event === "chat") chat(ws, payload ?? {});
   else if (event === "sprite") setSprite(ws, payload || {});
+  else if (event === "target") targetToggle(ws, payload || {});
+  else if (event === "targetMove") targetMove(ws, payload || {});
 }
 
 const MIME = {

@@ -34,6 +34,12 @@ export type CoopNoplace = {
   reason?: string;
 };
 
+/** Позиция общей мишени комнаты в клеточных долях (0 — левый верх спрайта). */
+export type CoopTargetPos = { x: number; y: number };
+
+/** Состояние общей мишени: включена/выключена, координаты при включении. */
+export type CoopTargetState = CoopTargetPos & { on: boolean };
+
 /** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
 export type CoopChatMessage = {
   seq: number;
@@ -59,7 +65,14 @@ export type CoopCloseInfo = {
 
 export type CoopHandlers = {
   onYou?: (cat: CoopCat) => void;
-  onField?: (field: { width?: number; height?: number; room?: string; cats?: CoopCat[] }) => void;
+  onField?: (field: {
+    width?: number;
+    height?: number;
+    room?: string;
+    cats?: CoopCat[];
+    /** Общая мишень комнаты: null — выключена. */
+    target?: CoopTargetPos | null;
+  }) => void;
   onCat?: (cat: Partial<CoopCat> & { id: number }) => void;
   onFight?: (entry: CoopFight) => void;
   onChat?: (message: CoopChatMessage) => void;
@@ -67,6 +80,10 @@ export type CoopHandlers = {
   onInfo?: (text: string) => void;
   onRefuse?: (refuse: CoopRefuse) => void;
   onNoplace?: (payload?: CoopNoplace) => void;
+  /** Мишень включили/выключили (уходит и включившему). */
+  onTargetState?: (state: CoopTargetState) => void;
+  /** Кто-то другой тащит мишень — свежая позиция. */
+  onTargetMove?: (pos: CoopTargetPos) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -147,6 +164,24 @@ function asRefuse(payload: unknown): CoopRefuse | null {
     code: typeof row.code === "string" ? row.code : undefined,
     text: typeof row.text === "string" ? row.text : undefined,
   };
+}
+
+/** Разбор позиции мишени: два конечных числа. */
+function asTargetPos(payload: unknown): CoopTargetPos | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as Partial<CoopTargetPos>;
+  const x = Number(row.x);
+  const y = Number(row.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+/** Разбор targetState: флаг on плюс позиция. */
+function asTargetState(payload: unknown): CoopTargetState | null {
+  if (!payload || typeof payload !== "object") return null;
+  const pos = asTargetPos(payload);
+  if (!pos) return null;
+  return { ...pos, on: !!(payload as { on?: unknown }).on };
 }
 
 export function catToDummy(cat: CoopCat): DummyConfig {
@@ -237,7 +272,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[] });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[]; target?: CoopTargetPos | null });
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
       else if (event === "fight") handlers.onFight?.(payload as CoopFight);
       else if (event === "chat") {
@@ -251,6 +286,13 @@ export function createCoopClient(handlers: CoopHandlers) {
         const row = asRefuse(payload);
         if (row) handlers.onRefuse?.(row);
       } else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
+      else if (event === "targetState") {
+        const row = asTargetState(payload);
+        if (row) handlers.onTargetState?.(row);
+      } else if (event === "targetMove") {
+        const row = asTargetPos(payload);
+        if (row) handlers.onTargetMove?.(row);
+      }
     };
     ws.onclose = () => {
       ws = null;

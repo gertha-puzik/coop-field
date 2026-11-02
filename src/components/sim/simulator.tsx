@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CharacterPicker, type CharacterChoice } from './character-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight } from '@/lib/net/coop';
+import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight, type CoopTargetPos } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
   applyOwnMoveAck,
@@ -23,7 +23,9 @@ import { keyAction } from '@/lib/sim/keys';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
+  FIELD_SPRITES,
   SPRITES,
+  TARGET_SPRITE,
   bfsPath,
   dirByDeg,
   inWindow,
@@ -71,6 +73,17 @@ const SPENT_COLOR = '#e5484d';
 
 /** Насколько темнее хвоста наконечник стрелы (множитель яркости цвета). */
 const ARROW_TIP_SHADE = 0.55;
+
+/** Идентификатор общей мишени «ПОХУЯШ» — предмета комнаты, не персонажа. */
+const TARGET_ID = 'pohuyash';
+/** Рост мишени, % от высоты клетки (как у котов по умолчанию). */
+const TARGET_SCALE = 100;
+/** Темп рассылки позиции мишени при перетаскивании, мс (~25 кадров/с). */
+const TARGET_EMIT_MS = 40;
+/** Дефолтная клетка мишени (левый верх спрайта, клеточные доли) — совпадает с серверной. */
+const TARGET_DEFAULT = { x: 4, y: 2 };
+/** Округление клеточных долей до сотых — точность перетаскивания хватает, пакет короче. */
+const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** Затемнение hex-цвета (#rgb / #rrggbb) множителем f — для наконечника стрелы. */
 function shadeHex(hex: string, f: number): string {
@@ -627,6 +640,8 @@ export default function Simulator() {
   const [peerCount, setPeerCount] = useState(1);
   const [netReady, setNetReady] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
+  /** Мишень «ПОХУЯШ» включена в комнате (истина приходит с сервера, не из localStorage). */
+  const [targetOn, setTargetOn] = useState(false);
   const [chatLines, setChatLines] = useState<CoopChatMessage[]>([]);
   const startStepRef = useRef<((dir: number) => void) | null>(null);
   const doStrikeRef = useRef<(() => void) | null>(null);
@@ -650,6 +665,14 @@ export default function Simulator() {
   /** «Желе»: амплитуда дрожи каждого манекена (0..1) — растёт от тряски мышью при
    *  перетаскивании, дальше качается и гаснет сама. */
   const jellyRef = useRef<Record<string, number>>({});
+  /** Позиция мишени в клеточных долях (левый верх спрайта); null — выключена. */
+  const targetPosRef = useRef<CoopTargetPos | null>(null);
+  /** Мишень включена — зеркало для игрового цикла: state в замыкание кадра не попадает. */
+  const targetOnRef = useRef(false);
+  /** performance.now() последнего сетевого сдвига мишени — для скорости «желе». */
+  const targetSeenRef = useRef(0);
+  /** Темп рассылки targetMove при перетаскивании. */
+  const targetSyncRef = useRef<{ at: number }>({ at: 0 });
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
   const engineRef = useRef<Engine>({
@@ -676,6 +699,24 @@ export default function Simulator() {
      *  предикта, чтобы перешаг не уходил в серверный кулдаун и не терялся. */
     moveLockUntil: 0,
   });
+
+  /** Применить состояние мишени из комнаты: зеркала для кадра + React-состояние. */
+  const applyTarget = useCallback((on: boolean, pos: CoopTargetPos | null) => {
+    targetOnRef.current = on;
+    targetPosRef.current = on ? pos : null;
+    setTargetOn(on);
+  }, []);
+
+  /** Тумблер «Включить мишень»: локально optimistic, сервер рассылёт targetState всей комнате. */
+  const toggleTarget = useCallback(
+    (on: boolean) => {
+      const net = netRef.current;
+      if (!net?.ready) return;
+      applyTarget(on, on ? (targetPosRef.current ?? { ...TARGET_DEFAULT }) : null);
+      net.emit('target', { on });
+    },
+    [applyTarget],
+  );
 
   /* ---------- загрузка / сохранение настроек ---------- */
 
@@ -814,6 +855,10 @@ export default function Simulator() {
           netMovesRef.current.server = { col, row };
         }
         setNetStatus(`Вы в комнате ${field.room || room} · ${cats.length} на поле`);
+        // Мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
+        const ft = field.target;
+        if (ft && Number.isFinite(ft.x) && Number.isFinite(ft.y)) applyTarget(true, { x: ft.x, y: ft.y });
+        else applyTarget(false, null);
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
@@ -916,6 +961,23 @@ export default function Simulator() {
       },
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
+      onTargetState: (state) => {
+        // Авторитет сервера: подтверждает optimistic-тумблер и синхронизирует остальных.
+        applyTarget(state.on, state.on ? { x: state.x, y: state.y } : null);
+      },
+      onTargetMove: (pos) => {
+        // Чужой тащит мишень: позиция на кадр, скорость сдвига раскачивает «желе».
+        const prev = targetPosRef.current;
+        const nowMs = performance.now();
+        if (prev) {
+          const s0 = settingsRef.current;
+          const dist = Math.hypot((pos.x - prev.x) * s0.field.cellW, (pos.y - prev.y) * s0.field.cellH);
+          const speed = dist / Math.max(1, nowMs - targetSeenRef.current);
+          jellyRef.current[TARGET_ID] = Math.max(jellyRef.current[TARGET_ID] ?? 0, Math.min(1, speed / 2.2));
+        }
+        targetSeenRef.current = nowMs;
+        targetPosRef.current = { x: pos.x, y: pos.y };
+      },
       onClose: (info) => {
         setNetReady(false);
         // При обрыве клиент сам переподключается с backoff и повторным join:
@@ -942,6 +1004,9 @@ export default function Simulator() {
       remoteAimRef.current.clear();
       remoteDrawRef.current.clear();
       netMovesRef.current = { server: null, pending: [] };
+      applyTarget(false, null);
+      targetSeenRef.current = 0;
+      targetSyncRef.current.at = 0;
       const sync = aimSyncRef.current;
       if (sync.timer) clearTimeout(sync.timer);
       sync.timer = null;
@@ -970,7 +1035,7 @@ export default function Simulator() {
 
   useEffect(() => {
     let cancelled = false;
-    for (const sp of SPRITES) {
+    for (const sp of FIELD_SPRITES) {
       const img = new Image();
       const store = () => {
         if (cancelled || spritesRef.current[sp.id]) return;
@@ -1601,6 +1666,29 @@ export default function Simulator() {
         }
       };
 
+      // Общая мишень «ПОХУЯШ»: видна всем, тащится любым игроком, позиция живёт на
+      // сервере. Рисуется под котами, при перетаскивании — по курсорной позиции;
+      // имя постоянное и показывается всегда, даже когда на поле один игрок.
+      if (targetOnRef.current && targetPosRef.current) {
+        const sprP = spritesRef.current[TARGET_SPRITE.id] ?? null;
+        if (sprP) {
+          const tp =
+            drag && drag.key === TARGET_ID
+              ? { x: drag.x, y: drag.y }
+              : { x: targetPosRef.current.x * s.field.cellW, y: targetPosRef.current.y * s.field.cellH };
+          drawChar(sprP, tp, TARGET_SCALE, TARGET_ID, false, whiteSpritesRef.current[TARGET_SPRITE.id] ?? null, false);
+          const thP = (s.field.cellH - 10) * (TARGET_SCALE / 100);
+          const nameX = tp.x + (sprP.width / sprP.height) * thP * 0.5;
+          ctx.font = 'bold 12px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillText(TARGET_SPRITE.name, nameX + 1, tp.y - 16);
+          ctx.fillStyle = '#f4f4f5';
+          ctx.fillText(TARGET_SPRITE.name, nameX, tp.y - 17);
+        }
+      }
+
       // манекены-мишени (каждый со своим спрайтом и ростом). Скрытая мишень не рисуется.
       for (const d of dummies) {
         if (!dummyIsDrawn(d, s.controlled)) continue;
@@ -1832,6 +1920,9 @@ export default function Simulator() {
           jelly: Object.fromEntries(
             Object.entries(jellyRef.current).map(([k2, v]) => [k2, Math.round((v ?? 0) * 100) / 100]),
           ),
+          target: targetOnRef.current
+            ? { x: targetPosRef.current?.x ?? null, y: targetPosRef.current?.y ?? null }
+            : null,
           dummies: dummiesOf(settingsRef.current, liveRemotesRef.current).map((d) => {
             const vis = remoteDrawRef.current.get(d.id);
             return {
@@ -1978,6 +2069,22 @@ export default function Simulator() {
     return null;
   };
 
+  /** Прямоугольник мишени под точкой (mx,my) канваса — px и размеры спрайта, либо null.
+   *  Пока мишень тащат, проверка не нужна: её уже удерживает захват указателя. */
+  const hitTargetObjAt = (s: SimSettings, mx: number, my: number) => {
+    if (!targetOnRef.current) return null;
+    const pos = targetPosRef.current;
+    if (!pos) return null;
+    const sprT = spritesRef.current[TARGET_SPRITE.id] ?? null;
+    const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, TARGET_SCALE);
+    const px = pos.x * s.field.cellW;
+    const py = pos.y * s.field.cellH;
+    if (mx >= px - 4 && mx <= px + b.w + 4 && my >= py - 4 && my <= py + b.h + 4) {
+      return { x: px, y: py, w: b.w, h: b.h };
+    }
+    return null;
+  };
+
   const onMove = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const s = settingsRef.current;
     const { mx, my } = canvasPoint(ev);
@@ -1996,6 +2103,15 @@ export default function Simulator() {
       dg.lastX = mx;
       dg.lastY = my;
       dg.lastT = nowT;
+      if (dg.key === TARGET_ID) {
+        // Мишень — общая: пока тащим, позиция уходит на сервер с постоянным темпом,
+        // чтобы остальные видели движение в реальном времени.
+        const net = netRef.current;
+        if (net?.ready && nowT - targetSyncRef.current.at >= TARGET_EMIT_MS) {
+          targetSyncRef.current.at = nowT;
+          net.emit('targetMove', { x: round2(dg.x / s.field.cellW), y: round2(dg.y / s.field.cellH) });
+        }
+      }
       return;
     }
     const c = Math.floor(mx / s.field.cellW);
@@ -2006,7 +2122,8 @@ export default function Simulator() {
     // над активной (управляемой) моделью обычный курсор — её тащить нельзя
     const cv = canvasRef.current;
     const hov = hitTargetAt(s, mx, my);
-    if (cv) cv.style.cursor = hov && hov.id !== s.controlled ? 'grab' : '';
+    const hovT = hitTargetObjAt(s, mx, my);
+    if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'grab' : '';
   };
 
   const onLeave = () => {
@@ -2020,6 +2137,28 @@ export default function Simulator() {
     if (ev.button !== 0) return;
     const s = settingsRef.current;
     const { mx, my } = canvasPoint(ev);
+    // Общая мишень тащится всегда (и в комнате с игроками — это её смысл):
+    // захват до проверки манекенов, чтобы живые коты её не блокировали.
+    const tObj = hitTargetObjAt(s, mx, my);
+    if (tObj) {
+      dragRef.current = {
+        key: TARGET_ID,
+        grabDX: mx - tObj.x,
+        grabDY: my - tObj.y,
+        x: tObj.x,
+        y: tObj.y,
+        w: tObj.w,
+        h: tObj.h,
+        lastX: mx,
+        lastY: my,
+        lastT: performance.now(),
+        moved: false,
+      };
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+      ev.currentTarget.style.cursor = 'grabbing';
+      ev.preventDefault();
+      return;
+    }
     const t = hitTargetAt(s, mx, my);
     if (!t) return;
     if (liveRemotesRef.current.length > 0) return; // чужих игроков не таскаем
@@ -2060,6 +2199,15 @@ export default function Simulator() {
     let r = Math.floor((dg.y + dg.h / 2) / s.field.cellH);
     c = Math.min(Math.max(c, 0), s.field.cols - 1);
     r = Math.min(Math.max(r, 0), s.field.rows - 1);
+    if (dg.key === TARGET_ID) {
+      // Мишень — общий предмет: с котами не конфликтует, ставится в клетку под центром
+      // и отправляет финальную позицию на сервер (без ожидания темпа рассылки).
+      targetPosRef.current = { x: c, y: r };
+      targetSyncRef.current.at = performance.now();
+      const net = netRef.current;
+      if (net?.ready) net.emit('targetMove', { x: c, y: r });
+      return;
+    }
     const e = engineRef.current;
     const mp = s.controlled === 'main' ? null : mainSavedRef.current;
     // занято любым персонажем, кроме перетаскиваемого: управляемый (движок),
@@ -2670,6 +2818,8 @@ export default function Simulator() {
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <SettingsPanel
                 settings={settings}
+                targetOn={targetOn}
+                onToggleTarget={toggleTarget}
                 patchField={patchField}
                 patchCharacter={patchCharacter}
                 patchArrow={patchArrow}
