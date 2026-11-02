@@ -26,11 +26,12 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body className={`${interSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}>
-        {/* Тема ставится до первой отрисовки: иначе при светлой/пивной теме экран мигает тёмным. */}
+        {/* Тема ставится до первой отрисовки (ночью — тоже: от неё зависят
+            CSS-правила [data-theme='night']), иначе мигает и теряются стили кнопок. */}
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('catwar-battle-sim-theme');if(t==='light'||t==='beer')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
+              "try{var t=localStorage.getItem('catwar-battle-sim-theme');if(t!=='light'&&t!=='beer')t='night';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','night');}",
           }}
         />
         {children}

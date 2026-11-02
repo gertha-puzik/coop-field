@@ -2371,16 +2371,6 @@ export default function Simulator() {
     }
   }, []);
 
-  const goCenter = useCallback(() => {
-    if (netRef.current?.ready) return;
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    e.step = null;
-    e.path = [];
-    e.col = Math.floor(s.field.cols / 2);
-    e.row = Math.floor(s.field.rows / 2);
-  }, []);
-
   const sendChat = useCallback((text: string) => {
     const net = netRef.current;
     if (!net?.ready) return false;
@@ -2516,7 +2506,7 @@ export default function Simulator() {
               onChange={(e) => setPlayerName(e.target.value)}
             />
           </label>
-          <Button size="sm" variant="outline" className="h-7 text-[11px]" type="submit">
+          <Button size="sm" variant="outline" className="btn-neutral h-7 text-[11px]" type="submit">
             Войти
           </Button>
           <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
@@ -2548,13 +2538,10 @@ export default function Simulator() {
           >
             Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
           </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={goCenter}>
-            В центр
-          </Button>
           <Button
             size="sm"
             variant={settingsOpen ? 'default' : 'outline'}
-            className={settingsOpen ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]' : 'h-8 text-xs'}
+            className={settingsOpen ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]' : 'btn-neutral h-8 text-xs'}
             onClick={() => setSettingsOpen((v) => !v)}
           >
             Настройки

@@ -1,26 +1,20 @@
 'use client';
 
 import type { ThemeId } from '@/lib/sim/theme';
+import { BeerBackdrop } from '@/components/sim/beer-backdrop';
 
 /**
- * Декоративный слой под интерфейсом: в «Пивной» теме снизу вверх всплывают
- * пивные пузырьки, в «Ночной» мерцают звёзды, в «Светлой» медленно плывут
- * облака. Ничего не перехватывает у мыши (pointer-events-none) и рисуется
- * только в просветах между панелями.
+ * Декоративный слой под интерфейсом: в «Пивной» теме — живой канвас
+ * (пузырьки, свет и пена, реагирующие на курсор), в «Ночной» мерцают
+ * звёзды, в «Светлой» медленно плывут облака. Ничего не перехватывает
+ * у мыши (pointer-events-none) и рисуется только в просветах между панелями.
  */
 
-/** Детерминированный «рандом»: без него пузыри при каждом рендере прыгали бы. */
+/** Детерминированный «рандом»: без него звёзды при каждом рендере прыгали бы. */
 const rnd = (seed: number) => {
   const x = Math.sin(seed * 12.9898) * 43758.5453;
   return x - Math.floor(x);
 };
-
-const BUBBLES = Array.from({ length: 18 }, (_, i) => ({
-  left: 2 + rnd(i + 1) * 96,
-  size: 5 + rnd(i + 40) * 16,
-  dur: 9 + rnd(i + 80) * 8,
-  delay: -rnd(i + 120) * 16,
-}));
 
 const STARS = Array.from({ length: 26 }, (_, i) => ({
   left: rnd(i + 200) * 99,
@@ -43,20 +37,7 @@ const CLOUDS = Array.from({ length: 6 }, (_, i) => ({
 export function ThemeBackdrop({ theme }: { theme: ThemeId }) {
   return (
     <div data-sim-backdrop aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-      {theme === 'beer' &&
-        BUBBLES.map((b, i) => (
-          <span
-            key={i}
-            className="sim-bubble"
-            style={{
-              left: `${b.left}%`,
-              width: b.size,
-              height: b.size,
-              animationDuration: `${b.dur}s`,
-              animationDelay: `${b.delay}s`,
-            }}
-          />
-        ))}
+      {theme === 'beer' && <BeerBackdrop />}
       {theme === 'night' &&
         STARS.map((s, i) => (
           <span
