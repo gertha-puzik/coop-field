@@ -16,6 +16,8 @@ import {
 } from '@/lib/net/move-book';
 import { FightLog } from './fight-log';
 import { RoomChat } from './room-chat';
+import { ThemeBackdrop } from './theme-backdrop';
+import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, THEMES, type ThemeId } from '@/lib/sim/theme';
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import { keyAction } from '@/lib/sim/keys';
 import {
@@ -137,7 +139,7 @@ function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () 
         dragging.current = false;
         onEnd();
       }}
-      className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-zinc-700/40 transition-colors hover:bg-emerald-600/50 active:bg-emerald-500/70 lg:block"
+      className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-[var(--sim-divider)] transition-colors hover:bg-[var(--sim-accent-soft)] active:bg-[var(--sim-accent-soft)] lg:block"
     />
   );
 }
@@ -514,6 +516,11 @@ export default function Simulator() {
   }, []);
   /** Панель настроек теперь выдвижная: не отдаёт поле постоянной колонке. */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Тема оформления: ночь / светлая / пивная. Цвета — CSS-переменные (globals.css). */
+  const [theme, setTheme] = useState<ThemeId>('night');
+  useEffect(() => {
+    setTheme(loadTheme());
+  }, []);
   const spritesRef = useRef<Partial<Record<SpriteId, HTMLImageElement>>>({});
   /** Белые силуэты спрайтов: тонкая обводка своего кота. */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
@@ -2440,9 +2447,26 @@ export default function Simulator() {
     };
   }, [fieldW, fieldH, entered]);
 
+  /** Смена темы: перекрашивает интерфейс и, если цвета поля не настроены вручную,
+   *  подгоняет палитру поля под тему (иначе доска остаётся тёмной на светлой теме). */
+  const changeTheme = useCallback(
+    (t: ThemeId) => {
+      setTheme(t);
+      applyTheme(t);
+      const cur = {
+        bgColor: settingsRef.current.field.bgColor,
+        bgColorAlt: settingsRef.current.field.bgColorAlt,
+        gridColor: settingsRef.current.field.gridColor,
+      };
+      if (fieldPaletteOf(cur) !== null) patchField(FIELD_PRESETS[t]);
+    },
+    [patchField],
+  );
+
   if (!entered) {
     return (
-      <div className="h-dvh bg-[#14161a] text-zinc-100">
+      <div className="app-bg relative h-dvh text-[var(--sim-text)]">
+        <ThemeBackdrop theme={theme} />
         {loaded ? (
           <CharacterPicker
             initialSprite={settings.character.sprite}
@@ -2456,11 +2480,12 @@ export default function Simulator() {
   }
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#14161a] text-zinc-100">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-800 bg-[#191c21] px-4 py-2.5">
+    <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]">
+      <ThemeBackdrop theme={theme} />
+      <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
         <div>
           <h1 className="text-base font-bold leading-tight">Общее поле</h1>
-          <p className="text-[11px] text-zinc-500">
+          <p className="text-[11px] text-[var(--sim-text-faint)]">
             {settings.field.cols}×{settings.field.rows} · комната {roomCode} · {peerCount} на поле
           </p>
         </div>
@@ -2475,18 +2500,18 @@ export default function Simulator() {
             window.location.assign(url.pathname + url.search);
           }}
         >
-          <label className="flex items-center gap-1 text-zinc-400">
+          <label className="flex items-center gap-1 text-[var(--sim-text-muted)]">
             комната
             <input
-              className="h-7 w-24 rounded border border-zinc-700 bg-zinc-900 px-1.5 text-zinc-100"
+              className="h-7 w-24 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-[var(--sim-text)]"
               value={roomCode}
               onChange={(e) => setRoomCode(e.target.value)}
             />
           </label>
-          <label className="flex items-center gap-1 text-zinc-400">
+          <label className="flex items-center gap-1 text-[var(--sim-text-muted)]">
             имя
             <input
-              className="h-7 w-28 rounded border border-zinc-700 bg-zinc-900 px-1.5 text-zinc-100"
+              className="h-7 w-28 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-[var(--sim-text)]"
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
             />
@@ -2494,15 +2519,29 @@ export default function Simulator() {
           <Button size="sm" variant="outline" className="h-7 text-[11px]" type="submit">
             Войти
           </Button>
-          <span className="max-w-[280px] truncate text-zinc-400">{netStatus}</span>
+          <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
         </form>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
+            тема
+            <select
+              value={theme}
+              onChange={(ev) => changeTheme(ev.target.value as ThemeId)}
+              className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-xs text-[var(--sim-text)] outline-none"
+            >
+              {THEMES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <Button
             size="sm"
             variant={settings.arrow.battleMode ? 'default' : 'outline'}
             className={
               settings.arrow.battleMode
-                ? 'h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-500'
+                ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
                 : 'h-8 text-xs'
             }
             onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
@@ -2515,7 +2554,7 @@ export default function Simulator() {
           <Button
             size="sm"
             variant={settingsOpen ? 'default' : 'outline'}
-            className={settingsOpen ? 'h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-500' : 'h-8 text-xs'}
+            className={settingsOpen ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]' : 'h-8 text-xs'}
             onClick={() => setSettingsOpen((v) => !v)}
           >
             Настройки
@@ -2526,7 +2565,7 @@ export default function Simulator() {
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
           Ширины колонок тянутся разделителями и запоминаются. */}
       <main
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
+        className="relative z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
         style={{ '--chat-w': `${layout.chatW}px`, '--log-w': `${layout.logW}px` } as CSSProperties}
       >
         <div className="flex h-56 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)]">
@@ -2543,7 +2582,7 @@ export default function Simulator() {
               ref={fieldFrameRef}
               role="region"
               aria-label="Игровое поле"
-              className="overflow-hidden rounded-xl border border-zinc-800 bg-[#20242a] p-2 lg:absolute lg:inset-0"
+              className="overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
             >
               <canvas
                 ref={canvasRef}
@@ -2562,7 +2601,7 @@ export default function Simulator() {
               />
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
             <span>W A S D — шаг (те же клавиши на русской: ц ф ы в; зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
             <span>Q E Z X — диагонали</span>
             <span>ЛКМ — маршрут · манекен — тянуть</span>
@@ -2595,13 +2634,13 @@ export default function Simulator() {
         <>
           <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
           <aside
-            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-zinc-800 bg-[#191c21] shadow-2xl"
+            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl"
             onKeyDown={(ev) => {
               if (ev.key === 'Escape') setSettingsOpen(false);
             }}
           >
-            <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
-              <h2 className="text-sm font-bold text-zinc-100">Настройки</h2>
+            <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
+              <h2 className="text-sm font-bold text-[var(--sim-text)]">Настройки</h2>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSettingsOpen(false)}>
                 Закрыть
               </Button>

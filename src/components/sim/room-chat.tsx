@@ -50,14 +50,14 @@ export function RoomChat({
   return (
     <section
       aria-label="Чат комнаты"
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#191c21]"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-panel)]"
     >
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
-        <h2 className="text-sm font-bold tracking-wide text-zinc-200">Чат</h2>
-        <p className="text-[11px] text-zinc-500">Enter — написать · Esc — на поле</p>
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
+        <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Чат</h2>
+        <p className="text-[11px] text-[var(--sim-text-faint)]">Enter — написать · Esc — на поле</p>
       </div>
       {/* ввод сверху: не нужно тянуться вниз, чтобы написать в комнату */}
-      <form onSubmit={submit} className="flex items-center gap-2 border-b border-zinc-800 p-2">
+      <form onSubmit={submit} className="flex items-center gap-2 border-b border-[var(--sim-line)] p-2">
         <label className="sr-only" htmlFor="roomChatInput">
           Сообщение
         </label>
@@ -78,7 +78,7 @@ export function RoomChat({
               ev.currentTarget.blur();
             }
           }}
-          className="h-9 min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus-visible:border-zinc-500 disabled:opacity-50"
+          className="h-9 min-w-0 flex-1 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-2.5 text-sm text-[var(--sim-text)] outline-none placeholder:text-[var(--sim-text-faint)] focus-visible:border-[var(--sim-line-hover)] disabled:opacity-50"
         />
         <Button type="submit" size="sm" className="h-9 text-sm" disabled={!canSend || !draft.trim()}>
           Отправить
@@ -99,18 +99,18 @@ export function RoomChat({
         className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 [scrollbar-width:thin]"
       >
         {lines.length === 0 ? (
-          <p className="text-sm text-zinc-500">Пока тихо. Сообщение увидят все в этой комнате.</p>
+          <p className="text-sm text-[var(--sim-text-faint)]">Пока тихо. Сообщение увидят все в этой комнате.</p>
         ) : (
           lines.map((line) => {
             const mine = meId != null && line.id === meId;
             return (
-              <p key={line.seq} className="break-words text-sm leading-snug text-zinc-100">
-                <span className="mr-1.5 text-[11px] text-zinc-500">{clock(line.ts)} </span>
+              <p key={line.seq} className="break-words text-sm leading-snug text-[var(--sim-text)]">
+                <span className="mr-1.5 text-[11px] text-[var(--sim-text-faint)]">{clock(line.ts)} </span>
                 <span className="font-semibold" style={{ color: nameColor(line.color) }}>
                   {line.login || 'Кот'}
                 </span>
-                {mine ? <span className="text-[11px] text-zinc-500"> · вы</span> : null}
-                <span className="text-zinc-400">: </span>
+                {mine ? <span className="text-[11px] text-[var(--sim-text-faint)]"> · вы</span> : null}
+                <span className="text-[var(--sim-text-muted)]">: </span>
                 {line.text}
               </p>
             );

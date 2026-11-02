@@ -103,10 +103,10 @@ function SlideNum({
   return (
     <div className="py-1.5">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-xs text-zinc-300">{label}</span>
+        <span className="text-xs text-[var(--sim-text-soft)]">{label}</span>
         <div className="flex items-center gap-1">
           <NumInput value={value} min={min} max={max} step={step} onChange={onChange} className="w-20" />
-          {suffix ? <span className="w-7 text-[10px] text-zinc-500">{suffix}</span> : null}
+          {suffix ? <span className="w-7 text-[10px] text-[var(--sim-text-faint)]">{suffix}</span> : null}
         </div>
       </div>
       <Slider
@@ -115,9 +115,9 @@ function SlideNum({
         max={max}
         step={step}
         onValueChange={(vals) => onChange(parseFloat(vals[0].toFixed(2)))}
-        className="[*_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-range]]:bg-emerald-600"
+        className="[*_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-range]]:bg-[var(--sim-accent)]"
       />
-      {hint ? <div className="mt-0.5 text-[10px] leading-tight text-zinc-500">{hint}</div> : null}
+      {hint ? <div className="mt-0.5 text-[10px] leading-tight text-[var(--sim-text-faint)]">{hint}</div> : null}
     </div>
   );
 }
@@ -136,13 +136,13 @@ function Toggle({
   return (
     <div className="flex items-center justify-between gap-3 py-1.5">
       <div>
-        <div className="text-xs text-zinc-300">{label}</div>
-        {hint ? <div className="text-[10px] leading-tight text-zinc-500">{hint}</div> : null}
+        <div className="text-xs text-[var(--sim-text-soft)]">{label}</div>
+        {hint ? <div className="text-[10px] leading-tight text-[var(--sim-text-faint)]">{hint}</div> : null}
       </div>
       <Switch
         checked={checked}
         onCheckedChange={onChange}
-        className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-zinc-700"
+        className="data-[state=checked]:bg-[var(--sim-accent)] data-[state=unchecked]:bg-[var(--sim-line-strong)]"
       />
     </div>
   );
@@ -159,7 +159,7 @@ function ColorInput({
 }) {
   return (
     <div className="flex items-center justify-between gap-2 py-1.5">
-      <span className="text-xs text-zinc-300">{label}</span>
+      <span className="text-xs text-[var(--sim-text-soft)]">{label}</span>
       <div className="flex items-center gap-1.5">
         <Input
           className="h-7 w-24 px-2 font-mono text-[11px]"
@@ -172,7 +172,7 @@ function ColorInput({
             if (!/^#[0-9a-fA-F]{6}$/.test(value)) onChange('#ffffff');
           }}
         />
-        <label className="relative inline-block h-7 w-8 cursor-pointer overflow-hidden rounded-md border border-zinc-700">
+        <label className="relative inline-block h-7 w-8 cursor-pointer overflow-hidden rounded-md border border-[var(--sim-line-strong)]">
           <span className="block h-full w-full" style={{ background: value }} />
           <input
             type="color"
@@ -221,7 +221,7 @@ function LiveAngle({
   return (
     <div className="py-1.5">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-xs text-zinc-300">Точный угол стрелы</span>
+        <span className="text-xs text-[var(--sim-text-soft)]">Точный угол стрелы</span>
         <NumInput
           className="w-20"
           value={angle}
@@ -237,9 +237,9 @@ function LiveAngle({
         step={1}
         onValueChange={(vals) => onManualAngle(vals[0], false)}
         onValueCommit={(vals) => onManualAngle(vals[0], true)}
-        className="[&_[data-slot=slider-range]]:bg-emerald-600"
+        className="[&_[data-slot=slider-range]]:bg-[var(--sim-accent)]"
       />
-      <div className="mt-0.5 text-[10px] text-zinc-500">
+      <div className="mt-0.5 text-[10px] text-[var(--sim-text-faint)]">
         Живой угол стрелы; можно задать точно ползунком или числом.
       </div>
     </div>
@@ -468,11 +468,11 @@ export function SettingsPanel(props: Props) {
               onClick={() => setTab(t.id)}
               className={`flex size-11 items-center justify-center rounded-lg border transition-colors ${
                 active
-                  ? 'border-emerald-500 bg-emerald-950/50 shadow-[0_0_0_1px_rgba(16,185,129,0.35)]'
-                  : 'border-zinc-700 bg-zinc-900/40 hover:border-zinc-500'
+                  ? 'border-[var(--sim-accent)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_1px_var(--sim-accent-glow)]'
+                  : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] hover:border-[var(--sim-line-hover)]'
               }`}
             >
-              <span className={t.id === 'field' ? 'text-lg font-black text-zinc-100' : 'text-xl leading-none'}>
+              <span className={t.id === 'field' ? 'text-lg font-black text-[var(--sim-text)]' : 'text-xl leading-none'}>
                 {t.icon}
               </span>
             </button>
@@ -481,8 +481,8 @@ export function SettingsPanel(props: Props) {
       </div>
 
       {/* содержимое выбранного раздела */}
-      <section aria-label={activeTab.label} className="rounded-lg border border-zinc-800 bg-zinc-900/60">
-        <div className="border-b border-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-100">{activeTab.label}</div>
+      <section aria-label={activeTab.label} className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset)]">
+        <div className="border-b border-[var(--sim-line)] px-3 py-2 text-sm font-semibold text-[var(--sim-text)]">{activeTab.label}</div>
         <div className="px-3 py-2">
           {tab === 'field' && (
             <>
@@ -496,7 +496,7 @@ export function SettingsPanel(props: Props) {
             ] as const
           ).map(([label, key, min, max]) => (
             <div key={key} className="flex items-center justify-between gap-2 py-1">
-              <span className="text-xs text-zinc-300">{label}</span>
+              <span className="text-xs text-[var(--sim-text-soft)]">{label}</span>
               <NumInput
                 className="w-20"
                 value={s.field[key]}
@@ -540,7 +540,7 @@ export function SettingsPanel(props: Props) {
           onChange={(v) => props.patchArrow({ periodSec: v })}
         />
         <div className="pb-1.5">
-          <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Готовые значения:</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--sim-text-faint)]">Готовые значения:</div>
           <div className="flex flex-wrap gap-1">
             {[1.8, 2.5, 3.5, 4, 4.5, 5].map((v) => {
               const active = Math.abs(s.arrow.periodSec - v) < 0.05;
@@ -551,7 +551,7 @@ export function SettingsPanel(props: Props) {
                   variant={active ? 'default' : 'outline'}
                   className={
                     active
-                      ? 'h-6 bg-emerald-600 px-2 text-[10px] font-semibold text-black hover:bg-emerald-500'
+                      ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
                       : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
                   }
                   onClick={() => props.patchArrow({ periodSec: v })}
@@ -562,7 +562,7 @@ export function SettingsPanel(props: Props) {
             })}
           </div>
         </div>
-        <div className="text-[10px] leading-snug text-zinc-500">
+        <div className="text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Стрела вращается вручную: удерживайте <b>J</b> — против часовой, <b>L</b> — по часовой. Период задаёт
           скорость вращения при удержании. Стрела привязана к модельке: точка закрепления сидит на спрайте, а длина,
           толщина и наконечник автоматически растут вместе с персонажем (значения заданы для модельки 100%).
@@ -636,12 +636,12 @@ export function SettingsPanel(props: Props) {
           hint="Интервал движения при зажатой клавише (ещё растягивается замедлением); новое нажатие срабатывает сразу, но не раньше, чем завершится предыдущий шаг, — спам не может превысить скорость, разрешённую замедлением."
           onChange={(v) => props.patchCharacter({ stepMs: v })}
         />
-        <div className="mb-1 text-[11px] leading-snug text-zinc-400">
+        <div className="mb-1 text-[11px] leading-snug text-[var(--sim-text-muted)]">
           Окно — диапазон углов стрелы, при котором прыжок в этом направлении идёт без замедления. Углы: 0°=вправо,
           90°=вниз, окно идёт от «от» до «до» по часовой.
         </div>
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-zinc-500">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-[var(--sim-text-faint)]">
             <span className="flex-1">Направление</span>
             <span className="w-14 text-center">от, °</span>
             <span className="w-14 text-center">до, °</span>
@@ -650,7 +650,7 @@ export function SettingsPanel(props: Props) {
             const w = s.slowdown.windows[d.key];
             return (
               <div key={d.key} className="flex items-center gap-2">
-                <span className="flex-1 truncate text-xs text-zinc-300">{d.label}</span>
+                <span className="flex-1 truncate text-xs text-[var(--sim-text-soft)]">{d.label}</span>
                 <NumInput
                   className="w-14"
                   value={w.start}
@@ -670,13 +670,13 @@ export function SettingsPanel(props: Props) {
           })}
         </div>
 
-        <div className="mt-3 mb-1 text-[11px] font-medium text-zinc-300">
+        <div className="mt-3 mb-1 text-[11px] font-medium text-[var(--sim-text-soft)]">
           Уровни замедления (по углу между прыжком и стрелой):
         </div>
         <div className="flex flex-col gap-1">
           {s.slowdown.tiers.map((t, i) => (
             <div key={i} className="flex items-center gap-2">
-              <span className="w-10 text-xs text-zinc-400">≤</span>
+              <span className="w-10 text-xs text-[var(--sim-text-muted)]">≤</span>
               <NumInput
                 className="w-14"
                 value={t.max}
@@ -684,7 +684,7 @@ export function SettingsPanel(props: Props) {
                 max={180}
                 onChange={(v) => props.patchTier(i, { max: v })}
               />
-              <span className="text-xs text-zinc-500">° →</span>
+              <span className="text-xs text-[var(--sim-text-faint)]">° →</span>
               <NumInput
                 className="w-14"
                 value={t.value}
@@ -692,11 +692,11 @@ export function SettingsPanel(props: Props) {
                 max={100}
                 onChange={(v) => props.patchTier(i, { value: v })}
               />
-              <span className="text-xs text-zinc-500">% замедления</span>
+              <span className="text-xs text-[var(--sim-text-faint)]">% замедления</span>
             </div>
           ))}
           <div className="flex items-center gap-2">
-            <span className="flex-1 text-xs text-zinc-400">Спина (дальше последнего уровня)</span>
+            <span className="flex-1 text-xs text-[var(--sim-text-muted)]">Спина (дальше последнего уровня)</span>
             <NumInput
               className="w-14"
               value={s.slowdown.maxSlowdown}
@@ -704,11 +704,11 @@ export function SettingsPanel(props: Props) {
               max={100}
               onChange={(v) => props.patchSlowdown({ maxSlowdown: v })}
             />
-            <span className="text-xs text-zinc-500">%</span>
+            <span className="text-xs text-[var(--sim-text-faint)]">%</span>
             <span className="w-14" />
           </div>
         </div>
-        <div className="mt-2 text-[10px] leading-snug text-zinc-500">
+        <div className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Скорость прыжка = 100% − замедление. Замедление фиксируется в момент начала прыжка.
         </div>
         <Toggle
@@ -731,7 +731,7 @@ export function SettingsPanel(props: Props) {
           )}
           {tab === 'combat' && (
             <>
-        <div className="mb-1 text-[11px] leading-snug text-zinc-400">
+        <div className="mb-1 text-[11px] leading-snug text-[var(--sim-text-muted)]">
           Удар — клавиша <b>I</b> (отклик {s.combat.strikeResponseMs} мс: удар применяется через {s.combat.strikeResponseMs} мс
           после нажатия; при удержании и прожатиях — не чаще одного удара в этот же интервал). Нужно стоять вплотную к
           мишени (её клетка непроходима) и навести на неё стрелу. Энергия тратится только при попадании в зону удара;
@@ -766,7 +766,7 @@ export function SettingsPanel(props: Props) {
           onChange={(v) => props.patchCombat({ strikeResponseMs: v })}
         />
 
-        <div className="mt-3 mb-1 text-[11px] font-medium text-zinc-300">Восстановление энергии:</div>
+        <div className="mt-3 mb-1 text-[11px] font-medium text-[var(--sim-text-soft)]">Восстановление энергии:</div>
         <Toggle
           label="Регенерация энергии"
           checked={s.combat.regenEnabled}
@@ -790,7 +790,7 @@ export function SettingsPanel(props: Props) {
           suffix="сек"
           onChange={(v) => props.patchCombat({ regenIntervalSec: v })}
         />
-        <div className="text-[10px] leading-snug text-zinc-500">
+        <div className="text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Коты в комнате всегда в боевом режиме: сквозь них нельзя пройти, бить можно любого соседа;
           если рядом стоят несколько — удар идёт в того, на кого точнее наведена стрела. У каждого своя энергия
           и своя стрела.
@@ -798,8 +798,8 @@ export function SettingsPanel(props: Props) {
 
         <div className="mt-3 pb-0.5">
           <div className="mb-1 flex items-baseline justify-between gap-2">
-            <span className="text-[11px] font-medium text-zinc-300">Урон игрока — готовые пресеты:</span>
-            <span className="text-[10px] text-zinc-500">горло сейчас: {throatDamageFor(s.combat.damageLevel)}%</span>
+            <span className="text-[11px] font-medium text-[var(--sim-text-soft)]">Урон игрока — готовые пресеты:</span>
+            <span className="text-[10px] text-[var(--sim-text-faint)]">горло сейчас: {throatDamageFor(s.combat.damageLevel)}%</span>
           </div>
           <div className="flex flex-wrap gap-1">
             {DAMAGE_LEVELS.map((k) => {
@@ -811,7 +811,7 @@ export function SettingsPanel(props: Props) {
                   variant={active ? 'default' : 'outline'}
                   className={
                     active
-                      ? 'h-6 bg-emerald-600 px-2 text-[10px] font-semibold text-black hover:bg-emerald-500'
+                      ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
                       : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
                   }
                   onClick={() =>
@@ -827,21 +827,21 @@ export function SettingsPanel(props: Props) {
               );
             })}
           </div>
-          <div className="mt-1 text-[10px] leading-snug text-zinc-500">
+          <div className="mt-1 text-[10px] leading-snug text-[var(--sim-text-faint)]">
             Зависимость через горло: {throatDamageFor(0)}% при уроне 0,0, дальше +3,67% за каждые 0,1 — при 0,9 горло
             получает {throatDamageFor(9)}%. Остальные зоны растут пропорционально своей базе при 0,0. Кнопка
             перезаписывает урон всех зон; после можно докрутить числа вручную — выбранный пресет подсвечен.
           </div>
         </div>
 
-        <div className="mt-3 mb-1 text-[11px] font-medium text-zinc-300">Зоны удара и урон за 1 удар:</div>
+        <div className="mt-3 mb-1 text-[11px] font-medium text-[var(--sim-text-soft)]">Зоны удара и урон за 1 удар:</div>
         <ZoneTarget zones={s.combat.zones} activeId={zoneHover} onHover={setZoneHover} />
-        <div className="mt-1 text-center text-[10px] leading-snug text-zinc-500">
+        <div className="mt-1 text-center text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Тело манекена в пикселях: 0 px — верх спрайта, 150 — низ. Левая половина — зоны левой стороны тела,
           правая — правой. Наведите на полосу или строку — зона подсветится, правка применяется мгновенно.
         </div>
         <div className="mt-2 flex flex-col gap-1">
-          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--sim-text-faint)]">
             <span className="w-20 shrink-0">Зона</span>
             <span className="w-14 text-center">урон</span>
             <span className="w-14 text-center">от, px</span>
@@ -854,7 +854,7 @@ export function SettingsPanel(props: Props) {
               onMouseEnter={() => setZoneHover(z.id)}
               onMouseLeave={() => setZoneHover(null)}
               className={`-mx-0.5 flex items-center gap-1.5 rounded px-0.5 transition-colors ${
-                zoneHover === z.id ? 'bg-zinc-800/70' : ''
+                zoneHover === z.id ? 'bg-[var(--sim-hover)]' : ''
               }`}
             >
               <span className="flex w-20 shrink-0 items-center gap-1.5 overflow-hidden">
@@ -862,7 +862,7 @@ export function SettingsPanel(props: Props) {
                   className="inline-block size-2.5 shrink-0 rounded-full border border-black/30"
                   style={{ background: z.color }}
                 />
-                <span className="truncate text-xs text-zinc-300">{z.name}</span>
+                <span className="truncate text-xs text-[var(--sim-text-soft)]">{z.name}</span>
               </span>
               <NumInput
                 className="w-14"
@@ -905,8 +905,8 @@ export function SettingsPanel(props: Props) {
                       onClick={() => props.patchZone(i, { side: next })}
                       className={`h-6 w-6 rounded border text-[10px] font-semibold transition-colors ${
                         active
-                          ? 'border-emerald-500 bg-emerald-950/60 text-emerald-300'
-                          : 'border-zinc-700 bg-zinc-900/60 text-zinc-500 hover:border-zinc-500'
+                          ? 'border-[var(--sim-accent)] bg-[var(--sim-accent-tint)] text-[var(--sim-accent-text)]'
+                          : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset)] text-[var(--sim-text-faint)] hover:border-[var(--sim-line-hover)]'
                       }`}
                     >
                       {sid === 'left' ? 'Л' : 'П'}
@@ -917,13 +917,13 @@ export function SettingsPanel(props: Props) {
             </div>
           ))}
         </div>
-        <div className="mt-2 text-[10px] leading-snug text-zinc-500">
+        <div className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Удар летит по лучу стрелы от точки её закрепления: зона — полоса тела, в которую луч входит в ближний
           край манекена (слева — левая половина, справа — правая, сверху/снизу — половина по точке входа). Луч не
           задел тело или попал в промежуток без полосы — промах, энергия не тратится. На поле точка наведения
           подсвечивается цветом зоны прямо при вращении стрелы.
         </div>
-        <div className="text-[10px] leading-snug text-zinc-500">
+        <div className="text-[10px] leading-snug text-[var(--sim-text-faint)]">
           С диагональной клетки полосы не действуют: слева-сверху и справа-сверху от мишени — только Морда,
           слева-снизу — только Лапы, справа-снизу — только Хвост, и удар проходит лишь когда стрела стоит в окне
           замедления направления на мишень (вправо-вниз / влево-вниз / вправо-вверх / влево-вверх). Вне окна —
@@ -991,19 +991,19 @@ export function SettingsPanel(props: Props) {
           </Button>
         </div>
         <textarea
-          className="h-24 w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 font-mono text-[10px] text-zinc-300"
+          className="h-24 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-deep)] p-2 font-mono text-[10px] text-[var(--sim-text-soft)]"
           placeholder="JSON конфига…"
           value={ioText}
           onChange={(e) => setIoText(e.target.value)}
         />
-        {ioMsg ? <div className="text-[10px] text-zinc-500">{ioMsg}</div> : null}
+        {ioMsg ? <div className="text-[10px] text-[var(--sim-text-faint)]">{ioMsg}</div> : null}
             </>
           )}
         </div>
       </section>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-[11px] leading-relaxed text-zinc-400">
-        <div className="mb-1 text-xs font-semibold text-zinc-200">Управление</div>
+      <div className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] p-3 text-[11px] leading-relaxed text-[var(--sim-text-muted)]">
+        <div className="mb-1 text-xs font-semibold text-[var(--sim-text)]">Управление</div>
         W A S D — шаг вверх/влево/вниз/вправо, на русской раскладке те же клавиши — ц ф ы в · Q E Z X — диагонали · ЛКМ по клетке — идти маршрутом · B — боевой режим · I —
         удар (вплотную, по наведённой стреле) · J — стрела против часовой · L — по часовой. Персонаж прыгает мгновенно,
         без анимаций. Зажатая клавиша движения — шаг раз в 120 мс (с учётом замедления), спам нажатиями быстрее не

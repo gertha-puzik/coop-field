@@ -120,3 +120,241 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ---------- темы оформления (ночная по умолчанию) ---------- */
+
+:root,
+[data-theme='night'] {
+  --sim-app-bg: #14161a;
+  --sim-app-grad: radial-gradient(120% 90% at 50% 0%, #1a2030 0%, #14161a 55%, #0f1116 100%);
+  --sim-panel: #191c21;
+  --sim-frame: #20242a;
+  --sim-line: #27272a;
+  --sim-line-strong: #3f3f46;
+  --sim-line-hover: #71717a;
+  --sim-text: #f4f4f5;
+  --sim-text-soft: #d4d4d8;
+  --sim-text-muted: #a1a1aa;
+  --sim-text-faint: #71717a;
+  --sim-input-bg: #18181b;
+  --sim-inset: rgba(24, 24, 27, 0.6);
+  --sim-inset-soft: rgba(24, 24, 27, 0.4);
+  --sim-inset-strong: rgba(39, 39, 42, 0.7);
+  --sim-hover: rgba(39, 39, 42, 0.7);
+  --sim-divider: rgba(63, 63, 70, 0.4);
+  --sim-deep: #09090b;
+  --sim-accent: #059669;
+  --sim-accent-hover: #10b981;
+  --sim-accent-soft: rgba(16, 185, 129, 0.45);
+  --sim-accent-tint: rgba(6, 78, 59, 0.5);
+  --sim-accent-text: #6ee7b7;
+  --sim-accent-glow: rgba(16, 185, 129, 0.35);
+  --sim-accent-glow-strong: rgba(52, 211, 153, 0.85);
+  --sim-danger: #f87171;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --sim-app-bg: #f2efe7;
+  --sim-app-grad: radial-gradient(120% 90% at 50% 0%, #fdfbf5 0%, #f2efe7 60%, #e7e2d5 100%);
+  --sim-panel: #ffffff;
+  --sim-frame: #eae5d9;
+  --sim-line: #ddd8cd;
+  --sim-line-strong: #c8c2b4;
+  --sim-line-hover: #a8a29a;
+  --sim-text: #26241f;
+  --sim-text-soft: #423e36;
+  --sim-text-muted: #6b675e;
+  --sim-text-faint: #8d887d;
+  --sim-input-bg: #ffffff;
+  --sim-inset: rgba(38, 36, 31, 0.05);
+  --sim-inset-soft: rgba(38, 36, 31, 0.035);
+  --sim-inset-strong: rgba(38, 36, 31, 0.09);
+  --sim-hover: rgba(38, 36, 31, 0.07);
+  --sim-divider: rgba(38, 36, 31, 0.14);
+  --sim-deep: #fbfaf7;
+  --sim-accent: #059669;
+  --sim-accent-hover: #10b981;
+  --sim-accent-soft: rgba(16, 185, 129, 0.4);
+  --sim-accent-tint: rgba(6, 78, 59, 0.12);
+  --sim-accent-text: #047857;
+  --sim-accent-glow: rgba(16, 185, 129, 0.3);
+  --sim-accent-glow-strong: rgba(5, 150, 105, 0.7);
+  --sim-danger: #dc2626;
+  color-scheme: light;
+  /* шадсн-переменные, чтобы стандартные кнопки и инпуты не остались тёмными */
+  --background: #f7f4ee;
+  --foreground: #26241f;
+  --border: #d6d3cd;
+  --input: #cfcbc2;
+  --ring: #a8a29e;
+}
+
+[data-theme='beer'] {
+  --sim-app-bg: #241708;
+  --sim-app-grad: radial-gradient(120% 90% at 50% 0%, #3f2d13 0%, #241708 55%, #190f05 100%);
+  --sim-panel: #30220f;
+  --sim-frame: #3a2b14;
+  --sim-line: #52401f;
+  --sim-line-strong: #6b5426;
+  --sim-line-hover: #8a6d33;
+  --sim-text: #f7ecd7;
+  --sim-text-soft: #ecd9b8;
+  --sim-text-muted: #cbb17f;
+  --sim-text-faint: #a98f5e;
+  --sim-input-bg: #241a0b;
+  --sim-inset: rgba(20, 14, 5, 0.55);
+  --sim-inset-soft: rgba(20, 14, 5, 0.35);
+  --sim-inset-strong: rgba(20, 14, 5, 0.7);
+  --sim-hover: rgba(255, 214, 130, 0.12);
+  --sim-divider: rgba(217, 169, 79, 0.35);
+  --sim-deep: #1a1006;
+  --sim-accent: #d97706;
+  --sim-accent-hover: #f59e0b;
+  --sim-accent-soft: rgba(245, 158, 11, 0.45);
+  --sim-accent-tint: rgba(120, 63, 8, 0.55);
+  --sim-accent-text: #fcd34d;
+  --sim-accent-glow: rgba(245, 158, 11, 0.35);
+  --sim-accent-glow-strong: rgba(252, 211, 77, 0.85);
+  --sim-danger: #f87171;
+  color-scheme: dark;
+  /* шадсн-переменные: янтарные кнопки «Отправить» и переключатели */
+  --background: #2e2010;
+  --foreground: #f7ecd7;
+  --primary: #d97706;
+  --primary-foreground: #fff7e6;
+  --border: #6b4a1e;
+  --input: #6b4a1e;
+  --ring: #d97706;
+  --accent: #4a3318;
+  --accent-foreground: #f7ecd7;
+}
+
+/* Фон приложения: градиент текущей темы (виден в просветах между панелями). */
+.app-bg {
+  background: var(--sim-app-grad) fixed;
+}
+
+/* ---------- лёгкие анимации ---------- */
+
+/* Плавная перекраска при смене темы и мягкий отклик кнопок. */
+.app-bg header,
+.app-bg main,
+.app-bg section,
+.app-bg aside,
+.app-bg div,
+.app-bg p,
+.app-bg span,
+.app-bg h1,
+.app-bg h2,
+.app-bg input,
+.app-bg select,
+.app-bg button,
+.app-bg canvas {
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.app-bg button:hover {
+  transform: translateY(-1px);
+}
+
+.app-bg button:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.app-bg button:disabled {
+  transform: none;
+}
+
+/* Пузырьки пивной темы: всплывают снизу вверх и лопаются у края. */
+.sim-bubble {
+  position: absolute;
+  bottom: -36px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 32% 30%, rgba(255, 244, 214, 0.95), rgba(245, 158, 11, 0.3) 62%, rgba(245, 158, 11, 0.12));
+  box-shadow: inset 0 0 6px rgba(255, 236, 179, 0.5);
+  animation-name: sim-rise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+@keyframes sim-rise {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.85;
+  }
+  82% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateY(-108vh) scale(1.08);
+    opacity: 0;
+  }
+}
+
+/* Звёзды ночной темы: тихо мерцают. */
+.sim-star {
+  position: absolute;
+  border-radius: 9999px;
+  background: #cbd5f5;
+  box-shadow: 0 0 4px rgba(203, 213, 245, 0.8);
+  animation-name: sim-twinkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes sim-twinkle {
+  0%,
+  100% {
+    opacity: 0.12;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.15);
+  }
+}
+
+/* Облака светлой темы: медленно плывут. */
+.sim-cloud {
+  position: absolute;
+  border-radius: 9999px;
+  background: #ffffff;
+  filter: blur(18px);
+  animation-name: sim-drift;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes sim-drift {
+  0%,
+  100% {
+    transform: translateX(-3%);
+  }
+  50% {
+    transform: translateX(3%);
+  }
+}
+
+/* Кому движение не нужно — ничего не двигается. */
+@media (prefers-reduced-motion: reduce) {
+  .app-bg button:hover,
+  .app-bg button:active {
+    transform: none;
+  }
+  .app-bg * {
+    transition-duration: 0s !important;
+  }
+  [data-sim-backdrop] span {
+    animation: none !important;
+  }
+}

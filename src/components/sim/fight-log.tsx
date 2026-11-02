@@ -20,11 +20,11 @@ export function FightLog({ lines }: { lines: string[] }) {
   return (
     <section
       aria-label="Лог ударов"
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#191c21]"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-panel)]"
     >
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
-        <h2 className="text-sm font-bold tracking-wide text-zinc-200">Бой</h2>
-        <p className="text-[11px] text-zinc-500">I — удар</p>
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
+        <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Бой</h2>
+        <p className="text-[11px] text-[var(--sim-text-faint)]">I — удар</p>
       </div>
       <div
         id="fightLog"
@@ -41,10 +41,10 @@ export function FightLog({ lines }: { lines: string[] }) {
         className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 [scrollbar-width:thin]"
       >
         {lines.length === 0 ? (
-          <p className="text-sm text-zinc-500">ударов ещё не было</p>
+          <p className="text-sm text-[var(--sim-text-faint)]">ударов ещё не было</p>
         ) : (
           lines.map((line, i) => (
-            <p key={`${i}:${line}`} className="truncate text-sm leading-snug text-zinc-100">
+            <p key={`${i}:${line}`} className="truncate text-sm leading-snug text-[var(--sim-text)]">
               {line}
             </p>
           ))
