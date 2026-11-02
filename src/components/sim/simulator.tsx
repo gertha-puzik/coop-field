@@ -69,6 +69,21 @@ const ARROW_ANCHOR_F = 0.5699;
 /** Цвет «потраченной» части стрелы (заполняется по мере расхода энергии). */
 const SPENT_COLOR = '#e5484d';
 
+/** Насколько темнее хвоста наконечник стрелы (множитель яркости цвета). */
+const ARROW_TIP_SHADE = 0.55;
+
+/** Затемнение hex-цвета (#rgb / #rrggbb) множителем f — для наконечника стрелы. */
+function shadeHex(hex: string, f: number): string {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  const n = parseInt(h, 16);
+  const r = Math.round(((n >> 16) & 255) * f);
+  const g = Math.round(((n >> 8) & 255) * f);
+  const b = Math.round((n & 255) * f);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 /** Отклик удара по умолчанию, мс: удар применяется через 170 мс после нажатия
  *  (удар «летит»); тот же интервал действует при удержании и прожатиях клавиши
  *  удара — быстрее одного удара в 170 мс не будет ни при каком спаме.
@@ -1207,8 +1222,13 @@ export default function Simulator() {
     };
 
     // Тело стрелы: хвост (зелёная часть = остаток энергии, красная — потраченная,
-    // растёт от наконечника, как на референсе) + наконечник; точка закрепления —
+    // растёт от наконечника, как на референсе) + тёмный наконечник; точка закрепления —
     // опциональна (прячется настройкой, сама стрела видна всегда).
+    // Хвост рисуется двумя встык идущими отрезками: зелёным от закрепления до границы
+    // энергии и красным дальше. Если красить сверху один сплошной зелёный хвост, круглая
+    // шляпка у закрепления остаётся зелёной даже при нуле энергии — тот самый «зелёный
+    // пиксель» в начале стрелы. Поэтому базовая шляпка красится цветом своего участка:
+    // при полностью выбитой энергии вся стрела, включая наконечник и закрепление, красная.
     const drawArrowBody = (
       s: SimSettings,
       k: number,
@@ -1228,40 +1248,52 @@ export default function Simulator() {
       const halfW = Math.max(2.5 * k, tipLen * 0.55);
       const shaftEnd = r2 - tipLen;
       const frac = Math.max(0, Math.min(1, energyFrac));
+      const lw = s.arrow.width * k;
+      const split = r1 + (shaftEnd - r1) * frac;
+      // Цвет участка у закрепления: есть энергия — цвет стрелы, выбрана целиком — красный.
+      const baseColor = frac > 0 ? s.arrow.color : SPENT_COLOR;
+      // Наконечник темнее хвоста — читается на любом фоне.
+      const tipColor = shadeHex(baseColor, ARROW_TIP_SHADE);
 
       ctx2.save();
-      // хвост стрелы (полностью цветом стрелы)
-      ctx2.beginPath();
-      ctx2.moveTo(ax + ca * r1, ay + sa * r1);
-      ctx2.lineTo(ax + ca * shaftEnd, ay + sa * shaftEnd);
-      ctx2.lineCap = 'round';
-      ctx2.lineWidth = s.arrow.width * k;
-      ctx2.strokeStyle = s.arrow.color;
-      ctx2.stroke();
-      // красная полоска потраченной энергии — от границы к наконечнику
-      if (frac < 1 && shaftEnd > r1) {
-        const split = r1 + (shaftEnd - r1) * frac;
-        ctx2.lineCap = 'butt';
+      // зелёная часть хвоста (остаток энергии)
+      ctx2.lineCap = 'butt';
+      if (frac > 0 && split > r1) {
+        ctx2.beginPath();
+        ctx2.moveTo(ax + ca * r1, ay + sa * r1);
+        ctx2.lineTo(ax + ca * split, ay + sa * split);
+        ctx2.lineWidth = lw;
+        ctx2.strokeStyle = s.arrow.color;
+        ctx2.stroke();
+      }
+      // красная часть (потраченная энергия) — до наконечника
+      if (frac < 1 && shaftEnd > split) {
         ctx2.beginPath();
         ctx2.moveTo(ax + ca * split, ay + sa * split);
         ctx2.lineTo(ax + ca * shaftEnd, ay + sa * shaftEnd);
+        ctx2.lineWidth = lw;
         ctx2.strokeStyle = SPENT_COLOR;
         ctx2.stroke();
       }
+      // круглая шляпка у закрепления — цветом участка, который начинается у базы
+      ctx2.beginPath();
+      ctx2.arc(ax + ca * r1, ay + sa * r1, lw / 2, 0, Math.PI * 2);
+      ctx2.fillStyle = baseColor;
+      ctx2.fill();
       // наконечник
       ctx2.beginPath();
       ctx2.moveTo(ax + ca * r2, ay + sa * r2);
       ctx2.lineTo(ax + ca * (r2 - tipLen) - sa * halfW, ay + sa * (r2 - tipLen) + ca * halfW);
       ctx2.lineTo(ax + ca * (r2 - tipLen) + sa * halfW, ay + sa * (r2 - tipLen) - ca * halfW);
       ctx2.closePath();
-      ctx2.fillStyle = s.arrow.color;
+      ctx2.fillStyle = tipColor;
       ctx2.fill();
       // точка закрепления (масштабируется вместе с моделькой); прячется настройкой,
       // но стрела — линия с наконечником — рисуется в любом случае
       if (showAnchor) {
         ctx2.beginPath();
         ctx2.arc(ax, ay, 4 * k, 0, Math.PI * 2);
-        ctx2.fillStyle = s.arrow.color;
+        ctx2.fillStyle = baseColor;
         ctx2.fill();
         ctx2.beginPath();
         ctx2.arc(ax, ay, 1.7 * k, 0, Math.PI * 2);
@@ -2206,7 +2238,10 @@ export default function Simulator() {
     ) {
       const target = Number(struck.id.slice(1));
       if (Number.isInteger(target)) {
-        netRef.current.emit('strike', { target, zone: entry.zoneId, angle: snap.angle });
+        // Урон едет вместе с ударом: это пресет «Урон игрока» бьющего.
+        // Сервер нормализует число и раздаёт fight с этим уроном всей комнате —
+        // иначе у цели всегда будет серверная таблица, и пресет 0,0–0,9 не работает.
+        netRef.current.emit('strike', { target, zone: entry.zoneId, angle: snap.angle, damage: hitDamage });
         return;
       }
     }

@@ -160,7 +160,8 @@ b.inbox.length = 0;
 c.inbox.length = 0;
 
 const aim = (Math.atan2(youB.y - youA.y, youB.x - youA.x) * 180) / Math.PI;
-a.send(JSON.stringify(["strike", { target: youB.id, zone: "throat", angle: aim }]));
+// damage — урон бьюшего (пресет «Урон игрока»): сервер обязан раздавать его как есть.
+a.send(JSON.stringify(["strike", { target: youB.id, zone: "throat", angle: aim, damage: 60 }]));
 const fightA = await waitFor(a, "fight");
 const fightB = await waitFor(b, "fight");
 const fightC = await waitFor(c, "fight");
@@ -181,7 +182,10 @@ for (const [who, msg] of [["A", fightA], ["B", fightB], ["C", fightC]]) {
 if (fightA[1].isAttacking !== true) throw new Error("attacker isAttacking");
 if (fightB[1].isAttacking !== false) throw new Error("victim isAttacking");
 if (fightC[1].isAttacking !== false) throw new Error("spectator isAttacking");
-console.log("ok: strike", fightA[1].attacker, "→", fightA[1].name, fightA[1].part);
+for (const [who, msg] of [["A", fightA], ["B", fightB], ["C", fightC]]) {
+  if (msg[1].damage !== 60) throw new Error(`${who} fight damage ${JSON.stringify(msg[1].damage)}`);
+}
+console.log("ok: strike", fightA[1].attacker, "→", fightA[1].name, fightA[1].part, "damage", fightA[1].damage);
 
 a.inbox.length = 0;
 b.inbox.length = 0;
@@ -238,6 +242,8 @@ const diagHit = await waitFor(right, "fight");
 if (diagHit[1].part !== "Морда" || diagHit[1].name !== "Справа" || diagHit[1].isAttacking !== false) {
   throw new Error(`bad diagonal fight ${JSON.stringify(diagHit[1])}`);
 }
+// Без damage в ударе сервер берёт урон из своей таблицы (морда = 18).
+if (diagHit[1].damage !== 18) throw new Error(`diagonal fallback damage ${JSON.stringify(diagHit[1].damage)}`);
 console.log("ok: diagonal muzzle accepted, throat rejected");
 
 // Потолок 30: 31-й получает noplace, клетки не совпадают.

@@ -477,10 +477,12 @@ function resolveZone(raw) {
 }
 
 /**
- * Удар. Клиент → ["strike", { target, zone, angle }].
+ * Удар. Клиент → ["strike", { target, zone, angle, damage }].
  * Комнате → ["fight", { attackerId, attacker, targetId, name, part, zone, weapon, damage, isAttacking }].
  * name / part / weapon / isAttacking — поля боевого лога. isAttacking свой у каждого сокета.
- * Оружие пустое: когти и зубы в этот обмен не входят, нокаута нет.
+ * damage — урон бьющего (его пресет «Урон игрока»); сервер нормализует число 0..100,
+ * а без числа берёт урон зоны из серверной таблицы. Оружие пустое: когти и зубы
+ * в этот обмен не входят, нокаута нет.
  */
 function strike(ws, payload = {}) {
   const room = ws.room;
@@ -526,6 +528,10 @@ function strike(ws, payload = {}) {
   }
 
   cat.lastStrike = now;
+  // Урон присылает бьющий (его пресет «Урон игрока», проценты энергии 0..100).
+  // Число округляем и зажимаем; нет числа — фолбэк на серверную таблицу зон.
+  const dmgRaw = Number(payload.damage);
+  const damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : zone.damage;
   const entry = {
     attackerId: cat.id,
     attacker: cat.login,
@@ -534,7 +540,7 @@ function strike(ws, payload = {}) {
     part: zone.part,
     zone: zoneId,
     weapon: "",
-    damage: zone.damage,
+    damage,
   };
   for (const sock of room.sockets.keys()) {
     send(sock, "fight", {
