@@ -283,14 +283,12 @@
 .app-bg [class*='bg-[var(--sim-panel)]'],
 .app-bg [class*='bg-[var(--sim-frame)]'] {
   backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 /* Чат — тот же blur, но фон градиентный: сверху светлее, снизу темнее. */
 .sim-chat {
   background: var(--sim-chat-grad);
   backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 /* Ночная тема: нейтральные кнопки шапки («Войти», «Настройки») — серые
