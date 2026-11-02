@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import type { DirectionWindow, SimSettings, SlowdownTier, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
+import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
 import {
   DAMAGE_LEVELS,
   DIRECTIONS,
@@ -18,9 +18,15 @@ import {
 
 interface Props {
   settings: SimSettings;
-  /** Мишень «ПОХУЯШ» включена в комнате (состояние комнаты, не локальная настройка). */
-  targetOn: boolean;
-  onToggleTarget: (on: boolean) => void;
+  /** Манекен «ПОЧУХАТЬ» включён в комнате (состояние комнаты, не локальная настройка). */
+  dummyOn: boolean;
+  onToggleDummy: (on: boolean) => void;
+  /** Выбранный скин манекена (из списка персонажей). */
+  dummySprite: SpriteId;
+  onDummySprite: (sprite: SpriteId) => void;
+  /** Боевая мишень «РАБ» включена в комнате. */
+  rabOn: boolean;
+  onToggleRab: (on: boolean) => void;
   patchField: (p: Partial<SimSettings['field']>) => void;
   patchCharacter: (p: Partial<SimSettings['character']>) => void;
   patchArrow: (p: Partial<SimSettings['arrow']>) => void;
@@ -490,10 +496,36 @@ export function SettingsPanel(props: Props) {
           {tab === 'field' && (
             <>
         <Toggle
+          label="Включить манекен"
+          hint="Манекен «ПОЧУХАТЬ» на поле: вне боя, но сквозь него нельзя ходить. Видно всем, тащить может любой игрок — движение и имя тащщего (курсор) видно в реальном времени."
+          checked={props.dummyOn}
+          onChange={(v) => props.onToggleDummy(v)}
+        />
+        <div className="flex items-center justify-between gap-3 py-1.5">
+          <div>
+            <div className="text-xs text-[var(--sim-text-soft)]">Спрайт манекена</div>
+            <div className="text-[10px] leading-tight text-[var(--sim-text-faint)]">
+              Скин «ПОЧУХАТЬ» из списка присвоенных имён персонажей; выбор виден всей комнате.
+            </div>
+          </div>
+          <select
+            aria-label="Спрайт манекена"
+            value={props.dummySprite}
+            onChange={(e) => props.onDummySprite(e.target.value as SpriteId)}
+            className="h-7 max-w-36 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-1.5 text-xs text-[var(--sim-text)] outline-none focus:border-[var(--sim-accent)]"
+          >
+            {SPRITES.map((sp) => (
+              <option key={sp.id} value={sp.id}>
+                {sp.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Toggle
           label="Включить мишень"
-          hint="Мишень «ПОХУЯШ» на поле. Видно всем, тащить может любой игрок — движение видно в реальном времени."
-          checked={props.targetOn}
-          onChange={(v) => props.onToggleTarget(v)}
+          hint="Боевая мишень «РАБ» на поле: в боевом режиме — по ней проходят удары, и она физическое препятствие, сквозь неё нельзя ходить. Спрайт один у всех мишеней."
+          checked={props.rabOn}
+          onChange={(v) => props.onToggleRab(v)}
         />
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 py-1">
           {(

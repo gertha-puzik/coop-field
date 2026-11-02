@@ -34,11 +34,14 @@ export type CoopNoplace = {
   reason?: string;
 };
 
-/** Позиция общей мишени комнаты в клеточных долях (0 — левый верх спрайта). */
-export type CoopTargetPos = { x: number; y: number };
+/** Позиция общего предмета комнаты (манекен «ПОЧУХАТЬ») в клеточных долях (0 — левый верх спрайта). */
+export type CoopDummyPos = { x: number; y: number };
 
-/** Состояние общей мишени: включена/выключена, координаты при включении. */
-export type CoopTargetState = CoopTargetPos & { on: boolean };
+/** Состояние манекена комнаты: включён/выключен, координаты, спрайт и кто его тащит. */
+export type CoopDummyState = CoopDummyPos & { on: boolean; sprite: string; grab?: string | null };
+
+/** Состояние боевой мишени «РАБ»: включена/выключена (позиция фиксирована). */
+export type CoopRabState = { on: boolean };
 
 /** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
 export type CoopChatMessage = {
@@ -70,8 +73,10 @@ export type CoopHandlers = {
     height?: number;
     room?: string;
     cats?: CoopCat[];
-    /** Общая мишень комнаты: null — выключена. */
-    target?: CoopTargetPos | null;
+    /** Манекен «ПОЧУХАТЬ» комнаты: null — выключен. */
+    dummy?: CoopDummyState | null;
+    /** Боевая мишень «РАБ» комнаты: null — выключена. */
+    rab?: CoopRabState | null;
   }) => void;
   onCat?: (cat: Partial<CoopCat> & { id: number }) => void;
   onFight?: (entry: CoopFight) => void;
@@ -80,10 +85,16 @@ export type CoopHandlers = {
   onInfo?: (text: string) => void;
   onRefuse?: (refuse: CoopRefuse) => void;
   onNoplace?: (payload?: CoopNoplace) => void;
-  /** Мишень включили/выключили (уходит и включившему). */
-  onTargetState?: (state: CoopTargetState) => void;
-  /** Кто-то другой тащит мишень — свежая позиция. */
-  onTargetMove?: (pos: CoopTargetPos) => void;
+  /** Манекен включили/выключили или сменили спрайт (уходит и включившему). */
+  onDummyState?: (state: CoopDummyState) => void;
+  /** Кто-то другой тащит манекен — свежая позиция. */
+  onDummyMove?: (pos: CoopDummyPos) => void;
+  /** Кто-то взял манекен (имя тащщего — для курсора-обозначения). */
+  onDummyGrab?: (info: { login: string }) => void;
+  /** Манекен отпустили. */
+  onDummyDrop?: () => void;
+  /** Мишень РАБ включили/выключили (уходит и включившему). */
+  onRabState?: (state: CoopRabState) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -166,22 +177,28 @@ function asRefuse(payload: unknown): CoopRefuse | null {
   };
 }
 
-/** Разбор позиции мишени: два конечных числа. */
-function asTargetPos(payload: unknown): CoopTargetPos | null {
+/** Разбор позиции манекена: два конечных числа. */
+function asDummyPos(payload: unknown): CoopDummyPos | null {
   if (!payload || typeof payload !== "object") return null;
-  const row = payload as Partial<CoopTargetPos>;
+  const row = payload as Partial<CoopDummyPos>;
   const x = Number(row.x);
   const y = Number(row.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x, y };
 }
 
-/** Разбор targetState: флаг on плюс позиция. */
-function asTargetState(payload: unknown): CoopTargetState | null {
+/** Разбор dummyState: флаг on, позиция, спрайт и имя тащщего. */
+function asDummyState(payload: unknown): CoopDummyState | null {
   if (!payload || typeof payload !== "object") return null;
-  const pos = asTargetPos(payload);
+  const pos = asDummyPos(payload);
   if (!pos) return null;
-  return { ...pos, on: !!(payload as { on?: unknown }).on };
+  const row = payload as Partial<CoopDummyState>;
+  return {
+    ...pos,
+    on: !!row.on,
+    sprite: typeof row.sprite === "string" ? row.sprite : "",
+    grab: typeof row.grab === "string" && row.grab ? row.grab : null,
+  };
 }
 
 export function catToDummy(cat: CoopCat): DummyConfig {
@@ -272,7 +289,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[]; target?: CoopTargetPos | null });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[]; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
       else if (event === "fight") handlers.onFight?.(payload as CoopFight);
       else if (event === "chat") {
@@ -286,12 +303,20 @@ export function createCoopClient(handlers: CoopHandlers) {
         const row = asRefuse(payload);
         if (row) handlers.onRefuse?.(row);
       } else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
-      else if (event === "targetState") {
-        const row = asTargetState(payload);
-        if (row) handlers.onTargetState?.(row);
-      } else if (event === "targetMove") {
-        const row = asTargetPos(payload);
-        if (row) handlers.onTargetMove?.(row);
+      else if (event === "dummyState") {
+        const row = asDummyState(payload);
+        if (row) handlers.onDummyState?.(row);
+      } else if (event === "dummyMove") {
+        const row = asDummyPos(payload);
+        if (row) handlers.onDummyMove?.(row);
+      } else if (event === "dummyGrab") {
+        const login = (payload as { login?: unknown } | null)?.login;
+        if (typeof login === "string") handlers.onDummyGrab?.({ login });
+      } else if (event === "dummyDrop") {
+        handlers.onDummyDrop?.();
+      } else if (event === "rabState") {
+        const row = payload as { on?: unknown } | null;
+        if (row && typeof row === "object") handlers.onRabState?.({ on: !!row.on });
       }
     };
     ws.onclose = () => {

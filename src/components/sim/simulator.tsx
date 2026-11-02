@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CharacterPicker, type CharacterChoice } from './character-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopFight, type CoopTargetPos } from '@/lib/net/coop';
+import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopDummyPos, type CoopFight } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
   applyOwnMoveAck,
@@ -23,9 +23,11 @@ import { keyAction } from '@/lib/sim/keys';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
+  DUMMY_DEFAULT_SPRITE,
+  DUMMY_NAME,
   FIELD_SPRITES,
+  RAB_SPRITE,
   SPRITES,
-  TARGET_SPRITE,
   bfsPath,
   dirByDeg,
   inWindow,
@@ -74,14 +76,20 @@ const SPENT_COLOR = '#e5484d';
 /** Насколько темнее хвоста наконечник стрелы (множитель яркости цвета). */
 const ARROW_TIP_SHADE = 0.55;
 
-/** Идентификатор общей мишени «ПОХУЯШ» — предмета комнаты, не персонажа. */
-const TARGET_ID = 'pohuyash';
-/** Рост мишени, % от высоты клетки (как у котов по умолчанию). */
-const TARGET_SCALE = 100;
-/** Темп рассылки позиции мишени при перетаскивании, мс (~25 кадров/с). */
-const TARGET_EMIT_MS = 40;
-/** Дефолтная клетка мишени (левый верх спрайта, клеточные доли) — совпадает с серверной. */
-const TARGET_DEFAULT = { x: 4, y: 2 };
+/** Идентификатор манекена «ПОЧУХАТЬ» — предмета комнаты, не персонажа. */
+const DUMMY_ID = 'pochuhat';
+/** Рост манекена, % от высоты клетки (как у котов по умолчанию). */
+const DUMMY_SCALE = 100;
+/** Темп рассылки позиции манекена при перетаскивании, мс (~25 кадров/с). */
+const DUMMY_EMIT_MS = 40;
+/** Дефолтная клетка манекена (левый верх спрайта, клеточные доли) — совпадает с серверной. */
+const DUMMY_DEFAULT = { x: 7, y: 2 };
+/** Идентификатор боевой мишени «РАБ» — предмета комнаты в боевом режиме. */
+const RAB_ID = 'rab';
+/** Рост мишени РАБ, % от высоты клетки. */
+const RAB_SCALE = 100;
+/** Клетка мишени РАБ (0-based): фиксирована, совпадает с серверной RAB_CELL. */
+const RAB_POS = { col: 4, row: 2 };
 /** Округление клеточных долей до сотых — точность перетаскивания хватает, пакет короче. */
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -413,13 +421,15 @@ function dummiesOf(s: SimSettings, remotes: DummyConfig[]): DummyConfig[] {
 }
 
 /** Энергии чужих котов копятся только по текущим обитателям комнаты:
- *  ключи ушедших игроков не оседают в localStorage навсегда. */
+ *  ключи ушедших игроков не оседают в localStorage навсегда. keepIds — ключи общих
+ *  предметов комнаты (энергия мишени РАБ), которые не вычищаются. */
 function pruneRemoteEnergy(
   de: Record<string, number>,
   s: SimSettings,
   remotes: DummyConfig[],
+  keepIds: string[] = [],
 ): Record<string, number> {
-  const keep = new Set(remotes.map((d) => d.id));
+  const keep = new Set([...remotes.map((d) => d.id), ...keepIds]);
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(de)) if (keep.has(k)) out[k] = v;
   return out;
@@ -441,17 +451,20 @@ function strikeTargetDrawn(s: SimSettings, id: string, controlled: string): bool
 }
 
 /** Все персонажи, кроме самого (selfId): манекены на поле + свой кот, когда управление
- *  передано манекену (mainPos — где кот стоит). Клетки этих персонажей непроходимы,
+ *  передано манекену (mainPos — где кот стоит) + extras — общие предметы комнаты
+ *  (мишень РАБ — боевая цель). Клетки этих персонажей непроходимы,
  *  в них же летят удары. */
 function othersOf(
   s: SimSettings,
   selfId: string,
   mainPos: { col: number; row: number } | null,
   remotes: DummyConfig[],
+  extras: CharRef[] = [],
 ): CharRef[] {
   const list: CharRef[] = dummiesOf(s, remotes)
     .filter((d) => d.id !== selfId)
     .map((d) => ({ id: d.id, name: d.name, col: d.col, row: d.row, sprite: d.sprite, scale: d.scale }));
+  for (const ex of extras) list.push(ex);
   if (selfId !== 'main' && mainPos) {
     list.push({
       id: 'main',
@@ -465,7 +478,8 @@ function othersOf(
   return list;
 }
 
-/** Непроходимая ли клетка: клетки остальных персонажей — физические препятствия. */
+/** Непроходимая ли клетка: клетки остальных персонажей и общих предметов —
+ *  физические препятствия. */
 function isBlockedCell(
   s: SimSettings,
   selfId: string,
@@ -473,12 +487,14 @@ function isBlockedCell(
   c: number,
   r: number,
   remotes: DummyConfig[],
+  extras: CharRef[] = [],
 ): boolean {
-  return othersOf(s, selfId, mainPos, remotes).some((t) => t.col === c && t.row === r);
+  return othersOf(s, selfId, mainPos, remotes, extras).some((t) => t.col === c && t.row === r);
 }
 
 /** Кого заденет удар из клетки (col,row) под углом angle: единственный соседний персонаж,
- *  а если соседних несколько — тот, на который точнее указывает стрела. null — рядом никого. */
+ *  а если соседних несколько — тот, на который точнее указывает стрела. null — рядом никого.
+ *  extras — боевые общие предметы (мишень РАБ). */
 function pickStrikeTarget(
   s: SimSettings,
   col: number,
@@ -487,10 +503,11 @@ function pickStrikeTarget(
   selfId: string,
   mainPos: { col: number; row: number } | null,
   remotes: DummyConfig[],
+  extras: CharRef[] = [],
 ): CharRef | null {
   let best: CharRef | null = null;
   let bestDiff = Infinity;
-  for (const t of othersOf(s, selfId, mainPos, remotes)) {
+  for (const t of othersOf(s, selfId, mainPos, remotes, extras)) {
     const dx = t.col - col;
     const dy = t.row - row;
     if (Math.max(Math.abs(dx), Math.abs(dy)) !== 1) continue;
@@ -640,8 +657,12 @@ export default function Simulator() {
   const [peerCount, setPeerCount] = useState(1);
   const [netReady, setNetReady] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
-  /** Мишень «ПОХУЯШ» включена в комнате (истина приходит с сервера, не из localStorage). */
-  const [targetOn, setTargetOn] = useState(false);
+  /** Манекен «ПОЧУХАТЬ» включён в комнате (истина приходит с сервера, не из localStorage). */
+  const [dummyOn, setDummyOn] = useState(false);
+  /** Боевая мишень «РАБ» включена в комнате. */
+  const [rabOn, setRabOn] = useState(false);
+  /** Выбранный скин манекена (ушёл на сервер при включении, живёт в состоянии комнаты). */
+  const [dummySprite, setDummySprite] = useState<SpriteId>(DUMMY_DEFAULT_SPRITE);
   const [chatLines, setChatLines] = useState<CoopChatMessage[]>([]);
   const startStepRef = useRef<((dir: number) => void) | null>(null);
   const doStrikeRef = useRef<(() => void) | null>(null);
@@ -665,14 +686,20 @@ export default function Simulator() {
   /** «Желе»: амплитуда дрожи каждого манекена (0..1) — растёт от тряски мышью при
    *  перетаскивании, дальше качается и гаснет сама. */
   const jellyRef = useRef<Record<string, number>>({});
-  /** Позиция мишени в клеточных долях (левый верх спрайта); null — выключена. */
-  const targetPosRef = useRef<CoopTargetPos | null>(null);
-  /** Мишень включена — зеркало для игрового цикла: state в замыкание кадра не попадает. */
-  const targetOnRef = useRef(false);
-  /** performance.now() последнего сетевого сдвига мишени — для скорости «желе». */
-  const targetSeenRef = useRef(0);
-  /** Темп рассылки targetMove при перетаскивании. */
-  const targetSyncRef = useRef<{ at: number }>({ at: 0 });
+  /** Позиция манекена в клеточных долях (левый верх спрайта); null — выключен. */
+  const dummyPosRef = useRef<CoopDummyPos | null>(null);
+  /** Манекен включён — зеркало для игрового цикла: state в замыкание кадра не попадает. */
+  const dummyOnRef = useRef(false);
+  /** Скин манекена — зеркало для кадра. */
+  const dummySpriteRef = useRef<SpriteId>(DUMMY_DEFAULT_SPRITE);
+  /** Кто сейчас тащит манекен (login) — курсор с именем видят все; null — никто. */
+  const dummyGrabRef = useRef<string | null>(null);
+  /** performance.now() последнего сетевого сдвига манекена — для скорости «желе». */
+  const dummySeenRef = useRef(0);
+  /** Темп рассылки dummyMove при перетаскивании. */
+  const dummySyncRef = useRef<{ at: number }>({ at: 0 });
+  /** Мишень РАБ включена — зеркало для игрового цикла. */
+  const rabOnRef = useRef(false);
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
   const engineRef = useRef<Engine>({
@@ -700,22 +727,74 @@ export default function Simulator() {
     moveLockUntil: 0,
   });
 
-  /** Применить состояние мишени из комнаты: зеркала для кадра + React-состояние. */
-  const applyTarget = useCallback((on: boolean, pos: CoopTargetPos | null) => {
-    targetOnRef.current = on;
-    targetPosRef.current = on ? pos : null;
-    setTargetOn(on);
+  /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
+  const applyDummy = useCallback((on: boolean, pos: CoopDummyPos | null, sprite?: SpriteId) => {
+    dummyOnRef.current = on;
+    dummyPosRef.current = on ? pos : null;
+    setDummyOn(on);
+    if (sprite) {
+      dummySpriteRef.current = sprite;
+      setDummySprite(sprite);
+    }
   }, []);
 
-  /** Тумблер «Включить мишень»: локально optimistic, сервер рассылёт targetState всей комнате. */
-  const toggleTarget = useCallback(
+  /** Применить состояние мишени РАБ из комнаты. */
+  const applyRab = useCallback((on: boolean) => {
+    rabOnRef.current = on;
+    setRabOn(on);
+  }, []);
+
+  /** Клетки общих предметов комнаты (0-based): и РАБ, и ПОЧУХАТЬ непроходимы.
+   *  Для ударов нужен только РАБ (манекен вне боя), поэтому раздельно. */
+  const rabExtra = useCallback((): CharRef[] =>
+    rabOnRef.current
+      ? [{ id: RAB_ID, name: RAB_SPRITE.name, col: RAB_POS.col, row: RAB_POS.row, sprite: RAB_SPRITE.id, scale: RAB_SCALE }]
+      : [],
+    [],
+  );
+  const objectExtras = useCallback((): CharRef[] => {
+    const out = rabExtra();
+    if (dummyOnRef.current && dummyPosRef.current) {
+      out.push({
+        id: DUMMY_ID,
+        name: DUMMY_NAME,
+        col: Math.round(dummyPosRef.current.x),
+        row: Math.round(dummyPosRef.current.y),
+        sprite: dummySpriteRef.current,
+        scale: DUMMY_SCALE,
+      });
+    }
+    return out;
+  }, [rabExtra]);
+
+  /** Тумблер «Включить манекен»: локально optimistic, сервер рассылёт dummyState всей комнате. */
+  const toggleDummy = useCallback(
     (on: boolean) => {
       const net = netRef.current;
       if (!net?.ready) return;
-      applyTarget(on, on ? (targetPosRef.current ?? { ...TARGET_DEFAULT }) : null);
-      net.emit('target', { on });
+      applyDummy(on, on ? (dummyPosRef.current ?? { ...DUMMY_DEFAULT }) : null);
+      net.emit('dummy', { on, sprite: dummySpriteRef.current });
     },
-    [applyTarget],
+    [applyDummy],
+  );
+
+  /** Смена скина манекена в настройках: уходит в комнату, dummyState вернёт авторитетное состояние. */
+  const changeDummySprite = useCallback((sprite: SpriteId) => {
+    dummySpriteRef.current = sprite;
+    setDummySprite(sprite);
+    const net = netRef.current;
+    if (net?.ready && dummyOnRef.current) net.emit('dummy', { on: true, sprite });
+  }, []);
+
+  /** Тумблер «Включить мишень» (РАБ): локально optimistic, сервер рассылёт rabState всей комнате. */
+  const toggleRab = useCallback(
+    (on: boolean) => {
+      const net = netRef.current;
+      if (!net?.ready) return;
+      applyRab(on);
+      net.emit('rab', { on });
+    },
+    [applyRab],
   );
 
   /* ---------- загрузка / сохранение настроек ---------- */
@@ -757,7 +836,7 @@ export default function Simulator() {
     setCombat((prev) => {
       const es = Math.max(1, settingsRef.current.combat.energyStart);
       let playerEnergy = prev.playerEnergy;
-      const de = pruneRemoteEnergy(prev.dummyEnergy, settingsRef.current, liveRemotesRef.current);
+      const de = pruneRemoteEnergy(prev.dummyEnergy, settingsRef.current, liveRemotesRef.current, rabOnRef.current ? [RAB_ID] : []);
       if (fight.attackerId === me) {
         playerEnergy = Math.max(0, playerEnergy - settingsRef.current.combat.strikeCost);
       }
@@ -855,10 +934,17 @@ export default function Simulator() {
           netMovesRef.current.server = { col, row };
         }
         setNetStatus(`Вы в комнате ${field.room || room} · ${cats.length} на поле`);
-        // Мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
-        const ft = field.target;
-        if (ft && Number.isFinite(ft.x) && Number.isFinite(ft.y)) applyTarget(true, { x: ft.x, y: ft.y });
-        else applyTarget(false, null);
+        // Манекен и мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
+        const fd = field.dummy;
+        if (fd && fd.on && Number.isFinite(fd.x) && Number.isFinite(fd.y)) {
+          const spr = SPRITES.find((sp) => sp.id === fd.sprite)?.id;
+          applyDummy(true, { x: fd.x, y: fd.y }, spr);
+          dummyGrabRef.current = fd.grab || null;
+        } else {
+          applyDummy(false, null);
+          dummyGrabRef.current = null;
+        }
+        applyRab(!!field.rab?.on);
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
@@ -961,22 +1047,35 @@ export default function Simulator() {
       },
       onNoplace: (payload) =>
         setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
-      onTargetState: (state) => {
+      onDummyState: (state) => {
         // Авторитет сервера: подтверждает optimistic-тумблер и синхронизирует остальных.
-        applyTarget(state.on, state.on ? { x: state.x, y: state.y } : null);
+        const spr = SPRITES.find((sp) => sp.id === state.sprite)?.id;
+        applyDummy(state.on, state.on ? { x: state.x, y: state.y } : null, spr);
+        dummyGrabRef.current = state.on ? state.grab || null : null;
       },
-      onTargetMove: (pos) => {
-        // Чужой тащит мишень: позиция на кадр, скорость сдвига раскачивает «желе».
-        const prev = targetPosRef.current;
+      onDummyMove: (pos) => {
+        // Чужой тащит манекен: позиция на кадр, скорость сдвига раскачивает «желе».
+        const prev = dummyPosRef.current;
         const nowMs = performance.now();
         if (prev) {
           const s0 = settingsRef.current;
           const dist = Math.hypot((pos.x - prev.x) * s0.field.cellW, (pos.y - prev.y) * s0.field.cellH);
-          const speed = dist / Math.max(1, nowMs - targetSeenRef.current);
-          jellyRef.current[TARGET_ID] = Math.max(jellyRef.current[TARGET_ID] ?? 0, Math.min(1, speed / 2.2));
+          const speed = dist / Math.max(1, nowMs - dummySeenRef.current);
+          jellyRef.current[DUMMY_ID] = Math.max(jellyRef.current[DUMMY_ID] ?? 0, Math.min(1, speed / 2.2));
         }
-        targetSeenRef.current = nowMs;
-        targetPosRef.current = { x: pos.x, y: pos.y };
+        dummySeenRef.current = nowMs;
+        dummyPosRef.current = { x: pos.x, y: pos.y };
+      },
+      onDummyGrab: (info) => {
+        // Обозначение «кто тащит»: курсор с именем игрока над манекеном.
+        dummyGrabRef.current = info.login;
+      },
+      onDummyDrop: () => {
+        dummyGrabRef.current = null;
+      },
+      onRabState: (state) => {
+        // Авторитет сервера: подтверждает optimistic-тумблер мишени РАБ.
+        applyRab(state.on);
       },
       onClose: (info) => {
         setNetReady(false);
@@ -1004,9 +1103,11 @@ export default function Simulator() {
       remoteAimRef.current.clear();
       remoteDrawRef.current.clear();
       netMovesRef.current = { server: null, pending: [] };
-      applyTarget(false, null);
-      targetSeenRef.current = 0;
-      targetSyncRef.current.at = 0;
+      applyDummy(false, null);
+      dummySeenRef.current = 0;
+      dummySyncRef.current.at = 0;
+      dummyGrabRef.current = null;
+      applyRab(false);
       const sync = aimSyncRef.current;
       if (sync.timer) clearTimeout(sync.timer);
       sync.timer = null;
@@ -1162,7 +1263,7 @@ export default function Simulator() {
         const tc = e.col + d.dx;
         const tr = e.row + d.dy;
         // клетки остальных персонажей — физические препятствия: шагнуть в них нельзя
-        if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current)) return;
+        if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras())) return;
         if (tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows) requestStep(d.deg, tc, tr);
       };
 
@@ -1200,12 +1301,12 @@ export default function Simulator() {
           const d = dirByDeg(e.held[e.held.length - 1]);
           const tc = e.col + d.dx;
           const tr = e.row + d.dy;
-          if (!isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current) && tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows)
+          if (!isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras()) && tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows)
             requestStep(d.deg, tc, tr);
         } else if (e.path.length > 0) {
           const nx = e.path[0];
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
-          if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current)) {
+          if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current, objectExtras())) {
             const mode = requestStep(d.deg, nx.c, nx.r);
             if (mode === 'local' || mode === 'net') e.path.shift();
           } else {
@@ -1255,6 +1356,15 @@ export default function Simulator() {
               const nv = Math.min(es, cur + amt);
               if (nv !== cur) {
                 de[d.id] = nv;
+                changed = true;
+              }
+            }
+            // Мишень РАБ всегда в боевом режиме — её энергия восстанавливается сама.
+            if (rabOnRef.current) {
+              const cur = de[RAB_ID] ?? es;
+              const nv = Math.min(es, cur + amt);
+              if (nv !== cur) {
+                de[RAB_ID] = nv;
                 changed = true;
               }
             }
@@ -1666,26 +1776,75 @@ export default function Simulator() {
         }
       };
 
-      // Общая мишень «ПОХУЯШ»: видна всем, тащится любым игроком, позиция живёт на
-      // сервере. Рисуется под котами, при перетаскивании — по курсорной позиции;
-      // имя постоянное и показывается всегда, даже когда на поле один игрок.
-      if (targetOnRef.current && targetPosRef.current) {
-        const sprP = spritesRef.current[TARGET_SPRITE.id] ?? null;
+      // Боевая мишень «РАБ»: общая для комнаты, в боевом режиме (по ней проходят
+      // удары), клетка непроходима. Рисуется под котами; имя постоянное.
+      if (rabOnRef.current) {
+        const sprR = spritesRef.current[RAB_SPRITE.id] ?? null;
+        if (sprR) {
+          const tr = { x: RAB_POS.col * s.field.cellW, y: RAB_POS.row * s.field.cellH };
+          drawChar(sprR, tr, RAB_SCALE, RAB_ID, false, whiteSpritesRef.current[RAB_SPRITE.id] ?? null, false);
+          const thR = (s.field.cellH - 10) * (RAB_SCALE / 100);
+          const nameX = tr.x + (sprR.width / sprR.height) * thR * 0.5;
+          ctx.font = 'bold 12px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillText(RAB_SPRITE.name, nameX + 1, tr.y - 16);
+          ctx.fillStyle = '#f4f4f5';
+          ctx.fillText(RAB_SPRITE.name, nameX, tr.y - 17);
+        }
+      }
+
+      // Манекен «ПОЧУХАТЬ»: виден всем, тащится любым игроком, позиция живёт
+      // на сервере. Вне боя (удары по нему не проходят), но клетка непроходима.
+      // Имя постоянное; когда кто-то тащит — над ним курсор с именем игрока.
+      if (dummyOnRef.current && dummyPosRef.current) {
+        const sprP = spritesRef.current[dummySpriteRef.current] ?? null;
         if (sprP) {
           const tp =
-            drag && drag.key === TARGET_ID
+            drag && drag.key === DUMMY_ID
               ? { x: drag.x, y: drag.y }
-              : { x: targetPosRef.current.x * s.field.cellW, y: targetPosRef.current.y * s.field.cellH };
-          drawChar(sprP, tp, TARGET_SCALE, TARGET_ID, false, whiteSpritesRef.current[TARGET_SPRITE.id] ?? null, false);
-          const thP = (s.field.cellH - 10) * (TARGET_SCALE / 100);
+              : { x: dummyPosRef.current.x * s.field.cellW, y: dummyPosRef.current.y * s.field.cellH };
+          drawChar(sprP, tp, DUMMY_SCALE, DUMMY_ID, false, whiteSpritesRef.current[dummySpriteRef.current] ?? null, false);
+          const thP = (s.field.cellH - 10) * (DUMMY_SCALE / 100);
           const nameX = tp.x + (sprP.width / sprP.height) * thP * 0.5;
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillText(TARGET_SPRITE.name, nameX + 1, tp.y - 16);
+          ctx.fillText(DUMMY_NAME, nameX + 1, tp.y - 16);
           ctx.fillStyle = '#f4f4f5';
-          ctx.fillText(TARGET_SPRITE.name, nameX, tp.y - 17);
+          ctx.fillText(DUMMY_NAME, nameX, tp.y - 17);
+          // Обозначение «кто тащит»: курсор-стрелка и имя игрока рядом с манекеном.
+          const grab = dummyGrabRef.current;
+          if (grab) {
+            const gx = nameX;
+            const gy = tp.y - 36;
+            ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+            const label = grab;
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.78)';
+            ctx.beginPath();
+            ctx.roundRect(gx - tw / 2 - 20, gy - 3, tw + 30, 18, 9);
+            ctx.fill();
+            // курсор-стрелка (как указатель мыши)
+            ctx.fillStyle = '#ffd60a';
+            ctx.beginPath();
+            ctx.moveTo(gx - tw / 2 - 12, gy);
+            ctx.lineTo(gx - tw / 2 - 12, gy + 10.5);
+            ctx.lineTo(gx - tw / 2 - 9.2, gy + 7.8);
+            ctx.lineTo(gx - tw / 2 - 7, gy + 12.5);
+            ctx.lineTo(gx - tw / 2 - 5.4, gy + 11.7);
+            ctx.lineTo(gx - tw / 2 - 7.6, gy + 7);
+            ctx.lineTo(gx - tw / 2 - 4, gy + 7);
+            ctx.closePath();
+            ctx.fill();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffd60a';
+            ctx.fillText(label, gx + 4, gy + 6);
+            ctx.textBaseline = 'top';
+          }
         }
       }
 
@@ -1792,7 +1951,7 @@ export default function Simulator() {
       // (только для прямой стойки: с диагонали зону задаёт правило окон)
       if (s.arrow.battleMode && s.arrow.showRay) {
         const mpAim = selfId === 'main' ? null : mainSavedRef.current;
-        const tm = pickStrikeTarget(s, e.col, e.row, e.angle, selfId, mpAim, liveRemotesRef.current);
+        const tm = pickStrikeTarget(s, e.col, e.row, e.angle, selfId, mpAim, liveRemotesRef.current, rabExtra());
         const diagM = !!tm && Math.abs(tm.col - e.col) === 1 && Math.abs(tm.row - e.row) === 1;
         const sprTm = tm ? (spritesRef.current[tm.sprite] ?? null) : null;
         const sprSelf = spritesRef.current[cfgSelf ? cfgSelf.sprite : s.character.sprite] ?? null;
@@ -1920,9 +2079,10 @@ export default function Simulator() {
           jelly: Object.fromEntries(
             Object.entries(jellyRef.current).map(([k2, v]) => [k2, Math.round((v ?? 0) * 100) / 100]),
           ),
-          target: targetOnRef.current
-            ? { x: targetPosRef.current?.x ?? null, y: targetPosRef.current?.y ?? null }
+          dummy: dummyOnRef.current
+            ? { x: dummyPosRef.current?.x ?? null, y: dummyPosRef.current?.y ?? null, sprite: dummySpriteRef.current, grab: dummyGrabRef.current }
             : null,
+          rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row } : null,
           dummies: dummiesOf(settingsRef.current, liveRemotesRef.current).map((d) => {
             const vis = remoteDrawRef.current.get(d.id);
             return {
@@ -2069,14 +2229,14 @@ export default function Simulator() {
     return null;
   };
 
-  /** Прямоугольник мишени под точкой (mx,my) канваса — px и размеры спрайта, либо null.
-   *  Пока мишень тащат, проверка не нужна: её уже удерживает захват указателя. */
-  const hitTargetObjAt = (s: SimSettings, mx: number, my: number) => {
-    if (!targetOnRef.current) return null;
-    const pos = targetPosRef.current;
+  /** Прямоугольник манекена под точкой (mx,my) канваса — px и размеры спрайта, либо null.
+   *  Пока манекен тащат, проверка не нужна: его уже удерживает захват указателя. */
+  const hitDummyObjAt = (s: SimSettings, mx: number, my: number) => {
+    if (!dummyOnRef.current) return null;
+    const pos = dummyPosRef.current;
     if (!pos) return null;
-    const sprT = spritesRef.current[TARGET_SPRITE.id] ?? null;
-    const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, TARGET_SCALE);
+    const sprT = spritesRef.current[dummySpriteRef.current] ?? null;
+    const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, DUMMY_SCALE);
     const px = pos.x * s.field.cellW;
     const py = pos.y * s.field.cellH;
     if (mx >= px - 4 && mx <= px + b.w + 4 && my >= py - 4 && my <= py + b.h + 4) {
@@ -2103,13 +2263,13 @@ export default function Simulator() {
       dg.lastX = mx;
       dg.lastY = my;
       dg.lastT = nowT;
-      if (dg.key === TARGET_ID) {
-        // Мишень — общая: пока тащим, позиция уходит на сервер с постоянным темпом,
+      if (dg.key === DUMMY_ID) {
+        // Манекен — общий: пока тащим, позиция уходит на сервер с постоянным темпом,
         // чтобы остальные видели движение в реальном времени.
         const net = netRef.current;
-        if (net?.ready && nowT - targetSyncRef.current.at >= TARGET_EMIT_MS) {
-          targetSyncRef.current.at = nowT;
-          net.emit('targetMove', { x: round2(dg.x / s.field.cellW), y: round2(dg.y / s.field.cellH) });
+        if (net?.ready && nowT - dummySyncRef.current.at >= DUMMY_EMIT_MS) {
+          dummySyncRef.current.at = nowT;
+          net.emit('dummyMove', { x: round2(dg.x / s.field.cellW), y: round2(dg.y / s.field.cellH) });
         }
       }
       return;
@@ -2122,7 +2282,7 @@ export default function Simulator() {
     // над активной (управляемой) моделью обычный курсор — её тащить нельзя
     const cv = canvasRef.current;
     const hov = hitTargetAt(s, mx, my);
-    const hovT = hitTargetObjAt(s, mx, my);
+    const hovT = hitDummyObjAt(s, mx, my);
     if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'grab' : '';
   };
 
@@ -2137,12 +2297,12 @@ export default function Simulator() {
     if (ev.button !== 0) return;
     const s = settingsRef.current;
     const { mx, my } = canvasPoint(ev);
-    // Общая мишень тащится всегда (и в комнате с игроками — это её смысл):
-    // захват до проверки манекенов, чтобы живые коты её не блокировали.
-    const tObj = hitTargetObjAt(s, mx, my);
+    // Манекен тащится всегда (и в комнате с игроками — это его смысл):
+    // захват до проверки манекенов, чтобы живые коты его не блокировали.
+    const tObj = hitDummyObjAt(s, mx, my);
     if (tObj) {
       dragRef.current = {
-        key: TARGET_ID,
+        key: DUMMY_ID,
         grabDX: mx - tObj.x,
         grabDY: my - tObj.y,
         x: tObj.x,
@@ -2154,6 +2314,9 @@ export default function Simulator() {
         lastT: performance.now(),
         moved: false,
       };
+      // Комната видит курсор с именем тащщего; своё имя рисуем тоже — после dummyGrab.
+      const net = netRef.current;
+      if (net?.ready) net.emit('dummyGrab');
       ev.currentTarget.setPointerCapture(ev.pointerId);
       ev.currentTarget.style.cursor = 'grabbing';
       ev.preventDefault();
@@ -2199,13 +2362,16 @@ export default function Simulator() {
     let r = Math.floor((dg.y + dg.h / 2) / s.field.cellH);
     c = Math.min(Math.max(c, 0), s.field.cols - 1);
     r = Math.min(Math.max(r, 0), s.field.rows - 1);
-    if (dg.key === TARGET_ID) {
-      // Мишень — общий предмет: с котами не конфликтует, ставится в клетку под центром
+    if (dg.key === DUMMY_ID) {
+      // Манекен — общий предмет: с котами не конфликтует, ставится в клетку под центром
       // и отправляет финальную позицию на сервер (без ожидания темпа рассылки).
-      targetPosRef.current = { x: c, y: r };
-      targetSyncRef.current.at = performance.now();
+      dummyPosRef.current = { x: c, y: r };
+      dummySyncRef.current.at = performance.now();
       const net = netRef.current;
-      if (net?.ready) net.emit('targetMove', { x: c, y: r });
+      if (net?.ready) {
+        net.emit('dummyMove', { x: c, y: r });
+        net.emit('dummyDrop');
+      }
       return;
     }
     const e = engineRef.current;
@@ -2270,7 +2436,7 @@ export default function Simulator() {
       r,
       s.field.cols,
       s.field.rows,
-      othersOf(s, s.controlled, mp, liveRemotesRef.current).map((t) => ({ c: t.col, r: t.row })),
+      othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
     );
   };
 
@@ -2299,7 +2465,7 @@ export default function Simulator() {
 
     /** Кого задел удар: единственный соседний персонаж, а если соседних несколько —
      *  тот, на который точнее наведена стрела. null — рядом никого. */
-    const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp, liveRemotesRef.current);
+    const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp, liveRemotesRef.current, rabExtra());
     /** Поражённый персонаж (для списания его энергии; null — попадания не было). */
     let struck: CharRef | null = null;
     /** Урон по цели этим ударом (null — попадания не было). */
@@ -2397,6 +2563,8 @@ export default function Simulator() {
     if (hitDamage !== null && struck) {
       const z = s.combat.zones.find((zz) => zz.id === entry.zoneId);
       if (z) pushDamageLabel(z, struck.col, struck.row);
+      // Попадание по мишени РАБ качает её «желе» — видно всем, удар пришёлся.
+      if (struck.id === RAB_ID) jellyRef.current[RAB_ID] = 1;
     } else {
       pushMissLabel();
     }
@@ -2406,7 +2574,7 @@ export default function Simulator() {
     setCombat((prev) => {
       const es = Math.max(1, s.combat.energyStart);
       let playerEnergy = prev.playerEnergy;
-      const de = pruneRemoteEnergy(prev.dummyEnergy, s, liveRemotesRef.current);
+      const de = pruneRemoteEnergy(prev.dummyEnergy, s, liveRemotesRef.current, rabOnRef.current ? [RAB_ID] : []);
       // энергия тратится только при попадании в зону удара — промах бесплатен;
       // платит тот, кем управляем (свой кот — playerEnergy, манекен — своя энергия)
       if (hitDamage !== null) {
@@ -2818,8 +2986,12 @@ export default function Simulator() {
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <SettingsPanel
                 settings={settings}
-                targetOn={targetOn}
-                onToggleTarget={toggleTarget}
+                dummyOn={dummyOn}
+                onToggleDummy={toggleDummy}
+                dummySprite={dummySprite}
+                onDummySprite={changeDummySprite}
+                rabOn={rabOn}
+                onToggleRab={toggleRab}
                 patchField={patchField}
                 patchCharacter={patchCharacter}
                 patchArrow={patchArrow}

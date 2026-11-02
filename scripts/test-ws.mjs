@@ -562,54 +562,89 @@ for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
 }
 console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy");
 
-// Общая мишень комнаты: включение видно всем (и включившему), движение тащащему
-// не эхоится, чужие получают targetMove, новичку позиция приходит в field.
+// Манекен «ПОЧУХАТЬ»: включение видно всем (и включившему), движение тащащему
+// не эхоится, чужие получают dummyMove, новичку состояние приходит в field,
+// клетка манекена непроходима, захват виден курсором с именем (dummyGrab/dummyDrop).
 const tgtRoom = `t${Date.now().toString(36)}g`;
 const ta = await client("Альфа", tgtRoom);
 const tb = await client("Бета", tgtRoom);
 await waitFor(ta, "you");
 await waitFor(tb, "you");
+const youBt = tb.inbox.find((m) => m[0] === "you")[1];
 ta.inbox.length = 0;
 tb.inbox.length = 0;
-ta.send(JSON.stringify(["target", { on: true }]));
-const stA = await waitFor(ta, "targetState");
-const stB = await waitFor(tb, "targetState");
+ta.send(JSON.stringify(["dummy", { on: true, sprite: "drel" }]));
+const stA = await waitFor(ta, "dummyState");
+const stB = await waitFor(tb, "dummyState");
 for (const [who, st] of [["A", stA], ["B", stB]]) {
-  if (st[1].on !== true) throw new Error(`${who} targetState.on ${JSON.stringify(st[1])}`);
+  if (st[1].on !== true) throw new Error(`${who} dummyState.on ${JSON.stringify(st[1])}`);
+  if (st[1].sprite !== "drel") throw new Error(`${who} dummyState.sprite ${JSON.stringify(st[1])}`);
   if (!Number.isFinite(st[1].x) || !Number.isFinite(st[1].y)) {
-    throw new Error(`${who} targetState coords ${JSON.stringify(st[1])}`);
+    throw new Error(`${who} dummyState coords ${JSON.stringify(st[1])}`);
   }
 }
 ta.inbox.length = 0;
 tb.inbox.length = 0;
-ta.send(JSON.stringify(["targetMove", { x: 2.5, y: 1.25 }]));
-const mvB = await waitFor(tb, "targetMove");
-if (mvB[1].x !== 2.5 || mvB[1].y !== 1.25) throw new Error(`targetMove ${JSON.stringify(mvB[1])}`);
+ta.send(JSON.stringify(["dummyMove", { x: 2.5, y: 1.25 }]));
+const mvB = await waitFor(tb, "dummyMove");
+if (mvB[1].x !== 2.5 || mvB[1].y !== 1.25) throw new Error(`dummyMove ${JSON.stringify(mvB[1])}`);
 await sleep(80);
-if (ta.inbox.some((m) => m[0] === "targetMove")) throw new Error("targetMove echoed to the dragger");
+if (ta.inbox.some((m) => m[0] === "dummyMove")) throw new Error("dummyMove echoed to the dragger");
 // Грубые координаты зажимаются сервером в пределы поля.
-ta.send(JSON.stringify(["targetMove", { x: 99, y: -5 }]));
-const clamped = await waitFor(tb, "targetMove");
+ta.send(JSON.stringify(["dummyMove", { x: 99, y: -5 }]));
+const clamped = await waitFor(tb, "dummyMove");
 if (clamped[1].x < 0 || clamped[1].x > 9 || clamped[1].y < 0 || clamped[1].y > 5) {
-  throw new Error(`targetMove clamp ${JSON.stringify(clamped[1])}`);
+  throw new Error(`dummyMove clamp ${JSON.stringify(clamped[1])}`);
 }
-ta.send(JSON.stringify(["target", { on: false }]));
-const offA = await waitFor(ta, "targetState");
-const offB = await waitFor(tb, "targetState");
-if (offA[1].on !== false || offB[1].on !== false) throw new Error("targetState off failed");
-// Повторное включение: мишень снова в дефолтной клетке, видна новичку в field.
-ta.send(JSON.stringify(["target", { on: true }]));
-await waitFor(ta, "targetState");
-await waitFor(tb, "targetState");
+// Новичок получает состояние манекена в field: объект есть — значит включён.
 const tc = await client("Гамма", tgtRoom);
 const fieldT = (await waitFor(tc, "field"))[1];
-// В field мишень — {x,y} или null: есть объект — значит включена.
-if (!fieldT.target || !Number.isFinite(fieldT.target.x) || !Number.isFinite(fieldT.target.y)) {
-  throw new Error(`field target ${JSON.stringify(fieldT.target)}`);
+if (!fieldT.dummy || fieldT.dummy.on !== true || !Number.isFinite(fieldT.dummy.x) || !Number.isFinite(fieldT.dummy.y) || fieldT.dummy.sprite !== "drel") {
+  throw new Error(`field dummy ${JSON.stringify(fieldT.dummy)}`);
 }
-ta.send(JSON.stringify(["target", { on: false }]));
-await waitFor(ta, "targetState");
-console.log("ok: target", "on/move/clamp/off/field");
+// Клетка манекена непроходима: ставим его вплотную справа от Беты и пробуем шагнуть.
+ta.send(JSON.stringify(["dummyMove", { x: youBt.x, y: youBt.y - 1 }]));
+await waitFor(tb, "dummyMove");
+tb.inbox.length = 0;
+tb.send(JSON.stringify(["move", { x: 1, y: 0 }]));
+const refused = await waitFor(tb, "refuse");
+if (refused[1].code !== "cell_busy") throw new Error(`dummy cell passable: ${JSON.stringify(refused[1])}`);
+// Курсор-обозначение: захват виден обоим (включая взявшего).
+ta.send(JSON.stringify(["dummyGrab"]));
+const grA = await waitFor(ta, "dummyGrab");
+const grB = await waitFor(tb, "dummyGrab");
+if (grA[1].login !== "Альфа" || grB[1].login !== "Альфа") {
+  throw new Error(`dummyGrab ${JSON.stringify([grA[1], grB[1]])}`);
+}
+// Ушедший тащащий убирает курсор: close тащившего шлёт dummyDrop остальным.
+ta.close();
+const dropped = await waitFor(tb, "dummyDrop");
+if (!dropped) throw new Error("dummyDrop on grabber leave");
+console.log("ok: dummy", "on/move/clamp/field/block/grab/drop");
+
+// Боевая мишень «РАБ»: включение видно всем, её клетка непроходима
+// (второй кот спавнится мимо неё), новичку состояние приходит в field.
+const rabRoom = `t${Date.now().toString(36)}r`;
+const ra = await client("Альфа", rabRoom);
+await waitFor(ra, "you");
+ra.inbox.length = 0;
+ra.send(JSON.stringify(["rab", { on: true }]));
+const rsA = await waitFor(ra, "rabState");
+if (rsA[1].on !== true) throw new Error(`rabState.on ${JSON.stringify(rsA[1])}`);
+const rb = await client("Бета", rabRoom);
+const youB2 = (await waitFor(rb, "you"))[1];
+// РАБ стоит в 0-based (4,2) = серверной (5,3): второй спавн обязан её обойти.
+if (youB2.x === 5 && youB2.y === 3) throw new Error(`spawn on RAB cell ${JSON.stringify(youB2)}`);
+const rc = await client("Гамма", rabRoom);
+const fieldR = (await waitFor(rc, "field"))[1];
+if (!fieldR.rab || fieldR.rab.on !== true) throw new Error(`field rab ${JSON.stringify(fieldR.rab)}`);
+ra.inbox.length = 0;
+rb.inbox.length = 0;
+ra.send(JSON.stringify(["rab", { on: false }]));
+const rsOff = await waitFor(ra, "rabState");
+const rsOffB = await waitFor(rb, "rabState");
+if (rsOff[1].on !== false || rsOffB[1].on !== false) throw new Error("rabState off failed");
+console.log("ok: rab", "on/spawn-skip/field/off");
 
 function handshake(origin) {
   return new Promise((resolve) => {

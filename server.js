@@ -98,12 +98,17 @@ const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
 const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "serebristyy", "evr", "drel"];
 /**
- * Общая мишень комнаты («ПОХУЯШ»). Позиция в клеточных долях (x — по ширине,
- * y — по высоте, 0 — левый верх спрайта), чтобы поле любого клиента с любым
- * размером клетки рисовало её в одном и том же месте. Живёт в состоянии комнаты:
- * включается любым игроком, тащить может любой, координаты видны всем в реальном времени.
+ * Манекен «ПОЧУХАТЬ»: общий предмет комнаты, не персонаж. Не в боевом режиме,
+ * но клетка под ним непроходима. Позиция в клеточных долях (x — по ширине,
+ * y — по высоте, 0 — левый верх спрайта). Тащить может любой игрок; когда кто-то
+ * держит манекен, комната видит курсор с его именем.
  */
-const TARGET_DEFAULT = { x: 4, y: 2 };
+const DUMMY_DEFAULT = { x: 7, y: 2, sprite: "puhlyashik" };
+/**
+ * Боевая мишень «РАБ»: общий предмет комнаты в боевом режиме — по ней проходят
+ * удары, её клетка непроходима. Спрайт один у всех мишеней, позиция фиксирована.
+ */
+const RAB_CELL = { x: 4, y: 2 };
 
 const rooms = new Map();
 let nextId = 1001;
@@ -120,15 +125,29 @@ function roomOf(code) {
     .replace(/[^a-z0-9_-]/g, "")
     .slice(0, 24) || "demo";
   if (!rooms.has(key)) {
-    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0, target: null, targetLast: null });
+    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0, dummy: null, dummyLast: null, dummyGrab: null, rab: null });
   }
   return rooms.get(key);
+}
+
+/** Клетка предмета (0-based) по его клеточным долям: центр округляется в пределы поля. */
+function objCell(pos) {
+  return {
+    cx: Math.min(WIDTH - 1, Math.max(0, Math.round(pos.x))),
+    cy: Math.min(HEIGHT - 1, Math.max(0, Math.round(pos.y))),
+  };
 }
 
 function occupied(room, x, y, exceptId) {
   for (const cat of room.cats.values()) {
     if (cat.id !== exceptId && cat.x === x && cat.y === y) return true;
   }
+  // Предметы комнаты — физические препятствия: на их клетки нельзя ступать и там нельзя спавниться.
+  if (room.dummy) {
+    const c = objCell(room.dummy);
+    if (c.cx === x - 1 && c.cy === y - 1) return true;
+  }
+  if (room.rab && RAB_CELL.x === x - 1 && RAB_CELL.y === y - 1) return true;
   return false;
 }
 
@@ -177,7 +196,10 @@ function fieldPayload(room) {
     users,
     cats: [...room.cats.values()].map(publicCat),
     location: { name: "Расщелина меж скал", bg: 71085 },
-    target: room.target ? { ...room.target } : null,
+    dummy: room.dummy
+      ? { on: true, x: room.dummy.x, y: room.dummy.y, sprite: room.dummy.sprite, grab: room.dummyGrab || null }
+      : null,
+    rab: room.rab ? { on: true } : null,
   };
 }
 
@@ -192,6 +214,11 @@ function leave(ws) {
   if (!room) return;
   const cat = room.sockets.get(ws);
   room.sockets.delete(ws);
+  // Ушедший тащил манекен — комната больше не видит курсор с его именем.
+  if (room.dummyGrab && cat && room.dummyGrab === cat.login) {
+    room.dummyGrab = null;
+    broadcast(room, "dummyDrop", {});
+  }
   if (cat) {
     clearAimTimer(cat);
     clearMoveTimer(cat);
@@ -642,11 +669,11 @@ function chat(ws, payload = {}) {
 }
 
 /**
- * Общая мишень комнаты. Клиент → ["target", { on }].
- * Включение ставит мишень в дефолтную клетку, выключение убирает; новое состояние
- * уходит всей комнате (и включившему тоже) одним пакетом targetState.
+ * Манекен «ПОЧУХАТЬ». Клиент → ["dummy", { on, sprite? }].
+ * Включение ставит манекен туда, где его выключили (или в дефолт), sprite обновляет
+ * скин из списка персонажей. Комнате (и включившему тоже) → один пакет dummyState.
  */
-function targetToggle(ws, payload = {}) {
+function dummyToggle(ws, payload = {}) {
   const room = ws.room;
   if (!room) {
     send(ws, "info", "Сначала зайдите в комнату.");
@@ -654,38 +681,82 @@ function targetToggle(ws, payload = {}) {
   }
   const on = !!payload.on;
   if (on) {
-    // Включение возвращает мишень туда, где её выключили (или в дефолт).
-    if (!room.target) room.target = room.targetLast ? { ...room.targetLast } : { ...TARGET_DEFAULT };
+    if (!room.dummy) room.dummy = room.dummyLast ? { ...room.dummyLast } : { ...DUMMY_DEFAULT };
+    const sprite = String(payload.sprite || "").trim();
+    if (SPRITES.includes(sprite)) room.dummy.sprite = sprite;
   } else {
-    if (room.target) room.targetLast = { ...room.target };
-    room.target = null;
+    if (room.dummy) room.dummyLast = { ...room.dummy };
+    room.dummy = null;
+    room.dummyGrab = null;
   }
-  const state = { on, x: room.target?.x ?? TARGET_DEFAULT.x, y: room.target?.y ?? TARGET_DEFAULT.y };
-  broadcast(room, "targetState", state);
+  broadcast(room, "dummyState", {
+    on,
+    x: room.dummy?.x ?? DUMMY_DEFAULT.x,
+    y: room.dummy?.y ?? DUMMY_DEFAULT.y,
+    sprite: room.dummy?.sprite ?? DUMMY_DEFAULT.sprite,
+    grab: room.dummyGrab || null,
+  });
 }
 
-/** Округление координат мишени до сотых: точности перетаскивания хватает, пакет короче. */
-function normTargetCoord(value, max) {
+/** Округление координат манекена до сотых: точности перетаскивания хватает, пакет короче. */
+function normDummyCoord(value, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.round(Math.min(max, Math.max(0, n)) * 100) / 100;
 }
 
 /**
- * Перетаскивание мишени. Клиент → ["targetMove", { x, y }] — координаты в клеточных
+ * Перетаскивание манекена. Клиент → ["dummyMove", { x, y }] — координаты в клеточных
  * долях, уже зажатые клиентом; сервер перепроверяет и рассылает остальным
- * ["targetMove", { x, y }]. Отправителю эхо не нужно: он уже нарисовал позицию.
+ * ["dummyMove", { x, y }]. Отправителю эхо не нужно: он уже нарисовал позицию.
  */
-function targetMove(ws, payload = {}) {
+function dummyMove(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
-  if (!room || !cat || !room.target) return;
-  const x = normTargetCoord(payload.x, WIDTH - 1);
-  const y = normTargetCoord(payload.y, HEIGHT - 1);
+  if (!room || !cat || !room.dummy) return;
+  const x = normDummyCoord(payload.x, WIDTH - 1);
+  const y = normDummyCoord(payload.y, HEIGHT - 1);
   if (x == null || y == null) return;
-  room.target.x = x;
-  room.target.y = y;
-  broadcast(room, "targetMove", { x, y }, ws);
+  room.dummy.x = x;
+  room.dummy.y = y;
+  broadcast(room, "dummyMove", { x, y }, ws);
+}
+
+/**
+ * Кто-то взял манекен: комната (включая взявшего) видит курсор с именем тащщего.
+ * Клиент → ["dummyGrab"]. Комнате → ["dummyGrab", { login }].
+ */
+function dummyGrab(ws) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat || !room.dummy) return;
+  room.dummyGrab = cat.login;
+  broadcast(room, "dummyGrab", { login: room.dummyGrab });
+}
+
+/** Манекен отпущен. Клиент → ["dummyDrop"]. Комнате → ["dummyDrop"]. */
+function dummyDrop(ws) {
+  const room = ws.room;
+  if (!room || !room.dummyGrab) return;
+  const cat = room.sockets.get(ws);
+  if (cat && room.dummyGrab !== cat.login) return;
+  room.dummyGrab = null;
+  broadcast(room, "dummyDrop", {});
+}
+
+/**
+ * Боевая мишень «РАБ». Клиент → ["rab", { on }]. Включение/выключение уходит всей
+ * комнате (и включившему тоже) пакетом rabState. Позиция фиксирована (RAB_CELL).
+ */
+function rabToggle(ws, payload = {}) {
+  const room = ws.room;
+  if (!room) {
+    send(ws, "info", "Сначала зайдите в комнату.");
+    return;
+  }
+  const on = !!payload.on;
+  room.rab = on ? { on: true } : null;
+  broadcast(room, "rabState", { on });
 }
 
 function onMessage(ws, raw) {
@@ -703,8 +774,11 @@ function onMessage(ws, raw) {
   else if (event === "strike") strike(ws, payload || {});
   else if (event === "chat") chat(ws, payload ?? {});
   else if (event === "sprite") setSprite(ws, payload || {});
-  else if (event === "target") targetToggle(ws, payload || {});
-  else if (event === "targetMove") targetMove(ws, payload || {});
+  else if (event === "dummy") dummyToggle(ws, payload || {});
+  else if (event === "dummyMove") dummyMove(ws, payload || {});
+  else if (event === "dummyGrab") dummyGrab(ws);
+  else if (event === "dummyDrop") dummyDrop(ws);
+  else if (event === "rab") rabToggle(ws, payload || {});
 }
 
 const MIME = {
