@@ -60,7 +60,7 @@ const BLOBS: Blob[] = [
 ];
 
 const TAU = Math.PI * 2;
-const GLOW_R = 105; // компактное свечение у курсора
+const GLOW_R = 50; // компактное тёплое свечение у курсора
 
 export function BeerBackdrop() {
   const ref = useRef<HTMLCanvasElement | null>(null);
@@ -231,9 +231,9 @@ export function BeerBackdrop() {
       if (!mouse.on || mouse.x < -100) return;
       // Мгновенно: рисуем строго в позиции курсора, без запаздывания.
       const g = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, GLOW_R);
-      g.addColorStop(0, 'rgba(253, 230, 168, 0.16)');
-      g.addColorStop(0.5, 'rgba(245, 178, 68, 0.06)');
-      g.addColorStop(1, 'rgba(245, 178, 68, 0)');
+      g.addColorStop(0, 'rgba(255, 205, 120, 0.22)');
+      g.addColorStop(0.5, 'rgba(255, 150, 60, 0.09)');
+      g.addColorStop(1, 'rgba(255, 140, 50, 0)');
       ctx.fillStyle = g;
       ctx.fillRect(mouse.x - GLOW_R, mouse.y - GLOW_R, GLOW_R * 2, GLOW_R * 2);
     };
