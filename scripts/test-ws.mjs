@@ -598,13 +598,27 @@ function handshake(origin) {
   if (selfEcho[0][1].x !== moverYou.x || selfEcho[0][1].y !== moverYou.y + 1) {
     throw new Error(`echo cell ${selfEcho[0][1].x}:${selfEcho[0][1].y}`);
   }
+  // Шаг в кулдаун (80 мс) не глотается: встаёт в очередь и исполняется
+  // в момент её снятия — иначе предикт клиента расходится с сервером.
   mover.send(JSON.stringify(["move", { x: 0, y: 1 }]));
-  await sleep(40);
+  await sleep(250);
   const paced = mover.inbox.filter((m) => m[0] === "update cat" && m[1].id === moverYou.id);
-  if (paced.length !== 1 || paced[0][1].y !== moverYou.y + 1) {
-    throw new Error(`cooldown let a second step through: ${JSON.stringify(paced.map((m) => m[1]))}`);
+  if (paced.length !== 2 || paced[1][1].y !== moverYou.y + 2) {
+    throw new Error(`queued step lost or wrong: ${JSON.stringify(paced.map((m) => m[1]))}`);
   }
-  console.log("ok: one move echo, cooldown drops the double");
+  console.log("ok: one move echo, step in cooldown queued not dropped");
+  // Залп из 5 шагов: первый исполняется сразу, ещё 3 занимают очередь,
+  // пятый — честный отказ с кодом cooldown. Итог: ровно 4 клетки по x.
+  const dirX = moverYou.x <= 6 ? 1 : -1;
+  for (let i = 0; i < 5; i++) mover.send(JSON.stringify(["move", { x: dirX, y: 0 }]));
+  await sleep(600);
+  const refuses = mover.inbox.filter((m) => m[0] === "refuse" && m[1].code === "cooldown");
+  if (refuses.length !== 1) throw new Error(`overflow refuse ×${refuses.length}, expected 1`);
+  const walk = mover.inbox.filter((m) => m[0] === "update cat" && m[1].id === moverYou.id).map((m) => m[1].x);
+  if (walk[walk.length - 1] !== moverYou.x + dirX * 4) {
+    throw new Error(`queued walk ended at x=${walk[walk.length - 1]}, expected ${moverYou.x + dirX * 4} (${JSON.stringify(walk)})`);
+  }
+  console.log("ok: queue of 3 executes, overflow refused cooldown");
   mover.close();
   watcher.close();
 }
