@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '@/components/ui/button';
 import { CharacterPicker, type CharacterChoice } from './character-picker';
 import { SettingsPanel } from './settings-panel';
@@ -39,6 +39,14 @@ import {
 const STORAGE_KEY = 'catwar-battle-sim-v4';
 /** Отдельное хранилище боевого состояния (энергия + лог ударов). */
 const COMBAT_KEY = 'catwar-battle-sim-combat-v1';
+/** Ширины боковых колонок (чат слева, лог ударов справа) — их тянет сам игрок. */
+const LAYOUT_KEY = 'catwar-battle-sim-layout-v1';
+/** Пределы растяжения колонок, px: узкие неудобны, широкие съедают поле. */
+const CHAT_W = { min: 210, max: 560, def: 300 };
+const LOG_W = { min: 170, max: 460, def: 230 };
+/** Поле может растягиваться сверх клеточного размера, чтобы занять весь кадр.
+ *  Дальше 2× картинка начинает заметно мылить даже с dpr-рендером. */
+const FIELD_MAX_UPSCALE = 2;
 /** Пауза на новые шаги после отката предикта (чуть выше серверного кулдауна 80мс):
  *  мгновенный перешаг после отката уходил в серверный кулдаун и терялся. */
 const NET_ROLLBACK_LOCK_MS = 90;
@@ -64,6 +72,75 @@ const SPENT_COLOR = '#e5484d';
  *  удара — быстрее одного удара в 170 мс не будет ни при каком спаме.
  *  Точное значение — настройка «Отклик удара» (combat.strikeResponseMs). */
 const STRIKE_RESPONSE_MS = 170;
+
+type Layout = { chatW: number; logW: number };
+
+const clampLayout = (l: Layout): Layout => ({
+  chatW: Math.max(CHAT_W.min, Math.min(CHAT_W.max, Math.round(l.chatW))),
+  logW: Math.max(LOG_W.min, Math.min(LOG_W.max, Math.round(l.logW))),
+});
+
+const loadLayout = (): Layout => {
+  if (typeof window === 'undefined') return { chatW: CHAT_W.def, logW: LOG_W.def };
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return { chatW: CHAT_W.def, logW: LOG_W.def };
+    const p = JSON.parse(raw) as Partial<Layout>;
+    return clampLayout({
+      chatW: Number(p.chatW) || CHAT_W.def,
+      logW: Number(p.logW) || LOG_W.def,
+    });
+  } catch {
+    return { chatW: CHAT_W.def, logW: LOG_W.def };
+  }
+};
+
+const saveLayout = (l: Layout) => {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(clampLayout(l)));
+  } catch {}
+};
+
+/**
+ * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
+ * соседней панели. Сам ничего не хранит — отдаёт дельту dx родителю.
+ */
+function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () => void }) {
+  const last = useRef(0);
+  const dragging = useRef(false);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Потяните, чтобы изменить ширину панели"
+      title="Потяните, чтобы изменить ширину"
+      onPointerDown={(ev) => {
+        ev.preventDefault();
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+        last.current = ev.clientX;
+        dragging.current = true;
+      }}
+      onPointerMove={(ev) => {
+        if (!dragging.current || !(ev.buttons & 1)) return;
+        onDrag(ev.clientX - last.current);
+        last.current = ev.clientX;
+      }}
+      onPointerUp={(ev) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        try {
+          ev.currentTarget.releasePointerCapture(ev.pointerId);
+        } catch {}
+        onEnd();
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+        onEnd();
+      }}
+      className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-zinc-700/40 transition-colors hover:bg-emerald-600/50 active:bg-emerald-500/70 lg:block"
+    />
+  );
+}
 
 /** Максимум строк в боевом логе (лог теперь последовательный, старые строки вытесняются). */
 const LOG_LIMIT = 100;
@@ -424,6 +501,19 @@ export default function Simulator() {
   /** Рамка поля: по ней канвас вписывается в оставшееся место, без внутреннего скролла. */
   const fieldFrameRef = useRef<HTMLDivElement | null>(null);
   const [fieldFit, setFieldFit] = useState<{ w: number; h: number } | null>(null);
+  /** Ширины чата и лога ударов; меняются перетаскиванием разделителей и запоминаются. */
+  const [layout, setLayout] = useState<Layout>(() => ({ chatW: CHAT_W.def, logW: LOG_W.def }));
+  const layoutRef = useRef(layout);
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
+  useEffect(() => {
+    const saved = loadLayout();
+    setLayout(saved);
+    layoutRef.current = saved;
+  }, []);
+  /** Панель настроек теперь выдвижная: не отдаёт поле постоянной колонке. */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const spritesRef = useRef<Partial<Record<SpriteId, HTMLImageElement>>>({});
   /** Белые силуэты спрайтов: тонкая обводка своего кота. */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
@@ -1323,10 +1413,19 @@ export default function Simulator() {
       const e = engineRef.current;
       const W = s.field.cols * s.field.cellW;
       const H = s.field.rows * s.field.cellH;
-      if (cv.width !== W || cv.height !== H) {
-        cv.width = W;
-        cv.height = H;
+      // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
+      // Чтобы без «мыла»: backing store повторяет показанный размер с учётом
+      // devicePixelRatio (кап 2), а рисунок идёт в клеточных координатах через
+      // ctx.setTransform. Мышь маппится через отношение размеров — не ломается.
+      const cssW = cv.clientWidth || W;
+      const k = Math.min(2, Math.max(1, (cssW * (window.devicePixelRatio || 1)) / Math.max(1, W)));
+      const bw = Math.round(W * k);
+      const bh = Math.round(H * k);
+      if (cv.width !== bw || cv.height !== bh) {
+        cv.width = bw;
+        cv.height = bh;
       }
+      ctx.setTransform(k, 0, 0, k, 0, 0);
 
       // фон
       ctx.fillStyle = s.field.bgColor;
@@ -2304,9 +2403,11 @@ export default function Simulator() {
   const fieldW = settings.field.cols * settings.field.cellW;
   const fieldH = settings.field.rows * settings.field.cellH;
 
-  // Канвас рисуется в пикселях клеток (10×100 на 6×150). На широком экране
-  // CSS-размер вписывается в рамку целиком — и по ширине, и по высоте.
-  // На узком высота следует за шириной, а страница прокручивается вместе с полем.
+  // Канвас рисуется в пикселях клеток (10×100 на 6×150). Боковые колонки (чат и лог)
+  // живут рядом с полем, поэтому кадр отдаётся полю целиком: размер вписывается и по
+  // ширине, и по высоте, а сверх клеточного размера допускается растяжение до 2× —
+  // рендер учитывает devicePixelRatio, так что картинка остаётся чёткой.
+  // На узком экране высота следует за шириной, а страница прокручивается вместе с полем.
   useLayoutEffect(() => {
     const frame = fieldFrameRef.current;
     if (!frame) return;
@@ -2317,10 +2418,10 @@ export default function Simulator() {
       const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
       const availW = Math.max(0, frame.clientWidth - padX);
       const availH = Math.max(0, frame.clientHeight - padY);
-      let w = Math.min(availW, fieldW);
+      let w = Math.min(availW, fieldW * FIELD_MAX_UPSCALE);
       let h = fieldH * (w / Math.max(1, fieldW));
       if (mq.matches && availH > 0 && h > availH) {
-        h = Math.min(availH, fieldH);
+        h = Math.min(availH, fieldH * FIELD_MAX_UPSCALE);
         w = fieldW * (h / Math.max(1, fieldH));
       }
       const nextW = Math.max(1, Math.floor(w));
@@ -2411,27 +2512,38 @@ export default function Simulator() {
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={goCenter}>
             В центр
           </Button>
+          <Button
+            size="sm"
+            variant={settingsOpen ? 'default' : 'outline'}
+            className={settingsOpen ? 'h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-500' : 'h-8 text-xs'}
+            onClick={() => setSettingsOpen((v) => !v)}
+          >
+            Настройки
+          </Button>
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 lg:flex-row lg:overflow-hidden lg:p-4">
-        <section className="flex w-full min-w-0 shrink-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:w-auto lg:flex-1 lg:shrink">
-          <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-stretch">
-            <div className="min-w-0 md:flex-1">
-              <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
-            </div>
-            {settings.arrow.battleMode && settings.combat.showLog ? (
-              <div className="flex min-h-0 min-w-0 flex-col overflow-hidden md:w-80 md:shrink-0">
-                <FightLog lines={combat.log.map(formatLogLine)} />
-              </div>
-            ) : null}
-          </div>
-          <div className="relative w-full min-w-0 shrink-0 lg:min-h-0 lg:flex-1">
+      {/* Один ряд: чат слева · поле в центре · лог ударов справа.
+          Ширины колонок тянутся разделителями и запоминаются. */}
+      <main
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
+        style={{ '--chat-w': `${layout.chatW}px`, '--log-w': `${layout.logW}px` } as CSSProperties}
+      >
+        <div className="flex h-56 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)]">
+          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
+        </div>
+        <ColResize
+          onDrag={(dx) => setLayout((p) => ({ ...p, chatW: clampLayout({ ...p, chatW: p.chatW + dx }).chatW }))}
+          onEnd={() => saveLayout(layoutRef.current)}
+        />
+
+        <section className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1">
+          <div className="relative w-full min-w-0 flex-1 lg:min-h-0">
             <div
               ref={fieldFrameRef}
               role="region"
               aria-label="Игровое поле"
-              className="overflow-hidden rounded-xl border border-zinc-800 bg-[#20242a] p-3 lg:absolute lg:inset-0"
+              className="overflow-hidden rounded-xl border border-zinc-800 bg-[#20242a] p-2 lg:absolute lg:inset-0"
             >
               <canvas
                 ref={canvasRef}
@@ -2465,27 +2577,58 @@ export default function Simulator() {
           </div>
         </section>
 
-        <aside className="w-full shrink-0 lg:min-h-0 lg:w-[400px] lg:overflow-y-auto lg:pr-1">
-          <SettingsPanel
-            settings={settings}
-            patchField={patchField}
-            patchCharacter={patchCharacter}
-            patchArrow={patchArrow}
-            patchSlowdown={patchSlowdown}
-            patchWindow={patchWindow}
-            patchTier={patchTier}
-            patchHud={patchHud}
-            patchCombat={patchCombat}
-            patchZone={patchZone}
-            onResetCombat={onResetCombat}
-            onResetAll={onResetAll}
-            onExport={onExport}
-            onImport={onImport}
-            getAngle={getEngineAngle}
-            onManualAngle={setEngineAngle}
-          />
-        </aside>
+        {settings.arrow.battleMode && settings.combat.showLog ? (
+          <>
+            <ColResize
+              onDrag={(dx) => setLayout((p) => ({ ...p, logW: clampLayout({ ...p, logW: p.logW - dx }).logW }))}
+              onEnd={() => saveLayout(layoutRef.current)}
+            />
+            <div className="flex h-44 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--log-w)]">
+              <FightLog lines={combat.log.map(formatLogLine)} />
+            </div>
+          </>
+        ) : null}
       </main>
+
+      {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
+      {settingsOpen ? (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
+          <aside
+            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-zinc-800 bg-[#191c21] shadow-2xl"
+            onKeyDown={(ev) => {
+              if (ev.key === 'Escape') setSettingsOpen(false);
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
+              <h2 className="text-sm font-bold text-zinc-100">Настройки</h2>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSettingsOpen(false)}>
+                Закрыть
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <SettingsPanel
+                settings={settings}
+                patchField={patchField}
+                patchCharacter={patchCharacter}
+                patchArrow={patchArrow}
+                patchSlowdown={patchSlowdown}
+                patchWindow={patchWindow}
+                patchTier={patchTier}
+                patchHud={patchHud}
+                patchCombat={patchCombat}
+                patchZone={patchZone}
+                onResetCombat={onResetCombat}
+                onResetAll={onResetAll}
+                onExport={onExport}
+                onImport={onImport}
+                getAngle={getEngineAngle}
+                onManualAngle={setEngineAngle}
+              />
+            </div>
+          </aside>
+        </>
+      ) : null}
     </div>
   );
 }
