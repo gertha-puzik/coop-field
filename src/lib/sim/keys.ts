@@ -9,6 +9,7 @@ export type KeyAction =
   | { type: 'move'; dir: number }
   | { type: 'rot'; sign: -1 | 1 }
   | { type: 'strike' }
+  | { type: 'block' }
   | { type: 'battle' }
   | { type: 'chat' };
 
@@ -24,6 +25,8 @@ const BY_CODE: Record<string, KeyAction> = {
   KeyJ: { type: 'rot', sign: -1 },
   KeyL: { type: 'rot', sign: 1 },
   KeyI: { type: 'strike' },
+  // Блок: клавиша «К» — в йцукен она стоит на физической R.
+  KeyR: { type: 'block' },
   KeyB: { type: 'battle' },
   Enter: { type: 'chat' },
 };
@@ -53,6 +56,9 @@ const BY_KEY: Record<string, KeyAction> = {
   д: { type: 'rot', sign: 1 },
   i: { type: 'strike' },
   ш: { type: 'strike' },
+  // Блок: латиница r и йцукен «к» — одна и та же физическая клавиша.
+  r: { type: 'block' },
+  к: { type: 'block' },
   b: { type: 'battle' },
   и: { type: 'battle' },
 };

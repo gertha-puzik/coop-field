@@ -284,17 +284,17 @@ export const DEFAULT_SETTINGS: SimSettings = {
     showRay: false,
   },
   slowdown: {
-    // Окна «без замедления»: каждое симметрично относительно своего направления —
-    // кардиналы ±40°, диагонали ±20° (у диагоналей узкие окна: по ним ходить тяжелее).
+    // Окна «без замедления» — ручная калибровка владельца (возвращена по его скрину):
+    // окна стыкуются вплотную по кругу, у каждого направления своя ширина.
     windows: {
-      '0': { start: 320, end: 40 },
-      '45': { start: 25, end: 65 },
-      '90': { start: 70, end: 110 },
-      '135': { start: 115, end: 155 },
-      '180': { start: 140, end: 220 },
-      '225': { start: 205, end: 245 },
-      '270': { start: 250, end: 290 },
-      '315': { start: 295, end: 335 },
+      '0': { start: 310, end: 35 },
+      '45': { start: 35, end: 53 },
+      '90': { start: 53, end: 110 },
+      '135': { start: 110, end: 130 },
+      '180': { start: 130, end: 220 },
+      '225': { start: 220, end: 245 },
+      '270': { start: 245, end: 290 },
+      '315': { start: 290, end: 310 },
     },
     tiers: [
       { max: 65, value: 75 },
@@ -600,8 +600,9 @@ const LEGACY_WINDOWS_V3: Record<WindowKey, DirectionWindow> = {
   '315': { start: 290, end: 302 },
 };
 
-/** Ручная калибровка из панели (правилась владельцем): тоже асимметрична, 135 и 315
- *  не входят в свои окна. По просьбе владельца заменяется на симметричную. */
+/** Ручная калибровка из панели (правилась владельцем): асимметрична, 135 и 315
+ *  не входят в свои окна. Сейчас снова является дефолтом; запись заморожена,
+ *  чтобы старые сохранения продолжали опознаваться. */
 const LEGACY_WINDOWS_V4: Record<WindowKey, DirectionWindow> = {
   '0': { start: 310, end: 35 },
   '45': { start: 35, end: 53 },
@@ -611,6 +612,20 @@ const LEGACY_WINDOWS_V4: Record<WindowKey, DirectionWindow> = {
   '225': { start: 220, end: 245 },
   '270': { start: 245, end: 290 },
   '315': { start: 290, end: 310 },
+};
+
+/** Симметричные окна (кардиналы ±40°, диагонали ±20°) — дефолт на время, пока
+ *  владельцем не была возвращена ручная калибровка. Сохранения с ними заменяются
+ *  на актуальные. */
+const LEGACY_WINDOWS_V5: Record<WindowKey, DirectionWindow> = {
+  '0': { start: 320, end: 40 },
+  '45': { start: 25, end: 65 },
+  '90': { start: 70, end: 110 },
+  '135': { start: 115, end: 155 },
+  '180': { start: 140, end: 220 },
+  '225': { start: 205, end: 245 },
+  '270': { start: 250, end: 290 },
+  '315': { start: 295, end: 335 },
 };
 
 /** Совпадают ли ТОЛЬКО окна сохранённого блока с эталонными (уровни не смотрим). */
@@ -631,7 +646,13 @@ function windowsMatch(sd: unknown, ref: Record<WindowKey, DirectionWindow>): boo
  */
 function legacySlowdownKind(sd: unknown): 'full' | 'windows' | false {
   if (slowdownMatches(sd, LEGACY_SLOWDOWN_V1) || slowdownMatches(sd, LEGACY_SLOWDOWN_V2)) return 'full';
-  if (windowsMatch(sd, LEGACY_WINDOWS_V3) || windowsMatch(sd, LEGACY_WINDOWS_V4)) return 'windows';
+  if (
+    windowsMatch(sd, LEGACY_WINDOWS_V3) ||
+    windowsMatch(sd, LEGACY_WINDOWS_V4) ||
+    windowsMatch(sd, LEGACY_WINDOWS_V5)
+  ) {
+    return 'windows';
+  }
   return false;
 }
 

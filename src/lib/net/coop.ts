@@ -13,6 +13,8 @@ export type CoopCat = {
   y: number;
   deg?: number;
   size?: number;
+  /** Кот держит блок (удержание К): любые удары по нему проводятся в «Лапы». */
+  blocking?: boolean;
 };
 
 /** Боевой лог комнаты. name / part / weapon / isAttacking — как в журнале удара. */
@@ -100,6 +102,8 @@ export type CoopHandlers = {
   onRabState?: (state: CoopRabState) => void;
   /** Кто-то другой ударил мишень РАБ — показать качание и урон (бьющему эхо не приходит). */
   onRabHit?: (info: CoopRabHit) => void;
+  /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
+  onBlock?: (info: { id: number; on: boolean }) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -330,6 +334,11 @@ export function createCoopClient(handlers: CoopHandlers) {
             part: typeof row.part === "string" ? row.part : "",
             damage: Number.isFinite(Number(row.damage)) ? Number(row.damage) : 0,
           });
+        }
+      } else if (event === "block") {
+        const row = payload as { id?: unknown; on?: unknown } | null;
+        if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
+          handlers.onBlock?.({ id: Number(row.id), on: !!row.on });
         }
       }
     };

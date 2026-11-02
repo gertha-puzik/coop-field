@@ -307,6 +307,9 @@ interface Engine {
   strikeHeld: boolean;
   /** performance.now() следующего автоматического удара при удержании I. */
   nextHoldStrike: number;
+  /** Блок (удержание К): удары по игроку уходят в «Лапы», сам он не двигается,
+   *  не бьёт и не крутит стрелу. Значок замка видит только сам игрок. */
+  blocking: boolean;
   labels: FloatLabel[];
   hover: { c: number; r: number } | null;
   lastSpeed: number;
@@ -700,6 +703,8 @@ export default function Simulator() {
   const dummySyncRef = useRef<{ at: number }>({ at: 0 });
   /** Мишень РАБ включена — зеркало для игрового цикла. */
   const rabOnRef = useRef(false);
+  /** Кто из чужих котов держит блок (их числовые id): любой удар по такому — в «Лапы». */
+  const remoteBlockRef = useRef<Set<number>>(new Set());
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
   const engineRef = useRef<Engine>({
@@ -718,6 +723,8 @@ export default function Simulator() {
     lastStrike: 0,
     strikeHeld: false,
     nextHoldStrike: 0,
+    /** Блок (удержание К): двигаться, бить и крутить стрелу нельзя; виден только самому. */
+    blocking: false,
     labels: [],
     hover: null,
     lastSpeed: 100,
@@ -907,11 +914,16 @@ export default function Simulator() {
         netMovesRef.current = { server: { col, row }, pending: [] };
         setNetStatus(`Вы — ${cat.login || 'кот'} (#${cat.id})`);
         if (cat.login) setPlayerName(cat.login);
+        // После переподключения сервер завёл нового кота без блока: сообщаем стойку заново,
+        // иначе удерживаемый К после обрыва перестал бы ловить удары в «Лапы».
+        if (e.blocking) netRef.current?.emit('block', { on: true });
       },
       onField: (field) => {
         const cats = field.cats || [];
         const others = cats.filter((c) => c.id !== meIdRef.current);
         liveRemotesRef.current = others.map(catToDummy);
+        // Кто из чужих котов держит блок — из снапшота комнаты (после обрыва тоже).
+        remoteBlockRef.current = new Set(cats.filter((c) => c.blocking && c.id !== meIdRef.current).map((c) => c.id));
         remoteAimRef.current.clear();
         remoteDrawRef.current.clear();
         for (const d of liveRemotesRef.current) remoteDrawRef.current.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
@@ -950,6 +962,7 @@ export default function Simulator() {
         if (cat.x === 0 && cat.y === 0) {
           remoteAimRef.current.delete(`p${cat.id}`);
           remoteDrawRef.current.delete(`p${cat.id}`);
+          remoteBlockRef.current.delete(cat.id);
           liveRemotesRef.current = liveRemotesRef.current.filter((d) => d.id !== `p${cat.id}`);
           setPeerCount(1 + liveRemotesRef.current.length);
           return;
@@ -982,6 +995,9 @@ export default function Simulator() {
           }
           return;
         }
+        // Блок чужого кота приходит и с move-пакетами (publicCat несёт blocking).
+        if (cat.blocking === true) remoteBlockRef.current.add(cat.id);
+        else if (cat.blocking === false) remoteBlockRef.current.delete(cat.id);
         const prev = liveRemotesRef.current.find((d) => d.id === `p${cat.id}`);
         const dummy = catToDummy({
           id: cat.id,
@@ -1009,6 +1025,12 @@ export default function Simulator() {
         rememberRemoteCell(remoteDrawRef.current, dummy.id, dummy.col, dummy.row);
         liveRemotesRef.current = [...liveRemotesRef.current, dummy];
         setPeerCount(1 + liveRemotesRef.current.length);
+      },
+      onBlock: (info) => {
+        // Стойка блока чужого кота: нужна бьющему, чтобы проводить удары в «Лапы».
+        if (info.id === meIdRef.current) return;
+        if (info.on) remoteBlockRef.current.add(info.id);
+        else remoteBlockRef.current.delete(info.id);
       },
       onFight: (fight) => applyNetFight(fight),
       onChat: (message) => {
@@ -1214,6 +1236,15 @@ export default function Simulator() {
       stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current, now);
       const s = settingsRef.current;
       const e = engineRef.current;
+      // Блок (удержание К): двигаться, крутить стрелу и бить нельзя. Гасим всё,
+      // что могло прийти, пока блок держится (маршрут по клику, удержания).
+      if (e.blocking) {
+        e.held = [];
+        e.path = [];
+        e.rot = 0;
+        e.strikeHeld = false;
+        e.step = null;
+      }
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
       const cy = (r: number) => r * s.field.cellH + s.field.cellH / 2;
 
@@ -1920,6 +1951,16 @@ export default function Simulator() {
           whiteSpritesRef.current[s.character.sprite] ?? null,
           selfId === 'main',
         );
+        // Значок блока (замок) над своим котом — его видит только сам игрок:
+        // рисуем только из локального состояния движка, по сети картинка не ходит.
+        if (selfId === 'main' && e.blocking) {
+          const th0 = (s.field.cellH - 10) * (s.character.spriteScale / 100);
+          const w0 = th0 * (spr.width / spr.height);
+          ctx.font = `${Math.round(th0 * 0.32)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText('🔒', cellX + w0 / 2, cellY - 4);
+        }
       } else if (!spr) {
         ctx.beginPath();
         ctx.arc(cxp, cyp, 18, 0, Math.PI * 2);
@@ -2157,6 +2198,27 @@ export default function Simulator() {
       // темп движения ограничен только замедлением (спам не превышает скорость шага)
       if (ev.repeat) return;
       if (!action) return;
+      const eB = engineRef.current;
+      // Блок (удержание К): встаёт в стойку сразу, снимается отпусканием.
+      if (action.type === 'block') {
+        ev.preventDefault();
+        // Блок — стойка игрока (своего кота): за манекеном блокировать нечего.
+        if (settingsRef.current.controlled !== 'main' || eB.blocking) return;
+        eB.blocking = true;
+        // В блоке нельзя двигаться, бить и крутить стрелу — всё начатое прекращаем.
+        eB.held = [];
+        eB.path = [];
+        eB.step = null;
+        eB.rot = 0;
+        eB.strikeHeld = false;
+        netRef.current?.emit('block', { on: true });
+        return;
+      }
+      // Пока блок держится — движение, удары и вращение не работают.
+      if (eB.blocking && (action.type === 'rot' || action.type === 'strike' || action.type === 'move')) {
+        ev.preventDefault();
+        return;
+      }
       if (action.type === 'rot') {
         ev.preventDefault();
         engineRef.current.rot = action.sign;
@@ -2195,6 +2257,13 @@ export default function Simulator() {
       const e = engineRef.current;
       const action = keyAction(ev);
       if (!action) return;
+      if (action.type === 'block') {
+        if (e.blocking) {
+          e.blocking = false;
+          netRef.current?.emit('block', { on: false });
+        }
+        return;
+      }
       if (action.type === 'rot') {
         if (action.sign === -1 && e.rot === -1) e.rot = 0;
         if (action.sign === 1 && e.rot === 1) e.rot = 0;
@@ -2205,9 +2274,16 @@ export default function Simulator() {
       }
     };
     const blur = () => {
-      engineRef.current.held = [];
-      engineRef.current.rot = 0;
-      engineRef.current.strikeHeld = false;
+      const e = engineRef.current;
+      e.held = [];
+      e.rot = 0;
+      e.strikeHeld = false;
+      // Окно потеряло фокус при зажатом блоке — стойку снимаем, иначе кот
+      // остался бы в блоке навсегда (keyup уже не пришёл бы).
+      if (e.blocking) {
+        e.blocking = false;
+        netRef.current?.emit('block', { on: false });
+      }
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
@@ -2518,8 +2594,16 @@ export default function Simulator() {
       const tRow = t.row;
       const dx = tCol - snap.col;
       const dy = tRow - snap.row;
-      const diagonal = Math.abs(dx) === 1 && Math.abs(dy) === 1;
-      if (diagonal) {
+      // Блок цели: ЛЮБОЙ удар по блокирующему игроку — в «Лапы», куда бы стрела
+      // ни шла и с какой стойки ни бьём (прямая/диагональ, любое окно).
+      const zPaws = s.combat.zones.find((zz) => zz.id === 'paws');
+      const targetBlocking =
+        t.id.startsWith('p') && remoteBlockRef.current.has(Number(t.id.slice(1)));
+      if (targetBlocking && zPaws) {
+        hitDamage = zPaws.damage;
+        struck = t;
+        entry = { target: t.name, zoneId: zPaws.id, zoneLabel: zPaws.name, count: 1, actor: 'Я' };
+      } else if (Math.abs(dx) === 1 && Math.abs(dy) === 1) {
         // Удар с диагонали: зона задаётся стойкой относительно цели, а стрела обязана
         // стоять в окне замедления направления на цель:
         //  слева-сверху (стрела вправо-вниз, окно 45°) и справа-сверху (влево-вниз, 135°) — Морда,
@@ -2623,6 +2707,8 @@ export default function Simulator() {
     const s = settingsRef.current;
     const e = engineRef.current;
     if (!s.arrow.battleMode) return;
+    // В блоке бить нельзя.
+    if (e.blocking) return;
     // удар не проходит, пока стрела вращается (J/L) — сначала нужно остановить стрелу
     if (e.rot !== 0 || e.rotActive !== 0) return;
     // В комнате без связи удар по чужим котам локально не моделируется:

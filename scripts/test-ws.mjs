@@ -246,6 +246,46 @@ if (diagHit[1].part !== "Морда" || diagHit[1].name !== "Справа" || di
 if (diagHit[1].damage !== 18) throw new Error(`diagonal fallback damage ${JSON.stringify(diagHit[1].damage)}`);
 console.log("ok: diagonal muzzle accepted, throat rejected");
 
+// Блок: пока кот держит блок, любой его удар — только в «Лапы», стойка бьющего не важна.
+right.send(JSON.stringify(["block", { on: true }]));
+const blockOn = await waitFor(left, "block");
+if (blockOn[1].id !== rightYou.id || blockOn[1].on !== true) {
+  throw new Error(`block on relay ${JSON.stringify(blockOn[1])}`);
+}
+if (right.inbox.some((m) => m[0] === "block")) throw new Error("block echoed to the blocker");
+// Новичок в комнате видит блокирующего в field с blocking: true.
+const blockWatcher = await client("Наблюдатель", diagRoom);
+const fieldW = (await waitFor(blockWatcher, "field"))[1];
+const blockerInField = (fieldW.cats || []).find((c) => c.id === rightYou.id);
+if (!blockerInField || blockerInField.blocking !== true) {
+  throw new Error(`field blocking ${JSON.stringify(blockerInField)}`);
+}
+left.inbox.length = 0;
+right.inbox.length = 0;
+// Диагональное «горло» по блокирующему проходит — но как «Лапы» (урон бьющего 6).
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "throat", angle: diagAngle, damage: 6 }]));
+const blockedHit = await waitFor(right, "fight");
+if (blockedHit[1].zone !== "paws" || blockedHit[1].part !== "Лапы") {
+  throw new Error(`blocked strike zone ${JSON.stringify(blockedHit[1])}`);
+}
+if (blockedHit[1].damage !== 6) throw new Error(`blocked strike damage ${JSON.stringify(blockedHit[1].damage)}`);
+left.inbox.length = 0;
+right.inbox.length = 0;
+right.send(JSON.stringify(["block", { on: false }]));
+const blockOff = await waitFor(left, "block");
+if (blockOff[1].id !== rightYou.id || blockOff[1].on !== false) {
+  throw new Error(`block off relay ${JSON.stringify(blockOff[1])}`);
+}
+left.inbox.length = 0;
+await sleep(40);
+// Блок снят — диагональное горло снова отклоняется.
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "throat", angle: diagAngle }]));
+const diagReject2 = await waitFor(left, "info");
+if (!String(diagReject2[1]).includes("диагонали")) {
+  throw new Error(`expected diagonal reject after unblock, got ${diagReject2[1]}`);
+}
+console.log("ok: block", "→ relay on/off, any strike lands in paws");
+
 // Потолок 30: 31-й получает noplace, клетки не совпадают.
 const capRoom = `c${Date.now().toString(36)}`;
 const held = [];

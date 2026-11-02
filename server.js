@@ -179,6 +179,7 @@ function publicCat(cat) {
     y: cat.y,
     deg: cat.deg,
     size: cat.size,
+    blocking: !!cat.blocking,
   };
 }
 
@@ -270,6 +271,8 @@ function join(ws, payload = {}) {
     lastStrike: 0,
     lastAim: 0,
     lastChat: 0,
+    // Блок (удержание К): любые удары по этому коту проводятся в «Лапы» (см. strike).
+    blocking: false,
     // Шаги, ждущие снятия кулдауна (см. queueMove), и их таймер.
     moveQueue: [],
     moveTimer: null,
@@ -537,7 +540,9 @@ function strike(ws, payload = {}) {
     send(ws, "info", "Удар не разобран.");
     return;
   }
-  const [zoneId, zone] = resolved;
+  const [zoneId0, zone0] = resolved;
+  let zoneId = zoneId0;
+  let zone = zone0;
   const target = room.cats.get(targetId);
   if (!target || target.id === cat.id) {
     cat.lastStrike = now;
@@ -555,14 +560,19 @@ function strike(ws, payload = {}) {
     send(ws, "info", "Стрела смотрит не на эту цель.");
     return;
   }
-  const forced = diagonalZone(target.x - cat.x, target.y - cat.y);
-  if (forced && zoneId !== forced) {
-    cat.lastStrike = now;
-    send(ws, "info", "С этой диагонали бьётся другая часть.");
-    return;
-  }
-
   cat.lastStrike = now;
+  // Блок цели: любой удар — в «Лапы», стойка бьющего (прямая/диагональ) не важна.
+  if (target.blocking) {
+    zoneId = "paws";
+    zone = STRIKE_ZONES.paws;
+  } else {
+    const forced = diagonalZone(target.x - cat.x, target.y - cat.y);
+    if (forced && zoneId !== forced) {
+      cat.lastStrike = now;
+      send(ws, "info", "С этой диагонали бьётся другая часть.");
+      return;
+    }
+  }
   // Урон присылает бьющий (его пресет «Урон игрока», проценты энергии 0..100).
   // Число округляем и зажимаем; нет числа — фолбэк на серверную таблицу зон.
   const dmgRaw = Number(payload.damage);
@@ -780,6 +790,19 @@ function rabHit(ws, payload = {}) {
   }
 }
 
+/**
+ * Блок (удержание К). Клиент → ["block", { on }]. Комнате (кроме отправителя) →
+ * ["block", { id, on }]. Пока блок держится, strike проводит любые удары по этому
+ * коту в зону «Лапы». Состояние также входит в publicCat — новички видят его в field.
+ */
+function block(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat) return;
+  cat.blocking = !!payload.on;
+  broadcast(room, "block", { id: cat.id, on: cat.blocking }, ws);
+}
+
 function onMessage(ws, raw) {
   let msg;
   try {
@@ -801,6 +824,7 @@ function onMessage(ws, raw) {
   else if (event === "dummyDrop") dummyDrop(ws);
   else if (event === "rab") rabToggle(ws, payload || {});
   else if (event === "rabHit") rabHit(ws, payload || {});
+  else if (event === "block") block(ws, payload || {});
 }
 
 const MIME = {
