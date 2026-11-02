@@ -127,8 +127,9 @@
 [data-theme='night'] {
   --sim-app-bg: #14161a;
   --sim-app-grad: radial-gradient(120% 90% at 50% 0%, #1a2030 0%, #14161a 55%, #0f1116 100%);
-  --sim-panel: #191c21;
-  --sim-frame: #20242a;
+  --sim-panel: rgba(25, 28, 33, 0.84);
+  --sim-frame: rgba(32, 36, 42, 0.84);
+  --sim-chat-grad: linear-gradient(to bottom, rgba(38, 43, 50, 0.9) 0%, rgba(15, 17, 21, 0.95) 100%);
   --sim-line: #27272a;
   --sim-line-strong: #3f3f46;
   --sim-line-hover: #71717a;
@@ -157,8 +158,9 @@
 [data-theme='light'] {
   --sim-app-bg: #f2efe7;
   --sim-app-grad: radial-gradient(120% 90% at 50% 0%, #fdfbf5 0%, #f2efe7 60%, #e7e2d5 100%);
-  --sim-panel: #ffffff;
-  --sim-frame: #eae5d9;
+  --sim-panel: rgba(255, 255, 255, 0.8);
+  --sim-frame: rgba(234, 229, 217, 0.82);
+  --sim-chat-grad: linear-gradient(to bottom, rgba(255, 255, 255, 0.94) 0%, rgba(223, 217, 203, 0.92) 100%);
   --sim-line: #ddd8cd;
   --sim-line-strong: #c8c2b4;
   --sim-line-hover: #a8a29a;
@@ -196,8 +198,9 @@
     radial-gradient(85% 65% at 18% 10%, rgba(245, 178, 68, 0.14) 0%, rgba(245, 178, 68, 0) 55%),
     radial-gradient(75% 60% at 84% 88%, rgba(217, 119, 6, 0.13) 0%, rgba(217, 119, 6, 0) 60%),
     radial-gradient(120% 90% at 50% 0%, #3f2d13 0%, #241708 55%, #190f05 100%);
-  --sim-panel: #30220f;
-  --sim-frame: #3a2b14;
+  --sim-panel: rgba(48, 34, 15, 0.85);
+  --sim-frame: rgba(58, 43, 20, 0.85);
+  --sim-chat-grad: linear-gradient(to bottom, rgba(88, 63, 27, 0.9) 0%, rgba(26, 17, 6, 0.95) 100%);
   --sim-line: #52401f;
   --sim-line-strong: #6b5426;
   --sim-line-hover: #8a6d33;
@@ -272,6 +275,22 @@
 
 .app-bg button:disabled {
   transform: none;
+}
+
+/* Лёгкое стекло: окна немного просвечивают и размывают то, что за ними
+   (фон темы и живой канвас). Селектор ловит все панели по их классу bg,
+   поэтому блюр автоматом достаётся и будущим окнам. */
+.app-bg [class*='bg-[var(--sim-panel)]'],
+.app-bg [class*='bg-[var(--sim-frame)]'] {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Чат — тот же blur, но фон градиентный: сверху светлее, снизу темнее. */
+.sim-chat {
+  background: var(--sim-chat-grad);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 /* Ночная тема: нейтральные кнопки шапки («Войти», «Настройки») — серые

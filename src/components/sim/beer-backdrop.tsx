@@ -7,8 +7,10 @@ import { useEffect, useRef } from 'react';
  *  - тёплые пятна света медленно дрейфуют (эффект света через бокал);
  *  - пузырьки всплывают тремя слоями глубины с покачиванием и параллаксом;
  *  - у «поверхности» (верх экрана) пузырьки лопаются с колечком;
- *  - мягкое тёплое свечение тянется за курсором, а пузырьки разбегаются
- *    от мыши, как пена от помешивания;
+ *  - пузырьки разбегаются от курсора и увлекаются его движением: чем быстрее
+ *    мышь, тем сильнее «взмах», а на резком движении у курсора взбивается
+ *    пена из мелких брызг;
+ *  - компактное тёплое свечение движется за курсором мгновенно;
  *  - внизу — две полупрозрачные волны пены.
  *
  * Канвас pointer-events-none, мышь слушаем на window: клики и жесты игры
@@ -28,6 +30,8 @@ type Bubble = {
 };
 
 type Ring = { x: number; y: number; r: number; life: number };
+
+type Foam = { x: number; y: number; vx: number; vy: number; r: number; life: number };
 
 type Blob = {
   ux: number; // базовый центр, доли ширины/высоты
@@ -56,6 +60,7 @@ const BLOBS: Blob[] = [
 ];
 
 const TAU = Math.PI * 2;
+const GLOW_R = 105; // компактное свечение у курсора
 
 export function BeerBackdrop() {
   const ref = useRef<HTMLCanvasElement | null>(null);
@@ -73,9 +78,11 @@ export function BeerBackdrop() {
     let raf = 0;
     let t = 0;
 
-    const mouse = { x: -9999, y: -9999, sx: -9999, sy: -9999, on: false };
+    const mouse = { x: -9999, y: -9999, px: -9999, py: -9999, on: false };
+    const vel = { x: 0, y: 0 }; // сглаженная скорость мыши, px/с
     const bubbles: Bubble[] = [];
     const rings: Ring[] = [];
+    const foam: Foam[] = [];
 
     const resize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -110,23 +117,31 @@ export function BeerBackdrop() {
     const step = (dt: number) => {
       t += dt;
 
-      // Свечение тянется за курсором с плавным запаздыванием.
-      const k = 1 - Math.pow(0.002, dt);
-      mouse.sx += (mouse.x - mouse.sx) * k;
-      mouse.sy += (mouse.y - mouse.sy) * k;
+      // Скорость мыши: мгновенная за кадр → сглаженная (взмах затухает мягко).
+      if (mouse.px > -9000) {
+        const ivx = (mouse.x - mouse.px) / dt;
+        const ivy = (mouse.y - mouse.py) / dt;
+        const k = Math.min(1, dt * 12);
+        vel.x += (ivx - vel.x) * k;
+        vel.y += (ivy - vel.y) * k;
+      }
+      mouse.px = mouse.x;
+      mouse.py = mouse.y;
+      const speed = Math.hypot(vel.x, vel.y);
 
-      const nx = mouse.on ? (mouse.sx - w / 2) / w : 0; // параллакс от мыши
+      const nx = mouse.on ? (mouse.x - w / 2) / w : 0; // параллакс от мыши
 
       for (const b of bubbles) {
         b.wob += b.wobV * dt;
         b.y -= b.vy * dt;
 
-        // Пузырьки разбегаются от курсора, как пена от помешивания.
         if (mouse.on) {
           const x = b.bx + Math.sin(b.wob) * b.amp;
-          const dx = x - mouse.sx;
-          const dy = b.y - mouse.sy;
+          const dx = x - mouse.x;
+          const dy = b.y - mouse.y;
           const d2 = dx * dx + dy * dy;
+
+          // Разбегание от курсора, как пена от помешивания.
           const R = 120 + b.layer * 45;
           if (d2 < R * R && d2 > 0.01) {
             const d = Math.sqrt(d2);
@@ -135,6 +150,20 @@ export function BeerBackdrop() {
             const cap = 90 + b.layer * 60;
             if (b.vx > cap) b.vx = cap;
             if (b.vx < -cap) b.vx = -cap;
+          }
+
+          // Увлечение движением: быстрый взмах гонит пузыри за мышью.
+          if (speed > 60) {
+            const R2 = 250 + b.layer * 40;
+            if (d2 < R2 * R2 && d2 > 0.01) {
+              const d = Math.sqrt(d2);
+              const fall = 1 - d / R2;
+              b.vx += vel.x * fall * dt * 1.5;
+              b.y += vel.y * fall * dt * 0.3;
+              const cap = 200 + b.layer * 90;
+              if (b.vx > cap) b.vx = cap;
+              if (b.vx < -cap) b.vx = -cap;
+            }
           }
         }
         b.vx *= Math.pow(0.88, dt * 60);
@@ -148,6 +177,30 @@ export function BeerBackdrop() {
           if (rings.length < 24) rings.push({ x, y: Math.max(h * 0.07, b.y), r: b.r + 2, life: 1 });
           spawn(b, false);
         }
+      }
+
+      // Взбитая пена: на быстром движении курсора рождаются мелкие брызги.
+      if (mouse.on && speed > 420) {
+        const p = Math.min(0.85, (speed - 380) / 2200);
+        if (Math.random() < p && foam.length < 46) {
+          foam.push({
+            x: mouse.x + (Math.random() - 0.5) * 30,
+            y: mouse.y + (Math.random() - 0.5) * 30,
+            vx: vel.x * 0.14 + (Math.random() - 0.5) * 50,
+            vy: vel.y * 0.1 - 24 - Math.random() * 46,
+            r: 0.8 + Math.random() * 1.9,
+            life: 1,
+          });
+        }
+      }
+      for (let i = foam.length - 1; i >= 0; i--) {
+        const f = foam[i];
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+        f.vy += 14 * dt; // брызги чуть тяжелеют и оседают
+        f.vx *= Math.pow(0.9, dt * 60);
+        f.life -= 1.7 * dt;
+        if (f.life <= 0) foam.splice(i, 1);
       }
 
       for (let i = rings.length - 1; i >= 0; i--) {
@@ -175,14 +228,14 @@ export function BeerBackdrop() {
     };
 
     const drawCursorGlow = () => {
-      if (!mouse.on || mouse.sx < -100) return;
-      const rad = 200;
-      const g = ctx.createRadialGradient(mouse.sx, mouse.sy, 0, mouse.sx, mouse.sy, rad);
-      g.addColorStop(0, 'rgba(253, 230, 168, 0.13)');
-      g.addColorStop(0.45, 'rgba(245, 178, 68, 0.05)');
+      if (!mouse.on || mouse.x < -100) return;
+      // Мгновенно: рисуем строго в позиции курсора, без запаздывания.
+      const g = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, GLOW_R);
+      g.addColorStop(0, 'rgba(253, 230, 168, 0.16)');
+      g.addColorStop(0.5, 'rgba(245, 178, 68, 0.06)');
       g.addColorStop(1, 'rgba(245, 178, 68, 0)');
       ctx.fillStyle = g;
-      ctx.fillRect(mouse.sx - rad, mouse.sy - rad, rad * 2, rad * 2);
+      ctx.fillRect(mouse.x - GLOW_R, mouse.y - GLOW_R, GLOW_R * 2, GLOW_R * 2);
     };
 
     const drawBubbles = (nx: number) => {
@@ -205,6 +258,15 @@ export function BeerBackdrop() {
       }
     };
 
+    const drawFoam = () => {
+      for (const f of foam) {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r, 0, TAU);
+        ctx.fillStyle = `rgba(255, 248, 224, ${Math.max(0, f.life) * 0.8})`;
+        ctx.fill();
+      }
+    };
+
     const drawRings = () => {
       for (const g of rings) {
         ctx.beginPath();
@@ -215,8 +277,8 @@ export function BeerBackdrop() {
       }
     };
 
-    const drawFoam = () => {
-      const foam = (yBase: number, amp: number, ph: number, alpha: number) => {
+    const drawWaves = () => {
+      const wave = (yBase: number, amp: number, ph: number, alpha: number) => {
         ctx.beginPath();
         ctx.moveTo(0, h);
         for (let x = 0; x <= w + 10; x += 10) {
@@ -228,8 +290,8 @@ export function BeerBackdrop() {
         ctx.fillStyle = `rgba(255, 244, 214, ${alpha})`;
         ctx.fill();
       };
-      foam(h - 30, 8, t * 0.5, 0.05);
-      foam(h - 16, 6, t * 0.35 + 2, 0.08);
+      wave(h - 30, 8, t * 0.5, 0.05);
+      wave(h - 16, 6, t * 0.35 + 2, 0.08);
     };
 
     const draw = (nx: number) => {
@@ -237,9 +299,10 @@ export function BeerBackdrop() {
       drawBlobs();
       drawCursorGlow();
       drawBubbles(nx);
+      drawFoam();
       drawRings();
       ctx.globalCompositeOperation = 'source-over';
-      drawFoam();
+      drawWaves();
     };
 
     if (reduced) {
@@ -268,13 +331,19 @@ export function BeerBackdrop() {
       mouse.y = ev.clientY;
       if (!mouse.on) {
         mouse.on = true;
-        mouse.sx = ev.clientX;
-        mouse.sy = ev.clientY;
+        mouse.px = ev.clientX;
+        mouse.py = ev.clientY;
+        vel.x = 0;
+        vel.y = 0;
       }
     };
     const onOut = (ev: PointerEvent) => {
       // Ушёл из окна — свечение гаснет, пузырьки успокаиваются.
-      if (!ev.relatedTarget) mouse.on = false;
+      if (!ev.relatedTarget) {
+        mouse.on = false;
+        vel.x = 0;
+        vel.y = 0;
+      }
     };
     const onResize = () => resize();
 
