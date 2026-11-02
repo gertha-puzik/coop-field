@@ -1951,15 +1951,19 @@ export default function Simulator() {
           whiteSpritesRef.current[s.character.sprite] ?? null,
           selfId === 'main',
         );
-        // Значок блока (замок) над своим котом — его видит только сам игрок:
-        // рисуем только из локального состояния движка, по сети картинка не ходит.
+        // Значок блока (замок) у основания стрелы своего кота — его видит только сам
+        // игрок: рисуем только из локального состояния движка, по сети не ходит.
+        // Замок висит по центру точки закрепления стрелы (ARROW_ANCHOR_F), а стрела
+        // рисуется позже поверх — поэтому замок оказывается «под стрелой».
         if (selfId === 'main' && e.blocking) {
           const th0 = (s.field.cellH - 10) * (s.character.spriteScale / 100);
           const w0 = th0 * (spr.width / spr.height);
+          const ax0 = cellX + w0 * ARROW_ANCHOR_F;
+          const ay0 = cellY + th0 * ARROW_ANCHOR_F + s.arrow.anchorOffsetY;
           ctx.font = `${Math.round(th0 * 0.32)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
           ctx.textAlign = 'center';
-          ctx.textBaseline = 'alphabetic';
-          ctx.fillText('🔒', cellX + w0 / 2, cellY - 4);
+          ctx.textBaseline = 'middle';
+          ctx.fillText('🔒', ax0, ay0);
         }
       } else if (!spr) {
         ctx.beginPath();
@@ -3059,6 +3063,7 @@ export default function Simulator() {
             <span>B — бой</span>
             <span>Enter — чат</span>
             <span>I — удар</span>
+            <span>K (удерживать) — блок</span>
             <span>J — стрела против часовой</span>
             <span>L — по часовой</span>
             <span className="ml-auto">

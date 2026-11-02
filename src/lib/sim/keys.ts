@@ -25,8 +25,8 @@ const BY_CODE: Record<string, KeyAction> = {
   KeyJ: { type: 'rot', sign: -1 },
   KeyL: { type: 'rot', sign: 1 },
   KeyI: { type: 'strike' },
-  // Блок: клавиша «К» — в йцукен она стоит на физической R.
-  KeyR: { type: 'block' },
+  // Блок: английская K — физическая клавиша K (на русской раскладке на ней «л»).
+  KeyK: { type: 'block' },
   KeyB: { type: 'battle' },
   Enter: { type: 'chat' },
 };
@@ -56,9 +56,9 @@ const BY_KEY: Record<string, KeyAction> = {
   д: { type: 'rot', sign: 1 },
   i: { type: 'strike' },
   ш: { type: 'strike' },
-  // Блок: латиница r и йцукен «к» — одна и та же физическая клавиша.
-  r: { type: 'block' },
-  к: { type: 'block' },
+  // Блок: латиница k и йцукен «л» — одна и та же физическая клавиша.
+  k: { type: 'block' },
+  л: { type: 'block' },
   b: { type: 'battle' },
   и: { type: 'battle' },
 };
