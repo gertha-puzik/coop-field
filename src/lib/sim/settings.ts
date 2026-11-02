@@ -155,7 +155,7 @@ export interface SimSettings {
   hud: {
     show: boolean;
   };
-  /** Персонажи-мишени на поле (манекены): имя, клетка, рост, стрела, убрать/добавить. */
+  /** Манекены на поле убраны: массив всегда пуст, оставлен ради совместимости типа и старых сохранений. */
   dummies: DummyConfig[];
   /** За кем сейчас управление: 'main' — свой кот, иначе id манекена. */
   controlled: string;
@@ -274,13 +274,7 @@ export const DEFAULT_SETTINGS: SimSettings = {
   hud: {
     show: false,
   },
-  dummies: [
-    { id: 'd1', name: 'Пухляшик', sprite: 'puhlyashik', col: 6, row: 3, scale: 100, angle: 0, present: true, visible: false },
-    { id: 'd2', name: 'Пузатик', sprite: 'puzatik', col: 8, row: 3, scale: 100, angle: 0, present: true, visible: false },
-    { id: 'd3', name: 'Пламя Раздора', sprite: 'razdora', col: 1, row: 1, scale: 100, angle: 0, present: true, visible: false },
-    { id: 'd4', name: 'Похититель Пламени', sprite: 'pohititel', col: 3, row: 1, scale: 100, angle: 0, present: true, visible: false },
-    { id: 'd5', name: 'Сырстяшка', sprite: 'syrstyashka', col: 4, row: 3, scale: 100, angle: 0, present: true, visible: false },
-  ],
+  dummies: [],
   controlled: 'main',
   combat: {
     energyStart: 100,
@@ -531,42 +525,6 @@ const LEGACY_SLOWDOWN_V2: SimSettings['slowdown'] = {
   showSpeedBadge: false,
 };
 
-/** Склейка массива манекенов с дефолтами; из старых сохранений мишени
- *  восстанавливаются из combat.target* (Пухляшик) и combat.target2* (Пузатик). */
-function mergeDummies(rawD: unknown, rawC: any, d: DummyConfig[]): DummyConfig[] {
-  const num = (v: unknown, def: number, min: number, max: number) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
-  };
-  const list: any[] = Array.isArray(rawD) ? rawD : [];
-  const legacy = (i: number) => {
-    if (rawC == null || typeof rawC !== 'object') return null;
-    // старые поля: мишень 1 — targetName/targetCol/targetRow, мишень 2 — target2*
-    if (i === 0 && typeof rawC.targetName === 'string' && rawC.targetName.trim()) {
-      return { name: rawC.targetName, col: rawC.targetCol, row: rawC.targetRow };
-    }
-    if (i === 1 && typeof rawC.target2Name === 'string' && rawC.target2Name.trim()) {
-      return { name: rawC.target2Name, col: rawC.target2Col, row: rawC.target2Row };
-    }
-    return null;
-  };
-  return d.map((dz, i) => {
-    const r = list[i] ?? legacy(i) ?? {};
-    const sprite = SPRITES.find((sp) => sp.id === r?.sprite)?.id ?? dz.sprite;
-    return {
-      id: dz.id,
-      name: typeof r?.name === 'string' && r.name.trim() ? r.name : dz.name,
-      sprite: sprite as SpriteId,
-      col: num(r?.col, dz.col, 0, 39),
-      row: num(r?.row, dz.row, 0, 39),
-      scale: num(r?.scale, dz.scale, 60, 100),
-      angle: num(r?.angle, dz.angle, 0, 359),
-      present: typeof r?.present === 'boolean' ? r.present : dz.present,
-      visible: typeof r?.visible === 'boolean' ? r.visible : dz.visible,
-    };
-  });
-}
-
 /** Совпадает ли сохранённый блок замедлений с эталонной калибровкой (по полям и окнам). */
 function slowdownMatches(sd: unknown, ref: SimSettings['slowdown']): boolean {
   if (!sd || typeof sd !== 'object') return false;
@@ -700,7 +658,8 @@ export function mergeSettings(raw: any): SimSettings {
       maxSlowdown: slowIsLegacy ? d.slowdown.maxSlowdown : num(rawSlow.maxSlowdown, d.slowdown.maxSlowdown),
     },
     hud: { ...d.hud, ...(raw?.hud ?? {}) },
-    dummies: mergeDummies(raw?.dummies, raw?.combat, d.dummies),
+    // манекены убраны с поля: старые сохранения не восстанавливаем, массив всегда пуст
+    dummies: [],
     // управление не сохраняется между сессиями: после загрузки всегда играем своим котом
     controlled: 'main',
     combat: mergeCombat(raw?.combat, d.combat),

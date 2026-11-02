@@ -300,10 +300,9 @@ function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>, n
   }
 }
 
-/** Манекены, добавленные на поле (или другие игроки комнаты). */
+/** Другие игроки комнаты. Локальные манекены убраны с поля: на нём только коты. */
 function dummiesOf(s: SimSettings, remotes: DummyConfig[]): DummyConfig[] {
-  if (remotes.length > 0) return remotes;
-  return s.dummies.filter((d) => d.present);
+  return remotes;
 }
 
 /** Энергии чужих котов копятся только по текущим обитателям комнаты:
@@ -313,8 +312,7 @@ function pruneRemoteEnergy(
   s: SimSettings,
   remotes: DummyConfig[],
 ): Record<string, number> {
-  const keep = new Set(s.dummies.map((d) => d.id));
-  for (const d of remotes) keep.add(d.id);
+  const keep = new Set(remotes.map((d) => d.id));
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(de)) if (keep.has(k)) out[k] = v;
   return out;
@@ -2398,11 +2396,6 @@ export default function Simulator() {
           <span className="max-w-[280px] truncate text-zinc-400">{netStatus}</span>
         </form>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {settings.controlled !== 'main' ? (
-            <span className="rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-[11px] font-medium text-amber-200">
-              Вы играете: {settings.dummies.find((d) => d.id === settings.controlled)?.name ?? settings.controlled}
-            </span>
-          ) : null}
           <Button
             size="sm"
             variant={settings.arrow.battleMode ? 'default' : 'outline'}
