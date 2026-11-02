@@ -552,7 +552,7 @@ const skinJoiner = await client("Гамма", skinRoom);
 const skinField = (await waitFor(skinJoiner, "field"))[1];
 const worn = (skinField.cats || []).find((c) => c.id === skinYou.id);
 if (!worn || worn.sprite !== "puzatik") throw new Error(`sprite not in field ${JSON.stringify(worn)}`);
-for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
+for (const id of ["ryzhiy", "trehcvetny", "serebristyy", "maslina", "buran"]) {
   sb.inbox.length = 0;
   sa.send(JSON.stringify(["sprite", { sprite: id }]));
   const seen = await waitFor(sb, "update cat");
@@ -560,7 +560,7 @@ for (const id of ["ryzhiy", "trehcvetny", "serebristyy"]) {
     throw new Error(`sprite ${id} ${JSON.stringify(seen[1])}`);
   }
 }
-console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy");
+console.log("ok: sprite", skinYou.x, skinYou.y, "→", worn.sprite, "+ ryzhiy trehcvetny serebristyy maslina buran");
 
 // Манекен «ПОЧУХАТЬ»: включение видно всем (и включившему), движение тащащему
 // не эхоится, чужие получают dummyMove, новичку состояние приходит в field,
