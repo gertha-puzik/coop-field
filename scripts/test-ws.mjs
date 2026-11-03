@@ -981,6 +981,91 @@ function handshake(origin) {
   watcher.close();
 }
 
+// ----- комната «тест»: другой формат поля (лужайка + переход + закуток) -----
+{
+  const ta = await client("Тестер", "test");
+  const tYou = (await waitFor(ta, "you"))[1];
+  const tField = (await waitFor(ta, "field"))[1];
+  if (tField.format !== "test") throw new Error(`field.format=${tField.format}`);
+  if (tField.width !== 19 || tField.height !== 7) throw new Error(`field ${tField.width}x${tField.height}`);
+  if (tField.room !== "test") throw new Error(`field.room=${tField.room}`);
+  // спавн — на лужайке (1..10 / 1..7)
+  if (tYou.x < 1 || tYou.x > 10 || tYou.y < 1 || tYou.y > 7) {
+    throw new Error(`spawn ${cellKey(tYou)} вне лужайки`);
+  }
+  console.log("ok: test room field 19x7, spawn", cellKey(tYou));
+  // клеточная ходьба по зонам: вправо через лужайку, переход и закуток до кромки
+  ta.inbox.length = 0;
+  for (let i = 0; i < 15; i++) {
+    ta.send(JSON.stringify(["move", { x: 1, y: 0 }]));
+    await sleep(100);
+  }
+  await sleep(300);
+  const walkX = ta.inbox.filter((m) => m[0] === "update cat" && m[1].id === tYou.id).map((m) => m[1].x);
+  if (walkX[walkX.length - 1] !== 19) {
+    throw new Error(`walk right ended x=${walkX[walkX.length - 1]}, expected 19 (кромка закутка)`);
+  }
+  console.log("ok: test room walk lawn→passage→nook, x →", walkX[walkX.length - 1]);
+  // вверх из закутка выхода нет: y=1 → y=0 отказ «край»
+  ta.inbox.length = 0;
+  for (let i = 0; i < 3 && !ta.inbox.some((m) => m[0] === "refuse"); i++) {
+    ta.send(JSON.stringify(["move", { x: 0, y: -1 }]));
+    await sleep(110);
+  }
+  const edgeRefuse = ta.inbox.find((m) => m[0] === "refuse" && m[1].code === "edge");
+  if (!edgeRefuse) throw new Error("expected edge refuse above nook");
+  console.log("ok: test room edge refuse at location border");
+  // свободная ходьба: freemove релеится соседу с логической клеткой, темп и stop
+  const tb = await client("Сосед", "test");
+  await waitFor(tb, "field");
+  await sleep(50);
+  tb.inbox.length = 0;
+  ta.send(JSON.stringify(["freemove", { x: 3.5, y: 3.5 }]));
+  // второй пакет внутри окна 50 мс — сервер его рассылать не должен
+  await sleep(15);
+  ta.send(JSON.stringify(["freemove", { x: 3.6, y: 3.5 }]));
+  await sleep(120);
+  const fm = tb.inbox.find((m) => m[0] === "freemove");
+  if (!fm || fm[1].id !== tYou.id) throw new Error(`freemove relay missing: ${JSON.stringify(tb.inbox.find((m) => m[0] === "freemove"))}`);
+  if (fm[1].x !== 3.5 || fm[1].y !== 3.5) throw new Error(`freemove pos ${fm[1].x}:${fm[1].y}`);
+  // ближайшая проходимая клетка к (3.5, 3.5) — (5, 5) в 1-based
+  if (fm[1].cx !== 5 || fm[1].cy !== 5) throw new Error(`freemove cell ${fm[1].cx}:${fm[1].cy}, expected 5:5`);
+  const fmGap = tb.inbox.filter((m) => m[0] === "freemove");
+  if (fmGap.length !== 1) throw new Error(`freemove gap failed: ${fmGap.length} packets`);
+  ta.send(JSON.stringify(["freemove", { x: 4.2, y: 3.8, stop: true }]));
+  await sleep(80);
+  const fmStop = tb.inbox.filter((m) => m[0] === "freemove");
+  if (fmStop.length !== 2 || fmStop[1][1].x !== 4.2) {
+    throw new Error(`stop freemove: ${JSON.stringify(fmStop.map((m) => m[1]))}`);
+  }
+  // возврат в клеточный бой: cellsync рассылает publicCat с fm=0 (и самому игроку)
+  ta.inbox.length = 0;
+  tb.inbox.length = 0;
+  ta.send(JSON.stringify(["cellsync", { x: 5, y: 4 }]));
+  await sleep(120);
+  const syncSelf = ta.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id);
+  const syncPeer = tb.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id);
+  if (!syncSelf || !syncPeer) throw new Error("cellsync echo missing");
+  if (syncSelf[1].x !== 5 || syncSelf[1].y !== 4 || syncSelf[1].fm !== 0) {
+    throw new Error(`cellsync self ${JSON.stringify(syncSelf[1])}`);
+  }
+  if (syncPeer[1].fm !== 0) throw new Error("cellsync peer fm must be 0");
+  // манекен и мишень в «тесте» недоступны: info-отказ, состояния комнаты не рассылаются
+  ta.inbox.length = 0;
+  ta.send(JSON.stringify(["dummy", { on: true }]));
+  ta.send(JSON.stringify(["rab", { on: true }]));
+  await sleep(100);
+  if (ta.inbox.some((m) => m[0] === "dummyState" || m[0] === "rabState")) {
+    throw new Error("test room must not accept dummy/rab");
+  }
+  const guardInfo = ta.inbox.filter((m) => m[0] === "info");
+  if (guardInfo.length < 2) throw new Error(`expected dummy+rab refusals, got ${JSON.stringify(guardInfo)}`);
+  console.log("ok: test room freemove relay/gap/stop, cellsync, no dummy/rab");
+  ta.close();
+  tb.close();
+  await sleep(50);
+}
+
 const originCases = [
   ["https://abnocw.89-232-184-77.sslip.io", true],
   ["https://coop.89-232-184-77.sslip.io", true],

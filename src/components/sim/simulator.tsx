@@ -22,6 +22,19 @@ import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, THEMES, type Them
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import { keyAction } from '@/lib/sim/keys';
 import {
+  TEST_COLS,
+  TEST_ROOM_ID,
+  TEST_ROWS,
+  TEST_ZONES,
+  clampToPolygon,
+  drawTestDecorItem,
+  nearestWalkableCell,
+  pointInPolygon,
+  testFieldGeometry,
+  testNonWalkableCells,
+  testWalkableCell,
+} from '@/lib/sim/test-field';
+import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
   DUMMY_DEFAULT_SPRITE,
@@ -68,6 +81,10 @@ const NET_ROLLBACK_LOCK_MS = 90;
 const REMOTE_STEP_MS = 60;
 /** Дальше этого отставания чужого кота не анимируем — сразу ставим в клетку сервера. */
 const REMOTE_BACKLOG_MAX = 4;
+/** Темп рассылки свободной позиции в «тесте» (~12 кадров/с). */
+const FREE_EMIT_MS = 80;
+/** Плавность камеры: за ~130 мс камера догоняет игрока на 63% дистанции. */
+const CAMERA_TAU_MS = 130;
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -342,6 +359,10 @@ interface Engine {
   lastDir: number | null;
   /** performance.now(), до которого новые шаги подавлены после отката предикта. */
   moveLockUntil: number;
+  /** Комната «тест», мирный режим: свободная позиция в клеточных долях мира
+   *  (левый верх спрайта). В бою совпадает с col/row. */
+  fx: number;
+  fy: number;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -600,6 +621,15 @@ export default function Simulator() {
   }, []);
   /** Панель настроек теперь выдвижная: не отдаёт поле постоянной колонке. */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Формат поля комнаты: «test» — лужайка/переход/закуток с камерой и свободной ходьбой. */
+  const [fieldFormat, setFieldFormat] = useState<'grid' | 'test'>('grid');
+  const fieldFormatRef = useRef<'grid' | 'test'>('grid');
+  /** Плавная камера «теста»: центр взгляда в px мира; init — встать на игрока без анимации. */
+  const camRef = useRef({ x: 0, y: 0, init: false });
+  /** Темп рассылки freemove и флаг «сейчас идём» (для финального стоп-пакета). */
+  const freeSyncRef = useRef({ at: 0, moving: false });
+  /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
+  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number }>());
   /** Тема оформления: ночь / светлая / пивная. Цвета — CSS-переменные (globals.css). */
   const [theme, setTheme] = useState<ThemeId>('night');
   useEffect(() => {
@@ -769,6 +799,8 @@ export default function Simulator() {
     /** performance.now(), до которого новые шаги подавлены: пауза после отката
      *  предикта, чтобы перешаг не уходил в серверный кулдаун и не терялся. */
     moveLockUntil: 0,
+    fx: 4,
+    fy: 2,
   });
 
   /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
@@ -957,6 +989,9 @@ export default function Simulator() {
         const row = typeof cat.y === 'number' ? Math.max(0, cat.y - 1) : e.row;
         e.col = col;
         e.row = row;
+        // В «тесте» свободная позиция стартует с клетки сервера (после reconnect тоже).
+        e.fx = col;
+        e.fy = row;
         netMovesRef.current = { server: { col, row }, pending: [] };
         setNetStatus(`Вы — ${cat.login || 'кот'} (#${cat.id})`);
         if (cat.login) setPlayerName(cat.login);
@@ -969,7 +1004,25 @@ export default function Simulator() {
       onField: (field) => {
         const cats = field.cats || [];
         const others = cats.filter((c) => c.id !== meIdRef.current);
+        // Формат поля комнаты: «test» — лужайка/переход/закуток (камера, свободная ходьба).
+        const fmt = field.format === 'test' ? 'test' : 'grid';
+        if (fmt !== fieldFormatRef.current) {
+          fieldFormatRef.current = fmt;
+          setFieldFormat(fmt);
+        }
+        camRef.current.init = false;
+        remoteFreeRef.current.clear();
         liveRemotesRef.current = others.map(catToDummy);
+        // Кто из чужих котов идёт свободно (fm=1) — сеем плавную доведённую позицию.
+        for (const c of others) {
+          if (c.fm === 1 && Number.isFinite(c.fx) && Number.isFinite(c.fy)) {
+            remoteFreeRef.current.set(`p${c.id}`, { x: c.fx!, y: c.fy!, tx: c.fx!, ty: c.fy! });
+          }
+        }
+        // В «тесте» игрок появляется сразу в боевом режиме (клавиша B выключает).
+        if (fmt === 'test' && !settingsRef.current.arrow.battleMode) {
+          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: true } }));
+        }
         // Кто из чужих котов держит блок — из снапшота комнаты (после обрыва тоже).
         remoteBlockRef.current = new Set(cats.filter((c) => c.blocking && c.id !== meIdRef.current).map((c) => c.id));
         remoteAimRef.current.clear();
@@ -991,6 +1044,8 @@ export default function Simulator() {
           const row = Math.max(0, me.y - 1);
           engineRef.current.col = col;
           engineRef.current.row = row;
+          engineRef.current.fx = col;
+          engineRef.current.fy = row;
           netMovesRef.current.server = { col, row };
         }
         setNetStatus(`Вы в комнате ${roomTitle(field.room || 'demo')} · ${cats.length} на поле`);
@@ -1055,6 +1110,32 @@ export default function Simulator() {
           y: typeof cat.y === 'number' ? cat.y : (prev?.row ?? 0) + 1,
           deg: cat.deg ?? prev?.angle,
         });
+        // «Тест»: чужой кот в свободной ходьбе — позиция едет в карту плавного
+        // доведения, клетка сервера обновляется без анимации шага.
+        if (cat.fm === 1 && Number.isFinite(cat.fx) && Number.isFinite(cat.fy)) {
+          const fr = remoteFreeRef.current.get(dummy.id);
+          if (fr) {
+            fr.tx = cat.fx!;
+            fr.ty = cat.fy!;
+          } else {
+            remoteFreeRef.current.set(dummy.id, { x: cat.fx!, y: cat.fy!, tx: cat.fx!, ty: cat.fy! });
+          }
+          if (prev) {
+            prev.col = dummy.col;
+            prev.row = dummy.row;
+            prev.name = dummy.name;
+            prev.sprite = dummy.sprite;
+            prev.angle = dummy.angle;
+          }
+          const visF = remoteDrawRef.current.get(dummy.id);
+          if (visF) {
+            visF.col = dummy.col;
+            visF.row = dummy.row;
+            visF.queue = [];
+          }
+          return;
+        }
+        remoteFreeRef.current.delete(dummy.id);
         // Сетевой угол пишем в тот же объект, без setState. На кадре рисуем
         // не его, а сглаженный display. Клетка сервера — в col/row сразу,
         // картинка догоняет её по одной за кадр (remoteDrawRef.current).
@@ -1083,6 +1164,31 @@ export default function Simulator() {
         if (info.id === meIdRef.current) return;
         if (info.on) remoteBlockRef.current.add(info.id);
         else remoteBlockRef.current.delete(info.id);
+      },
+      onFreeMove: (m) => {
+        // Чужой кот идёт свободно («тест», мирный режим): обновляем цель доведения
+        // и логическую клетку — по ней работают удары и препятствия.
+        const key = `p${m.id}`;
+        const fr = remoteFreeRef.current.get(key);
+        if (fr) {
+          fr.tx = m.x;
+          fr.ty = m.y;
+        } else {
+          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y });
+        }
+        if (m.cx != null && m.cy != null) {
+          const prev = liveRemotesRef.current.find((d) => d.id === key);
+          if (prev) {
+            prev.col = m.cx - 1;
+            prev.row = m.cy - 1;
+          }
+          const vis = remoteDrawRef.current.get(key);
+          if (vis) {
+            vis.col = m.cx - 1;
+            vis.row = m.cy - 1;
+            vis.queue = [];
+          }
+        }
       },
       onFight: (fight) => applyNetFight(fight),
       onChat: (message) => {
@@ -1192,6 +1298,10 @@ export default function Simulator() {
       liveRemotesRef.current = [];
       remoteAimRef.current.clear();
       remoteDrawRef.current.clear();
+      remoteFreeRef.current.clear();
+      fieldFormatRef.current = 'grid';
+      setFieldFormat('grid');
+      camRef.current.init = false;
       netMovesRef.current = { server: null, pending: [] };
       applyDummy(false, null);
       dummySeenRef.current = 0;
@@ -1329,12 +1439,43 @@ export default function Simulator() {
     const s = settingsRef.current;
     e.col = Math.max(0, Math.min(e.col, s.field.cols - 1));
     e.row = Math.max(0, Math.min(e.row, s.field.rows - 1));
+    e.fx = Math.max(0, Math.min(e.fx, s.field.cols - 1));
+    e.fy = Math.max(0, Math.min(e.fy, s.field.rows - 1));
     if (mainSavedRef.current) {
       mainSavedRef.current.col = Math.max(0, Math.min(mainSavedRef.current.col, s.field.cols - 1));
       mainSavedRef.current.row = Math.max(0, Math.min(mainSavedRef.current.row, s.field.rows - 1));
     }
     e.path = e.path.filter((p) => p.c < s.field.cols && p.r < s.field.rows);
   }, [settings.field.cols, settings.field.rows, settings.field.cellW, settings.field.cellH]);
+
+  /**
+   * Комната «тест»: переход мирная ходьба ↔ боевой режим.
+   *  В бой — щёлкаем на ближайшую проходимую клетку, синхронизируем сервер (cellsync)
+   *  и предикт; в мирный — свободная позиция стартует с текущей клетки.
+   */
+  useEffect(() => {
+    if (fieldFormat !== 'test') return;
+    const e = engineRef.current;
+    const net = netRef.current;
+    if (settings.arrow.battleMode) {
+      const cell = nearestWalkableCell(e.fx, e.fy);
+      e.col = cell.c;
+      e.row = cell.r;
+      e.fx = cell.c;
+      e.fy = cell.r;
+      e.step = null;
+      e.path = [];
+      netMovesRef.current = { server: { col: cell.c, row: cell.r }, pending: [] };
+      net?.emit('cellsync', { x: cell.c + 1, y: cell.r + 1 });
+    } else {
+      e.fx = e.col;
+      e.fy = e.row;
+      e.step = null;
+      e.path = [];
+      freeSyncRef.current.moving = false;
+      net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+    }
+  }, [fieldFormat, settings.arrow.battleMode]);
 
   /* ---------- игровой цикл ---------- */
 
@@ -1350,6 +1491,9 @@ export default function Simulator() {
       stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current, now);
       const s = settingsRef.current;
       const e = engineRef.current;
+      // Комната «тест» и мирный режим: свободная ходьба по всей локации вместо клеток.
+      const testMode = fieldFormatRef.current === 'test';
+      const peaceWalk = testMode && !s.arrow.battleMode && s.controlled === 'main';
       // Блок (удержание К): двигаться, крутить стрелу и бить нельзя. Гасим всё,
       // что могло прийти, пока блок держится (маршрут по клику, удержания).
       if (e.blocking) {
@@ -1422,6 +1566,7 @@ export default function Simulator() {
       };
 
       startStepRef.current = (dir: number) => {
+        if (peaceWalk) return; // в мирном «тесте» движения свободные, шаги по клеткам отключены
         if (e.step) return; // предыдущий шаг ещё в кулдауне — спам не ускоряет движение
         if (performance.now() < e.moveLockUntil) return; // только что был откат — даём серверу догнать
         const self = s.controlled;
@@ -1429,9 +1574,11 @@ export default function Simulator() {
         const d = dirByDeg(dir);
         const tc = e.col + d.dx;
         const tr = e.row + d.dy;
-        // клетки остальных персонажей — физические препятствия: шагнуть в них нельзя
+        // клетки остальных персонажей — физические препятствия: шагнуть в них нельзя;
+        // в «тесте» дополнительно — только внутри зон клеточной ходьбы
         if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras())) return;
-        if (tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows) requestStep(d.deg, tc, tr);
+        const inField = tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows;
+        if (inField && (!testMode || testWalkableCell(tc, tr))) requestStep(d.deg, tc, tr);
       };
 
       // ручное вращение стрелы: J — против часовой, L — по часовой.
@@ -1460,25 +1607,108 @@ export default function Simulator() {
 
       // старт шага при удержании клавиш движения / маршрут по клику: следующий шаг
       // начинается сразу после кулдауна предыдущего, то есть удержание движется
-      // с интервалом stepMs (120 мс по умолчанию), растянутым замедлением
-      if (!e.step) {
+      // с интервалом stepMs (120 мс по умолчанию), растянутым замедлением.
+      // В мирном «тесте» вместо этого — свободная ходьба (ниже).
+      if (!peaceWalk && !e.step) {
         const self = s.controlled;
         const mp = self === 'main' ? null : mainSavedRef.current;
         if (e.held.length > 0) {
           const d = dirByDeg(e.held[e.held.length - 1]);
           const tc = e.col + d.dx;
           const tr = e.row + d.dy;
-          if (!isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras()) && tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows)
+          if (
+            !isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras()) &&
+            tc >= 0 &&
+            tc < s.field.cols &&
+            tr >= 0 &&
+            tr < s.field.rows &&
+            (!testMode || testWalkableCell(tc, tr))
+          )
             requestStep(d.deg, tc, tr);
         } else if (e.path.length > 0) {
           const nx = e.path[0];
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
-          if (d && nx.c === e.col + d.dx && nx.r === e.row + d.dy && !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current, objectExtras())) {
+          if (
+            d &&
+            nx.c === e.col + d.dx &&
+            nx.r === e.row + d.dy &&
+            !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current, objectExtras()) &&
+            (!testMode || testWalkableCell(nx.c, nx.r))
+          ) {
             const mode = requestStep(d.deg, nx.c, nx.r);
             if (mode === 'local' || mode === 'net') e.path.shift();
           } else {
             e.path = [];
           }
+        }
+      }
+
+      // «Тест», мирный режим: свободная ходьба по всей нарисованной локации.
+      // Скорость — как темп боя: клетка по ширине/высоте за stepMs, диагонали нормируются.
+      if (peaceWalk) {
+        let mvx = 0;
+        let mvy = 0;
+        for (const dirDeg of e.held) {
+          const d = dirByDeg(dirDeg);
+          mvx += d.dx;
+          mvy += d.dy;
+        }
+        const moving = mvx !== 0 || mvy !== 0;
+        const net = netRef.current;
+        if (moving) {
+          const len = Math.hypot(mvx, mvy) || 1;
+          mvx /= len;
+          mvy /= len;
+          const spx = (s.field.cellW / Math.max(30, s.character.stepMs)) * 1000;
+          const spy = (s.field.cellH / Math.max(30, s.character.stepMs)) * 1000;
+          const nxP = e.fx + (mvx * spx * dt) / 1000;
+          const nyP = e.fy + (mvy * spy * dt) / 1000;
+          const geo = testFieldGeometry(s.field.cellW, s.field.cellH);
+          const cl = clampToPolygon(geo.polygon, e.fx, e.fy, nxP, nyP);
+          e.fx = cl.x;
+          e.fy = cl.y;
+          e.lastDir = dirByDeg(e.held[e.held.length - 1]).deg;
+          if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
+            freeSyncRef.current.at = now;
+            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
+          }
+          freeSyncRef.current.moving = true;
+        } else if (freeSyncRef.current.moving) {
+          freeSyncRef.current.moving = false;
+          net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+        }
+      }
+
+      // Чужие коты в свободной ходьбе («тест»): плавное доведение до последней позиции.
+      if (remoteFreeRef.current.size > 0) {
+        const kf = 1 - Math.exp(-dt / 80);
+        for (const fr of remoteFreeRef.current.values()) {
+          fr.x += (fr.tx - fr.x) * kf;
+          fr.y += (fr.ty - fr.y) * kf;
+        }
+      }
+
+      // Плавная камера «теста»: догоняет своего кота, упирается в кромку локации.
+      if (testMode) {
+        const vw = cv.clientWidth || 1;
+        const vh = cv.clientHeight || 1;
+        const cellW = s.field.cellW;
+        const cellH = s.field.cellH;
+        const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
+        const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
+        const bb = testFieldGeometry(cellW, cellH).bboxPx;
+        const cxT =
+          bb.x1 - bb.x0 >= vw ? Math.min(Math.max(txP, bb.x0 + vw / 2), bb.x1 - vw / 2) : (bb.x0 + bb.x1) / 2;
+        const cyT =
+          bb.y1 - bb.y0 >= vh ? Math.min(Math.max(tyP, bb.y0 + vh / 2), bb.y1 - vh / 2) : (bb.y0 + bb.y1) / 2;
+        if (!camRef.current.init) {
+          camRef.current.x = cxT;
+          camRef.current.y = cyT;
+          camRef.current.init = true;
+        } else {
+          const kc = 1 - Math.exp(-dt / CAMERA_TAU_MS);
+          camRef.current.x += (cxT - camRef.current.x) * kc;
+          camRef.current.y += (cyT - camRef.current.y) * kc;
         }
       }
 
@@ -1707,9 +1937,9 @@ export default function Simulator() {
       drawArrowBody(s, k, ax, ay, e.angle, frac, s.arrow.showRay);
     };
 
-    const drawHud = (s: SimSettings, e: Engine) => {
+    const drawHud = (s: SimSettings, e: Engine, screenW?: number) => {
       const ctx2 = ctx;
-      const W = s.field.cols * s.field.cellW;
+      const W = screenW ?? s.field.cols * s.field.cellW;
       const pw = 186;
       const ph = 208;
       const px = W - pw - 12;
@@ -1794,44 +2024,118 @@ export default function Simulator() {
       const e = engineRef.current;
       const W = s.field.cols * s.field.cellW;
       const H = s.field.rows * s.field.cellH;
-      // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
-      // Чтобы без «мыла»: backing store повторяет показанный размер с учётом
-      // devicePixelRatio (кап 2), а рисунок идёт в клеточных координатах через
-      // ctx.setTransform. Мышь маппится через отношение размеров — не ломается.
-      const cssW = cv.clientWidth || W;
-      const k = Math.min(2, Math.max(1, (cssW * (window.devicePixelRatio || 1)) / Math.max(1, W)));
-      const bw = Math.round(W * k);
-      const bh = Math.round(H * k);
-      if (cv.width !== bw || cv.height !== bh) {
-        cv.width = bw;
-        cv.height = bh;
-      }
-      ctx.setTransform(k, 0, 0, k, 0, 0);
-
-      // фон
-      ctx.fillStyle = s.field.bgColor;
-      ctx.fillRect(0, 0, W, H);
-      if (s.field.checker) {
-        ctx.fillStyle = s.field.bgColorAlt;
-        for (let r = 0; r < s.field.rows; r++) {
-          for (let c = 0; c < s.field.cols; c++) {
-            if ((c + r) % 2 === 0) ctx.fillRect(c * s.field.cellW, r * s.field.cellH, s.field.cellW, s.field.cellH);
+      const testMode = fieldFormatRef.current === 'test';
+      let vw = 0;
+      let vh = 0;
+      if (testMode) {
+        // «Тест»: канвас — вьюпорт в мир. Занимает весь кадр, рисунок в мировых
+        // координатах через камеру (translate), чёткость — через devicePixelRatio (кап 2).
+        vw = cv.clientWidth || 1;
+        vh = cv.clientHeight || 1;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const bw = Math.round(vw * dpr);
+        const bh = Math.round(vh * dpr);
+        if (cv.width !== bw || cv.height !== bh) {
+          cv.width = bw;
+          cv.height = bh;
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // фон за кромкой локации — самый тёмный цвет темы
+        const outside =
+          getComputedStyle(document.documentElement).getPropertyValue('--sim-deep').trim() || '#09090b';
+        ctx.fillStyle = outside;
+        ctx.fillRect(0, 0, vw, vh);
+        ctx.save();
+        ctx.translate(Math.round(vw / 2 - camRef.current.x), Math.round(vh / 2 - camRef.current.y));
+        const geo = testFieldGeometry(s.field.cellW, s.field.cellH);
+        // трава локации — природная тёмная зелень
+        const grad = ctx.createLinearGradient(0, geo.bboxPx.y0, 0, geo.bboxPx.y1);
+        grad.addColorStop(0, '#31511f');
+        grad.addColorStop(0.55, '#2a461c');
+        grad.addColorStop(1, '#233b18');
+        ctx.fillStyle = grad;
+        ctx.fill(geo.path);
+        // земляная кромка и светлый травяной кант внутри неё
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#4a3a28';
+        ctx.stroke(geo.path);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
+        ctx.stroke(geo.path);
+        // зоны клеточной ходьбы: доска с сеткой (цвета — настройки поля)
+        for (const z of TEST_ZONES) {
+          const zx = z.c0 * s.field.cellW;
+          const zy = z.r0 * s.field.cellH;
+          const zw = (z.c1 - z.c0 + 1) * s.field.cellW;
+          const zh = (z.r1 - z.r0 + 1) * s.field.cellH;
+          ctx.fillStyle = s.field.bgColor;
+          ctx.fillRect(zx, zy, zw, zh);
+          if (s.field.checker) {
+            ctx.fillStyle = s.field.bgColorAlt;
+            for (let r = z.r0; r <= z.r1; r++) {
+              for (let c = z.c0; c <= z.c1; c++) {
+                if ((c + r) % 2 === 0) ctx.fillRect(c * s.field.cellW, r * s.field.cellH, s.field.cellW, s.field.cellH);
+              }
+            }
+          }
+          if (s.field.showGrid) {
+            ctx.strokeStyle = s.field.gridColor;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let c = z.c0; c <= z.c1 + 1; c++) {
+              ctx.moveTo(c * s.field.cellW + 0.5, zy);
+              ctx.lineTo(c * s.field.cellW + 0.5, zy + zh);
+            }
+            for (let r = z.r0; r <= z.r1 + 1; r++) {
+              ctx.moveTo(zx, r * s.field.cellH + 0.5);
+              ctx.lineTo(zx + zw, r * s.field.cellH + 0.5);
+            }
+            ctx.stroke();
           }
         }
-      }
-      if (s.field.showGrid) {
-        ctx.strokeStyle = s.field.gridColor;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (let c = 0; c <= s.field.cols; c++) {
-          ctx.moveTo(c * s.field.cellW + 0.5, 0);
-          ctx.lineTo(c * s.field.cellW + 0.5, H);
+        // трава и цветы — чисто визуальный фон, под персонажами
+        for (const d of geo.decor) drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH);
+      } else {
+        // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
+        // Чтобы без «мыла»: backing store повторяет показанный размер с учётом
+        // devicePixelRatio (кап 2), а рисунок идёт в клеточных координатах через
+        // ctx.setTransform. Мышь маппится через отношение размеров — не ломается.
+        const cssW = cv.clientWidth || W;
+        const k = Math.min(2, Math.max(1, (cssW * (window.devicePixelRatio || 1)) / Math.max(1, W)));
+        const bw = Math.round(W * k);
+        const bh = Math.round(H * k);
+        if (cv.width !== bw || cv.height !== bh) {
+          cv.width = bw;
+          cv.height = bh;
         }
-        for (let r = 0; r <= s.field.rows; r++) {
-          ctx.moveTo(0, r * s.field.cellH + 0.5);
-          ctx.lineTo(W, r * s.field.cellH + 0.5);
+        ctx.setTransform(k, 0, 0, k, 0, 0);
+
+        // фон
+        ctx.fillStyle = s.field.bgColor;
+        ctx.fillRect(0, 0, W, H);
+        if (s.field.checker) {
+          ctx.fillStyle = s.field.bgColorAlt;
+          for (let r = 0; r < s.field.rows; r++) {
+            for (let c = 0; c < s.field.cols; c++) {
+              if ((c + r) % 2 === 0) ctx.fillRect(c * s.field.cellW, r * s.field.cellH, s.field.cellW, s.field.cellH);
+            }
+          }
         }
-        ctx.stroke();
+        if (s.field.showGrid) {
+          ctx.strokeStyle = s.field.gridColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let c = 0; c <= s.field.cols; c++) {
+            ctx.moveTo(c * s.field.cellW + 0.5, 0);
+            ctx.lineTo(c * s.field.cellW + 0.5, H);
+          }
+          for (let r = 0; r <= s.field.rows; r++) {
+            ctx.moveTo(0, r * s.field.cellH + 0.5);
+            ctx.lineTo(W, r * s.field.cellH + 0.5);
+          }
+          ctx.stroke();
+        }
       }
 
       // подсветка клетки под курсором
@@ -1870,7 +2174,14 @@ export default function Simulator() {
       const drag = dragRef.current;
       const posOfChar = (id: string, col: number, row: number): { x: number; y: number } => {
         if (drag && drag.key === id) return { x: drag.x, y: drag.y };
-        if (id === s.controlled) return { x: e.col * s.field.cellW, y: e.row * s.field.cellH };
+        if (id === s.controlled) {
+          // «Тест», мирный режим: свой кот стоит в свободной позиции
+          if (testMode && !s.arrow.battleMode) return { x: e.fx * s.field.cellW, y: e.fy * s.field.cellH };
+          return { x: e.col * s.field.cellW, y: e.row * s.field.cellH };
+        }
+        // чужой кот в свободной ходьбе («тест») — плавная доведённая позиция
+        const free = id.startsWith('p') ? remoteFreeRef.current.get(id) : undefined;
+        if (free) return { x: free.x * s.field.cellW, y: free.y * s.field.cellH };
         const vis = id.startsWith('p') ? remoteDrawRef.current.get(id) : undefined;
         if (vis) return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH };
         return { x: col * s.field.cellW, y: row * s.field.cellH };
@@ -2052,12 +2363,14 @@ export default function Simulator() {
         }
       }
 
-      // свой кот: под управлением — по клетке движка, иначе стоит там, где его оставили
+      // свой кот: под управлением — по клетке движка (в мирном «тесте» — по свободной позиции),
+      // иначе стоит там, где его оставили
       const spr = spritesRef.current[s.character.sprite] ?? Object.values(spritesRef.current)[0] ?? null;
       const selfId = s.controlled;
       const mainPos = selfId === 'main' ? { col: e.col, row: e.row } : mainSavedRef.current;
-      const cellX = (mainPos ? mainPos.col : e.col) * s.field.cellW;
-      const cellY = (mainPos ? mainPos.row : e.row) * s.field.cellH;
+      const selfFree = testMode && !s.arrow.battleMode;
+      const cellX = (selfFree ? e.fx : mainPos ? mainPos.col : e.col) * s.field.cellW;
+      const cellY = (selfFree ? e.fy : mainPos ? mainPos.row : e.row) * s.field.cellH;
       const cxp = cellX + s.field.cellW / 2;
       const cyp = cellY + s.field.cellH / 2;
       if (spr && mainPos) {
@@ -2257,7 +2570,13 @@ export default function Simulator() {
         ctx.globalAlpha = 1;
       }
 
-      if (s.hud.show) drawHud(s, e);
+      if (testMode) {
+        // мир выведен, камера больше не нужна — HUD рисуем в экранных координатах
+        ctx.restore();
+        if (s.hud.show) drawHud(s, e, vw);
+      } else if (s.hud.show) {
+        drawHud(s, e);
+      }
     };
 
     // Отладочный доступ к состоянию движка — только в dev-сборке (автотесты);
@@ -2271,6 +2590,11 @@ export default function Simulator() {
           col: st.col,
           row: st.row,
           angle: Math.round(wrap360(st.angle)),
+          fx: Math.round(st.fx * 100) / 100,
+          fy: Math.round(st.fy * 100) / 100,
+          format: fieldFormatRef.current,
+          battle: settingsRef.current.arrow.battleMode,
+          cam: { x: Math.round(camRef.current.x), y: Math.round(camRef.current.y), init: camRef.current.init },
           stepping: !!st.step,
           stepDur: st.step ? Math.round(st.step.dur) : 0,
           stepLeft: st.step ? Math.max(0, Math.round(st.step.dur - (performance.now() - st.step.start))) : 0,
@@ -2484,8 +2808,18 @@ export default function Simulator() {
 
   const onMove = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const s = settingsRef.current;
-    const { mx, my } = canvasPoint(ev);
     const e = engineRef.current;
+    const testMode = fieldFormatRef.current === 'test';
+    // «Тест»: мир больше вьюпорта — курсор переводится в мировые координаты через камеру
+    let { mx, my } = canvasPoint(ev);
+    if (testMode) {
+      const cvp = canvasRef.current;
+      if (cvp) {
+        const rect = cvp.getBoundingClientRect();
+        mx = ev.clientX - rect.left + camRef.current.x - cvp.clientWidth / 2;
+        my = ev.clientY - rect.top + camRef.current.y - cvp.clientHeight / 2;
+      }
+    }
     const dg = dragRef.current;
     if (dg) {
       // перетаскивание: спрайт следует за курсором в пределах поля,
@@ -2513,11 +2847,21 @@ export default function Simulator() {
     }
     const c = Math.floor(mx / s.field.cellW);
     const r = Math.floor(my / s.field.cellH);
-    if (c >= 0 && c < s.field.cols && r >= 0 && r < s.field.rows) e.hover = { c, r };
+    // подсветка клетки — в бою и только по проходимым зонам «теста»
+    const hoverOk =
+      c >= 0 &&
+      c < s.field.cols &&
+      r >= 0 &&
+      r < s.field.rows &&
+      (!testMode || (s.arrow.battleMode && testWalkableCell(c, r)));
+    if (hoverOk) e.hover = { c, r };
     else e.hover = null;
-    // курсор-рука над манекеном — намёк, что его можно перетащить;
-    // над активной (управляемой) моделью обычный курсор — её тащить нельзя
     const cv = canvasRef.current;
+    if (testMode) {
+      // манекена в «тесте» нет — таскать нечего, курсор обычный
+      if (cv) cv.style.cursor = '';
+      return;
+    }
     const hov = hitTargetAt(s, mx, my);
     const hovT = hitDummyObjAt(s, mx, my);
     if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'grab' : '';
@@ -2659,12 +3003,24 @@ export default function Simulator() {
       return;
     }
     const s = settingsRef.current;
-    const { mx, my } = canvasPoint(ev);
+    const e = engineRef.current;
+    const testMode = fieldFormatRef.current === 'test';
+    let { mx, my } = canvasPoint(ev);
+    if (testMode) {
+      // в мирном «тесте» маршрутов нет (ходьба свободная); в бою клик — в мировых координатах
+      if (!s.arrow.battleMode) return;
+      const cvp = canvasRef.current;
+      if (!cvp) return;
+      const rect = cvp.getBoundingClientRect();
+      mx = ev.clientX - rect.left + camRef.current.x - cvp.clientWidth / 2;
+      my = ev.clientY - rect.top + camRef.current.y - cvp.clientHeight / 2;
+    }
     const c = Math.floor(mx / s.field.cellW);
     const r = Math.floor(my / s.field.cellH);
     if (c < 0 || c >= s.field.cols || r < 0 || r >= s.field.rows) return;
-    const e = engineRef.current;
-    // клетки персонажей непроходимы — маршрут через/на них не строится
+    if (testMode && !testWalkableCell(c, r)) return;
+    // клетки персонажей непроходимы — маршрут через/на них не строится;
+    // в «тесте» непроходимы и клетки вне зон клеточной ходьбы
     const mp = s.controlled === 'main' ? null : mainSavedRef.current;
     e.path = bfsPath(
       e.col,
@@ -2673,7 +3029,10 @@ export default function Simulator() {
       r,
       s.field.cols,
       s.field.rows,
-      othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
+      [
+        ...othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
+        ...(testMode ? testNonWalkableCells() : []),
+      ],
     );
   };
 
@@ -3026,6 +3385,8 @@ export default function Simulator() {
 
   const fieldW = settings.field.cols * settings.field.cellW;
   const fieldH = settings.field.rows * settings.field.cellH;
+  /** Комната «тест»: канвас — вьюпорт с камерой, поле не вписывается в кадр. */
+  const testField = fieldFormat === 'test';
 
   // Канвас рисуется в пикселях клеток (10×100 на 6×150). Боковые колонки (чат и лог)
   // живут рядом с полем, поэтому кадр отдаётся полю целиком: размер вписывается и по
@@ -3035,6 +3396,7 @@ export default function Simulator() {
   useLayoutEffect(() => {
     const frame = fieldFrameRef.current;
     if (!frame) return;
+    if (fieldFormatRef.current === 'test') return; // вьюпорт «теста» не вписывается — он и так весь кадр
     const mq = window.matchMedia('(min-width: 64rem)');
     const fit = () => {
       const cs = getComputedStyle(frame);
@@ -3250,11 +3612,13 @@ export default function Simulator() {
             >
               <canvas
                 ref={canvasRef}
-                className="mx-auto block max-w-full cursor-crosshair rounded-lg"
+                className={testField ? 'block h-full w-full cursor-crosshair rounded-lg' : 'mx-auto block max-w-full cursor-crosshair rounded-lg'}
                 style={
-                  fieldFit
-                    ? { width: fieldFit.w, height: fieldFit.h }
-                    : { width: '100%', maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
+                  testField
+                    ? undefined
+                    : fieldFit
+                      ? { width: fieldFit.w, height: fieldFit.h }
+                      : { width: '100%', maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
                 }
                 onPointerMove={onMove}
                 onPointerDown={onPointerDown}
@@ -3321,6 +3685,7 @@ export default function Simulator() {
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <SettingsPanel
                 settings={settings}
+                testField={testField}
                 dummyOn={dummyOn}
                 onToggleDummy={toggleDummy}
                 dummySprite={dummySprite}

@@ -50,12 +50,12 @@ export function RoomPicker({
         <h1 className="text-xl font-bold leading-tight">{first ? 'Выберите комнату' : 'Перейти в другую комнату'}</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
           {first
-            ? 'Пивной грот №1, №2 и №3 — игроки одни и те же, поле у каждого грота своё. Видно, кто где уже сидит.'
+            ? 'Пивной грот №1–№3 и «тест» — игроки одни и те же, поле у каждого своё. В «тесте» — нарисованная лужайка с закутком: камера едет за котом, в мирном режиме ходьба свободная.'
             : 'Состав комнат обновляется сам. Текущая комната помечена «вы здесь».'}
         </p>
       </header>
 
-      <div role="radiogroup" aria-label="Комнаты" className="mt-5 grid gap-3 sm:grid-cols-3">
+      <div role="radiogroup" aria-label="Комнаты" className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {rows.map((row) => {
           const extra = Math.max(0, row.logins.length - LOGIN_CHIPS);
           return (

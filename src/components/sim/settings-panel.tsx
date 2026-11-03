@@ -18,6 +18,8 @@ import {
 
 interface Props {
   settings: SimSettings;
+  /** Комната «тест»: чистый полигон — манекен и мишень РАБ недоступны. */
+  testField?: boolean;
   /** Манекен «ПОЧУХАТЬ» включён в комнате (состояние комнаты, не локальная настройка). */
   dummyOn: boolean;
   onToggleDummy: (on: boolean) => void;
@@ -603,6 +605,9 @@ export function SettingsPanel(props: Props) {
         <div className="px-3 py-2">
           {tab === 'field' && (
             <>
+        {/* «Тест» — чистый полигон: манекен и мишень РАБ недоступны */}
+        {!props.testField && (
+          <>
         <Toggle
           label="Включить манекен"
           hint="Манекен «ПОЧУХАТЬ» на поле: вне боя, но сквозь него нельзя ходить. Видно всем, тащить может любой игрок — движение и имя тащщего (курсор) видно в реальном времени."
@@ -635,6 +640,8 @@ export function SettingsPanel(props: Props) {
           checked={props.rabOn}
           onChange={(v) => props.onToggleRab(v)}
         />
+          </>
+        )}
         <Toggle label="Сетка клеток" checked={s.field.showGrid} onChange={(v) => props.patchField({ showGrid: v })} />
         <Toggle
           label="Шахматная подсветка"

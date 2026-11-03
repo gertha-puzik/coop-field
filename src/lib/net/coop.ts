@@ -5,13 +5,16 @@ export const PRODUCTION_WS = "wss://coop.89-232-184-77.sslip.io";
 export const LOCAL_WS = "ws://localhost:3780";
 
 /**
- * Три постоянные комнаты «Пивной грот». id уходит на сервер (латиница — сервер
- * нормализует коды комнат до [a-z0-9_-]), title — то, что видят игроки.
+ * Постоянные комнаты: три «Пивных грота» и «тест» — другой формат поля (лужайка,
+ * переход и закуток нарисованной локации, свободная ходьба в мирном режиме).
+ * id уходит на сервер (латиница — сервер нормализует коды комнат до [a-z0-9_-]),
+ * title — то, что видят игроки.
  */
 export const ROOMS = [
   { id: "grot-1", title: "Пивной грот №1" },
   { id: "grot-2", title: "Пивной грот №2" },
   { id: "grot-3", title: "Пивной грот №3" },
+  { id: "test", title: "тест" },
 ] as const;
 
 /** Заголовок комнаты для интерфейса: у гротов — людское имя, у прочих — код. */
@@ -33,6 +36,11 @@ export type CoopCat = {
   size?: number;
   /** Кот держит блок (удержание К): любые удары по нему проводятся в «Лапы». */
   blocking?: boolean;
+  /** Комната «тест»: 1 — кот в свободной ходьбе (fx/fy — позиция в клеточных долях),
+   *  0/нет — кот ходит по клеткам. */
+  fm?: number;
+  fx?: number;
+  fy?: number;
 };
 
 /** Боевой лог комнаты. name / part / weapon / isAttacking — как в журнале удара. */
@@ -94,6 +102,8 @@ export type CoopHandlers = {
   onField?: (field: {
     width?: number;
     height?: number;
+    /** «test» — поле нового формата (лужайка/переход/закуток, камера, свободная ходьба). */
+    format?: string;
     room?: string;
     cats?: CoopCat[];
     /** Манекен «ПОЧУХАТЬ» комнаты: null — выключен. */
@@ -122,6 +132,9 @@ export type CoopHandlers = {
   onRabHit?: (info: CoopRabHit) => void;
   /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
   onBlock?: (info: { id: number; on: boolean }) => void;
+  /** Чужой кот идёт свободно (комната «тест», мирный режим): свежая позиция
+   *  в клеточных долях мира; cx/cy — ближайшая клетка сервера (1-based). */
+  onFreeMove?: (m: { id: number; x: number; y: number; cx?: number; cy?: number }) => void;
   /** Состав комнат в ответ на requestRooms(): по запрошенным id, пустые — с нулями. */
   onRooms?: (rooms: CoopRoomInfo[]) => void;
   onOpen?: () => void;
@@ -324,8 +337,20 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; room?: string; cats?: CoopCat[]; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
+      else if (event === "freemove") {
+        const row = payload as { id?: unknown; x?: unknown; y?: unknown; cx?: unknown; cy?: unknown } | null;
+        if (row && typeof row === "object" && Number.isFinite(Number(row.id)) && Number.isFinite(Number(row.x)) && Number.isFinite(Number(row.y))) {
+          handlers.onFreeMove?.({
+            id: Number(row.id),
+            x: Number(row.x),
+            y: Number(row.y),
+            cx: Number.isFinite(Number(row.cx)) ? Number(row.cx) : undefined,
+            cy: Number.isFinite(Number(row.cy)) ? Number(row.cy) : undefined,
+          });
+        }
+      }
       else if (event === "fight") handlers.onFight?.(payload as CoopFight);
       else if (event === "chat") {
         const row = asChat(payload);

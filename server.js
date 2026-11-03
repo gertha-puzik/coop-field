@@ -118,6 +118,58 @@ const DUMMY_DEFAULT = { x: 7, y: 2, sprite: "puhlyashik" };
  */
 const RAB_CELL = { x: 4, y: 2 };
 
+/**
+ * Комната «тест» — другой формат поля: нарисованная локация с лужайкой, переходом
+ * и закутком. В боевом режиме ходьба по клеткам трёх зон, в мирном — свободная
+ * (клиент шлёт позицию freemove, сервер зажимает её в мир локации и обновляет
+ * логическую клетку — ближайшую проходимую — для ударов и препятствий).
+ */
+const TEST_ROOM = 'test';
+const TEST_WIDTH = 19;
+const TEST_HEIGHT = 7;
+/** Маска проходимости «теста» (0-based): лужайка 10×7, переход 3×5, закуток 6×6. */
+const TEST_CELLS = (() => {
+  const mask = Array.from({ length: TEST_HEIGHT }, () => new Array(TEST_WIDTH).fill(false));
+  for (const [c0, r0, c1, r1] of [
+    [0, 0, 9, 6],
+    [10, 1, 12, 5],
+    [13, 0, 18, 5],
+  ]) {
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) mask[r][c] = true;
+    }
+  }
+  return mask;
+})();
+
+function testCellWalkable(c, r) {
+  return TEST_CELLS[r]?.[c] === true;
+}
+
+/** Проходимая ли клетка в 1-based координатах сервера. */
+function testWalkable(x, y) {
+  return testCellWalkable(x - 1, y - 1);
+}
+
+/** Ближайшая проходимая клетка (1-based) к точке в клеточных долях мира. */
+function nearestTestCell(fx, fy) {
+  const c0 = Math.min(TEST_WIDTH - 1, Math.max(0, Math.round(fx)));
+  const r0 = Math.min(TEST_HEIGHT - 1, Math.max(0, Math.round(fy)));
+  if (testCellWalkable(c0, r0)) return { x: c0 + 1, y: r0 + 1 };
+  for (let rad = 1; rad < Math.max(TEST_WIDTH, TEST_HEIGHT); rad++) {
+    for (let dr = -rad; dr <= rad; dr++) {
+      for (let dc = -rad; dc <= rad; dc++) {
+        if (Math.max(Math.abs(dc), Math.abs(dr)) !== rad) continue;
+        const c = c0 + dc;
+        const r = r0 + dr;
+        if (c < 0 || c >= TEST_WIDTH || r < 0 || r >= TEST_HEIGHT) continue;
+        if (testCellWalkable(c, r)) return { x: c + 1, y: r + 1 };
+      }
+    }
+  }
+  return null;
+}
+
 const rooms = new Map();
 let nextId = 1001;
 
@@ -141,7 +193,18 @@ function normalizeRoomCode(code) {
 function roomOf(code) {
   const key = normalizeRoomCode(code);
   if (!rooms.has(key)) {
-    rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0, dummy: null, dummyLast: null, dummyGrab: null, rab: null });
+    rooms.set(key, {
+      code: key,
+      fmt: key === TEST_ROOM ? 'test' : 'grid',
+      cats: new Map(),
+      sockets: new Map(),
+      chat: [],
+      chatSeq: 0,
+      dummy: null,
+      dummyLast: null,
+      dummyGrab: null,
+      rab: null,
+    });
   }
   return rooms.get(key);
 }
@@ -159,6 +222,8 @@ function occupied(room, x, y, exceptId) {
     if (cat.id !== exceptId && cat.x === x && cat.y === y) return true;
   }
   // Предметы комнаты — физические препятствия: на их клетки нельзя ступать и там нельзя спавниться.
+  // В «тесте» манекена и мишени нет — проверки не нужны.
+  if (room.fmt === 'test') return false;
   if (room.dummy) {
     const c = objCell(room.dummy);
     if (c.cx === x - 1 && c.cy === y - 1) return true;
@@ -168,12 +233,16 @@ function occupied(room, x, y, exceptId) {
 }
 
 function spawnCell(room) {
+  const test = room.fmt === 'test';
+  const W = test ? TEST_WIDTH : WIDTH;
+  const H = test ? TEST_HEIGHT : HEIGHT;
+  const ok = (x, y) => (test ? testWalkable(x, y) : true);
   for (const [x, y] of SPAWNS) {
-    if (!occupied(room, x, y)) return [x, y];
+    if (ok(x, y) && !occupied(room, x, y)) return [x, y];
   }
-  for (let y = 1; y <= HEIGHT; y++) {
-    for (let x = 1; x <= WIDTH; x++) {
-      if (!occupied(room, x, y)) return [x, y];
+  for (let y = 1; y <= H; y++) {
+    for (let x = 1; x <= W; x++) {
+      if (ok(x, y) && !occupied(room, x, y)) return [x, y];
     }
   }
   return null;
@@ -185,8 +254,8 @@ function pickSprite(payload, slot) {
   return SPRITES[slot % SPRITES.length];
 }
 
-function publicCat(cat) {
-  return {
+function publicCat(cat, room) {
+  const base = {
     id: cat.id,
     login: cat.login,
     color: cat.color,
@@ -197,22 +266,36 @@ function publicCat(cat) {
     size: cat.size,
     blocking: !!cat.blocking,
   };
+  // Комната «тест»: режим свободной ходьбы и позиция в клеточных долях —
+  // новичкам и после переподключения (иначе свободный кот замрёт на клетке).
+  if (room?.fmt === 'test') {
+    base.fm = cat.fm ? 1 : 0;
+    const fx = cat.fm ? cat.fx ?? cat.x - 1 : cat.x - 1;
+    const fy = cat.fm ? cat.fy ?? cat.y - 1 : cat.y - 1;
+    base.fx = Math.round(fx * 100) / 100;
+    base.fy = Math.round(fy * 100) / 100;
+  }
+  return base;
 }
 
 function fieldPayload(room) {
+  const test = room.fmt === 'test';
+  const W = test ? TEST_WIDTH : WIDTH;
+  const H = test ? TEST_HEIGHT : HEIGHT;
   const users = {};
   for (const cat of room.cats.values()) {
-    if (!users[cat.x]) users[cat.x] = Array(HEIGHT + 1).fill(null);
-    users[cat.x][cat.y] = publicCat(cat);
+    if (!users[cat.x]) users[cat.x] = Array(H + 1).fill(null);
+    users[cat.x][cat.y] = publicCat(cat, room);
   }
   return {
     huntMode: false,
-    width: WIDTH,
-    height: HEIGHT,
+    width: W,
+    height: H,
+    format: test ? 'test' : undefined,
     room: room.code,
     users,
-    cats: [...room.cats.values()].map(publicCat),
-    location: { name: "Расщелина меж скал", bg: 71085 },
+    cats: [...room.cats.values()].map((c) => publicCat(c, room)),
+    location: { name: test ? 'Пробная лужайка' : 'Расщелина меж скал', bg: test ? 4234811 : 71085 },
     dummy: room.dummy
       ? { on: true, x: room.dummy.x, y: room.dummy.y, sprite: room.dummy.sprite, grab: room.dummyGrab || null }
       : null,
@@ -303,10 +386,10 @@ function join(ws, payload = {}) {
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
   ws.room = room;
-  send(ws, "you", publicCat(cat));
+  send(ws, "you", publicCat(cat, room));
   send(ws, "field", fieldPayload(room));
   if (room.chat?.length) send(ws, "chatlog", room.chat);
-  broadcast(room, "move", publicCat(cat), ws);
+  broadcast(room, "move", publicCat(cat, room), ws);
 }
 
 function move(ws, payload = {}) {
@@ -349,8 +432,12 @@ function applyMove(ws, cat, payload) {
   const now = Date.now();
   const nx = cat.x + step.dx;
   const ny = cat.y + step.dy;
-  if (nx < 1 || nx > WIDTH || ny < 1 || ny > HEIGHT) {
-    send(ws, "info", "Край поля.");
+  const inBounds =
+    room.fmt === 'test'
+      ? testWalkable(nx, ny)
+      : nx >= 1 && nx <= WIDTH && ny >= 1 && ny <= HEIGHT;
+  if (!inBounds) {
+    send(ws, "info", room.fmt === 'test' ? "Край локации." : "Край поля.");
     // refuse — тот же отказ, но с кодом: клиент откатывает предикт по коду,
     // а не по подстроке русского текста (текст менять можно свободно).
     send(ws, "refuse", { code: "edge", text: "Край поля." });
@@ -372,7 +459,7 @@ function applyMove(ws, cat, payload) {
   cat.aimDirty = false;
   cat.lastAim = now;
   cat.lastMove = now;
-  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite, size: cat.size };
+  const patch = publicCat(cat, room);
   // Шагнувшему — одно эхо. Второй экземпляр той же клетки (broadcast без except)
   // клиент читал как отказ предикта: спрайт шагал назад и следующим кадром
   // перепрыгивал клетку.
@@ -431,7 +518,7 @@ function setSprite(ws, payload = {}) {
   broadcast(
     room,
     "update cat",
-    { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite, login: cat.login },
+    publicCat(cat, room),
     ws,
   );
 }
@@ -473,7 +560,7 @@ function setDeg(ws, deg) {
 function broadcastDeg(room, cat, exceptWs) {
   cat.aimDirty = false;
   cat.lastAim = Date.now();
-  broadcast(room, "update cat", { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite }, exceptWs);
+  broadcast(room, "update cat", publicCat(cat, room), exceptWs);
 }
 
 function aim(ws, payload = {}) {
@@ -799,6 +886,11 @@ function dummyToggle(ws, payload = {}) {
     send(ws, "info", "Сначала зайдите в комнату.");
     return;
   }
+  // В «тесте» — чистый полигон: манекен и мишень недоступны.
+  if (room.fmt === 'test') {
+    send(ws, "info", "В комнате «тест» манекен недоступен.");
+    return;
+  }
   const on = !!payload.on;
   if (on) {
     if (!room.dummy) room.dummy = room.dummyLast ? { ...room.dummyLast } : { ...DUMMY_DEFAULT };
@@ -874,6 +966,10 @@ function rabToggle(ws, payload = {}) {
     send(ws, "info", "Сначала зайдите в комнату.");
     return;
   }
+  if (room.fmt === 'test') {
+    send(ws, "info", "В комнате «тест» мишень недоступна.");
+    return;
+  }
   const on = !!payload.on;
   room.rab = on ? { on: true } : null;
   broadcast(room, "rabState", { on });
@@ -912,6 +1008,75 @@ function block(ws, payload = {}) {
   if (!room || !cat) return;
   cat.blocking = !!payload.on;
   broadcast(room, "block", { id: cat.id, on: cat.blocking }, ws);
+}
+
+/** Темп рассылки свободных позиций: чаще — спам, реже — рваное движение у соседей. */
+const FREE_MOVE_GAP_MS = 50;
+
+/**
+ * Свободная ходьба в мирном режиме комнаты «тест». Клиент → ["freemove", { x, y, stop? }]
+ * — позиция в клеточных долях мира (уже зажатая кромкой локации). Сервер перепроверяет
+ * (конечные числа, запас за кромку), обновляет логическую клетку кота (ближайшая
+ * проходимая — для ударов и препятствий) и раз в FREE_MOVE_GAP_MS рассылает остальным
+ * ["freemove", { id, x, y, cx, cy }]. stop=true — финальная позиция остановки, уходит без темпа.
+ */
+function freeMove(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat || room.fmt !== 'test') return;
+  const x = Number(payload.x);
+  const y = Number(payload.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const nx = Math.min(TEST_WIDTH + 0.6, Math.max(-0.6, x));
+  const ny = Math.min(TEST_HEIGHT + 0.6, Math.max(-0.6, y));
+  cat.fm = 1;
+  cat.fx = Math.round(nx * 100) / 100;
+  cat.fy = Math.round(ny * 100) / 100;
+  const cell = nearestTestCell(cat.fx, cat.fy);
+  if (cell) {
+    cat.x = cell.x;
+    cat.y = cell.y;
+  }
+  const now = Date.now();
+  if (!payload.stop && now - (cat.lastFree || 0) < FREE_MOVE_GAP_MS) return;
+  cat.lastFree = now;
+  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y }, ws);
+}
+
+/**
+ * Возврат в клеточный бой комнаты «тест»: клиент щёлкает на ближайшую проходимую
+ * клетку и шлёт ["cellsync", { x, y }] (1-based). Сервер проверяет зону, при занятой
+ * клетке ищет свободную рядом, запоминает режим fm=0 и рассылает publicCat всей
+ * комнате (и самому отправителю — его onCat синхронизирует клетку).
+ */
+function cellsync(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat || room.fmt !== 'test') return;
+  const x = Math.round(Number(payload.x));
+  const y = Math.round(Number(payload.y));
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !testWalkable(x, y)) return;
+  if (occupied(room, x, y, cat.id)) {
+    outer: for (let rad = 1; rad <= 6; rad++) {
+      for (let dr = -rad; dr <= rad; dr++) {
+        for (let dc = -rad; dc <= rad; dc++) {
+          if (Math.max(Math.abs(dc), Math.abs(dr)) !== rad) continue;
+          const nx = x + dc;
+          const ny = y + dr;
+          if (testWalkable(nx, ny) && !occupied(room, nx, ny, cat.id)) {
+            cat.x = nx;
+            cat.y = ny;
+            break outer;
+          }
+        }
+      }
+    }
+  } else {
+    cat.x = x;
+    cat.y = y;
+  }
+  cat.fm = 0;
+  broadcast(room, "update cat", publicCat(cat, room));
 }
 
 /**
@@ -963,6 +1128,8 @@ function onMessage(ws, raw) {
   else if (event === "rabHit") rabHit(ws, payload || {});
   else if (event === "block") block(ws, payload || {});
   else if (event === "armor") armor(ws, payload || {});
+  else if (event === "freemove") freeMove(ws, payload || {});
+  else if (event === "cellsync") cellsync(ws, payload || {});
   else if (event === "rooms") roomsInfo(ws, payload || {});
 }
 
