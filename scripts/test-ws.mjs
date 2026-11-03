@@ -286,6 +286,35 @@ if (!String(diagReject2[1]).includes("диагонали")) {
 }
 console.log("ok: block", "→ relay on/off, any strike lands in paws");
 
+// Удар «в полёте»: блок, вставший после броска, ловит удар в «Лапы»
+// с лаповым уроном пресета бьющего (pawsDamage), а не с уроном исходной зоны.
+left.inbox.length = 0;
+right.inbox.length = 0;
+await sleep(40); // кулдаун удара после отклонённого удара предыдущего теста
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 20, pawsDamage: 7, flightMs: 150 }]));
+right.send(JSON.stringify(["block", { on: true }]));
+const flightCatch = await waitFor(right, "fight");
+if (flightCatch[1].zone !== "paws" || flightCatch[1].part !== "Лапы") {
+  throw new Error(`flight catch zone ${JSON.stringify(flightCatch[1])}`);
+}
+if (flightCatch[1].damage !== 7) throw new Error(`flight catch damage ${JSON.stringify(flightCatch[1].damage)}`);
+right.send(JSON.stringify(["block", { on: false }]));
+await sleep(60);
+console.log("ok: block catches a strike in flight → paws, paws damage");
+
+// Блок успел встать и снялся до касания — удар летит как брошенный (морда, 20).
+left.inbox.length = 0;
+right.inbox.length = 0;
+await sleep(40);
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 20, pawsDamage: 7, flightMs: 150 }]));
+right.send(JSON.stringify(["block", { on: true }]));
+right.send(JSON.stringify(["block", { on: false }]));
+const flightMiss = await waitFor(right, "fight");
+if (flightMiss[1].zone !== "muzzle" || flightMiss[1].part !== "Морда" || flightMiss[1].damage !== 20) {
+  throw new Error(`flight miss ${JSON.stringify(flightMiss[1])}`);
+}
+console.log("ok: block dropped before impact → strike lands as thrown");
+
 // Потолок 30: 31-й получает noplace, клетки не совпадают.
 const capRoom = `c${Date.now().toString(36)}`;
 const held = [];

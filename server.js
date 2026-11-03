@@ -67,6 +67,14 @@ const MAX_PAYLOAD = 4 * 1024;
 const AIM_MIN_GAP_MS = 20;
 /** Нижняя граница отклика удара в симе — 30 мс. Кулдаун чуть ниже, чтобы легитимный удар не отбрасывался. */
 const STRIKE_COOLDOWN_MS = 25;
+/**
+ * Окно «полёта» удара, мс: применение откладывается на этот срок, и блок цели
+ * перепроверяется в момент касания. Удар, брошенный в неблокирующего, но ещё
+ * «висящий в воздухе», когда цель встала в блок, всё равно уходит в «Лапы».
+ * Клиент присылает свой отклик удара (flightMs); без него — 170 мс.
+ */
+const STRIKE_CATCH_MS = 170;
+const STRIKE_CATCH_MAX_MS = 600;
 /** Одно сообщение комнате. Длиннее обрезается, чаще этого интервала — отказ. */
 const CHAT_MAX_LEN = 200;
 const CHAT_COOLDOWN_MS = 450;
@@ -577,9 +585,19 @@ function strike(ws, payload = {}) {
   // Число округляем и зажимаем; нет числа — фолбэк на серверную таблицу зон.
   const dmgRaw = Number(payload.damage);
   const damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : zone.damage;
-  const entry = {
-    attackerId: cat.id,
+  // Лаповый урон из пресета бьющего: если на моменте касания удар переводится
+  // в «Лапы», списываем именно лаповый урон, а не урон исходной зоны.
+  const pawsRaw = Number(payload.pawsDamage);
+  const pawsDamage = Number.isFinite(pawsRaw) ? Math.min(100, Math.max(0, Math.round(pawsRaw))) : null;
+  // Окно полёта: блок, вставший после нажатия бьющего, но до касания, ловит удар.
+  const flightRaw = Number(payload.flightMs);
+  const flightMs = Number.isFinite(flightRaw)
+    ? Math.min(STRIKE_CATCH_MAX_MS, Math.max(0, Math.round(flightRaw)))
+    : STRIKE_CATCH_MS;
+  const attackerId = cat.id;
+  const thrown = {
     attacker: cat.login,
+    attackerId: cat.id,
     targetId: target.id,
     name: target.login,
     part: zone.part,
@@ -587,12 +605,36 @@ function strike(ws, payload = {}) {
     weapon: "",
     damage,
   };
-  for (const sock of room.sockets.keys()) {
-    send(sock, "fight", {
-      ...entry,
-      isAttacking: room.sockets.get(sock)?.id === cat.id,
-    });
-  }
+  setTimeout(() => {
+    // Цель вышла за время полёта — удар исчезает вместе с ней.
+    if (!room.cats.has(targetId)) return;
+    let part = thrown.part;
+    let finalZoneId = thrown.zone;
+    let finalDamage = thrown.damage;
+    // Перепроверка блока в момент касания: удар «в полёте» блок ловит.
+    if (target.blocking) {
+      finalZoneId = "paws";
+      part = STRIKE_ZONES.paws.part;
+      if (pawsDamage !== null) finalDamage = pawsDamage;
+      else if (zoneId0 !== "paws") finalDamage = STRIKE_ZONES.paws.damage;
+    }
+    const entry = {
+      attacker: cat.login,
+      attackerId,
+      targetId: target.id,
+      name: target.login,
+      part,
+      zone: finalZoneId,
+      weapon: "",
+      damage: finalDamage,
+    };
+    for (const sock of room.sockets.keys()) {
+      send(sock, "fight", {
+        ...entry,
+        isAttacking: room.sockets.get(sock)?.id === attackerId,
+      });
+    }
+  }, flightMs);
 }
 
 /**

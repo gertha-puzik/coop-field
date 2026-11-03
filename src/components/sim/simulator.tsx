@@ -1955,15 +1955,36 @@ export default function Simulator() {
         // игрок: рисуем только из локального состояния движка, по сети не ходит.
         // Замок висит по центру точки закрепления стрелы (ARROW_ANCHOR_F), а стрела
         // рисуется позже поверх — поэтому замок оказывается «под стрелой».
+        // Рисуем фигурами, а не эмодзи: заливки полностью непрозрачные и вид
+        // одинаков на любой платформе (эмодзи-шрифты рендерятся по-разному).
         if (selfId === 'main' && e.blocking) {
           const th0 = (s.field.cellH - 10) * (s.character.spriteScale / 100);
           const w0 = th0 * (spr.width / spr.height);
           const ax0 = cellX + w0 * ARROW_ANCHOR_F;
           const ay0 = cellY + th0 * ARROW_ANCHOR_F + s.arrow.anchorOffsetY;
-          ctx.font = `${Math.round(th0 * 0.32)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('🔒', ax0, ay0);
+          const u = th0 * 0.3;
+          ctx.save();
+          ctx.globalAlpha = 1;
+          // дужка — полукольцо над корпусом
+          ctx.beginPath();
+          ctx.arc(ax0, ay0 - u * 0.16, u * 0.2, Math.PI, Math.PI * 2);
+          ctx.lineWidth = u * 0.12;
+          ctx.strokeStyle = '#9aa2ab';
+          ctx.stroke();
+          // корпус — сплошная золотая заливка с тёмной обводкой
+          rr(ctx, ax0 - u * 0.31, ay0 - u * 0.16, u * 0.62, u * 0.46, u * 0.1);
+          ctx.fillStyle = '#ffb02e';
+          ctx.fill();
+          ctx.lineWidth = Math.max(1, u * 0.05);
+          ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+          ctx.stroke();
+          // скважина
+          ctx.beginPath();
+          ctx.arc(ax0, ay0 + u * 0.03, u * 0.07, 0, Math.PI * 2);
+          ctx.fillStyle = '#4a3200';
+          ctx.fill();
+          ctx.fillRect(ax0 - u * 0.035, ay0 + u * 0.03, u * 0.07, u * 0.18);
+          ctx.restore();
         }
       } else if (!spr) {
         ctx.beginPath();
@@ -2551,7 +2572,7 @@ export default function Simulator() {
 
   /** Применение результата удара: вызывается через отклик удара (170 мс по умолчанию)
    *  после нажатия, со снятым в момент нажатия снимком стойки и угла стрелы. */
-  const landStrike = useCallback((snap: { angle: number; col: number; row: number }) => {
+  const landStrike = useCallback((snap: { angle: number; col: number; row: number; flightMs?: number }) => {
     const s = settingsRef.current;
     const e = engineRef.current;
     const now = performance.now();
@@ -2563,6 +2584,8 @@ export default function Simulator() {
     /** Кого задел удар: единственный соседний персонаж, а если соседних несколько —
      *  тот, на который точнее наведена стрела. null — рядом никого. */
     const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp, liveRemotesRef.current, rabExtra());
+    /** Лаповая зона пресета бьющего: урон, который уходит на сервер для удара по блоку. */
+    const zPaws = s.combat.zones.find((zz) => zz.id === 'paws');
     /** Поражённый персонаж (для списания его энергии; null — попадания не было). */
     let struck: CharRef | null = null;
     /** Урон по цели этим ударом (null — попадания не было). */
@@ -2600,7 +2623,6 @@ export default function Simulator() {
       const dy = tRow - snap.row;
       // Блок цели: ЛЮБОЙ удар по блокирующему игроку — в «Лапы», куда бы стрела
       // ни шла и с какой стойки ни бьём (прямая/диагональ, любое окно).
-      const zPaws = s.combat.zones.find((zz) => zz.id === 'paws');
       const targetBlocking =
         t.id.startsWith('p') && remoteBlockRef.current.has(Number(t.id.slice(1)));
       if (targetBlocking && zPaws) {
@@ -2660,7 +2682,17 @@ export default function Simulator() {
         // Урон едет вместе с ударом: это пресет «Урон игрока» бьющего.
         // Сервер нормализует число и раздаёт fight с этим уроном всей комнате —
         // иначе у цели всегда будет серверная таблица, и пресет 0,0–0,9 не работает.
-        netRef.current.emit('strike', { target, zone: entry.zoneId, angle: snap.angle, damage: hitDamage });
+        // pawsDamage — лаповый урон пресета: если блок встанет за время полёта,
+        // сервер переведёт удар в «Лапы» и спишет именно его. flightMs — окно
+        // отклика бьющего: столько удар «летит» на сервере, и блок успевает его поймать.
+        netRef.current.emit('strike', {
+          target,
+          zone: entry.zoneId,
+          angle: snap.angle,
+          damage: hitDamage,
+          pawsDamage: zPaws ? zPaws.damage : undefined,
+          flightMs: snap.flightMs,
+        });
         return;
       }
     }
@@ -2732,8 +2764,9 @@ export default function Simulator() {
         : (combatRef.current.dummyEnergy[s.controlled] ?? esNow);
     if (myEnergy < s.combat.strikeCost) return;
     e.lastStrike = now;
-    // удар «выпадает» с откликом resp: стойка и угол фиксируются в момент нажатия
-    const snap = { angle: e.angle, col: e.col, row: e.row };
+    // удар «выпадает» с откликом resp: стойка и угол фиксируются в момент нажатия;
+    // окно полёта едет на сервер, чтобы блок цели успел поймать удар до касания
+    const snap = { angle: e.angle, col: e.col, row: e.row, flightMs: resp };
     const id = window.setTimeout(() => landStrike(snap), resp);
     pendingStrikesRef.current.push(id);
   }, [landStrike]);
