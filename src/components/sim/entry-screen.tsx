@@ -457,6 +457,13 @@ export function EntryScreen({
           </div>
         )}
       </section>
+
+      {/* Предисловие внизу страницы */}
+      <footer className="mt-6 text-center">
+        <p className="text-[11px] leading-snug text-[var(--sim-text-faint)]">
+          Абноукетвар разработан Пухляшиком и Сырь, идейно вдохновлён Суперняшкой Блестяшкой
+        </p>
+      </footer>
     </div>
   );
 }
