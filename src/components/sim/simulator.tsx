@@ -184,13 +184,17 @@ function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () 
 /** Максимум строк в боевом логе (лог теперь последовательный, старые строки вытесняются). */
 const LOG_LIMIT = 100;
 
-/** Строка лога ударов: «Кто => Кого (зона) xN» — пишется последовательно, свежая сверху.
+/** Строка лога ударов: «Кто => Кого (зона) xN [урон%]» — пишется последовательно, свежая сверху.
  *  Свой кот подписывается «Я». Для промахов имя мишени не пишется (target = ''). */
 interface CombatLogEntry {
   target: string;
   zoneId: string;
   zoneLabel: string;
   count: number;
+  /** Полученный целью урон за 1 удар, % энергии. Сервер присылает его уже
+   *  после блока и брони — это ровно то, что цель потеряла этим ударом.
+   *  Нет числа — промах или строка из старого сохранения. */
+  dmg?: number;
   /** Кто бил. Пустое значение в старых сохранениях — свой кот. */
   actor?: string;
   /** Оружие, если сервер его прислал. Пусто — удара лапой без когтей. */
@@ -209,15 +213,26 @@ function mergeLog(prev: CombatLogEntry[], entry: CombatLogEntry): CombatLogEntry
     top.zoneId === entry.zoneId &&
     logActor(top) === logActor(entry) &&
     (top.weapon || '') === (entry.weapon || '');
-  if (same && top) return [{ ...top, count: top.count + 1 }, ...rest].slice(0, LOG_LIMIT);
+  // Урон за удар в серии обновляем до последнего значения: броня или пресет
+  // бьющего могли измениться между ударами, свежее число точнее.
+  if (same && top)
+    return [{ ...top, count: top.count + 1, dmg: entry.dmg ?? top.dmg }, ...rest].slice(0, LOG_LIMIT);
   return [entry, ...prev].slice(0, LOG_LIMIT);
+}
+
+/** Урон в строке лога: целые — без хвоста, дробные — до 2 знаков (67, 19, 18,55). */
+function formatDmg(dmg: number | undefined): string {
+  if (dmg === undefined || !Number.isFinite(dmg)) return '';
+  return String(Math.round(dmg * 100) / 100);
 }
 
 function formatLogLine(entry: CombatLogEntry): string {
   const actor = logActor(entry);
   if (entry.zoneId === 'miss') return `${actor} => мимо x${entry.count}`;
   const weapon = entry.weapon ? `, ${entry.weapon}` : '';
-  return `${actor} => ${entry.target} (${entry.zoneLabel}${weapon}) x${entry.count}`;
+  const dmg = formatDmg(entry.dmg);
+  const dmgTxt = dmg === '' ? '' : ` [${dmg}%]`;
+  return `${actor} => ${entry.target} (${entry.zoneLabel}${weapon}) x${entry.count}${dmgTxt}`;
 }
 
 /** Боевое состояние: энергии персонажей и лог ударов (живёт отдельно от настроек). */
@@ -260,6 +275,8 @@ function loadCombat(energyStart: number): CombatState {
               zoneId: l.zoneId,
               zoneLabel: typeof l.zoneLabel === 'string' ? l.zoneLabel : l.zoneId,
               count: Number(l.count) > 0 ? Math.floor(Number(l.count)) : 1,
+              dmg:
+                l.dmg == null || !Number.isFinite(Number(l.dmg)) ? undefined : Number(l.dmg),
               actor: typeof l.actor === 'string' && l.actor ? l.actor : 'Я',
               weapon: typeof l.weapon === 'string' ? l.weapon : '',
             }))
@@ -872,6 +889,9 @@ export default function Simulator() {
         zoneId,
         zoneLabel,
         count: 1,
+        // fight.damage — урон уже после блока и брони цели: ровно то,
+        // сколько энергии цель потеряла этим ударом.
+        dmg,
         actor,
         weapon,
       };
@@ -2749,7 +2769,9 @@ export default function Simulator() {
       if (z) {
         hitDamage = z.damage;
         struck = t;
-        entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
+        // Манекены и РАБ без брони: полученный урон = урон зоны. По живым игрокам
+        // строку с реальным уроном (после брони) принесёт fight от сервера.
+        entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я', dmg: hitDamage };
       } else {
         // луч прошёл мимо тела — «мимо», имя цели не пишется
         entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
