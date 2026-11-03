@@ -362,6 +362,48 @@ tAtk.close();
 tDef.close();
 console.log("ok: tail strike caught in flight → paws, paws damage");
 
+// Состав комнат для выбора: roomsinfo отвечает по запрошенным id в порядке запроса,
+// пустая комната — count 0 и пустой список (комната при этом НЕ создаётся).
+// Гроты запрашиваем одним взглядом (count >= 0), а точный состав — на уникальных
+// комнатах, чтобы тест не зависел от живых игроков в общих комнатах.
+const infoRoom = `g${Date.now().toString(36)}a`;
+const infoRoom2 = `g${Date.now().toString(36)}b`;
+const asker = await client("Осведомитель", infoRoom);
+await waitFor(asker, "you");
+asker.inbox.length = 0;
+asker.send(JSON.stringify(["rooms", { ids: ["grot-1", infoRoom, infoRoom2, "Пивной грот №3!"] }]));
+const roomsList = (await waitFor(asker, "roomsinfo"))[1];
+if (!Array.isArray(roomsList) || roomsList.length !== 4) {
+  throw new Error(`roomsinfo shape ${JSON.stringify(roomsList)}`);
+}
+if (roomsList[0].id !== "grot-1" || typeof roomsList[0].count !== "number" || roomsList[0].count < 0 || !Array.isArray(roomsList[0].logins)) {
+  throw new Error(`roomsinfo grot-1 ${JSON.stringify(roomsList[0])}`);
+}
+if (roomsList[1].id !== infoRoom || roomsList[1].count !== 1 || JSON.stringify(roomsList[1].logins) !== JSON.stringify(["Осведомитель"])) {
+  throw new Error(`roomsinfo own room ${JSON.stringify(roomsList[1])}`);
+}
+if (roomsList[2].id !== infoRoom2 || roomsList[2].count !== 0 || roomsList[2].logins.length !== 0) {
+  throw new Error(`roomsinfo empty room ${JSON.stringify(roomsList[2])}`);
+}
+// Кириллица и «№» вычищаются нормализацией — код совпадает с join-нормализацией,
+// для «Пивной грот №3!» останется только «3», комнаты нет — нули без создания.
+if (roomsList[3].id !== "3" || roomsList[3].count !== 0) {
+  throw new Error(`roomsinfo normalization ${JSON.stringify(roomsList[3])}`);
+}
+console.log("ok: roomsinfo counts, logins, empty rooms, code normalization");
+// Второй кот в ту же комнату — состав обновляется (после минимального интервала).
+const joiner = await client("Присоединившийся", infoRoom);
+await waitFor(joiner, "you");
+await sleep(300);
+asker.inbox.length = 0;
+asker.send(JSON.stringify(["rooms", { ids: [infoRoom] }]));
+const roomsList2 = (await waitFor(asker, "roomsinfo"))[1];
+if (roomsList2[0].count !== 2) throw new Error(`roomsinfo count after join ${JSON.stringify(roomsList2[0])}`);
+if (!roomsList2[0].logins.includes("Присоединившийся")) throw new Error(`roomsinfo logins ${JSON.stringify(roomsList2[0])}`);
+asker.close();
+joiner.close();
+console.log("ok: roomsinfo reflects a join");
+
 // Потолок 30: 31-й получает noplace, клетки не совпадают.
 const capRoom = `c${Date.now().toString(36)}`;
 const held = [];

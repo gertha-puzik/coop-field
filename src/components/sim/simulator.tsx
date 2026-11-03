@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '@/components/ui/button';
 import { CharacterPicker, type CharacterChoice } from './character-picker';
+import { RoomPicker, type RoomRow } from './room-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { catToDummy, createCoopClient, nameFromUrl, roomFromUrl, type CoopChatMessage, type CoopDummyPos, type CoopFight } from '@/lib/net/coop';
+import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
   applyOwnMoveAck,
@@ -533,10 +534,20 @@ function strikeResponseMs(s: SimSettings): number {
 export default function Simulator() {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
-  /** Пока false — экран выбора, сокет не открыт и поле не рисуется. */
-  const [entered, setEntered] = useState(false);
+  /** Экран: выбор персонажа → выбор комнаты → поле. Сокет открывается на втором,
+   *  но пока без join — только слушает состав комнат. */
+  const [stage, setStage] = useState<'character' | 'room' | 'field'>('character');
+  /** Сеть поднята (после подтверждения персонажа). Смена stage room↔field сокет не пересоздаёт. */
+  const [netStarted, setNetStarted] = useState(false);
+  /** Клавиатура поля активна только на stage «field» (см. обработчики keydown). */
   const enteredRef = useRef(false);
   const pendingJoinRef = useRef<{ room: string; login: string; sprite: SpriteId } | null>(null);
+  /** Состав комнат для выбора (roomsinfo). null — данных ещё не было. */
+  const [roomsRows, setRoomsRows] = useState<CoopRoomInfo[] | null>(null);
+  /** roomsinfo не приходит дольше 5 с (старый сервер без протокола) — предупреждение в карточках. */
+  const [roomsStale, setRoomsStale] = useState(false);
+  /** Модалка «Перейти в другую комнату» поверх поля. */
+  const [switchOpen, setSwitchOpen] = useState(false);
   const [combat, setCombat] = useState<CombatState>(() => defaultCombat(100));
   const settingsRef = useRef(settings);
   useEffect(() => {
@@ -654,7 +665,7 @@ export default function Simulator() {
       }, wait);
     };
   });
-  const [roomCode, setRoomCode] = useState('demo');
+  const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
   const [netStatus, setNetStatus] = useState('подключение…');
   const [peerCount, setPeerCount] = useState(1);
@@ -881,27 +892,34 @@ export default function Simulator() {
     });
   }, []);
 
+  /** Какие комнаты спрашивать у сервера: три грота + комната из ссылки, если она чужая. */
+  const wantedRoomIds = useCallback((): string[] => {
+    const ids: string[] = ROOMS.map((r) => r.id);
+    const urlRoom = roomFromUrl();
+    if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) ids.push(urlRoom);
+    return ids;
+  }, []);
+
   useEffect(() => {
-    if (!loaded || !entered) return;
-    const room = roomFromUrl();
+    if (!loaded || !netStarted) return;
     const pending = pendingJoinRef.current;
     const login = (pending?.login || nameFromUrl() || '').trim();
     if (!login) return;
-    setRoomCode(room);
+    // Пока никуда не заходим: сокет слушает состав комнат (roomsinfo), join уйдёт
+    // из pickRoom() — в выбранный грот, и оттуда же — при переходах между гротами.
+    setRoomCode('');
     setPlayerName(login);
-    const share = (nextRoom: string, nextName: string) => {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set('room', nextRoom || 'demo');
-        if (nextName) url.searchParams.set('name', nextName);
-        else url.searchParams.delete('name');
-        history.replaceState(null, '', url);
-      } catch {
-        /* ignore */
-      }
-    };
     const client = createCoopClient({
-      onOpen: () => setNetStatus('соединение есть, заходим…'),
+      onOpen: () => {
+        setNetStatus('соединение есть');
+        // Состав комнат для выбора/модалки: спрашиваем сразу после соединения —
+        // дальше экран выбора опрашивает сам по своему интервалу.
+        client.requestRooms(wantedRoomIds());
+      },
+      onRooms: (list) => {
+        setRoomsRows(list);
+        setRoomsStale(false);
+      },
       onYou: (cat) => {
         meIdRef.current = cat.id;
         setMeId(cat.id);
@@ -945,7 +963,7 @@ export default function Simulator() {
           engineRef.current.row = row;
           netMovesRef.current.server = { col, row };
         }
-        setNetStatus(`Вы в комнате ${field.room || room} · ${cats.length} на поле`);
+        setNetStatus(`Вы в комнате ${roomTitle(field.room || 'demo')} · ${cats.length} на поле`);
         // Манекен и мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
         const fd = field.dummy;
         if (fd && fd.on && Number.isFinite(fd.x) && Number.isFinite(fd.y)) {
@@ -1131,12 +1149,11 @@ export default function Simulator() {
     setNetReady(false);
     setMeId(null);
     netRef.current = client;
+    // Слушающий режим: без room — join не шлём, ждём выбора комнаты (pickRoom).
     client.connect({
-      room,
       login,
       sprite: pending?.sprite || settingsRef.current.character.sprite,
     });
-    share(room, login);
     return () => {
       liveRemotesRef.current = [];
       remoteAimRef.current.clear();
@@ -1154,7 +1171,67 @@ export default function Simulator() {
       client.close();
       netRef.current = null;
     };
-  }, [loaded, entered, applyNetFight]);
+  }, [loaded, netStarted, applyNetFight, wantedRoomIds]);
+
+  /** Обновление ?room=/&name= в адресной строке после выбора/смены комнаты: ссылкой
+   *  можно вернуться прямо в тот же грот (и имя подставится в пикер персонажа). */
+  const shareUrl = useCallback((nextRoom: string, nextName: string) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', nextRoom || 'demo');
+      if (nextName) url.searchParams.set('name', nextName);
+      else url.searchParams.delete('name');
+      history.replaceState(null, '', url);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /**
+   * Зайти в выбранный грот: первый вход с экрана выбора или переход из модалки.
+   * Сокет уже открыт — join уходит в ту же связь, сервер сам выведет кота из прежней
+   * комнаты (комната увидит исчезновение) и заведёт в новую. Состояние комнаты
+   * (соседи, манекен, мишень, чат) придёт заново с you/field.
+   */
+  const pickRoom = useCallback(
+    (roomId: string) => {
+      const net = netRef.current;
+      if (!net) return;
+      const pending = pendingJoinRef.current;
+      const login = (pending?.login || playerName || nameFromUrl() || '').trim().slice(0, 24);
+      const sprite = pending?.sprite || settingsRef.current.character.sprite;
+      pendingJoinRef.current = { room: roomId, login, sprite };
+      setChatLines([]);
+      setRoomsStale(false);
+      setSwitchOpen(false);
+      setRoomCode(roomId);
+      setPlayerName(login);
+      setNetReady(false);
+      setNetStatus(`Заходим в ${roomTitle(roomId)}…`);
+      shareUrl(roomId, login);
+      if (!enteredRef.current) {
+        enteredRef.current = true;
+        setStage('field');
+      }
+      net.joinRoom({ room: roomId, login, sprite });
+    },
+    [playerName, shareUrl],
+  );
+
+  /** Пока открыт выбор комнаты (первый экран или модалка) — опрашиваем состав гротов.
+   *  Сервер отвечает roomsinfo; если дольше 5 с ответа нет — помечаем «данные недоступны». */
+  useEffect(() => {
+    if (!netStarted || (stage !== 'room' && !switchOpen)) return;
+    setRoomsStale(false);
+    const ask = () => netRef.current?.requestRooms(wantedRoomIds());
+    ask();
+    const iv = setInterval(ask, 2500);
+    const staleT = setTimeout(() => setRoomsStale(true), 5000);
+    return () => {
+      clearInterval(iv);
+      clearTimeout(staleT);
+    };
+  }, [netStarted, stage, switchOpen, wantedRoomIds]);
 
   /** Скин своего кота уходит в комнату сразу, без повторного входа. */
   useEffect(() => {
@@ -2190,7 +2267,7 @@ export default function Simulator() {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [entered]);
+  }, [stage]);
 
   /* ---------- ручной угол стрелы ---------- */
 
@@ -2879,23 +2956,24 @@ export default function Simulator() {
     return true;
   }, []);
 
-  /** Подтверждение экрана выбора: только после этого открываем сокет и поле. */
+  /** Подтверждение экрана персонажа: дальше — выбор комнаты (грота), поле ещё не показываем. */
   const enterField = useCallback((choice: CharacterChoice) => {
     const login = choice.name.trim().slice(0, 24);
     if (!login) return;
     const sprite = SPRITES.some((sp) => sp.id === choice.sprite) ? choice.sprite : settingsRef.current.character.sprite;
     const scale = Math.min(100, Math.max(60, Math.round(choice.scale)));
-    const room = roomFromUrl();
-    pendingJoinRef.current = { room, login, sprite };
-    enteredRef.current = true;
+    pendingJoinRef.current = { room: '', login, sprite };
     setSettings((s) => ({
       ...s,
       controlled: 'main',
       character: { ...s.character, sprite, spriteScale: scale },
     }));
     setPlayerName(login);
-    setRoomCode(room);
-    setEntered(true);
+    setRoomCode('');
+    setRoomsRows(null);
+    setRoomsStale(false);
+    setNetStarted(true);
+    setStage('room');
   }, []);
 
   const fieldW = settings.field.cols * settings.field.cellW;
@@ -2936,7 +3014,7 @@ export default function Simulator() {
       ro.disconnect();
       mq.removeEventListener('change', fit);
     };
-  }, [fieldW, fieldH, entered]);
+  }, [fieldW, fieldH, stage]);
 
   /** Смена темы: перекрашивает интерфейс и, если цвета поля не настроены вручную,
    *  подгоняет палитру поля под тему (иначе доска остаётся тёмной на светлой теме). */
@@ -2954,7 +3032,31 @@ export default function Simulator() {
     [patchField],
   );
 
-  if (!entered) {
+  /** Карточки для выбора: три грота (состав из roomsinfo) + комната из ссылки,
+   *  если в URL стоит чужой код (?room=...) — старые ссылки продолжают работать. */
+  const roomRows: RoomRow[] = (() => {
+    const info = new Map((roomsRows ?? []).map((r) => [r.id, r]));
+    const rows: RoomRow[] = ROOMS.map((r) => ({
+      id: r.id,
+      title: r.title,
+      count: info.get(r.id)?.count ?? 0,
+      logins: info.get(r.id)?.logins ?? [],
+      here: r.id === roomCode,
+    }));
+    const urlRoom = roomFromUrl();
+    if (urlRoom && urlRoom !== 'demo' && !ROOMS.some((r) => r.id === urlRoom)) {
+      rows.push({
+        id: urlRoom,
+        title: `Комната из ссылки: ${urlRoom}`,
+        count: info.get(urlRoom)?.count ?? 0,
+        logins: info.get(urlRoom)?.logins ?? [],
+        here: urlRoom === roomCode,
+      });
+    }
+    return rows;
+  })();
+
+  if (stage === 'character') {
     return (
       <div className="app-bg relative h-dvh text-[var(--sim-text)]">
         <ThemeBackdrop theme={theme} />
@@ -2970,6 +3072,17 @@ export default function Simulator() {
     );
   }
 
+  if (stage === 'room') {
+    return (
+      <div className="app-bg relative h-dvh text-[var(--sim-text)]">
+        <ThemeBackdrop theme={theme} />
+        <div className="relative z-10 h-dvh overflow-y-auto">
+          {loaded ? <RoomPicker rows={roomRows} ready={roomsRows !== null} stale={roomsStale} onPick={pickRoom} /> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]">
       <ThemeBackdrop theme={theme} />
@@ -2977,41 +3090,23 @@ export default function Simulator() {
         <div>
           <h1 className="text-base font-bold leading-tight">Общее поле</h1>
           <p className="text-[11px] text-[var(--sim-text-faint)]">
-            {settings.field.cols}×{settings.field.rows} · комната {roomCode} · {peerCount} на поле
+            {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
           </p>
         </div>
-        <form
-          className="flex flex-wrap items-center gap-2 text-[11px]"
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            const url = new URL(window.location.href);
-            url.searchParams.set('room', roomCode || 'demo');
-            if (playerName) url.searchParams.set('name', playerName);
-            else url.searchParams.delete('name');
-            window.location.assign(url.pathname + url.search);
-          }}
-        >
-          <label className="flex items-center gap-1 text-[var(--sim-text-muted)]">
-            комната
-            <input
-              className="h-7 w-24 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-[var(--sim-text)]"
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value)}
-            />
-          </label>
-          <label className="flex items-center gap-1 text-[var(--sim-text-muted)]">
-            имя
-            <input
-              className="h-7 w-28 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-[var(--sim-text)]"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-            />
-          </label>
-          <Button size="sm" variant="outline" className="btn-neutral h-7 text-[11px]" type="submit">
-            Войти
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <Button
+            size="sm"
+            variant="outline"
+            className="btn-neutral h-8 text-xs"
+            onClick={() => {
+              setRoomsStale(false);
+              setSwitchOpen(true);
+            }}
+          >
+            Перейти в другую комнату
           </Button>
           <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
-        </form>
+        </div>
         <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
             тема
@@ -3161,6 +3256,25 @@ export default function Simulator() {
               />
             </div>
           </aside>
+        </>
+      ) : null}
+
+      {/* Переход в другую комнату — модалка с тем же выбором гротов.
+          Текущая комната помечена «вы здесь», клик по ней disabled. */}
+      {switchOpen ? (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSwitchOpen(false)} />
+          <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4">
+            <div className="w-full max-w-3xl rounded-2xl border border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl">
+              <RoomPicker
+                rows={roomRows}
+                ready={roomsRows !== null}
+                stale={roomsStale}
+                onPick={pickRoom}
+                onCancel={() => setSwitchOpen(false)}
+              />
+            </div>
+          </div>
         </>
       ) : null}
     </div>

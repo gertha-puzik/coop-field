@@ -126,12 +126,20 @@ function send(ws, event, payload) {
   ws.send(JSON.stringify([event, payload]));
 }
 
+/** Нормализация кода комнаты: латиница/цифры/дефис/подчёркивание, до 24 символов.
+ *  Одна и для join, и для списка комнат — иначе состав покажется не для той комнаты. */
+function normalizeRoomCode(code) {
+  return (
+    String(code || "demo")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "")
+      .slice(0, 24) || "demo"
+  );
+}
+
 function roomOf(code) {
-  const key = String(code || "demo")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 24) || "demo";
+  const key = normalizeRoomCode(code);
   if (!rooms.has(key)) {
     rooms.set(key, { code: key, cats: new Map(), sockets: new Map(), chat: [], chatSeq: 0, dummy: null, dummyLast: null, dummyGrab: null, rab: null });
   }
@@ -845,6 +853,32 @@ function block(ws, payload = {}) {
   broadcast(room, "block", { id: cat.id, on: cat.blocking }, ws);
 }
 
+/**
+ * Состав комнат для выбора: клиент → ["rooms", { ids: ["grot-1", ...] }],
+ * сервер → ["roomsinfo", [{ id, count, logins }]] в порядке запроса.
+ * Пустой комнаты в rooms нет — отвечаем нулём, НЕ создавая её (roomOf растит карту).
+ * Опрос частый (экран выбора обновляется каждые пару секунд), но обход дешёвый;
+ * от спама одной строкой — минимальный интервал на сокет.
+ */
+const ROOMS_MIN_GAP_MS = 250;
+
+function roomsInfo(ws, payload = {}) {
+  const now = Date.now();
+  if (now - (ws.lastRooms || 0) < ROOMS_MIN_GAP_MS) return;
+  ws.lastRooms = now;
+  const ids = Array.isArray(payload?.ids) ? payload.ids : [];
+  const list = ids.slice(0, 32).map((raw) => {
+    const key = normalizeRoomCode(raw);
+    const room = rooms.get(key);
+    return {
+      id: key,
+      count: room ? room.cats.size : 0,
+      logins: room ? [...room.cats.values()].map((c) => c.login) : [],
+    };
+  });
+  send(ws, "roomsinfo", list);
+}
+
 function onMessage(ws, raw) {
   let msg;
   try {
@@ -867,6 +901,7 @@ function onMessage(ws, raw) {
   else if (event === "rab") rabToggle(ws, payload || {});
   else if (event === "rabHit") rabHit(ws, payload || {});
   else if (event === "block") block(ws, payload || {});
+  else if (event === "rooms") roomsInfo(ws, payload || {});
 }
 
 const MIME = {

@@ -4,6 +4,24 @@ import { SPRITES } from "@/lib/sim/settings";
 export const PRODUCTION_WS = "wss://coop.89-232-184-77.sslip.io";
 export const LOCAL_WS = "ws://localhost:3780";
 
+/**
+ * Три постоянные комнаты «Пивной грот». id уходит на сервер (латиница — сервер
+ * нормализует коды комнат до [a-z0-9_-]), title — то, что видят игроки.
+ */
+export const ROOMS = [
+  { id: "grot-1", title: "Пивной грот №1" },
+  { id: "grot-2", title: "Пивной грот №2" },
+  { id: "grot-3", title: "Пивной грот №3" },
+] as const;
+
+/** Заголовок комнаты для интерфейса: у гротов — людское имя, у прочих — код. */
+export function roomTitle(code: string): string {
+  return ROOMS.find((r) => r.id === code)?.title ?? code;
+}
+
+/** Состав одной комнаты для выбора: сколько игроков и кто именно. */
+export type CoopRoomInfo = { id: string; count: number; logins: string[] };
+
 export type CoopCat = {
   id: number;
   login?: string;
@@ -104,6 +122,8 @@ export type CoopHandlers = {
   onRabHit?: (info: CoopRabHit) => void;
   /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
   onBlock?: (info: { id: number; on: boolean }) => void;
+  /** Состав комнат в ответ на requestRooms(): по запрошенным id, пустые — с нулями. */
+  onRooms?: (rooms: CoopRoomInfo[]) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -280,9 +300,10 @@ export function createCoopClient(handlers: CoopHandlers) {
       handlers.onOpen?.();
       // Каждый успешный open — повторный join теми же параметрами:
       // сервер вернёт you/field и клиент догонит состояние комнаты.
-      if (joinParams) {
+      // room пуст (экран выбора комнаты) — только слушаем: join не шлём.
+      if (joinParams?.room) {
         emit("join", {
-          room: joinParams.room || "demo",
+          room: joinParams.room,
           login: joinParams.login || "",
           sprite: joinParams.sprite,
         });
@@ -340,6 +361,21 @@ export function createCoopClient(handlers: CoopHandlers) {
         if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
           handlers.onBlock?.({ id: Number(row.id), on: !!row.on });
         }
+      } else if (event === "roomsinfo") {
+        if (!Array.isArray(payload)) return;
+        const list: CoopRoomInfo[] = [];
+        for (const raw of payload) {
+          const row = raw as Partial<CoopRoomInfo> | null;
+          if (!row || typeof row.id !== "string" || !row.id) continue;
+          list.push({
+            id: row.id,
+            count: Math.max(0, Math.round(Number(row.count) || 0)),
+            logins: Array.isArray(row.logins)
+              ? row.logins.filter((x): x is string => typeof x === "string")
+              : [],
+          });
+        }
+        handlers.onRooms?.(list);
       }
     };
     ws.onclose = () => {
@@ -352,7 +388,7 @@ export function createCoopClient(handlers: CoopHandlers) {
     };
   };
 
-  const connect = (join: { room?: string; login?: string; sprite?: string }) => {
+  const connect = (join: { room?: string; login?: string; sprite?: string } | null) => {
     joinParams = join;
     manualClose = false;
     clearReconnect();
@@ -368,9 +404,44 @@ export function createCoopClient(handlers: CoopHandlers) {
     openSocket();
   };
 
+  /**
+   * Зайти в комнату (первый вход или переход с той же связи): обновляет параметры
+   * переподключения и шлёт join сразу, если сокет открыт — сервер сам выведет кота
+   * из прежней комнаты и заведёт в новую. Новое соединение поднимаем, только если
+   * связи нет вовсе (или она доживает — тогда дождёмся open и уйдём join-ом оттуда).
+   */
+  const joinRoom = (join: { room?: string; login?: string; sprite?: string }) => {
+    joinParams = join;
+    manualClose = false;
+    clearReconnect();
+    if (ws) {
+      if (ws.readyState === WebSocket.OPEN) {
+        attempt = 0;
+        emit("join", { room: join.room || "demo", login: join.login || "", sprite: join.sprite });
+        return;
+      }
+      if (ws.readyState === WebSocket.CONNECTING) return; // open пошлёт join уже с новыми параметрами
+      detach(ws);
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      ws = null;
+    }
+    openSocket();
+  };
+
+  /** Состав комнат для экрана выбора: сервер ответит roomsinfo по этим id. */
+  const requestRooms = (ids: string[]) => {
+    emit("rooms", { ids });
+  };
+
   return {
     emit,
     connect,
+    joinRoom,
+    requestRooms,
     close() {
       manualClose = true;
       clearReconnect();
