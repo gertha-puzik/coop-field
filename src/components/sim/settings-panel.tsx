@@ -10,6 +10,7 @@ import {
   DAMAGE_LEVELS,
   DIRECTIONS,
   SPRITES,
+  armorLevelMultiplier,
   damageLevelLabel,
   throatDamageFor,
   wrap360,
@@ -872,6 +873,40 @@ export function SettingsPanel(props: Props) {
             Зависимость через горло: {throatDamageFor(0)}% при уроне 0,0, дальше +3,67% за каждые 0,1 — при 0,9 горло
             получает {throatDamageFor(9)}%. Остальные зоны растут пропорционально своей базе при 0,0. Кнопка
             перезаписывает урон всех зон; после можно докрутить числа вручную — выбранный пресет подсвечен.
+          </div>
+        </div>
+
+        <div className="mt-3 pb-0.5">
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <span className="text-[11px] font-medium text-[var(--sim-text-soft)]">Броня — готовые пресеты:</span>
+            <span className="text-[10px] text-[var(--sim-text-faint)]">
+              урон по вам проходит: {Math.round(armorLevelMultiplier(s.combat.armorLevel) * 100)}%
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {DAMAGE_LEVELS.map((k) => {
+              const active = s.combat.armorLevel === k;
+              return (
+                <Button
+                  key={k}
+                  size="sm"
+                  variant={active ? 'default' : 'outline'}
+                  className={
+                    active
+                      ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
+                      : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
+                  }
+                  onClick={() => props.patchCombat({ armorLevel: k })}
+                >
+                  {damageLevelLabel(k)}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="mt-1 text-[10px] leading-snug text-[var(--sim-text-faint)]">
+            Броня режет получаемый урон по замерам владельца: 0,0 — проходит весь урон, 0,8 — половина,
+            0,9 — {Math.round(armorLevelMultiplier(9) * 100)}%. Режет любой входящий удар, включая хвост:
+            блок хвост не ловит, а броня — режет.
           </div>
         </div>
 

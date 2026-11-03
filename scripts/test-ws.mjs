@@ -373,6 +373,83 @@ tAtk.close();
 tDef.close();
 console.log("ok: non-tail strike vs standing block → paws, paws damage");
 
+// Броня: пресет цели режет получаемый урон по кривой замеров владельца
+// (множитель = урон(броня) / урон(0,0): 0,9 ≈ 0,38275, 0,5 ≈ 0,72917).
+// Броня режет любой входящий удар — включая хвост: блок хвост не ловит, а броня режет.
+// 1) броня 0,9 — горло 42 проходит как round(42·0,38275) = 16;
+// 2) броня 0,5 — горло 42 проходит как 31;
+// 3) броня 0,0 — урон проходит целиком;
+// 4) броня 0,9 + блок — морда переводится в «Лапы», лаповый урон 5 проходит как 2;
+// 5) хвост по бронированному блокирующему — остаётся хвостом, 33 проходит как 13;
+// 6) зажим: armor 5 ведёт себя как 0,9.
+const armRoom = `t${Date.now().toString(36)}arm`;
+const aAtk = await client("Пробойник", armRoom);
+const aDef = await client("Панцирь", armRoom);
+const aAtkYou = (await waitFor(aAtk, "you"))[1];
+const aDefYou = (await waitFor(aDef, "you"))[1];
+const armAngle = (Math.atan2(aDefYou.y - aAtkYou.y, aDefYou.x - aAtkYou.x) * 180) / Math.PI;
+await sleep(60);
+aDef.send(JSON.stringify(["armor", { armor: 0.9 }]));
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+const arm09 = await waitFor(aDef, "fight");
+if (arm09[1].zone !== "throat" || arm09[1].damage !== 16) {
+  throw new Error(`armor 0.9 damage ${JSON.stringify(arm09[1])}`);
+}
+console.log("ok: armor 0.9 → throat 42 lands as 16");
+aDef.send(JSON.stringify(["armor", { armor: 0.5 }]));
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+const arm05 = await waitFor(aDef, "fight");
+if (arm05[1].damage !== 31) throw new Error(`armor 0.5 damage ${JSON.stringify(arm05[1])}`);
+console.log("ok: armor 0.5 → throat 42 lands as 31");
+aDef.send(JSON.stringify(["armor", { armor: 0 }]));
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+const arm00 = await waitFor(aDef, "fight");
+if (arm00[1].damage !== 42) throw new Error(`armor 0 damage ${JSON.stringify(arm00[1])}`);
+console.log("ok: armor 0.0 → damage passes fully");
+aDef.send(JSON.stringify(["armor", { armor: 0.9 }]));
+aDef.send(JSON.stringify(["block", { on: true }]));
+await waitFor(aAtk, "block");
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "muzzle", angle: armAngle, damage: 42, pawsDamage: 5 }]));
+const armBlock = await waitFor(aDef, "fight");
+if (armBlock[1].zone !== "paws" || armBlock[1].part !== "Лапы" || armBlock[1].damage !== 2) {
+  throw new Error(`armor + block ${JSON.stringify(armBlock[1])}`);
+}
+console.log("ok: armor 0.9 + block → paws damage 5 lands as 2");
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "tail", angle: armAngle, damage: 33 }]));
+const armTail = await waitFor(aDef, "fight");
+if (armTail[1].zone !== "tail" || armTail[1].part !== "Хвост" || armTail[1].damage !== 13) {
+  throw new Error(`armor tail ${JSON.stringify(armTail[1])}`);
+}
+aDef.send(JSON.stringify(["block", { on: false }]));
+await waitFor(aAtk, "block");
+console.log("ok: armored tail vs block → tail, 13");
+await sleep(60);
+aDef.send(JSON.stringify(["armor", { armor: 5 }]));
+await sleep(60);
+aAtk.inbox.length = 0;
+aDef.inbox.length = 0;
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+const armClamp = await waitFor(aDef, "fight");
+if (armClamp[1].damage !== 16) throw new Error(`armor clamp ${JSON.stringify(armClamp[1])}`);
+aAtk.close();
+aDef.close();
+console.log("ok: armor clamped to 0.9");
+
 // Состав комнат для выбора: roomsinfo отвечает по запрошенным id в порядке запроса,
 // пустая комната — count 0 и пустой список (комната при этом НЕ создаётся).
 // Гроты запрашиваем одним взглядом (count >= 0), а точный состав — на уникальных

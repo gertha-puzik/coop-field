@@ -290,6 +290,8 @@ function join(ws, payload = {}) {
     // Блок (удержание К): любые удары по этому коту проводятся в «Лапы» (см. strike),
     // кроме хвоста — удар в хвост блок не ловит (исключение из правила).
     blocking: false,
+    // Пресет брони 0–0,9: strike режет входящий урон по кривой замеров владельца.
+    armor: 0,
     // Шаги, ждущие снятия кулдауна (см. queueMove), и их таймер.
     moveQueue: [],
     moveTimer: null,
@@ -531,6 +533,54 @@ function resolveZone(raw) {
   return null;
 }
 
+// ---------------- Броня ----------------
+/**
+ * Броня режет получаемый урон. Кривая — замеры владельца: референс-удар при броне 0,0
+ * даёт 40% урона, дальше: 0,1 → 38,67; 0,12 → 37,64; 0,2 → 34,62; 0,35 → 31,62;
+ * 0,66 → 26,55; 0,78 → 20,93. Между точками — линейная интерполяция, после 0,78 —
+ * экстраполяция по наклону последнего отрезка (0,9 ≈ 15,31). Множитель = урон(броня)/40:
+ * броня 0,0 урон не меняет, 0,8 пропускает половину, 0,9 — около 38%.
+ * Тот же список лежит в src/lib/sim/settings.ts — меняйте синхронно.
+ */
+const ARMOR_CURVE = [
+  [0.0, 40.0],
+  [0.1, 38.67],
+  [0.12, 37.64],
+  [0.2, 34.62],
+  [0.35, 31.62],
+  [0.66, 26.55],
+  [0.78, 20.93],
+];
+
+function armorMultiplier(armor) {
+  const a = Number.isFinite(armor) ? Math.min(0.9, Math.max(0, Number(armor))) : 0;
+  const base = ARMOR_CURVE[0][1];
+  if (a <= ARMOR_CURVE[0][0]) return 1;
+  for (let i = 1; i < ARMOR_CURVE.length; i++) {
+    const [a1, p1] = ARMOR_CURVE[i];
+    if (a <= a1) {
+      const [a0, p0] = ARMOR_CURVE[i - 1];
+      return (p0 + ((p1 - p0) * (a - a0)) / (a1 - a0)) / base;
+    }
+  }
+  const [a0, p0] = ARMOR_CURVE[ARMOR_CURVE.length - 2];
+  const [a1, p1] = ARMOR_CURVE[ARMOR_CURVE.length - 1];
+  return (p1 + ((p1 - p0) * (a - a1)) / (a1 - a0)) / base;
+}
+
+/**
+ * Пресет брони. Клиент → ["armor", { armor: 0.3 }]. Значение зажимается в 0–0,9
+ * и округляется до десятых; хранится на коте. Соседям не бродкастится: удар и так
+ * уходит всем в fight уже с порезанным бронёй урона (см. strike).
+ */
+function armor(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat) return;
+  const raw = Number(payload.armor);
+  cat.armor = Number.isFinite(raw) ? Math.min(0.9, Math.max(0, Math.round(raw * 10) / 10)) : 0;
+}
+
 /**
  * Удар. Клиент → ["strike", { target, zone, angle, damage }].
  * Комнате → ["fight", { attackerId, attacker, targetId, name, part, zone, weapon, damage, isAttacking }].
@@ -629,6 +679,9 @@ function strike(ws, payload = {}) {
       if (pawsDamage !== null) finalDamage = pawsDamage;
       else if (zoneId0 !== "paws") finalDamage = STRIKE_ZONES.paws.damage;
     }
+    // Броня цели режет любой входящий урон — и переведённый блоком в «Лапы»,
+    // и хвост (блок хвост не ловит, а броня режет его как любой другой).
+    finalDamage = Math.round(finalDamage * armorMultiplier(target.armor));
     const entry = {
       attacker: cat.login,
       attackerId,
@@ -905,6 +958,7 @@ function onMessage(ws, raw) {
   else if (event === "rab") rabToggle(ws, payload || {});
   else if (event === "rabHit") rabHit(ws, payload || {});
   else if (event === "block") block(ws, payload || {});
+  else if (event === "armor") armor(ws, payload || {});
   else if (event === "rooms") roomsInfo(ws, payload || {});
 }
 

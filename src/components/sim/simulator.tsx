@@ -937,6 +937,8 @@ export default function Simulator() {
         // После переподключения сервер завёл нового кота без блока: сообщаем стойку заново,
         // иначе удерживаемый К после обрыва перестал бы ловить удары в «Лапы».
         if (e.blocking) netRef.current?.emit('block', { on: true });
+        // Броня — тоже: новый кот на сервере без брони, и входящий урон шёл бы целиком.
+        netRef.current?.emit('armor', { armor: settingsRef.current.combat.armorLevel / 10 });
       },
       onField: (field) => {
         const cats = field.cats || [];
@@ -2637,6 +2639,17 @@ export default function Simulator() {
       othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
     );
   };
+
+  /* ---------- броня ---------- */
+
+  /** Пресет брони уходит на сервер при смене кнопкой (и повторяется после
+   *  переподключения — см. onYou). Сервер режет этой бронёй входящий урон;
+   *  соседям значение не рассылается — они видят уже порезанный урон в fight.
+   *  Пока сокета нет, emit просто молчит: onYou всё равно пришлёт запрос заново. */
+  const armorLevel = settings.combat.armorLevel;
+  useEffect(() => {
+    netRef.current?.emit('armor', { armor: armorLevel / 10 });
+  }, [armorLevel]);
 
   /* ---------- удар (клавиша I) ---------- */
 

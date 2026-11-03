@@ -212,6 +212,9 @@ export interface SimSettings {
     showLog: boolean;
     /** Уровень урона игрока (выбранный пресет 0,0–0,9). Сам движок читает урон из зон. */
     damageLevel: number;
+    /** Уровень брони игрока (пресет 0,0–0,9): режет получаемый урон по кривой замеров.
+     *  Значение уходит на сервер, и он же применяет его к входящим ударам. */
+    armorLevel: number;
     /** Зоны попадания (фиксированный набор, значения настраиваются). */
     zones: StrikeZone[];
   };
@@ -318,6 +321,7 @@ export const DEFAULT_SETTINGS: SimSettings = {
     regenAmount: 20,
     regenIntervalSec: 5,
     damageLevel: 0,
+    armorLevel: 0,
     showLog: true,
     // Полосы тела в px (0 — верх спрайта, 150 — низ). Стороны как на схеме:
     // хвост/спина/шея — правая, лапы/живот/горло — левая, морда — обе.
@@ -368,6 +372,47 @@ export function zoneDamageFor(level: number, id: string): number {
 /** Метка пресета для кнопки: 0,0 … 0,9. */
 export function damageLevelLabel(level: number): string {
   return (level / 10).toFixed(1).replace('.', ',');
+}
+
+// ---------------- Броня игрока ----------------
+
+/**
+ * Замеры владельца: броня → урон по игроку, % (референс-удар, при броне 0,0 он даёт 40).
+ * 0,0 → 40; 0,1 → 38,67; 0,12 → 37,64; 0,2 → 34,62; 0,35 → 31,62; 0,66 → 26,55; 0,78 → 20,93.
+ * Между точками — линейная интерполяция, после 0,78 — экстраполяция по наклону
+ * последнего отрезка (0,9 ≈ 15,31), вне диапазона 0–0,9 — зажим.
+ */
+export const ARMOR_CURVE: ReadonlyArray<readonly [number, number]> = [
+  [0.0, 40.0],
+  [0.1, 38.67],
+  [0.12, 37.64],
+  [0.2, 34.62],
+  [0.35, 31.62],
+  [0.66, 26.55],
+  [0.78, 20.93],
+];
+
+/** Множитель получаемого урона при броне a (0–0,9): урон(броня) / урон(0,0).
+ *  Броня 0,0 урон не меняет, 0,8 пропускает половину, 0,9 — около 38%. */
+export function armorMultiplier(armor: number): number {
+  const a = Number.isFinite(armor) ? Math.min(0.9, Math.max(0, armor)) : 0;
+  const base = ARMOR_CURVE[0][1];
+  if (a <= ARMOR_CURVE[0][0]) return 1;
+  for (let i = 1; i < ARMOR_CURVE.length; i++) {
+    const [a1, p1] = ARMOR_CURVE[i];
+    if (a <= a1) {
+      const [a0, p0] = ARMOR_CURVE[i - 1];
+      return (p0 + ((p1 - p0) * (a - a0)) / (a1 - a0)) / base;
+    }
+  }
+  const [a0, p0] = ARMOR_CURVE[ARMOR_CURVE.length - 2];
+  const [a1, p1] = ARMOR_CURVE[ARMOR_CURVE.length - 1];
+  return (p1 + ((p1 - p0) * (a - a1)) / (a1 - a0)) / base;
+}
+
+/** Множитель получаемого урона для пресета уровня k (0..9 → 0,0..0,9). */
+export function armorLevelMultiplier(level: number): number {
+  return armorMultiplier(level / 10);
 }
 
 // ---------------- Математика ----------------
@@ -728,6 +773,7 @@ function mergeCombat(rawC: any, d: SimSettings['combat']): SimSettings['combat']
     regenIntervalSec: num(rawC?.regenIntervalSec, d.regenIntervalSec, 0.5, 600),
     showLog: typeof rawC?.showLog === 'boolean' ? rawC.showLog : d.showLog,
     damageLevel: num(rawC?.damageLevel, d.damageLevel, 0, 9),
+    armorLevel: num(rawC?.armorLevel, d.armorLevel, 0, 9),
     zones,
   };
 }
