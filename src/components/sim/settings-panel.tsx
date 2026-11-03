@@ -14,7 +14,6 @@ import {
   damageLevelLabel,
   throatDamageFor,
   wrap360,
-  zoneDamageFor,
 } from '@/lib/sim/settings';
 
 interface Props {
@@ -943,13 +942,20 @@ export function SettingsPanel(props: Props) {
                       ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
                       : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
                   }
-                  onClick={() =>
+                  onClick={() => {
+                    const prevThroat = Math.max(1, throatDamageFor(s.combat.damageLevel));
+                    const nextThroat = Math.max(1, throatDamageFor(k));
                     props.patchCombat({
                       damageLevel: k,
-                      // геометрия зон (px, сторона, цвет) сохраняется — меняется только урон
-                      zones: s.combat.zones.map((z) => ({ ...z, damage: zoneDamageFor(k, z.id) })),
-                    })
-                  }
+                      // геометрия зон (px, сторона, цвет) сохраняется — меняется только урон;
+                      // масштабируем ТЕКУЩИЙ урон зон: ручные правки зон не стираются
+                      // (раньше пересчёт от базы затирал их при смене пресета)
+                      zones: s.combat.zones.map((z) => ({
+                        ...z,
+                        damage: Math.max(0, Math.round((z.damage * nextThroat) / prevThroat)),
+                      })),
+                    });
+                  }}
                 >
                   {damageLevelLabel(k)}
                 </Button>
@@ -958,8 +964,9 @@ export function SettingsPanel(props: Props) {
           </div>
           <div className="mt-1 text-[10px] leading-snug text-[var(--sim-text-faint)]">
             Зависимость через горло: {throatDamageFor(0)}% при уроне 0,0, дальше +3,67% за каждые 0,1 — при 0,9 горло
-            получает {throatDamageFor(9)}%. Остальные зоны растут пропорционально своей базе при 0,0. Кнопка
-            перезаписывает урон всех зон; после можно докрутить числа вручную — выбранный пресет подсвечен.
+            получает {throatDamageFor(9)}%. Остальные зоны растут пропорционально текущим значениям — ручные правки
+            урона зон сохраняются. Кнопка меняет урон всех зон; после можно докрутить числа вручную — выбранный
+            пресет подсвечен.
           </div>
         </div>
 

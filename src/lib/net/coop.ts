@@ -231,13 +231,17 @@ function asDummyState(payload: unknown): CoopDummyState | null {
 }
 
 export function catToDummy(cat: CoopCat): DummyConfig {
+  // Рост модельки, выбранный при спавне (сервер шлёт его в size, % высоты клетки).
+  // Вне диапазона 60–100 (старый сервер со своим size: 3.2, отсутствие поля) — 100%.
+  const rawScale = Math.round(Number(cat.size));
+  const scale = Number.isFinite(rawScale) && rawScale >= 60 && rawScale <= 100 ? rawScale : 100;
   return {
     id: `p${cat.id}`,
     name: cat.login || `#${cat.id}`,
     sprite: spriteOf(cat),
     col: Math.max(0, (cat.x || 1) - 1),
     row: Math.max(0, (cat.y || 1) - 1),
-    scale: 100,
+    scale,
     angle: Number.isFinite(Number(cat.deg)) ? Number(cat.deg) : 0,
     present: true,
     // Чужой кот — не локальная мишень: рисуем всегда, флаг по сети не шлём.
@@ -252,7 +256,7 @@ const RECONNECT_MAX_MS = 30_000;
 
 export function createCoopClient(handlers: CoopHandlers) {
   let ws: WebSocket | null = null;
-  let joinParams: { room?: string; login?: string; sprite?: string } | null = null;
+  let joinParams: { room?: string; login?: string; sprite?: string; size?: number } | null = null;
   let manualClose = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -306,6 +310,7 @@ export function createCoopClient(handlers: CoopHandlers) {
           room: joinParams.room,
           login: joinParams.login || "",
           sprite: joinParams.sprite,
+          size: joinParams.size,
         });
       }
     };
@@ -388,7 +393,7 @@ export function createCoopClient(handlers: CoopHandlers) {
     };
   };
 
-  const connect = (join: { room?: string; login?: string; sprite?: string } | null) => {
+  const connect = (join: { room?: string; login?: string; sprite?: string; size?: number } | null) => {
     joinParams = join;
     manualClose = false;
     clearReconnect();
@@ -410,14 +415,14 @@ export function createCoopClient(handlers: CoopHandlers) {
    * из прежней комнаты и заведёт в новую. Новое соединение поднимаем, только если
    * связи нет вовсе (или она доживает — тогда дождёмся open и уйдём join-ом оттуда).
    */
-  const joinRoom = (join: { room?: string; login?: string; sprite?: string }) => {
+  const joinRoom = (join: { room?: string; login?: string; sprite?: string; size?: number }) => {
     joinParams = join;
     manualClose = false;
     clearReconnect();
     if (ws) {
       if (ws.readyState === WebSocket.OPEN) {
         attempt = 0;
-        emit("join", { room: join.room || "demo", login: join.login || "", sprite: join.sprite });
+        emit("join", { room: join.room || "demo", login: join.login || "", sprite: join.sprite, size: join.size });
         return;
       }
       if (ws.readyState === WebSocket.CONNECTING) return; // open пошлёт join уже с новыми параметрами

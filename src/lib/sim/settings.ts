@@ -292,15 +292,15 @@ export const DEFAULT_SETTINGS: SimSettings = {
     showRay: false,
   },
   slowdown: {
-    // Окна «без замедления» — ручная калибровка владельца (возвращена по его скрину):
-    // окна стыкуются вплотную по кругу, у каждого направления своя ширина.
+    // Окна «без замедления» — калибровка владельца (его скрин, правка 11.2025):
+    // вправо-вниз 48–63, вниз 68–110, влево-вверх 227–245; остальные — прежние.
     windows: {
       '0': { start: 310, end: 35 },
-      '45': { start: 35, end: 53 },
-      '90': { start: 53, end: 110 },
+      '45': { start: 48, end: 63 },
+      '90': { start: 68, end: 110 },
       '135': { start: 110, end: 130 },
       '180': { start: 130, end: 220 },
-      '225': { start: 220, end: 245 },
+      '225': { start: 227, end: 245 },
       '270': { start: 245, end: 290 },
       '315': { start: 290, end: 310 },
     },
@@ -678,6 +678,19 @@ const LEGACY_WINDOWS_V5: Record<WindowKey, DirectionWindow> = {
   '315': { start: 295, end: 335 },
 };
 
+/** Дефолтные окна до правки калибровки владельцем (скрин): сдвинуты вправо-вниз,
+ *  вниз и влево-вверх. */
+const LEGACY_WINDOWS_V6: Record<WindowKey, DirectionWindow> = {
+  '0': { start: 310, end: 35 },
+  '45': { start: 35, end: 53 },
+  '90': { start: 53, end: 110 },
+  '135': { start: 110, end: 130 },
+  '180': { start: 130, end: 220 },
+  '225': { start: 220, end: 245 },
+  '270': { start: 245, end: 290 },
+  '315': { start: 290, end: 310 },
+};
+
 /** Совпадают ли ТОЛЬКО окна сохранённого блока с эталонными (уровни не смотрим). */
 function windowsMatch(sd: unknown, ref: Record<WindowKey, DirectionWindow>): boolean {
   if (!sd || typeof sd !== 'object') return false;
@@ -699,7 +712,8 @@ function legacySlowdownKind(sd: unknown): 'full' | 'windows' | false {
   if (
     windowsMatch(sd, LEGACY_WINDOWS_V3) ||
     windowsMatch(sd, LEGACY_WINDOWS_V4) ||
-    windowsMatch(sd, LEGACY_WINDOWS_V5)
+    windowsMatch(sd, LEGACY_WINDOWS_V5) ||
+    windowsMatch(sd, LEGACY_WINDOWS_V6)
   ) {
     return 'windows';
   }

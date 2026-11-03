@@ -18,6 +18,7 @@ function clock(ts: number) {
 /**
  * Чат комнаты — левая колонка рядом с полем: строка ввода сверху,
  * под ней лента сообщений на всю оставшуюся высоту колонки.
+ * Новые сообщения появляются СВЕРХУ ленты (реверс хронологии).
  */
 export function RoomChat({
   lines,
@@ -33,11 +34,13 @@ export function RoomChat({
   const [draft, setDraft] = useState('');
   const [stuck, setStuck] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
+  // Новые сверху: реверсируем хронологический порядок сервера.
+  const ordered = [...lines].reverse();
 
   useEffect(() => {
     const el = logRef.current;
     if (!el || !stuck) return;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTop = 0; // «прилипание» — к верху, где свежие сообщения
   }, [lines, stuck]);
 
   const submit = (ev: React.FormEvent) => {
@@ -93,15 +96,16 @@ export function RoomChat({
         onScroll={() => {
           const el = logRef.current;
           if (!el) return;
-          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 28;
+          // прилипание к верху: новые сообщения прокручиваем сами, отлип — листая вниз
+          const near = el.scrollTop < 28;
           setStuck((prev) => (prev === near ? prev : near));
         }}
         className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 [scrollbar-width:thin]"
       >
-        {lines.length === 0 ? (
+        {ordered.length === 0 ? (
           <p className="text-sm text-[var(--sim-text-faint)]">Пока тихо. Сообщение увидят все в этой комнате.</p>
         ) : (
-          lines.map((line) => {
+          ordered.map((line) => {
             const mine = meId != null && line.id === meId;
             return (
               <p key={line.seq} className="break-words text-sm leading-snug text-[var(--sim-text)]">

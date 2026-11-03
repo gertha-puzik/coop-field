@@ -40,10 +40,10 @@ import {
   slowdownFor,
   speedFor,
   stepDuration,
+  throatDamageFor,
   tierColor,
   wrap180,
   wrap360,
-  zoneDamageFor,
 } from '@/lib/sim/settings';
 
 const STORAGE_KEY = 'catwar-battle-sim-v4';
@@ -212,6 +212,8 @@ function logActor(entry: CombatLogEntry): string {
 }
 
 function mergeLog(prev: CombatLogEntry[], entry: CombatLogEntry): CombatLogEntry[] {
+  // Промахи в лог не пишем: строк «мимо» больше нет (вместе с надписью над котом).
+  if (entry.zoneId === 'miss') return prev;
   const [top, ...rest] = prev;
   const same =
     !!top &&
@@ -234,7 +236,6 @@ function formatDmg(dmg: number | undefined): string {
 
 function formatLogLine(entry: CombatLogEntry): string {
   const actor = logActor(entry);
-  if (entry.zoneId === 'miss') return `${actor} => мимо x${entry.count}`;
   const weapon = entry.weapon ? `, ${entry.weapon}` : '';
   const dmg = formatDmg(entry.dmg);
   const dmgTxt = dmg === '' ? '' : ` [${dmg}%]`;
@@ -565,7 +566,7 @@ export default function Simulator() {
   const [netStarted, setNetStarted] = useState(true);
   /** Клавиатура поля активна только на stage «field» (см. обработчики keydown). */
   const enteredRef = useRef(false);
-  const pendingJoinRef = useRef<{ room: string; login: string; sprite: SpriteId } | null>(null);
+  const pendingJoinRef = useRef<{ room: string; login: string; sprite: SpriteId; scale: number } | null>(null);
   /** Состав комнат для выбора (roomsinfo). null — данных ещё не было. */
   const [roomsRows, setRoomsRows] = useState<CoopRoomInfo[] | null>(null);
   /** roomsinfo не приходит дольше 5 с (старый сервер без протокола) — предупреждение в карточках. */
@@ -1066,6 +1067,9 @@ export default function Simulator() {
           prev.angle = dummy.angle;
           prev.name = dummy.name;
           prev.sprite = dummy.sprite;
+          // Рост обновляем только когда он реально пришёл в пакете (иначе сбросили бы
+          // выбранный при спавне размер до дефолта).
+          if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;
           if (moved) rememberRemoteCell(remoteDrawRef.current, prev.id, dummy.col, dummy.row);
           return;
         }
@@ -1230,7 +1234,10 @@ export default function Simulator() {
       const pending = pendingJoinRef.current;
       const login = (pending?.login || playerName || nameFromUrl() || '').trim().slice(0, 24);
       const sprite = pending?.sprite || settingsRef.current.character.sprite;
-      pendingJoinRef.current = { room: roomId, login, sprite };
+      // Рост модельки, выбранный при спавне: едет в join (size), чтобы комнату
+      // видели все с этим ростом, а не только сам игрок.
+      const scale = Math.min(100, Math.max(60, Math.round(pending?.scale ?? settingsRef.current.character.spriteScale)));
+      pendingJoinRef.current = { room: roomId, login, sprite, scale };
       setChatLines([]);
       setRoomsStale(false);
       setSwitchOpen(false);
@@ -1243,7 +1250,7 @@ export default function Simulator() {
         enteredRef.current = true;
         setStage('field');
       }
-      net.joinRoom({ room: roomId, login, sprite });
+      net.joinRoom({ room: roomId, login, sprite, size: scale });
     },
     [playerName, shareUrl],
   );
@@ -1388,6 +1395,11 @@ export default function Simulator() {
           const book = netMovesRef.current;
           // Пока сервер не назвал клетку, шаг не рисуем: иначе «you» вернёт кота на спавн.
           if (!book.server) return 'wait';
+          // Один неподтверждённый шаг: следующий не отправляем и не рисуем, пока
+          // сервер не подтвердил предыдущий. Иначе при гонке за клетку предикт
+          // разъезжался с сервером на клетку, и отказ возвращал кота «куда-то
+          // рядом» — выглядело как вытеснение его другим игроком.
+          if (book.pending.length > 0) return 'wait';
           const dd = dirByDeg(dirDeg);
           const deg = Math.round(wrap360(e.angle) * 10) / 10;
           net.emit('move', { x: dd.dx, y: dd.dy, deg });
@@ -2688,9 +2700,9 @@ export default function Simulator() {
     [],
   );
 
-  /** Применение результата удара: вызывается через отклик удара (170 мс по умолчанию)
-   *  после нажатия, со снятым в момент нажатия снимком стойки и угла стрелы. */
-  const landStrike = useCallback((snap: { angle: number; col: number; row: number; flightMs?: number }) => {
+  /** Применение результата удара: расчёт и отправка на сервер — сразу при нажатии,
+   *  локальные видимые эффекты — с откликом удара (visual=true). */
+  const landStrike = useCallback((snap: { angle: number; col: number; row: number; flightMs?: number }, visual: boolean) => {
     const s = settingsRef.current;
     const e = engineRef.current;
     const now = performance.now();
@@ -2720,19 +2732,9 @@ export default function Simulator() {
         color: z.color,
       });
     };
-    /** Красная надпись «мимо» над атакующим. */
-    const pushMissLabel = () => {
-      e.labels.push({
-        x: cellCX(snap.col),
-        y: cellCY(snap.row) - s.field.cellH * 0.35,
-        born: now,
-        text: 'мимо',
-        color: '#ff453a',
-      });
-    };
 
     if (!t) {
-      // рядом никого — удар в пустоту, «мимо», имя в лог не пишется
+      // рядом никого — удар в пустоту (без надписи и без строки в логе)
       entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
     } else {
       const tCol = t.col;
@@ -2778,9 +2780,17 @@ export default function Simulator() {
         // строку с реальным уроном (после брони) принесёт fight от сервера.
         entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я', dmg: hitDamage };
       } else {
-        // луч прошёл мимо тела — «мимо», имя цели не пишется
+        // луч прошёл мимо тела — промах, без надписи и без строки в логе
         entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
       }
+    }
+
+    // Локальные эффекты (манекен, промах, РАБ, оффлайн) проявляются с откликом удара:
+    // сетевой удар уже улетел при нажатии — окно отклика бьющего на цель не тратим.
+    if (!visual) {
+      const id = window.setTimeout(() => landStrike(snap, true), strikeResponseMs(settingsRef.current));
+      pendingStrikesRef.current.push(id);
+      return;
     }
 
     // Попадание по живому соседу уходит на сервер. Строку лога и урон принесёт fight,
@@ -2828,8 +2838,6 @@ export default function Simulator() {
           });
         }
       }
-    } else {
-      pushMissLabel();
     }
 
     // энергия и лог обновляются функционально от последнего состояния,
@@ -2880,11 +2888,11 @@ export default function Simulator() {
         : (combatRef.current.dummyEnergy[s.controlled] ?? esNow);
     if (myEnergy < s.combat.strikeCost) return;
     e.lastStrike = now;
-    // удар «выпадает» с откликом resp: стойка и угол фиксируются в момент нажатия;
-    // окно полёта едет на сервер, чтобы блок цели успел поймать удар до касания
+    // Стойка, угол, расчёт и отправка удара — в момент нажатия. Раньше удар ещё
+    // resp ждал на клиенте, а сервер потом то же окно полёта: до касания шло
+    // ~два отклика. Теперь окно одно, серверное (flightMs) — блок цели успевает.
     const snap = { angle: e.angle, col: e.col, row: e.row, flightMs: resp };
-    const id = window.setTimeout(() => landStrike(snap), resp);
-    pendingStrikesRef.current.push(id);
+    landStrike(snap, false);
   }, [landStrike]);
 
   useEffect(() => {
@@ -3009,7 +3017,7 @@ export default function Simulator() {
         controlled: 'main',
         character: { ...s.character, sprite, spriteScale: scale },
       }));
-      pendingJoinRef.current = { room: roomId, login, sprite };
+      pendingJoinRef.current = { room: roomId, login, sprite, scale };
       setNetStarted(true);
       pickRoom(roomId);
     },
@@ -3114,13 +3122,22 @@ export default function Simulator() {
               roomsStale={roomsStale}
               onPickRoom={joinFromEntry}
               onApplySpeed={(v) => patchArrow({ periodSec: v })}
-              onApplyDamage={(k) =>
+              onApplyDamage={(k) => {
+                const prev = settingsRef.current.combat;
+                const prevThroat = Math.max(1, throatDamageFor(prev.damageLevel));
+                const nextThroat = Math.max(1, throatDamageFor(k));
                 patchCombat({
                   damageLevel: k,
-                  // геометрия зон (px, сторона, цвет) сохраняется — меняется только урон
-                  zones: settingsRef.current.combat.zones.map((z) => ({ ...z, damage: zoneDamageFor(k, z.id) })),
-                })
-              }
+                  // геометрия зон (px, сторона, цвет) сохраняется — меняется только урон;
+                  // масштабируем ТЕКУЩИЙ урон зон: ручные правки зон (админка) не стираются.
+                  // Раньше пересчёт шёл от базовых значений, и правленые Лапы 2% при смене
+                  // пресета превращались в базовые × множитель (до 10% и выше).
+                  zones: prev.zones.map((z) => ({
+                    ...z,
+                    damage: Math.max(0, Math.round((z.damage * nextThroat) / prevThroat)),
+                  })),
+                });
+              }}
               onApplyArmor={(k) => patchCombat({ armorLevel: k })}
             />
           ) : null}
@@ -3271,7 +3288,10 @@ export default function Simulator() {
               onEnd={() => saveLayout(layoutRef.current)}
             />
             <div className="flex h-44 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--log-w)]">
-              <FightLog lines={combat.log.map(formatLogLine)} />
+              <FightLog
+              lines={combat.log.map(formatLogLine)}
+              onClear={() => setCombat((c) => ({ ...c, log: [] }))}
+            />
             </div>
           </>
         ) : null}

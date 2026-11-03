@@ -274,6 +274,10 @@ function join(ws, payload = {}) {
   }
   const slot = room.cats.size;
   const login = uniqueLogin(room, sanitizeLogin(payload.login, NAMES[slot] || `Кот ${slot + 1}`));
+  // Рост модельки, выбранный при спавне: клиент шлёт проценты (60–100).
+  // Вне диапазона/не число — 100% (обычный рост).
+  const sizeRaw = Number(payload.size);
+  const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
   const cat = {
     id: nextId++,
     login,
@@ -282,7 +286,7 @@ function join(ws, payload = {}) {
     x: cell[0],
     y: cell[1],
     deg: 0,
-    size: 3.2,
+    size,
     lastMove: 0,
     lastStrike: 0,
     lastAim: 0,
@@ -368,7 +372,7 @@ function applyMove(ws, cat, payload) {
   cat.aimDirty = false;
   cat.lastAim = now;
   cat.lastMove = now;
-  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite };
+  const patch = { id: cat.id, x: cat.x, y: cat.y, deg: cat.deg, sprite: cat.sprite, size: cat.size };
   // Шагнувшему — одно эхо. Второй экземпляр той же клетки (broadcast без except)
   // клиент читал как отказ предикта: спрайт шагал назад и следующим кадром
   // перепрыгивал клетку.

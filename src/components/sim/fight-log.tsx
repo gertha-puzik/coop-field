@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
 
 /**
  * Лог ударов — правая колонка рядом с полем: те же строки, что раньше в окне
  * «Бой», свежая сверху. Колонка уже чата и тянется на всю высоту поля.
+ * Кнопка «Очистить» в шапке стирает лог (энергия персонажей не трогается).
  */
-export function FightLog({ lines }: { lines: string[] }) {
+export function FightLog({ lines, onClear }: { lines: string[]; onClear?: () => void }) {
   const logRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const signature = lines.join('\n');
@@ -24,7 +26,21 @@ export function FightLog({ lines }: { lines: string[] }) {
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
         <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Бой</h2>
-        <p className="text-[11px] text-[var(--sim-text-faint)]">I — удар</p>
+        <div className="flex items-center gap-2">
+          <p className="text-[11px] text-[var(--sim-text-faint)]">I — удар</p>
+          {onClear ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[10px]"
+              aria-label="Очистить лог ударов"
+              onClick={onClear}
+            >
+              Очистить лог
+            </Button>
+          ) : null}
+        </div>
       </div>
       <div
         id="fightLog"
