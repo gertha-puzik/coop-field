@@ -32,6 +32,7 @@ import {
   bfsPath,
   damageLevelLabel,
   dirByDeg,
+  GAME_CREDITS,
   inWindow,
   mergeSettings,
   rayBox,
@@ -3275,6 +3276,11 @@ export default function Simulator() {
           </>
         ) : null}
       </main>
+
+      {/* Надпись об авторах внизу страницы поля */}
+      <footer className="relative z-10 shrink-0 pb-1 text-center">
+        <p className="text-[10px] leading-tight text-[var(--sim-text-faint)]">{GAME_CREDITS}</p>
+      </footer>
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
       {settingsOpen ? (

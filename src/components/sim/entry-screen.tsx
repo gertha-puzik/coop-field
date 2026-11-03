@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import {
   DAMAGE_LEVELS,
+  GAME_CREDITS,
   SPRITES,
   armorLevelMultiplier,
   damageLevelLabel,
@@ -460,9 +461,7 @@ export function EntryScreen({
 
       {/* Предисловие внизу страницы */}
       <footer className="mt-6 text-center">
-        <p className="text-[11px] leading-snug text-[var(--sim-text-faint)]">
-          Абноукетвар разработан Пухляшиком и Сырь, идейно вдохновлён Суперняшкой Блестяшкой
-        </p>
+        <p className="text-[11px] leading-snug text-[var(--sim-text-faint)]">{GAME_CREDITS}</p>
       </footer>
     </div>
   );
