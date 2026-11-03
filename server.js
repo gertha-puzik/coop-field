@@ -287,7 +287,8 @@ function join(ws, payload = {}) {
     lastStrike: 0,
     lastAim: 0,
     lastChat: 0,
-    // Блок (удержание К): любые удары по этому коту проводятся в «Лапы» (см. strike).
+    // Блок (удержание К): любые удары по этому коту проводятся в «Лапы» (см. strike),
+    // кроме хвоста — удар в хвост блок не ловит (исключение из правила).
     blocking: false,
     // Шаги, ждущие снятия кулдауна (см. queueMove), и их таймер.
     moveQueue: [],
@@ -578,7 +579,8 @@ function strike(ws, payload = {}) {
   }
   cat.lastStrike = now;
   // Блок цели: любой удар — в «Лапы», стойка бьющего (прямая/диагональ) не важна.
-  if (target.blocking) {
+  // Исключение — хвост: удар в хвост блок не ловит, он проходит хвостом.
+  if (target.blocking && zoneId0 !== "tail") {
     zoneId = "paws";
     zone = STRIKE_ZONES.paws;
   } else {
@@ -620,7 +622,8 @@ function strike(ws, payload = {}) {
     let finalZoneId = thrown.zone;
     let finalDamage = thrown.damage;
     // Перепроверка блока в момент касания: удар «в полёте» блок ловит.
-    if (target.blocking) {
+    // Исключение — хвост: блок не переносит удар из хвоста в «Лапы».
+    if (target.blocking && zoneId0 !== "tail") {
       finalZoneId = "paws";
       part = STRIKE_ZONES.paws.part;
       if (pawsDamage !== null) finalDamage = pawsDamage;
@@ -843,7 +846,8 @@ function rabHit(ws, payload = {}) {
 /**
  * Блок (удержание К). Клиент → ["block", { on }]. Комнате (кроме отправителя) →
  * ["block", { id, on }]. Пока блок держится, strike проводит любые удары по этому
- * коту в зону «Лапы». Состояние также входит в publicCat — новички видят его в field.
+ * коту в зону «Лапы», кроме хвоста — удар в хвост блок не ловит (см. strike).
+ * Состояние также входит в publicCat — новички видят его в field.
  */
 function block(ws, payload = {}) {
   const room = ws.room;

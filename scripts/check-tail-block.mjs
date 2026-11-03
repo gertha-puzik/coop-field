@@ -5,9 +5,9 @@ import { WebSocket } from "ws";
  * Использование: node scripts/check-tail-block.mjs [wsUrl]
  *   по умолчанию — прод (wss://coop.89-232-184-77.sslip.io); для локали:
  *   node scripts/check-tail-block.mjs ws://127.0.0.1:3780
- * Сценарии: удар в хвост по стоящему блоку (→ Лапы), без блока (→ Хвост)
- * и с блоком, вставшим в полёте (→ Лапы). Регресс-тесты тех же правил —
- * в scripts/test-ws.mjs (блок «Хвост и блок»). */
+ * Правило: блок проводит любой удар в «Лапы», КРОМЕ хвоста — удар в хвост
+ * проходит хвостом и по стоящему блоку, и когда блок встал в полёте.
+ * Регресс-тесты тех же правил — в scripts/test-ws.mjs (блок «Хвост и блок»). */
 const url = process.argv[2] || "wss://coop.89-232-184-77.sslip.io";
 const room = `tailchk-${Date.now().toString(36)}`;
 
@@ -45,14 +45,15 @@ const angle = (Math.atan2(dYou.y - aYou.y, dYou.x - aYou.x) * 180) / Math.PI;
 console.log(`server=${url} room=${room} atk=${aYou.x},${aYou.y} def=${dYou.x},${dYou.y} angle=${angle.toFixed(0)}`);
 await sleep(80);
 
-// 1) Блок стоит → удар в хвост должен прийти «Лапы» с лаповым уроном (5).
+// 1) Блок стоит → удар в хвост должен пройти ХВОСТОМ с уроном бьющего (33):
+//    блок не ловит удар в хвост — исключение из правила.
 def.send(JSON.stringify(["block", { on: true }]));
 await waitFor(atk, "block");
 atk.inbox.length = 0;
 def.inbox.length = 0;
 atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 33, pawsDamage: 5 }]));
 const r1 = (await waitFor(def, "fight"))[1];
-console.log(`1) хвост по стоящему блоку: ${fmt(r1)} → ${r1.zone === "paws" ? "OK редирект" : "БАГ: хвост прошёл"}`);
+console.log(`1) хвост по стоящему блоку: ${fmt(r1)} → ${r1.zone === "tail" ? "OK исключение" : "БАГ: блок перехватил хвост"}`);
 
 // 2) Без блока → хвост остаётся хвостом (урон бьющего 33).
 def.send(JSON.stringify(["block", { on: false }]));
@@ -64,14 +65,22 @@ atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damag
 const r2 = (await waitFor(def, "fight"))[1];
 console.log(`2) хвост без блока:        ${fmt(r2)} → ${r2.zone === "tail" ? "OK хвост" : "неожиданно"}`);
 
-// 3) Блок встаёт, пока удар летит → на касании «Лапы» с уроном 5.
+// 3) Блок встаёт, пока удар летит → хвост всё равно проходит хвостом (33).
 await sleep(120);
 atk.inbox.length = 0;
 def.inbox.length = 0;
 atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 33, pawsDamage: 5, flightMs: 200 }]));
 def.send(JSON.stringify(["block", { on: true }]));
 const r3 = (await waitFor(def, "fight"))[1];
-console.log(`3) хвост, блок в полёте:   ${fmt(r3)} → ${r3.zone === "paws" ? "OK ловля в полёте" : "БАГ: пролетел"}`);
+console.log(`3) хвост, блок в полёте:   ${fmt(r3)} → ${r3.zone === "tail" ? "OK исключение" : "БАГ: блок перехватил хвост"}`);
+
+// 4) Контраст: морда по стоящему блоку → «Лапы» с лаповым уроном (5).
+await sleep(120);
+atk.inbox.length = 0;
+def.inbox.length = 0;
+atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "muzzle", angle, damage: 33, pawsDamage: 5 }]));
+const r4 = (await waitFor(def, "fight"))[1];
+console.log(`4) морда по стоящему блоку: ${fmt(r4)} → ${r4.zone === "paws" ? "OK редирект" : "неожиданно"}`);
 
 def.send(JSON.stringify(["block", { on: false }]));
 atk.close();

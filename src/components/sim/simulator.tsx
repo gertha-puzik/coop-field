@@ -309,7 +309,8 @@ interface Engine {
   /** performance.now() следующего автоматического удара при удержании I. */
   nextHoldStrike: number;
   /** Блок (удержание К): удары по игроку уходят в «Лапы», сам он не двигается,
-   *  не бьёт и не крутит стрелу. Значок замка видит только сам игрок. */
+   *  не бьёт и не крутит стрелу. Исключение — хвост: удар в хвост блок не ловит.
+   *  Значок замка видит только сам игрок. */
   blocking: boolean;
   labels: FloatLabel[];
   hover: { c: number; r: number } | null;
@@ -714,7 +715,8 @@ export default function Simulator() {
   const dummySyncRef = useRef<{ at: number }>({ at: 0 });
   /** Мишень РАБ включена — зеркало для игрового цикла. */
   const rabOnRef = useRef(false);
-  /** Кто из чужих котов держит блок (их числовые id): любой удар по такому — в «Лапы». */
+  /** Кто из чужих котов держит блок (их числовые id): любой удар по такому — в «Лапы»,
+   *  кроме удара в хвост — хвост блок не ловит. */
   const remoteBlockRef = useRef<Set<number>>(new Set());
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
@@ -1045,7 +1047,8 @@ export default function Simulator() {
         setPeerCount(1 + liveRemotesRef.current.length);
       },
       onBlock: (info) => {
-        // Стойка блока чужого кота: нужна бьющему, чтобы проводить удары в «Лапы».
+        // Стойка блока чужого кота: нужна бьющему, чтобы проводить удары в «Лапы»
+        // (кроме хвоста — удар в хвост блок не ловит).
         if (info.id === meIdRef.current) return;
         if (info.on) remoteBlockRef.current.add(info.id);
         else remoteBlockRef.current.delete(info.id);
@@ -2698,15 +2701,12 @@ export default function Simulator() {
       const tRow = t.row;
       const dx = tCol - snap.col;
       const dy = tRow - snap.row;
-      // Блок цели: ЛЮБОЙ удар по блокирующему игроку — в «Лапы», куда бы стрела
-      // ни шла и с какой стойки ни бьём (прямая/диагональ, любое окно).
       const targetBlocking =
         t.id.startsWith('p') && remoteBlockRef.current.has(Number(t.id.slice(1)));
-      if (targetBlocking && zPaws) {
-        hitDamage = zPaws.damage;
-        struck = t;
-        entry = { target: t.name, zoneId: zPaws.id, zoneLabel: zPaws.name, count: 1, actor: 'Я' };
-      } else if (Math.abs(dx) === 1 && Math.abs(dy) === 1) {
+      // Прицельная зона считается ДО блока: хвост — исключение из блока, поэтому
+      // важно знать, куда именно шла стрела, даже по блокирующему игроку.
+      let aimed: StrikeZone | null | undefined;
+      if (Math.abs(dx) === 1 && Math.abs(dy) === 1) {
         // Удар с диагонали: зона задаётся стойкой относительно цели, а стрела обязана
         // стоять в окне замедления направления на цель:
         //  слева-сверху (стрела вправо-вниз, окно 45°) и справа-сверху (влево-вниз, 135°) — Морда,
@@ -2715,14 +2715,7 @@ export default function Simulator() {
         const phi = wrap360((Math.atan2(dy, dx) * 180) / Math.PI);
         const forcedId = phi === 45 || phi === 135 ? 'muzzle' : phi === 225 ? 'tail' : 'paws';
         const win = s.slowdown.windows[String(phi) as WindowKey];
-        const z = win && inWindow(snap.angle, win) ? s.combat.zones.find((zz) => zz.id === forcedId) : undefined;
-        if (z) {
-          hitDamage = z.damage;
-          struck = t;
-          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
-        } else {
-          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
-        }
+        aimed = win && inWindow(snap.angle, win) ? s.combat.zones.find((zz) => zz.id === forcedId) : undefined;
       } else {
         // Прямая стойка: зона — полоса тела, в которую входит луч стрелы.
         // Луч идёт из точки закрепления стрелы под её углом; промах — луч не задел тело.
@@ -2733,15 +2726,20 @@ export default function Simulator() {
         const box = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, tCol, tRow, t.scale);
         const rad = (snap.angle * Math.PI) / 180;
         const hit = rayBox(a.ax, a.ay, Math.cos(rad), Math.sin(rad), box.x, box.y, box.w, box.h);
-        const z = hit.hit ? resolveZonePixel(hit.ny, entrySide(hit), s.combat.zones) : null;
-        if (z) {
-          hitDamage = z.damage;
-          struck = t;
-          entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
-        } else {
-          // луч прошёл мимо тела — «мимо», имя цели не пишется
-          entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
-        }
+        aimed = hit.hit ? resolveZonePixel(hit.ny, entrySide(hit), s.combat.zones) : null;
+      }
+      // Блок цели: ЛЮБОЙ удар по блокирующему игроку — в «Лапы», куда бы стрела
+      // ни шла и с какой стойки ни бьём (прямая/диагональ, любое окно).
+      // Единственное исключение — хвост: удар в хвост блок не ловит и остаётся
+      // хвостом (хвост — зона с самым маленьким получаемым уроном).
+      const z = targetBlocking && zPaws ? (aimed && aimed.id === 'tail' ? aimed : zPaws) : aimed;
+      if (z) {
+        hitDamage = z.damage;
+        struck = t;
+        entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я' };
+      } else {
+        // луч прошёл мимо тела — «мимо», имя цели не пишется
+        entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
       }
     }
 
@@ -2760,8 +2758,9 @@ export default function Simulator() {
         // Сервер нормализует число и раздаёт fight с этим уроном всей комнате —
         // иначе у цели всегда будет серверная таблица, и пресет 0,0–0,9 не работает.
         // pawsDamage — лаповый урон пресета: если блок встанет за время полёта,
-        // сервер переведёт удар в «Лапы» и спишет именно его. flightMs — окно
-        // отклика бьющего: столько удар «летит» на сервере, и блок успевает его поймать.
+        // сервер переведёт удар в «Лапы» и спишет именно его. Исключение — хвост:
+        // блок не переносит удар из хвоста в «Лапы». flightMs — окно отклика
+        // бьющего: столько удар «летит» на сервере, и блок успевает его поймать.
         netRef.current.emit('strike', {
           target,
           zone: entry.zoneId,

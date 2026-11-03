@@ -315,10 +315,12 @@ if (flightMiss[1].zone !== "muzzle" || flightMiss[1].part !== "Морда" || fl
 }
 console.log("ok: block dropped before impact → strike lands as thrown");
 
-// Хвост и блок: хвост — обычная зона, никаких исключений из редиректа.
-// 1) Блок уже стоит — удар в хвост проходит как «Лапы» с лаповым уроном бьющего.
-// 2) Блока нет — хвост проходит хвостом (серверная таблица: хвост = 2).
-// 3) Блок встал, пока удар летит — на касании удар всё равно уходит в «Лапы».
+// Хвост и блок: хвост — ЕДИНСТВЕННОЕ исключение из блока. Блок проводит любой удар
+// в «Лапы», но удар в хвост не переносит: он остаётся хвостом и по логу, и по урону.
+// 1) Блок уже стоит — удар в хвост проходит хвостом с уроном бьющего (33).
+// 2) Блока нет — то же самое: хвост проходит хвостом.
+// 3) Блок встал, пока удар летит — хвост всё равно проходит хвостом (исключение).
+// 4) Контраст: удар в морду по стоящему блоку — «Лапы» с лаповым уроном бьющего.
 const tailRoom = `t${Date.now().toString(36)}tail`;
 const tAtk = await client("Хвостобой", tailRoom);
 const tDef = await client("Хвостостой", tailRoom);
@@ -332,11 +334,10 @@ tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5 }]));
 const tailBlocked = await waitFor(tDef, "fight");
-if (tailBlocked[1].zone !== "paws" || tailBlocked[1].part !== "Лапы") {
+if (tailBlocked[1].zone !== "tail" || tailBlocked[1].part !== "Хвост" || tailBlocked[1].damage !== 33) {
   throw new Error(`tail vs block ${JSON.stringify(tailBlocked[1])}`);
 }
-if (tailBlocked[1].damage !== 5) throw new Error(`tail vs block damage ${JSON.stringify(tailBlocked[1].damage)}`);
-console.log("ok: tail strike vs standing block → paws, paws damage");
+console.log("ok: tail strike vs standing block → tail, tail damage (block exception)");
 tDef.send(JSON.stringify(["block", { on: false }]));
 await waitFor(tAtk, "block");
 await sleep(80);
@@ -354,13 +355,23 @@ tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5, flightMs: 150 }]));
 tDef.send(JSON.stringify(["block", { on: true }]));
 const tailFlight = await waitFor(tDef, "fight");
-if (tailFlight[1].zone !== "paws" || tailFlight[1].part !== "Лапы" || tailFlight[1].damage !== 5) {
-  throw new Error(`tail flight catch ${JSON.stringify(tailFlight[1])}`);
+if (tailFlight[1].zone !== "tail" || tailFlight[1].part !== "Хвост" || tailFlight[1].damage !== 33) {
+  throw new Error(`tail flight exception ${JSON.stringify(tailFlight[1])}`);
+}
+console.log("ok: tail strike vs block risen in flight → tail (exception)");
+// Контраст: не-хвостовая зона по стоящему блоку по-прежнему ловится в «Лапы».
+await sleep(80);
+tAtk.inbox.length = 0;
+tDef.inbox.length = 0;
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "muzzle", angle: tailAngle, damage: 33, pawsDamage: 5 }]));
+const muzzleBlocked = await waitFor(tDef, "fight");
+if (muzzleBlocked[1].zone !== "paws" || muzzleBlocked[1].part !== "Лапы" || muzzleBlocked[1].damage !== 5) {
+  throw new Error(`muzzle vs block ${JSON.stringify(muzzleBlocked[1])}`);
 }
 tDef.send(JSON.stringify(["block", { on: false }]));
 tAtk.close();
 tDef.close();
-console.log("ok: tail strike caught in flight → paws, paws damage");
+console.log("ok: non-tail strike vs standing block → paws, paws damage");
 
 // Состав комнат для выбора: roomsinfo отвечает по запрошенным id в порядке запроса,
 // пустая комната — count 0 и пустой список (комната при этом НЕ создаётся).
