@@ -21,8 +21,8 @@ const LOGIN_CHIPS = 6;
 
 /**
  * Выбор комнаты: карточки гротов с числом игроков и их именами.
- * Содержимое без обёртки — симулятор кладёт его либо на весь экран
- * (первый выбор после персонажа), либо в модалку («Перейти в другую комнату»).
+ * Без обёртки (embedded) — симулятор кладёт его внутрь своей колонки
+ * (экран входа); с обёрткой — на весь экран или в модалку.
  */
 export function RoomPicker({
   rows,
@@ -30,6 +30,7 @@ export function RoomPicker({
   stale,
   onPick,
   onCancel,
+  embedded,
 }: {
   rows: RoomRow[];
   /** roomsinfo уже приходил — иначе вместо чисел показываем «…». */
@@ -39,10 +40,12 @@ export function RoomPicker({
   onPick: (id: string) => void;
   /** Только для модалки: вернуться на поле без смены комнаты. */
   onCancel?: () => void;
+  /** Внутри экрана входа: без узкой внешней обёртки. */
+  embedded?: boolean;
 }) {
   const first = !onCancel;
-  return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+  const content = (
+    <>
       <header>
         <h1 className="text-xl font-bold leading-tight">{first ? 'Выберите комнату' : 'Перейти в другую комнату'}</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
@@ -119,6 +122,8 @@ export function RoomPicker({
           </Button>
         </div>
       ) : null}
-    </div>
+    </>
   );
+  if (embedded) return <div>{content}</div>;
+  return <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">{content}</div>;
 }

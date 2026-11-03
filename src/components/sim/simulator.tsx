@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '@/components/ui/button';
-import { CharacterPicker, type CharacterChoice } from './character-picker';
+import { EntryScreen } from './entry-screen';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
@@ -41,6 +41,7 @@ import {
   tierColor,
   wrap180,
   wrap360,
+  zoneDamageFor,
 } from '@/lib/sim/settings';
 
 const STORAGE_KEY = 'catwar-battle-sim-v4';
@@ -552,11 +553,11 @@ function strikeResponseMs(s: SimSettings): number {
 export default function Simulator() {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
-  /** Экран: выбор персонажа → выбор комнаты → поле. Сокет открывается на втором,
-   *  но пока без join — только слушает состав комнат. */
-  const [stage, setStage] = useState<'character' | 'room' | 'field'>('character');
-  /** Сеть поднята (после подтверждения персонажа). Смена stage room↔field сокет не пересоздаёт. */
-  const [netStarted, setNetStarted] = useState(false);
+  /** Экран: вход (кот + скрытые параметры + выбор комнаты) → поле. */
+  const [stage, setStage] = useState<'entry' | 'field'>('entry');
+  /** Сеть поднята с самого входа: сокет слушает состав комнат, join уходит
+   *  только по выбору комнаты. Смена entry↔field сокет не пересоздаёт. */
+  const [netStarted, setNetStarted] = useState(true);
   /** Клавиатура поля активна только на stage «field» (см. обработчики keydown). */
   const enteredRef = useRef(false);
   const pendingJoinRef = useRef<{ room: string; login: string; sprite: SpriteId } | null>(null);
@@ -1243,10 +1244,10 @@ export default function Simulator() {
     [playerName, shareUrl],
   );
 
-  /** Пока открыт выбор комнаты (первый экран или модалка) — опрашиваем состав гротов.
+  /** Пока открыт экран входа или модалка смены комнаты — опрашиваем состав гротов.
    *  Сервер отвечает roomsinfo; если дольше 5 с ответа нет — помечаем «данные недоступны». */
   useEffect(() => {
-    if (!netStarted || (stage !== 'room' && !switchOpen)) return;
+    if (!netStarted || (stage !== 'entry' && !switchOpen)) return;
     setRoomsStale(false);
     const ask = () => netRef.current?.requestRooms(wantedRoomIds());
     ask();
@@ -2990,25 +2991,26 @@ export default function Simulator() {
     return true;
   }, []);
 
-  /** Подтверждение экрана персонажа: дальше — выбор комнаты (грота), поле ещё не показываем. */
-  const enterField = useCallback((choice: CharacterChoice) => {
-    const login = choice.name.trim().slice(0, 24);
-    if (!login) return;
-    const sprite = SPRITES.some((sp) => sp.id === choice.sprite) ? choice.sprite : settingsRef.current.character.sprite;
-    const scale = Math.min(100, Math.max(60, Math.round(choice.scale)));
-    pendingJoinRef.current = { room: '', login, sprite };
-    setSettings((s) => ({
-      ...s,
-      controlled: 'main',
-      character: { ...s.character, sprite, spriteScale: scale },
-    }));
-    setPlayerName(login);
-    setRoomCode('');
-    setRoomsRows(null);
-    setRoomsStale(false);
-    setNetStarted(true);
-    setStage('room');
-  }, []);
+  /** Вход с экрана entry: подтверждённые кот/имя/размер + комната. Сокет уже
+   *  слушает комнаты — join уходит в ту же связь. Настройки персонажа применяем
+   *  здесь же: дальше экран входа размонтируется. */
+  const joinFromEntry = useCallback(
+    (roomId: string, who: { name: string; sprite: SpriteId; scale: number }) => {
+      const login = who.name.trim().slice(0, 24);
+      if (!login) return;
+      const sprite = SPRITES.some((sp) => sp.id === who.sprite) ? who.sprite : settingsRef.current.character.sprite;
+      const scale = Math.min(100, Math.max(60, Math.round(who.scale)));
+      setSettings((s) => ({
+        ...s,
+        controlled: 'main',
+        character: { ...s.character, sprite, spriteScale: scale },
+      }));
+      pendingJoinRef.current = { room: roomId, login, sprite };
+      setNetStarted(true);
+      pickRoom(roomId);
+    },
+    [pickRoom],
+  );
 
   const fieldW = settings.field.cols * settings.field.cellW;
   const fieldH = settings.field.rows * settings.field.cellH;
@@ -3090,28 +3092,34 @@ export default function Simulator() {
     return rows;
   })();
 
-  if (stage === 'character') {
-    return (
-      <div className="app-bg relative h-dvh text-[var(--sim-text)]">
-        <ThemeBackdrop theme={theme} />
-        {loaded ? (
-          <CharacterPicker
-            initialSprite={settings.character.sprite}
-            initialName={nameFromUrl().slice(0, 24)}
-            initialScale={settings.character.spriteScale}
-            onConfirm={enterField}
-          />
-        ) : null}
-      </div>
-    );
-  }
-
-  if (stage === 'room') {
+  if (stage === 'entry') {
     return (
       <div className="app-bg relative h-dvh text-[var(--sim-text)]">
         <ThemeBackdrop theme={theme} />
         <div className="relative z-10 h-dvh overflow-y-auto">
-          {loaded ? <RoomPicker rows={roomRows} ready={roomsRows !== null} stale={roomsStale} onPick={pickRoom} /> : null}
+          {loaded ? (
+            <EntryScreen
+              initialSprite={settings.character.sprite}
+              initialName={nameFromUrl().slice(0, 24)}
+              initialScale={settings.character.spriteScale}
+              periodSec={settings.arrow.periodSec}
+              damageLevel={settings.combat.damageLevel}
+              armorLevel={settings.combat.armorLevel}
+              roomRows={roomRows}
+              roomsReady={roomsRows !== null}
+              roomsStale={roomsStale}
+              onPickRoom={joinFromEntry}
+              onApplySpeed={(v) => patchArrow({ periodSec: v })}
+              onApplyDamage={(k) =>
+                patchCombat({
+                  damageLevel: k,
+                  // геометрия зон (px, сторона, цвет) сохраняется — меняется только урон
+                  zones: settingsRef.current.combat.zones.map((z) => ({ ...z, damage: zoneDamageFor(k, z.id) })),
+                })
+              }
+              onApplyArmor={(k) => patchCombat({ armorLevel: k })}
+            />
+          ) : null}
         </div>
       </div>
     );
