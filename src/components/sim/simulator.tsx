@@ -3209,7 +3209,7 @@ export default function Simulator() {
             className={
               settings.arrow.battleMode
                 ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                : 'h-8 text-xs'
+                : 'btn-neutral h-8 text-xs'
             }
             onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
           >
@@ -3314,7 +3314,7 @@ export default function Simulator() {
           >
             <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
               <h2 className="text-sm font-bold text-[var(--sim-text)]">Настройки</h2>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSettingsOpen(false)}>
+              <Button size="sm" variant="outline" className="btn-neutral h-7 text-xs" onClick={() => setSettingsOpen(false)}>
                 Закрыть
               </Button>
             </div>

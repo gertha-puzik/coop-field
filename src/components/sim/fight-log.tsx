@@ -33,7 +33,7 @@ export function FightLog({ lines, onClear }: { lines: string[]; onClear?: () => 
               type="button"
               size="sm"
               variant="outline"
-              className="h-6 px-2 text-[10px]"
+              className="btn-neutral h-6 px-2 text-[10px]"
               aria-label="Очистить лог ударов"
               onClick={onClear}
             >
