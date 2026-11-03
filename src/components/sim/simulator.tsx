@@ -927,11 +927,10 @@ export default function Simulator() {
     if (!loaded || !netStarted) return;
     const pending = pendingJoinRef.current;
     const login = (pending?.login || nameFromUrl() || '').trim();
-    if (!login) return;
-    // Пока никуда не заходим: сокет слушает состав комнат (roomsinfo), join уйдёт
-    // из pickRoom() — в выбранный грот, и оттуда же — при переходах между гротами.
-    setRoomCode('');
-    setPlayerName(login);
+    // Сокет нужен уже на экране входа: он слушает состав комнат (roomsinfo),
+    // пока игрок печатает имя. Вход без имени не делаем — join уйдёт из
+    // pickRoom(), где имя берётся из pendingJoinRef (его кладёт joinFromEntry).
+    if (login) setPlayerName(login);
     const client = createCoopClient({
       onOpen: () => {
         setNetStatus('соединение есть');

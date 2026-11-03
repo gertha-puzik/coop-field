@@ -202,13 +202,17 @@ function ColorInput({
 /** Идентификатор раздела настроек (квадратик-иконка в переключателе). */
 type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config';
 
-/** Разделы: квадратик с иконкой темы, клик открывает содержимое. */
-const TABS: { id: TabId; icon: string; label: string }[] = [
-  { id: 'field', icon: '#', label: 'Поле' },
-  { id: 'arrow', icon: '🏹', label: 'Стрела' },
-  { id: 'slowdown', icon: '⛔', label: 'Замедление' },
-  { id: 'combat', icon: '💥', label: 'Удары и энергия' },
-  { id: 'config', icon: '⚙️', label: 'Конфиг' },
+/** Пароль админа: открывает все разделы, кроме «Общего». */
+const ADMIN_PASSWORD = '1946';
+
+/** Разделы: квадратик с иконкой темы, клик открывает содержимое.
+ *  «Общий» (#) виден всем; разделы с admin: true — только после пароля. */
+const TABS: { id: TabId; icon: string; label: string; admin?: boolean }[] = [
+  { id: 'field', icon: '#', label: 'Общий' },
+  { id: 'arrow', icon: '🏹', label: 'Стрела', admin: true },
+  { id: 'slowdown', icon: '⛔', label: 'Замедление', admin: true },
+  { id: 'combat', icon: '💥', label: 'Удары и энергия', admin: true },
+  { id: 'config', icon: '⚙️', label: 'Конфиг', admin: true },
 ];
 
 /* ---------- панель ---------- */
@@ -460,13 +464,38 @@ export function SettingsPanel(props: Props) {
   const [zoneHover, setZoneHover] = useState<string | null>(null);
   /** Открытый раздел (квадратик-иконка сверху). */
   const [tab, setTab] = useState<TabId>('field');
-  const activeTab = TABS.find((t) => t.id === tab) ?? TABS[0];
+  /** Расширенные настройки открыты паролем админа. Живёт, пока панель не закрыта:
+   *  закрыл «Настройки» — доступ снова закрыт. */
+  const [admin, setAdmin] = useState(false);
+  /** Форма ввода пароля открыта / набранный пароль / неверный пароль. */
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw, setPw] = useState('');
+  const [pwErr, setPwErr] = useState(false);
+
+  /** Видимые вкладки: без пароля — только «Общий». */
+  const visibleTabs = TABS.filter((t) => admin || !t.admin);
+  const requestedTab = TABS.find((t) => t.id === tab) ?? TABS[0];
+  /** Если вкладка админская, а пароль не введён — показываем «Общий». */
+  const activeTab = admin || !requestedTab.admin ? requestedTab : TABS[0];
+
+  const tryUnlock = (ev: React.FormEvent) => {
+    ev.preventDefault();
+    if (pw.trim() === ADMIN_PASSWORD) {
+      setAdmin(true);
+      setPw('');
+      setPwOpen(false);
+      setPwErr(false);
+    } else {
+      setPwErr(true);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-2.5">
-      {/* переключатель разделов: квадратики с иконками тем */}
+      {/* переключатель разделов: квадратики с иконками тем.
+          Без админ-пароля виден только «Общий» (#). */}
       <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Разделы настроек">
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const active = tab === t.id;
           return (
             <button
@@ -489,6 +518,62 @@ export function SettingsPanel(props: Props) {
           );
         })}
       </div>
+
+      {/* Кнопка входа в расширенные настройки — видна, пока пароль не введён */}
+      {!admin ? (
+        <div className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] p-2">
+          {!pwOpen ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 w-full text-xs"
+              onClick={() => {
+                setPwOpen(true);
+                setPwErr(false);
+              }}
+            >
+              🔒 Перейти к расширенным настройкам
+            </Button>
+          ) : (
+            <form className="flex flex-col gap-1.5" onSubmit={tryUnlock}>
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  value={pw}
+                  placeholder="Пароль администратора"
+                  aria-label="Пароль администратора"
+                  aria-invalid={pwErr || undefined}
+                  className={`h-8 flex-1 text-xs ${pwErr ? 'border-red-400' : ''}`}
+                  onChange={(e) => {
+                    setPw(e.target.value);
+                    setPwErr(false);
+                  }}
+                />
+                <Button type="submit" size="sm" className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]">
+                  Открыть
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    setPwOpen(false);
+                    setPw('');
+                    setPwErr(false);
+                  }}
+                >
+                  Отмена
+                </Button>
+              </div>
+              {pwErr ? <div className="text-[10px] font-semibold text-red-400">Неверный пароль. Доступ к расширенным настройкам не открыт.</div> : null}
+            </form>
+          )}
+        </div>
+      ) : null}
 
       {/* содержимое выбранного раздела */}
       <section aria-label={activeTab.label} className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset)]">
@@ -528,27 +613,6 @@ export function SettingsPanel(props: Props) {
           checked={props.rabOn}
           onChange={(v) => props.onToggleRab(v)}
         />
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 py-1">
-          {(
-            [
-              ['Клеток по X', 'cols', 1, 40],
-              ['Клеток по Y', 'rows', 1, 40],
-              ['Ширина клетки', 'cellW', 20, 400],
-              ['Высота клетки', 'cellH', 20, 400],
-            ] as const
-          ).map(([label, key, min, max]) => (
-            <div key={key} className="flex items-center justify-between gap-2 py-1">
-              <span className="text-xs text-[var(--sim-text-soft)]">{label}</span>
-              <NumInput
-                className="w-20"
-                value={s.field[key]}
-                min={min}
-                max={max}
-                onChange={(v) => props.patchField({ [key]: v } as Partial<SimSettings['field']>)}
-              />
-            </div>
-          ))}
-        </div>
         <Toggle label="Сетка клеток" checked={s.field.showGrid} onChange={(v) => props.patchField({ showGrid: v })} />
         <Toggle
           label="Шахматная подсветка"
@@ -1085,6 +1149,11 @@ export function SettingsPanel(props: Props) {
         без анимаций. Зажатая клавиша движения — шаг раз в 120 мс (с учётом замедления), спам нажатиями быстрее не
         сделает: правила замедления действуют всегда. Отклик удара — 170 мс. Все изменения настроек применяются
         мгновенно.
+      </div>
+
+      {/* Временная подсказка пароля — потом уберём */}
+      <div className="rounded-lg border border-dashed border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] p-3 text-[11px] leading-relaxed text-[var(--sim-text-muted)]">
+        Пароль расширенных настроек: <b className="text-[var(--sim-text)]">1946</b>. Подсказка временная — потом уберём.
       </div>
     </div>
   );

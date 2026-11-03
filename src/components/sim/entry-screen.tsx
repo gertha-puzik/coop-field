@@ -19,6 +19,22 @@ const SPEED_PRESETS = [1.8, 2.5, 3.5, 4, 4.5, 5];
 
 const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
 
+/** Значение в строке «Выбор СП»: подтверждённое — акцентное с галочкой, остальное — обычное. */
+function SpVal({ done, children }: { done: boolean; children: ReactNode }) {
+  return (
+    <span
+      className={
+        done
+          ? 'font-semibold text-[var(--sim-accent-text)]'
+          : 'text-[var(--sim-text-soft)]'
+      }
+    >
+      {children}
+      {done ? ' ✓' : ''}
+    </span>
+  );
+}
+
 /** Стиль чипа-пресета — как в панели настроек: активный акцентный, остальные белые. */
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -86,8 +102,9 @@ function ParamCard({
 }
 
 /**
- * Вход на поле одной страницей, два блока рядом:
+ * Вход на поле одной страницей, три блока рядом:
  *  слева — имя (сверху) и карусель скинов в 2 ряда, крутится в стороны;
+ *  в центре — небольшой блок «Выбор СП» с записью выбранных скрытых параметров;
  *  справа — «Скрытые параметры»: скорость стрелы (ползунок + пресеты 5…1,8 сек),
  *  дамаг и броня (пресеты 0,0–0,9). Каждый пункт игрок подтверждает — только
  *  подтверждённое значение уходит в настройки.
@@ -181,15 +198,16 @@ export function EntryScreen({
   };
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       <header>
         <h1 className="text-xl font-bold leading-tight">Общее поле</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
-          Слева — имя и скин, справа — скрытые параметры. Подтвердите три пункта — ниже откроется выбор комнаты.
+          Слева — имя и скин, справа — скрытые параметры (выбранное дублируется в центре). Подтвердите три пункта —
+          ниже откроется выбор комнаты.
         </p>
       </header>
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]">
         {/* Блок 1: имя сверху, под ним карусель скинов в 2 ряда */}
         <section aria-label="Кот" className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
           <label className="flex flex-col gap-1.5" htmlFor="entry-name">
@@ -309,6 +327,22 @@ export function EntryScreen({
             />
             <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">Рост модельки в процентах от высоты клетки. 100% — в полный рост.</p>
           </div>
+        </section>
+
+        {/* Средний блок: записанный выбор СП — стрела, дамаг, броня. Значения обновляются
+            сразу при выборе; ✓ отмечает уже подтверждённые пункты. */}
+        <section
+          aria-label="Выбор СП"
+          className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4"
+        >
+          <p className="text-[13px] leading-relaxed text-[var(--sim-text)]">
+            <span className="font-bold">Выбор СП:</span> стрела <SpVal done={speedDone}>{fmtSec(speedVal)}</SpVal>, дамаг{' '}
+            <SpVal done={damageDone}>{damageLevelLabel(damageVal)}</SpVal>, броня{' '}
+            <SpVal done={armorDone}>{damageLevelLabel(armorVal)}</SpVal>
+          </p>
+          <p className="mt-2 text-[11px] leading-snug text-[var(--sim-text-faint)]">
+            Значения берутся из блока справа и применяются к вам на поле. ✓ — пункт подтверждён.
+          </p>
         </section>
 
         {/* Блок 2: скрытые параметры, каждый пункт подтверждается */}
