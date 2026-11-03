@@ -30,6 +30,7 @@ import {
   RAB_SPRITE,
   SPRITES,
   bfsPath,
+  damageLevelLabel,
   dirByDeg,
   inWindow,
   mergeSettings,
@@ -45,6 +46,9 @@ import {
 } from '@/lib/sim/settings';
 
 const STORAGE_KEY = 'catwar-battle-sim-v4';
+
+/** «4,8 сек» — подпись скорости стрелы для панели СП в шапке. */
+const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
 /** Отдельное хранилище боевого состояния (энергия + лог ударов). */
 const COMBAT_KEY = 'catwar-battle-sim-combat-v1';
 /** Ширины боковых колонок (чат слева, лог ударов справа) — их тянет сам игрок. */
@@ -3133,6 +3137,24 @@ export default function Simulator() {
           <p className="text-[11px] text-[var(--sim-text-faint)]">
             {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
           </p>
+        </div>
+        {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
+        <div
+          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
+          aria-label="Выбранные скрытые параметры"
+        >
+          <span className="font-bold text-[var(--sim-text)]">СП:</span>
+          <span className="text-[var(--sim-text-muted)]">
+            стрела <b className="font-semibold text-[var(--sim-text)]">{fmtSec(settings.arrow.periodSec)}</b>
+          </span>
+          <span className="text-[var(--sim-text-faint)]">·</span>
+          <span className="text-[var(--sim-text-muted)]">
+            дамаг <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.damageLevel)}</b>
+          </span>
+          <span className="text-[var(--sim-text-faint)]">·</span>
+          <span className="text-[var(--sim-text-muted)]">
+            броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Button
