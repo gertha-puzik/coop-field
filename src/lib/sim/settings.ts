@@ -64,6 +64,7 @@ export type SpriteId =
   | 'maslina'
   | 'buran'
   | 'sumrak'
+  | 'izya'
   | 'rab';
 
 export interface SpriteMeta {
@@ -88,6 +89,7 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'maslina', name: 'Маслина', src: '/sprites/maslina.png' },
   { id: 'buran', name: 'Буран', src: '/sprites/buran.png' },
   { id: 'sumrak', name: 'Сумрак', src: '/sprites/sumrak.png' },
+  { id: 'izya', name: 'Изя', src: '/sprites/izya.png' },
 ];
 
 /**
