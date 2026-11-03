@@ -205,6 +205,27 @@ type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config';
 /** Пароль админа: открывает все разделы, кроме «Общего». */
 const ADMIN_PASSWORD = '1946';
 
+/** sessionStorage помнит, что пароль уже введён: доступ переживает сворачивание панели
+ *  и перезагрузку страницы, пропадает только при закрытии вкладки/браузера. */
+const ADMIN_KEY = 'sim-admin-unlocked';
+
+function readAdminUnlocked(): boolean {
+  try {
+    return sessionStorage.getItem(ADMIN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeAdminUnlocked(on: boolean) {
+  try {
+    if (on) sessionStorage.setItem(ADMIN_KEY, '1');
+    else sessionStorage.removeItem(ADMIN_KEY);
+  } catch {
+    /* без хранилища доступ живёт только пока панель открыта */
+  }
+}
+
 /** Разделы: квадратик с иконкой темы, клик открывает содержимое.
  *  «Общий» (#) виден всем; разделы с admin: true — только после пароля. */
 const TABS: { id: TabId; icon: string; label: string; admin?: boolean }[] = [
@@ -464,9 +485,10 @@ export function SettingsPanel(props: Props) {
   const [zoneHover, setZoneHover] = useState<string | null>(null);
   /** Открытый раздел (квадратик-иконка сверху). */
   const [tab, setTab] = useState<TabId>('field');
-  /** Расширенные настройки открыты паролем админа. Живёт, пока панель не закрыта:
-   *  закрыл «Настройки» — доступ снова закрыт. */
-  const [admin, setAdmin] = useState(false);
+  /** Расширенные настройки открыты паролем админа. Доступ запоминается в sessionStorage:
+   *  сворачивание панели и перезагрузка страницы его не сбрасывают — снова
+   *  запрашивать пароль придётся только в новой вкладке. */
+  const [admin, setAdmin] = useState(readAdminUnlocked);
   /** Форма ввода пароля открыта / набранный пароль / неверный пароль. */
   const [pwOpen, setPwOpen] = useState(false);
   const [pw, setPw] = useState('');
@@ -482,6 +504,7 @@ export function SettingsPanel(props: Props) {
     ev.preventDefault();
     if (pw.trim() === ADMIN_PASSWORD) {
       setAdmin(true);
+      writeAdminUnlocked(true);
       setPw('');
       setPwOpen(false);
       setPwErr(false);
@@ -1141,15 +1164,6 @@ export function SettingsPanel(props: Props) {
           )}
         </div>
       </section>
-
-      <div className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] p-3 text-[11px] leading-relaxed text-[var(--sim-text-muted)]">
-        <div className="mb-1 text-xs font-semibold text-[var(--sim-text)]">Управление</div>
-        W A S D — шаг вверх/влево/вниз/вправо, на русской раскладке те же клавиши — ц ф ы в · Q E Z X — диагонали · ЛКМ по клетке — идти маршрутом · B — боевой режим · I —
-        удар (вплотную, по наведённой стреле) · J — стрела против часовой · L — по часовой. Персонаж прыгает мгновенно,
-        без анимаций. Зажатая клавиша движения — шаг раз в 120 мс (с учётом замедления), спам нажатиями быстрее не
-        сделает: правила замедления действуют всегда. Отклик удара — 170 мс. Все изменения настроек применяются
-        мгновенно.
-      </div>
 
       {/* Временная подсказка пароля — потом уберём */}
       <div className="rounded-lg border border-dashed border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] p-3 text-[11px] leading-relaxed text-[var(--sim-text-muted)]">
