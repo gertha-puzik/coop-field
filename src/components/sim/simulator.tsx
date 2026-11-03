@@ -26,10 +26,14 @@ import {
   TEST_ROOM_ID,
   TEST_ROWS,
   TEST_ZONES,
-  clampToPolygon,
   drawTestDecorItem,
+  nearestPeaceAnchor,
   nearestWalkableCell,
+  peaceAnchorPoints,
+  peaceRoute,
+  peaceStepNeighbor,
   pointInPolygon,
+  testClippedCells,
   testFieldGeometry,
   testNonWalkableCells,
   testWalkableCell,
@@ -83,8 +87,14 @@ const REMOTE_STEP_MS = 60;
 const REMOTE_BACKLOG_MAX = 4;
 /** Темп рассылки свободной позиции в «тесте» (~12 кадров/с). */
 const FREE_EMIT_MS = 80;
-/** Плавность камеры: за ~130 мс камера догоняет игрока на 63% дистанции. */
-const CAMERA_TAU_MS = 130;
+/** Плавность камеры: за ~420 мс камера догоняет игрока на 63% дистанции —
+ *  в несколько раз плавнее прежнего (130 мс), кот больше не «дёргает» камеру. */
+const CAMERA_TAU_MS = 420;
+/** Длительность полушага мирного режима (полклетки по оси), мс: и клик, и клавиши
+ *  идут с одной и той же скоростью — якорь к якорю. */
+const PEACE_STEP_MS = 210;
+/** Дальность притяжения клика к якорной точке, px (шаг решётки — 50×75 px). */
+const PEACE_SNAP_PX = 46;
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -363,6 +373,10 @@ interface Engine {
    *  (левый верх спрайта). В бою совпадает с col/row. */
   fx: number;
   fy: number;
+  /** Мирный режим: оставшиеся якоря маршрута (в свободных долях, под центр спрайта). */
+  proute: { x: number; y: number }[];
+  /** Мирный режим: якорь под курсором (клеточные доли мира) — для подсветки и курсора. */
+  hoverA: { x: number; y: number } | null;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -384,6 +398,15 @@ function spriteBoxOf(s: SimSettings, aspect: number, col: number, row: number, s
   const h = (s.field.cellH - 10) * k;
   const w = h * aspect;
   return { x: col * s.field.cellW, y: row * s.field.cellH, w, h, k };
+}
+
+/** Полгабарита своей модельки в клеточных долях: перевод якорной точки мира
+ *  (центр и середины сторон клетки) в свободную позицию (левый верх спрайта)
+ *  и обратно, чтобы центр модельки вставал точно на якорь. */
+function peaceHalfBox(s: SimSettings, img: HTMLImageElement | undefined) {
+  const aspect = img && img.height > 0 ? img.width / img.height : 2 / 3;
+  const b = spriteBoxOf(s, aspect, 0, 0, s.character.spriteScale);
+  return { dx: b.w / 2 / s.field.cellW, dy: b.h / 2 / s.field.cellH };
 }
 
 /** Точка закрепления стрелы: сидит на одной и той же доле (ARROW_ANCHOR_F) ширины/высоты модельки. */
@@ -801,6 +824,8 @@ export default function Simulator() {
     moveLockUntil: 0,
     fx: 4,
     fy: 2,
+    proute: [],
+    hoverA: null,
   });
 
   /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
@@ -1457,6 +1482,8 @@ export default function Simulator() {
     if (fieldFormat !== 'test') return;
     const e = engineRef.current;
     const net = netRef.current;
+    e.proute = [];
+    e.hoverA = null;
     if (settings.arrow.battleMode) {
       const cell = nearestWalkableCell(e.fx, e.fy);
       e.col = cell.c;
@@ -1499,6 +1526,7 @@ export default function Simulator() {
       if (e.blocking) {
         e.held = [];
         e.path = [];
+        e.proute = [];
         e.rot = 0;
         e.strikeHeld = false;
         e.step = null;
@@ -1643,31 +1671,49 @@ export default function Simulator() {
         }
       }
 
-      // «Тест», мирный режим: свободная ходьба по всей нарисованной локации.
-      // Скорость — как темп боя: клетка по ширине/высоте за stepMs, диагонали нормируются.
+      // «Тест», мирный режим: шаги по якорным точкам — центр клетки и середины её
+      // сторон. Клик строит маршрут по соседним якорям (BFS), зажатые клавиши дают
+      // по шагу за раз. Полушаг (полклетки по оси) длится PEACE_STEP_MS — скорость
+      // одна и та же и для клика, и для клавиш; остановиться можно на любом якоре.
       if (peaceWalk) {
-        let mvx = 0;
-        let mvy = 0;
-        for (const dirDeg of e.held) {
-          const d = dirByDeg(dirDeg);
-          mvx += d.dx;
-          mvy += d.dy;
-        }
-        const moving = mvx !== 0 || mvy !== 0;
         const net = netRef.current;
-        if (moving) {
-          const len = Math.hypot(mvx, mvy) || 1;
-          mvx /= len;
-          mvy /= len;
-          const spx = (s.field.cellW / Math.max(30, s.character.stepMs)) * 1000;
-          const spy = (s.field.cellH / Math.max(30, s.character.stepMs)) * 1000;
-          const nxP = e.fx + (mvx * spx * dt) / 1000;
-          const nyP = e.fy + (mvy * spy * dt) / 1000;
-          const geo = testFieldGeometry(s.field.cellW, s.field.cellH);
-          const cl = clampToPolygon(geo.polygon, e.fx, e.fy, nxP, nyP);
-          e.fx = cl.x;
-          e.fy = cl.y;
-          e.lastDir = dirByDeg(e.held[e.held.length - 1]).deg;
+        const cellW = s.field.cellW;
+        const cellH = s.field.cellH;
+        const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        // маршрута нет, но клавиши зажаты — один шаг к соседнему якорю в направлении
+        if (e.proute.length === 0 && e.held.length > 0) {
+          const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, cellW, cellH, 1e9);
+          const nb = here ? peaceStepNeighbor(here.i, e.held[e.held.length - 1], cellW, cellH) : null;
+          if (nb !== null) {
+            const p = peaceAnchorPoints()[nb];
+            e.proute.push({ x: p.x - hb.dx, y: p.y - hb.dy });
+          }
+        }
+        // движение по маршруту: сегмент идёт с постоянной скоростью, обе оси
+        // доезжают одновременно (длительность — по самой длинной оси)
+        if (e.proute.length > 0) {
+          let budget = dt;
+          let moveDeg: number | null = null;
+          while (budget > 0 && e.proute.length > 0) {
+            const seg = e.proute[0];
+            const dx = seg.x - e.fx;
+            const dy = seg.y - e.fy;
+            if (dx !== 0 || dy !== 0) {
+              moveDeg = wrap360((Math.atan2(dy * cellH, dx * cellW) * 180) / Math.PI);
+            }
+            const maxAxis = Math.max(Math.abs(dx), Math.abs(dy));
+            const segMs = Math.max(1, (maxAxis / 0.5) * PEACE_STEP_MS);
+            const stepMs = Math.min(budget, segMs);
+            e.fx += dx * (stepMs / segMs);
+            e.fy += dy * (stepMs / segMs);
+            budget -= stepMs;
+            if (stepMs >= segMs) {
+              e.fx = seg.x;
+              e.fy = seg.y;
+              e.proute.shift();
+            }
+          }
+          if (moveDeg !== null) e.lastDir = (Math.round(moveDeg / 45) * 45) % 360;
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
             freeSyncRef.current.at = now;
             net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
@@ -2055,15 +2101,11 @@ export default function Simulator() {
         grad.addColorStop(1, '#233b18');
         ctx.fillStyle = grad;
         ctx.fill(geo.path);
-        // земляная кромка и светлый травяной кант внутри неё
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = '#4a3a28';
-        ctx.stroke(geo.path);
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
-        ctx.stroke(geo.path);
-        // зоны клеточной ходьбы: доска с сеткой (цвета — настройки поля)
+        // зоны клеточной ходьбы: доска с сеткой (цвета — настройки поля).
+        // Доска с сеткой режется клипом по кромке локации: сглаженный край
+        // подрезает углы зон, и ничего не вылезает за нарисованный островок.
+        ctx.save();
+        ctx.clip(geo.path);
         for (const z of TEST_ZONES) {
           const zx = z.c0 * s.field.cellW;
           const zy = z.r0 * s.field.cellH;
@@ -2094,8 +2136,44 @@ export default function Simulator() {
             ctx.stroke();
           }
         }
+        // клетки, задетые кромкой (не целиком внутри полигона): в бою они
+        // недоступны для прыжков — помечаем лёгкой красной заливкой
+        if (s.arrow.battleMode) {
+          ctx.fillStyle = 'rgba(214, 69, 65, 0.16)';
+          for (const k of testClippedCells()) {
+            ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH, s.field.cellW, s.field.cellH);
+          }
+        }
+        ctx.restore();
+        // земляная кромка поверх подрезанной доски: срезанный край сетки
+        // получает аккуратную окантовку и плавно уходит в траву
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#4a3a28';
+        ctx.stroke(geo.path);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
+        ctx.stroke(geo.path);
         // трава и цветы — чисто визуальный фон, под персонажами
         for (const d of geo.decor) drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH);
+        // мирный режим: якорные точки шагов (центр и середины сторон клетки)
+        // и подсветка той, что под курсором
+        if (!s.arrow.battleMode) {
+          ctx.beginPath();
+          for (const p of peaceAnchorPoints()) {
+            ctx.moveTo(p.x * s.field.cellW + 1.7, p.y * s.field.cellH);
+            ctx.arc(p.x * s.field.cellW, p.y * s.field.cellH, 1.7, 0, Math.PI * 2);
+          }
+          ctx.fillStyle = 'rgba(235, 240, 225, 0.34)';
+          ctx.fill();
+          if (e.hoverA) {
+            ctx.beginPath();
+            ctx.arc(e.hoverA.x * s.field.cellW, e.hoverA.y * s.field.cellH, 5.5, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          }
+        }
       } else {
         // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
         // Чтобы без «мыла»: backing store повторяет показанный размер с учётом
@@ -2717,6 +2795,20 @@ export default function Simulator() {
         e.held.push(action.dir);
         e.path = [];
       }
+      // мирный «тест»: тап — немедленный шаг к соседнему якорю (зажатие довершает
+      // шаги циклом); клавиши перебивают клик-маршрут, как в бою
+      const sK = settingsRef.current;
+      if (fieldFormatRef.current === 'test' && !sK.arrow.battleMode && sK.controlled === 'main') {
+        e.proute = [];
+        const hb = peaceHalfBox(sK, spritesRef.current[sK.character.sprite]);
+        const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, sK.field.cellW, sK.field.cellH, 1e9);
+        const nb = here ? peaceStepNeighbor(here.i, action.dir, sK.field.cellW, sK.field.cellH) : null;
+        if (nb !== null) {
+          const p = peaceAnchorPoints()[nb];
+          e.proute.push({ x: p.x - hb.dx, y: p.y - hb.dy });
+        }
+        return;
+      }
       // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
       // чем разрешает замедление, двигаться нельзя
       startStepRef.current?.(action.dir);
@@ -2858,8 +2950,18 @@ export default function Simulator() {
     else e.hover = null;
     const cv = canvasRef.current;
     if (testMode) {
-      // манекена в «тесте» нет — таскать нечего, курсор обычный
-      if (cv) cv.style.cursor = '';
+      // манекена в «тесте» нет — таскать нечего; в мирном режиме подсвечиваем якорь
+      // под курсором (клик по нему задаёт шаг), в бою — обычный курсор
+      if (!s.arrow.battleMode) {
+        const wx = mx / s.field.cellW;
+        const wy = my / s.field.cellH;
+        const a = nearestPeaceAnchor(wx, wy, s.field.cellW, s.field.cellH, PEACE_SNAP_PX);
+        e.hoverA = a ? { x: a.x, y: a.y } : null;
+        if (cv) cv.style.cursor = a ? 'pointer' : '';
+      } else {
+        e.hoverA = null;
+        if (cv) cv.style.cursor = '';
+      }
       return;
     }
     const hov = hitTargetAt(s, mx, my);
@@ -2868,7 +2970,9 @@ export default function Simulator() {
   };
 
   const onLeave = () => {
-    engineRef.current.hover = null;
+    const e = engineRef.current;
+    e.hover = null;
+    e.hoverA = null;
     const cv = canvasRef.current;
     if (cv && !dragRef.current) cv.style.cursor = '';
   };
@@ -3007,13 +3111,25 @@ export default function Simulator() {
     const testMode = fieldFormatRef.current === 'test';
     let { mx, my } = canvasPoint(ev);
     if (testMode) {
-      // в мирном «тесте» маршрутов нет (ходьба свободная); в бою клик — в мировых координатах
-      if (!s.arrow.battleMode) return;
       const cvp = canvasRef.current;
       if (!cvp) return;
       const rect = cvp.getBoundingClientRect();
       mx = ev.clientX - rect.left + camRef.current.x - cvp.clientWidth / 2;
       my = ev.clientY - rect.top + camRef.current.y - cvp.clientHeight / 2;
+      if (!s.arrow.battleMode) {
+        // мирный «тест»: клик по якорной точке — шагаем к ней по соседним якорям;
+        // новый клик перезапускает маршрут с текущего места
+        const a = nearestPeaceAnchor(mx / s.field.cellW, my / s.field.cellH, s.field.cellW, s.field.cellH, PEACE_SNAP_PX);
+        if (!a) return;
+        const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, s.field.cellW, s.field.cellH, 1e9);
+        if (!here) return;
+        e.proute = peaceRoute(here.i, a.i).map((i) => {
+          const p = peaceAnchorPoints()[i];
+          return { x: p.x - hb.dx, y: p.y - hb.dy };
+        });
+        return;
+      }
     }
     const c = Math.floor(mx / s.field.cellW);
     const r = Math.floor(my / s.field.cellH);

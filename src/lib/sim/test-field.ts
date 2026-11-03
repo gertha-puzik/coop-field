@@ -4,12 +4,14 @@
  * Мир: лужайка 10×7 клеток, переход направо 3×5 и закуток 6×6 (клетка 100×150 px,
  * как на обычном поле). Поверх зон нарисована локация с неровным («природным»)
  * краем: тёмная трава и земляная кромка. В боевом режиме ходьба идёт строго по
- * клеткам трёх зон, в мирном — свободно по всей нарисованной локации.
+ * клеткам трёх зон, в мирном — шагами по якорным точкам (центр клетки и середины
+ * её сторон), по ним же наводится мышь.
  *
  * Кромка строится один раз детерминированно (сид от кода комнаты): расширяем зоны
  * на полклетки, снимаем контур маски (марширующие квадраты), сглаживаем алгоритмом
- * Чайкина и добавляем лёгкую дрожь вершин. Тот же полигон используется и как
- * граница свободной ходьбы — картинка и коллизия всегда совпадают.
+ * Чайкина и добавляем лёгкую дрожь вершин. Сглаживание подрезает углы зон, поэтому
+ * клетка считается проходимой только когда целиком внутри кромки — сетку у кромки
+ * рисуем с клипом по полигону, и картинка с ходьбой всегда совпадают.
  */
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
@@ -31,9 +33,43 @@ export const TEST_MARGIN = 0.5;
 
 export type Pt = { x: number; y: number };
 
-/** Проходимая ли клетка мира (0-based) в боевом режиме. */
+/* ---------- проходимость клетки с учётом кромки ---------- */
+
+/** Полигон локации в клеточных долях — считается один раз (мир фиксированный). */
+let islandPoly: Pt[] | null = null;
+function islandPolygon(): Pt[] {
+  if (!islandPoly) islandPoly = buildTestPolygon(TEST_ROOM_ID);
+  return islandPoly;
+}
+
+/** Клетка целиком внутри нарисованной кромки: 4 угла, середины сторон и центр.
+ *  Сглаженный край подрезает углы зон — такие клетки «задеты» кромкой. */
+export function testCellInIsland(c: number, r: number): boolean {
+  const poly = islandPolygon();
+  for (let dy = 0; dy <= 2; dy++) {
+    for (let dx = 0; dx <= 2; dx++) {
+      if (!pointInPolygon(poly, c + dx * 0.5, r + dy * 0.5)) return false;
+    }
+  }
+  return true;
+}
+
+/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне и не задета кромкой. */
 export function testWalkableCell(c: number, r: number): boolean {
-  return TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+  if (!TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
+  return testCellInIsland(c, r);
+}
+
+/** Клетка в зоне, но задетая кромкой (не целиком внутри) — для красной пометки. */
+export function testClippedCells(): { c: number; r: number }[] {
+  const out: { c: number; r: number }[] = [];
+  for (let r = 0; r < TEST_ROWS; r++) {
+    for (let c = 0; c < TEST_COLS; c++) {
+      if (testWalkableCell(c, r)) continue;
+      if (TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
+    }
+  }
+  return out;
 }
 
 /** Все непроходимые клетки мира — для BFS-маршрута по клику (боевой режим). */
@@ -247,18 +283,137 @@ export function buildTestPolygon(seed: string): Pt[] {
   return poly;
 }
 
-/** Свободная ходьба не выходит за кромку: пробуем полный шаг, потом по осям. */
-export function clampToPolygon(
-  poly: Pt[],
-  x: number,
-  y: number,
-  nx: number,
-  ny: number,
-): { x: number; y: number } {
-  if (pointInPolygon(poly, nx, ny)) return { x: nx, y: ny };
-  if (pointInPolygon(poly, nx, y)) return { x: nx, y };
-  if (pointInPolygon(poly, x, ny)) return { x, y: ny };
-  return { x, y };
+/* ---------- якорные точки мирного режима ---------- */
+
+/**
+ * Шаги в мирном режиме идут по якорным точкам — центр и середины сторон каждой
+ * клеточной зоны (в мировых клеточных долях). Точки образуют шахматную полрешётки
+ * (шаг полклетки), соседние точки соединены в граф для маршрута по клику.
+ * Точки вне нарисованной кромки не участвуют — мирный режим живёт внутри локации.
+ */
+type PeaceAnchors = {
+  /** точки в клеточных долях мира */
+  pts: Pt[];
+  /** индексы соседей (расстояние до клетки включительно) */
+  adj: number[][];
+};
+
+let peaceCache: PeaceAnchors | null = null;
+
+function peaceAnchorData(): PeaceAnchors {
+  if (peaceCache) return peaceCache;
+  const poly = islandPolygon();
+  const seen = new Set<string>();
+  const pts: Pt[] = [];
+  const add = (x: number, y: number) => {
+    const k = `${x},${y}`;
+    if (seen.has(k)) return;
+    if (!pointInPolygon(poly, x, y)) return;
+    seen.add(k);
+    pts.push({ x, y });
+  };
+  for (let r = 0; r < TEST_ROWS; r++) {
+    for (let c = 0; c < TEST_COLS; c++) {
+      if (!TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) continue;
+      add(c + 0.5, r + 0.5);
+      add(c + 0.5, r);
+      add(c + 0.5, r + 1);
+      add(c, r + 0.5);
+      add(c + 1, r + 0.5);
+    }
+  }
+  // соседи: все точки в пределах клетки (полшага по осям, полшага по диагонали,
+  // целая сторона) — маршрут не пересекает пустоту вне локации
+  const adj: number[][] = pts.map(() => []);
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const dx = Math.abs(pts[i].x - pts[j].x);
+      const dy = Math.abs(pts[i].y - pts[j].y);
+      if (Math.hypot(dx, dy) <= 1.05 + 1e-9) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+  peaceCache = { pts, adj };
+  return peaceCache;
+}
+
+/** Все якорные точки мирного режима (клеточных долях мира). */
+export function peaceAnchorPoints(): Pt[] {
+  return peaceAnchorData().pts;
+}
+
+/** Ближайшая якорная точка к точке мира (клеточных долях), не дальше maxDistPx. */
+export function nearestPeaceAnchor(
+  wx: number,
+  wy: number,
+  cellW: number,
+  cellH: number,
+  maxDistPx: number,
+): { i: number; x: number; y: number } | null {
+  const { pts } = peaceAnchorData();
+  let best = -1;
+  let bestD = maxDistPx * maxDistPx;
+  for (let i = 0; i < pts.length; i++) {
+    const dx = (pts[i].x - wx) * cellW;
+    const dy = (pts[i].y - wy) * cellH;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best < 0 ? null : { i: best, x: pts[best].x, y: pts[best].y };
+}
+
+/** Маршрут по якорям (индексы, без стартовой): BFS по графу соседей. */
+export function peaceRoute(from: number, to: number): number[] {
+  const { adj } = peaceAnchorData();
+  if (from === to) return [];
+  const prev = new Map<number, number>();
+  const queue = [from];
+  prev.set(from, -1);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === to) break;
+    for (const nb of adj[cur]) {
+      if (prev.has(nb)) continue;
+      prev.set(nb, cur);
+      queue.push(nb);
+    }
+  }
+  if (!prev.has(to)) return [];
+  const path: number[] = [];
+  let cur = to;
+  while (cur !== from && cur !== -1) {
+    path.push(cur);
+    cur = prev.get(cur) ?? -1;
+  }
+  path.reverse();
+  return path;
+}
+
+/** Сосед якоря i в направлении dirDeg (0° вправо, по часовой): самый точный по углу
+ *  (окно ±45°), угол считается в экранных пикселях с учётом неквадратной клетки. */
+export function peaceStepNeighbor(i: number, dirDeg: number, cellW: number, cellH: number): number | null {
+  const { pts, adj } = peaceAnchorData();
+  let best = -1;
+  let bestDiff = 45;
+  for (const nb of adj[i] ?? []) {
+    const deg = wrap360((Math.atan2((pts[nb].y - pts[i].y) * cellH, (pts[nb].x - pts[i].x) * cellW) * 180) / Math.PI);
+    let diff = Math.abs(deg - dirDeg);
+    if (diff > 180) diff = 360 - diff;
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = nb;
+    }
+  }
+  return best < 0 ? null : best;
+}
+
+function wrap360(deg: number): number {
+  return ((deg % 360) + 360) % 360;
 }
 
 /* ---------- декор: трава и цветы ---------- */

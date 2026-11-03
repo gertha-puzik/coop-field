@@ -1050,6 +1050,14 @@ function handshake(origin) {
     throw new Error(`cellsync self ${JSON.stringify(syncSelf[1])}`);
   }
   if (syncPeer[1].fm !== 0) throw new Error("cellsync peer fm must be 0");
+  // клетка, задетая кромкой локации (правый верх закутка), недоступна:
+  // cellsync на неё молчаливо отклоняется, ходьба с кромки даёт отказ «edge»
+  ta.inbox.length = 0;
+  ta.send(JSON.stringify(["cellsync", { x: 19, y: 1 }]));
+  await sleep(120);
+  const clippedEcho = ta.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id && m[1].x === 19 && m[1].y === 1);
+  if (clippedEcho) throw new Error(`cellsync accepted clipped cell: ${JSON.stringify(clippedEcho[1])}`);
+  console.log("ok: test room clipped cell (19:1) refused");
   // манекен и мишень в «тесте» недоступны: info-отказ, состояния комнаты не рассылаются
   ta.inbox.length = 0;
   ta.send(JSON.stringify(["dummy", { on: true }]));

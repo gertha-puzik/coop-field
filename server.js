@@ -127,16 +127,190 @@ const RAB_CELL = { x: 4, y: 2 };
 const TEST_ROOM = 'test';
 const TEST_WIDTH = 19;
 const TEST_HEIGHT = 7;
-/** Маска проходимости «теста» (0-based): лужайка 10×7, переход 3×5, закуток 6×6. */
+/** Зоны клеточной ходьбы (0-based, включительно): лужайка 10×7, переход 3×5, закуток 6×6. */
+const TEST_ZONE_RECTS = [
+  [0, 0, 9, 6],
+  [10, 1, 12, 5],
+  [13, 0, 18, 5],
+];
+
+/* ---------- геометрия кромки локации — точный порт src/lib/sim/test-field.ts.
+   Клиент и сервер обязаны считать одно и то же: сид и сглаживание совпадают,
+   иначе сервер разрешит клетку, которую клиент уже подрезал картинкой. ---------- */
+
+function hashStr(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function chaikin(pts, iterations) {
+  let cur = pts;
+  for (let it = 0; it < iterations; it++) {
+    const out = [];
+    const n = cur.length;
+    for (let i = 0; i < n; i++) {
+      const a = cur[i];
+      const b = cur[(i + 1) % n];
+      out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 });
+      out.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 });
+    }
+    cur = out;
+  }
+  return cur;
+}
+
+/** Точка внутри замкнутого полигона (луч, количество пересечений нечётно). */
+function pointInPolygon(poly, x, y) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    const hit = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-12) + xi;
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+
+/** Контур расширенных на полклетки зон на сетке 0,5 клетки (марширующие квадраты). */
+function traceMaskOutline() {
+  const G = 2; // единиц сетки в клетке (шаг 0,5 клетки)
+  const rects = TEST_ZONE_RECTS.map(([c0, r0, c1, r1]) => ({
+    gx0: (c0 - 0.5) * G,
+    gy0: (r0 - 0.5) * G,
+    gx1: (c1 + 1 + 0.5) * G,
+    gy1: (r1 + 1 + 0.5) * G,
+  }));
+  const minX = Math.min(...rects.map((r) => r.gx0));
+  const maxX = Math.max(...rects.map((r) => r.gx1));
+  const minY = Math.min(...rects.map((r) => r.gy0));
+  const maxY = Math.max(...rects.map((r) => r.gy1));
+  const insideCell = (gx, gy) => rects.some((r) => gx >= r.gx0 && gx < r.gx1 && gy >= r.gy0 && gy < r.gy1);
+  const vkey = (x, y) => `${x},${y}`;
+  const edges = [];
+  const byVertex = new Map();
+  const addEdge = (x1, y1, x2, y2) => {
+    const id = edges.length;
+    edges.push([x1, y1, x2, y2]);
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      const k = vkey(x, y);
+      const arr = byVertex.get(k);
+      if (arr) arr.push(id);
+      else byVertex.set(k, [id]);
+    }
+  };
+  for (let gy = minY; gy < maxY; gy++) {
+    for (let gx = minX; gx < maxX; gx++) {
+      if (!insideCell(gx, gy)) continue;
+      if (!insideCell(gx, gy - 1)) addEdge(gx, gy, gx + 1, gy);
+      if (!insideCell(gx, gy + 1)) addEdge(gx, gy + 1, gx + 1, gy + 1);
+      if (!insideCell(gx - 1, gy)) addEdge(gx, gy, gx, gy + 1);
+      if (!insideCell(gx + 1, gy)) addEdge(gx + 1, gy, gx + 1, gy + 1);
+    }
+  }
+  const used = new Array(edges.length).fill(false);
+  let best = [];
+  for (let i = 0; i < edges.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    const loop = [
+      [edges[i][0], edges[i][1]],
+      [edges[i][2], edges[i][3]],
+    ];
+    let guard = 0;
+    while (guard++ <= edges.length) {
+      const [tx, ty] = loop[loop.length - 1];
+      const cands = (byVertex.get(vkey(tx, ty)) || []).filter((si) => !used[si]);
+      if (cands.length === 0) break;
+      const si = cands[0];
+      used[si] = true;
+      const [ex1, ey1, ex2, ey2] = edges[si];
+      const next = ex1 === tx && ey1 === ty ? [ex2, ey2] : [ex1, ey1];
+      if (next[0] === loop[0][0] && next[1] === loop[0][1]) break;
+      loop.push(next);
+    }
+    if (loop.length > best.length) best = loop;
+  }
+  return best;
+}
+
+/** Полигон кромки в клеточных долях: зоны + полклетки, Чайкин ×3, дрожь ±5%, Чайкин ×1. */
+const TEST_ISLAND = (() => {
+  const rnd = mulberry32(hashStr(TEST_ROOM));
+  const outline = traceMaskOutline();
+  if (outline.length === 0) {
+    return [
+      { x: -0.5, y: -0.5 },
+      { x: TEST_WIDTH + 0.5, y: -0.5 },
+      { x: TEST_WIDTH + 0.5, y: TEST_HEIGHT + 0.5 },
+      { x: -0.5, y: TEST_HEIGHT + 0.5 },
+    ];
+  }
+  const pts = [];
+  for (const [gx, gy] of outline) {
+    const p = { x: gx / 2, y: gy / 2 };
+    const n = pts.length;
+    if (n >= 2) {
+      const a = pts[n - 2];
+      const b = pts[n - 1];
+      if ((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y)) {
+        pts[n - 1] = p;
+        continue;
+      }
+    }
+    pts.push(p);
+  }
+  let poly = chaikin(pts, 3);
+  poly = poly.map((p) => ({
+    x: p.x + (rnd() * 2 - 1) * 0.05,
+    y: p.y + (rnd() * 2 - 1) * 0.05,
+  }));
+  poly = chaikin(poly, 1);
+  return poly;
+})();
+
+/** Клетка целиком внутри кромки: 4 угла, середины сторон и центр. */
+function testCellInIsland(c, r) {
+  for (let dy = 0; dy <= 2; dy++) {
+    for (let dx = 0; dx <= 2; dx++) {
+      if (!pointInPolygon(TEST_ISLAND, c + dx * 0.5, r + dy * 0.5)) return false;
+    }
+  }
+  return true;
+}
+
+/** Маска проходимости «теста» (0-based): зоны минус клетки, задетые кромкой
+ *  (сглаженный край подрезает углы зон — такие клетки недоступны для прыжков,
+ *  а сетка у кромки на клиенте рисуется с клипом по тому же полигону). */
 const TEST_CELLS = (() => {
   const mask = Array.from({ length: TEST_HEIGHT }, () => new Array(TEST_WIDTH).fill(false));
-  for (const [c0, r0, c1, r1] of [
-    [0, 0, 9, 6],
-    [10, 1, 12, 5],
-    [13, 0, 18, 5],
-  ]) {
+  for (const [c0, r0, c1, r1] of TEST_ZONE_RECTS) {
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) mask[r][c] = true;
+    }
+  }
+  for (let r = 0; r < TEST_HEIGHT; r++) {
+    for (let c = 0; c < TEST_WIDTH; c++) {
+      if (mask[r][c] && !testCellInIsland(c, r)) mask[r][c] = false;
     }
   }
   return mask;
