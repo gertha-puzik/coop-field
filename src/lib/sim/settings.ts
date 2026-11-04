@@ -61,6 +61,11 @@ export type SpriteId =
   | 'syrstyashka'
   | 'ryzhiy'
   | 'trehcvetny'
+  | 'negr'
+  | 'chis'
+  | 'lera'
+  | 'anya1'
+  | 'anya2'
   | 'serebristyy'
   | 'evr'
   | 'drel'
@@ -86,6 +91,11 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'syrstyashka', name: 'Сырстяшка', src: '/sprites/syrstyashka.png' },
   { id: 'ryzhiy', name: 'Сырь', src: '/sprites/ryzhiy.png' },
   { id: 'trehcvetny', name: 'Негрик', src: '/sprites/trehcvetny.png' },
+  { id: 'negr', name: 'Негрик 2', src: '/sprites/negr.png' },
+  { id: 'chis', name: 'Чис', src: '/sprites/chis.png' },
+  { id: 'lera', name: 'Лера', src: '/sprites/lera.png' },
+  { id: 'anya1', name: 'Аня', src: '/sprites/anya1.png' },
+  { id: 'anya2', name: 'Аня 2', src: '/sprites/anya2.png' },
   { id: 'serebristyy', name: 'ВП', src: '/sprites/serebristyy.png' },
   { id: 'evr', name: 'Эвр', src: '/sprites/evr.png' },
   { id: 'drel', name: 'Дрель', src: '/sprites/drel.png' },
@@ -94,6 +104,44 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'sumrak', name: 'Сумрак', src: '/sprites/sumrak.png' },
   { id: 'izya', name: 'Изя', src: '/sprites/izya.png' },
 ];
+
+/**
+ * Персонаж («общее имя») — группа спрайтов в выборе скина. У одного игрока могут
+ * быть разные персонажи; все спрайты персонажа собраны в одном месте, внутри
+ * группы их листают стрелками карусели. Скин на поле — по-прежнему конкретный
+ * SpriteId, группы влияют только на порядок выбора.
+ */
+export interface SpriteGroup {
+  id: string;
+  /** Общее имя персонажа (заголовок колонки в карусели). */
+  name: string;
+  /** Спрайты персонажа в порядке листания. */
+  spriteIds: SpriteId[];
+}
+
+/** Персонажи выбора скина: общее имя → спрайты (листаются внутри колонки). */
+export const SPRITE_GROUPS: SpriteGroup[] = [
+  { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puzatik', 'razdora'] },
+  { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel'] },
+  { id: 'syr', name: 'Сырь', spriteIds: ['ryzhiy'] },
+  { id: 'vp', name: 'ВП', spriteIds: ['serebristyy'] },
+  { id: 'negrik', name: 'Негрик', spriteIds: ['trehcvetny', 'negr'] },
+  { id: 'chis', name: 'Чис', spriteIds: ['chis'] },
+  { id: 'lera', name: 'Лера', spriteIds: ['lera'] },
+  { id: 'anya', name: 'Аня', spriteIds: ['anya1', 'anya2'] },
+  { id: 'evr', name: 'Эвр', spriteIds: ['evr'] },
+  { id: 'sumrak', name: 'Сумрак', spriteIds: ['sumrak'] },
+  { id: 'maslina', name: 'Маслина', spriteIds: ['maslina'] },
+  { id: 'drel', name: 'Дрель', spriteIds: ['drel'] },
+  { id: 'izya', name: 'Изя', spriteIds: ['izya'] },
+  { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
+];
+
+/** Все id спрайтов, покрытые группами (контроль полноты на этапе сборки не нужен —
+ *  но карусель и подсказки строятся ровно по этому списку). */
+export function spriteGroupOf(id: SpriteId): SpriteGroup | undefined {
+  return SPRITE_GROUPS.find((g) => g.spriteIds.includes(id));
+}
 
 /**
  * Мишень «РАБ»: боевая цель комнаты, не персонаж. В выбор котов не входит,

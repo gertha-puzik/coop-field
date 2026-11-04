@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -8,10 +8,13 @@ import {
   DAMAGE_LEVELS,
   GAME_CREDITS,
   SPRITES,
+  SPRITE_GROUPS,
   armorLevelMultiplier,
   damageLevelLabel,
+  spriteGroupOf,
   throatDamageFor,
   type SpriteId,
+  type SpriteMeta,
 } from '@/lib/sim/settings';
 import { RoomPicker, type RoomRow } from './room-picker';
 
@@ -178,16 +181,35 @@ export function EntryScreen({
   const doneCount = [speedDone, damageDone, armorDone].filter(Boolean).length;
   const roomsOpen = !!trimmed && doneCount === 3;
 
-  /* --- карусель скинов: 2 ряда, колонки по 2 спрайта, крутится в стороны --- */
+  /* --- карусель скинов: колонки-персонажи («общее имя» → спрайты), крутится в стороны.
+     У одного игрока могут быть разные персонажи — все спрайты персонажа стоят
+     в одной колонке, листаются стрелками/перетаскиванием --- */
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef({ active: false, moved: false, startX: 0, startLeft: 0 });
-  const cols: (typeof SPRITES)[number][][] = [];
-  for (let i = 0; i < SPRITES.length; i += 2) cols.push(SPRITES.slice(i, i + 2));
+  const spriteById = new Map<SpriteId, SpriteMeta>(SPRITES.map((sp) => [sp.id, sp]));
+  const groups = SPRITE_GROUPS.map((g) => ({
+    ...g,
+    sprites: g.spriteIds
+      .map((id) => spriteById.get(id))
+      .filter((sp): sp is SpriteMeta => Boolean(sp)),
+  })).filter((g) => g.sprites.length > 0);
+  /** Группа выбранного при открытии экрана скина — на неё карусель скроллится при монтировании. */
+  const initialGroupRef = useRef<ReturnType<typeof spriteGroupOf>>(spriteGroupOf(initialSprite));
+  useEffect(() => {
+    const g = initialGroupRef.current;
+    const track = trackRef.current;
+    if (!g || !track) return;
+    const el = track.querySelector<HTMLElement>(`[data-group="${g.id}"]`);
+    if (el) track.scrollLeft = Math.max(0, el.offsetLeft - 8);
+  }, []);
 
+  /** Листание на одну колонку-персонажа за клик. */
   const scrollTrack = (dir: 1 | -1) => {
     const el = trackRef.current;
     if (!el) return;
-    el.scrollBy({ left: dir * Math.max(160, el.clientWidth * 0.75), behavior: 'smooth' });
+    const first = el.firstElementChild as HTMLElement | null;
+    const step = first ? first.offsetWidth + 8 : 120; // 8 = gap-2 между колонками
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
   };
   const onTrackPointerDown = (ev: React.PointerEvent<HTMLDivElement>) => {
     // Мышью карусель можно тащить; тач и колесо скроллят нативно.
@@ -281,47 +303,67 @@ export function EntryScreen({
               onPointerUp={endTrackDrag}
               onPointerLeave={endTrackDrag}
               onClickCapture={onTrackClickCapture}
-              className="flex cursor-grab snap-x snap-mandatory gap-2 overflow-x-auto pb-1 select-none active:cursor-grabbing [scrollbar-width:thin]"
+              className="relative flex cursor-grab snap-x snap-mandatory items-start gap-2 overflow-x-auto pb-1 select-none active:cursor-grabbing [scrollbar-width:thin]"
             >
-              {cols.map((col, ci) => (
-                <div key={`col-${ci}`} className="flex shrink-0 snap-start flex-col gap-2">
-                  {col.map((sp) => {
-                    const active = sprite === sp.id;
-                    return (
-                      <button
-                        key={sp.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        aria-label={sp.name}
-                        onClick={() => setSprite(sp.id)}
-                        className={`relative flex w-24 flex-col items-center gap-1 rounded-lg border px-1.5 pb-1.5 pt-4 transition-colors ${
-                          active
-                            ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_1px_var(--sim-accent-glow-strong)]'
-                            : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] hover:border-[var(--sim-line-hover)]'
-                        }`}
-                      >
-                        {active ? (
-                          <span className="absolute right-1 top-1 rounded bg-[var(--sim-accent-hover)] px-1 py-px text-[10px] font-bold leading-none text-white">
-                            выбран
-                          </span>
-                        ) : null}
-                        <img src={sp.src} alt="" className="h-14 w-auto object-contain sm:h-16" draggable={false} />
-                        <span
-                          className={`w-full truncate text-center text-[11px] font-medium ${
-                            active ? 'text-[var(--sim-accent-text)]' : 'text-[var(--sim-text-soft)]'
-                          }`}
+              {groups.map((g) => {
+                const activeInGroup = g.sprites.some((sp) => sp.id === sprite);
+                return (
+                  <div
+                    key={g.id}
+                    data-group={g.id}
+                    className={`flex shrink-0 snap-start flex-col gap-1.5 rounded-xl border p-1.5 transition-colors ${
+                      activeInGroup
+                        ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_1px_var(--sim-accent-glow-strong)]'
+                        : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] hover:border-[var(--sim-line-hover)]'
+                    }`}
+                  >
+                    <span
+                      className={`w-full truncate text-center text-[11px] font-bold ${
+                        activeInGroup ? 'text-[var(--sim-accent-text)]' : 'text-[var(--sim-text-soft)]'
+                      }`}
+                    >
+                      {g.name}
+                    </span>
+                    {g.sprites.map((sp) => {
+                      const active = sprite === sp.id;
+                      return (
+                        <button
+                          key={sp.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          aria-label={`${g.name} — ${sp.name}`}
+                          onClick={() => setSprite(sp.id)}
+                          className={`relative flex w-24 flex-col items-center gap-1 rounded-lg border px-1.5 pb-1.5 transition-colors ${
+                            active
+                              ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_1px_var(--sim-accent-glow-strong)]'
+                              : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                          } ${g.sprites.length > 1 ? 'pt-4' : 'pt-1'}`}
                         >
-                          {sp.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
+                          {active ? (
+                            <span className="absolute right-1 top-1 rounded bg-[var(--sim-accent-hover)] px-1 py-px text-[10px] font-bold leading-none text-white">
+                              выбран
+                            </span>
+                          ) : null}
+                          <img src={sp.src} alt="" className="h-14 w-auto object-contain sm:h-16" draggable={false} />
+                          {g.sprites.length > 1 ? (
+                            <span
+                              className={`w-full truncate text-center text-[11px] font-medium ${
+                                active ? 'text-[var(--sim-accent-text)]' : 'text-[var(--sim-text-soft)]'
+                              }`}
+                            >
+                              {sp.name}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
             </div>
             <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">
-              Карусель крутится в стороны: тяните мышью, колесом или кнопками ‹ ›.
+              Спрайты собраны под общими именами персонажей. Листайте карусель: тяните мышью, колесом или кнопками ‹ ›.
             </p>
           </div>
 

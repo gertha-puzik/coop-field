@@ -5,11 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
+import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, SpriteMeta, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
 import {
   DAMAGE_LEVELS,
   DIRECTIONS,
   SPRITES,
+  SPRITE_GROUPS,
   armorLevelMultiplier,
   damageLevelLabel,
   throatDamageFor,
@@ -627,11 +628,21 @@ export function SettingsPanel(props: Props) {
             onChange={(e) => props.onDummySprite(e.target.value as SpriteId)}
             className="h-7 max-w-36 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-1.5 text-xs text-[var(--sim-text)] outline-none focus:border-[var(--sim-accent)]"
           >
-            {SPRITES.map((sp) => (
-              <option key={sp.id} value={sp.id}>
-                {sp.name}
-              </option>
-            ))}
+            {SPRITE_GROUPS.map((g) => {
+              const opts = g.spriteIds
+                .map((id) => SPRITES.find((sp) => sp.id === id))
+                .filter((sp): sp is SpriteMeta => Boolean(sp));
+              if (!opts.length) return null;
+              return (
+                <optgroup key={g.id} label={g.name}>
+                  {opts.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
         </div>
         <Toggle
