@@ -26,6 +26,7 @@ import {
   drawDirtPatch,
   drawEntryCheck,
   drawEntryMark,
+  drawGroundCover,
   drawTestDecorItem,
   drawTestObject,
   hashStr,
@@ -38,6 +39,7 @@ import {
   testEntryAt,
   testEntryStrict,
   testFieldGeometry,
+  testObstacleBodies,
   testObjects,
   testObjectDrawRect,
   testPeaceBattleBlocked,
@@ -52,15 +54,26 @@ import {
   entryDirDelta,
   newObjectId,
   newZoneId,
+  objectBase,
   objectPosOffset,
+  objectRotDeg,
+  objectScale,
+  objectSprite,
+  obstacleBodyPx,
+  GROUND_COVER_OPTS,
+  OBJECT_ROT_STEP,
+  OBJECT_SCALE_MAX,
+  OBJECT_SCALE_MIN,
+  ROCK_SPRITE_OPTS,
+  TREE_SPRITE_OPTS,
   sanitizeTestMap,
   TEST_MAP_DEFAULT,
   TEST_MAP_LIMITS,
   testMapConnectivityError,
+  type GroundCover,
   type TestMap,
   type TestMapEntryDir,
   type TestMapObject,
-  type TestMapObjectPos,
   type TestMapZone,
   type TestMapZoneKind,
 } from '@/lib/sim/test-map';
@@ -197,10 +210,26 @@ function spawnSprintPart(arr: SprintPart[], fxPx: number, fyPx: number, bx: numb
 const EDITOR_PASS_KEY = 'catwar-editor-pass';
 
 /** Инструмент редактора локации: зона с клетками, зелёная зона, ластик,
- *  объект (камень/дерево — препятствия, земля — проталина-декор; ставятся кликом
- *  по клетке, земля ещё и протяжкой) или клетка захода (вход в боевую зону
- *  с направлением шага; ставится кликом, повторный клик с тем же направлением — убрать). */
-type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'entry';
+ *  объект (камень/дерево — препятствия со свободной позицией, размером и
+ *  поворотом; земля — проталина-декор; покрытие — плитка/цветы/пол на клетку,
+ *  красятся протяжкой) или клетка захода (вход в боевую зону с направлением шага). */
+type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'ground' | 'entry';
+
+/** Ставящийся объект редактора: «призрак» следует за курсором (свободная позиция,
+ *  без привязки к клетке), клик фиксирует точку; размер — колесом и кнопками ±,
+ *  поворот — кнопками; ✓ ставит объект, ✕ отменяет. pickId — объект, поднятый
+ *  с поля для правки (оригинал на время правки скрыт, ✓ переносит его). */
+type EditorPlace = {
+  kind: 'tree' | 'stone';
+  spr: string;
+  s: number;
+  rot: number;
+  /** точка опоры в клеточных долях мира */
+  x: number;
+  y: number;
+  anchored: boolean;
+  pickId: string | null;
+};
 
 /** Черновик локации в редакторе: рисуется на поле сразу (WYSIWYG), живёт до закрытия. */
 type EditorDraft = {
@@ -499,6 +528,15 @@ interface Engine {
    *  stuck/lastD — копилка «нет прогресса» (мс) и прошлая дистанция: цель
    *  упирается в стену — ходьба отменяется. null — стоит на месте. */
   ptarget: { x: number; y: number; stuck: number; lastD: number } | null;
+  /** Мирный режим: скорость кота (px мира/с, в экранных осях) — разгон и
+   *  «выбегание» с инерцией: кот не встаёт как вкопанный, а мягко тормозит. */
+  pvx: number;
+  pvy: number;
+  /** Куда смотрит моделька в мирном режиме: 1 — вправо (зеркало), -1 — влево
+   *  (как нарисован спрайт). Меняется от направления бега — с «желе». */
+  face: 1 | -1;
+  /** performance.now() последнего кадра спринта — после него выбегание дольше. */
+  lastSprint: number;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -826,14 +864,24 @@ export default function Simulator() {
   const [editorView, setEditorView] = useState<EditorDraft | null>(null);
   /** Пароль редактора: хранится в localStorage, подставляется при открытии. */
   const [editorPass, setEditorPass] = useState('');
-  /** Положение спрайта в клетке при постановке объектами редактора: центр / левый край /
-   *  правый / верх / низ (сдвиг — четверть клетки, см. objectPosOffset). */
-  const [editorObjPos, setEditorObjPos] = useState<TestMapObjectPos>('center');
-  /** Зеркало для обработчиков поля: pointer-события читают его без перерегистрации. */
-  const editorObjPosRef = useRef<TestMapObjectPos>('center');
+  /** Вариант спрайта при постановке: последнее выбранное дерево и камень. */
+  const lastSprRef = useRef<{ tree: string; stone: string }>({ tree: 'tree-1', stone: 'rock-1' });
+  /** Вариант покрытия земли при покраске (инструмент «Покрытие»). */
+  const [editorCover, setEditorCover] = useState<GroundCover>('flower-1');
+  const editorCoverRef = useRef<GroundCover>('flower-1');
   useEffect(() => {
-    editorObjPosRef.current = editorObjPos;
-  }, [editorObjPos]);
+    editorCoverRef.current = editorCover;
+  }, [editorCover]);
+  /** Ставящийся объект («призрак»): ref — источник истины для кадра (позиция
+   *  меняется каждым движением мыши), state — зеркало для панели редактора. */
+  const [editorPlace, setEditorPlace] = useState<EditorPlace | null>(null);
+  const editorPlaceRef = useRef<EditorPlace | null>(null);
+  /** Правка и зеркалирование ставящегося объекта: одним входом, чтобы ref и state не разъехались. */
+  const patchEditorPlace = (p: Partial<EditorPlace>) => {
+    const next = { ...(editorPlaceRef.current ?? { kind: 'tree', spr: 'tree-1', s: 1, rot: 0, x: 0, y: 0, anchored: false, pickId: null }), ...p } as EditorPlace;
+    editorPlaceRef.current = next;
+    setEditorPlace(next);
+  };
   /** Направление шага для нового захода (инструмент «Заход»): куда игрока
    *  перенесёт шаг в боевом режиме — туда же рисуется градиент от боевой клетки. */
   const [editorEntryDir, setEditorEntryDir] = useState<TestMapEntryDir>('right');
@@ -862,8 +910,9 @@ export default function Simulator() {
   /** Подсказка над полем: почему бой не включился / что сделал выход из боя. */
   const [battleHint, setBattleHint] = useState<string | null>(null);
   const battleHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
-  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number; sp?: boolean }>());
+  /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения,
+   *  face — куда смотрит моделька (флип по горизонтали их бега). */
+  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number; sp?: boolean; face?: 1 | -1 }>());
   /** Режим чужих котов «теста» по сети (поле fm из publicCat): 1 — мирный (стрела
    *  и проценты не рисуются), 0 — боевой. Раньше чужие стрелы рисовались всегда —
    *  отсюда «багованные» стрелы над мирными котами у соседей. */
@@ -1042,6 +1091,10 @@ export default function Simulator() {
     fx: 4,
     fy: 2,
     ptarget: null,
+    pvx: 0,
+    pvy: 0,
+    face: -1,
+    lastSprint: 0,
   });
 
   /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
@@ -1230,8 +1283,8 @@ export default function Simulator() {
         d.rows === map.rows &&
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
           JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
-        JSON.stringify(d.objects.map((o) => [o.kind, o.c, o.r, o.pos ?? 'center'])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.c, o.r, o.pos ?? 'center']));
+        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null])) ===
+          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null]));
       if (same) {
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
@@ -1295,6 +1348,7 @@ export default function Simulator() {
     };
     editorRef.current = draft;
     setEditorView({ ...draft, zones: draft.zones.map((z) => ({ ...z })), objects: draft.objects.map((o) => ({ ...o })), undo: [] });
+    patchOrClearPlace(null);
     setEditorMsg(null);
     try {
       setEditorPass(localStorage.getItem(EDITOR_PASS_KEY) || '');
@@ -1324,7 +1378,139 @@ export default function Simulator() {
     const d = editorRef.current;
     if (!d) return;
     d.tool = tool;
+    // Камень/дерево: сразу создаём «призрак» постановки — следует за курсором,
+    // размер/поворот подгоняются до клика-фиксации; остальные инструменты его снимают.
+    if (tool === 'tree' || tool === 'stone') {
+      const p = editorPlaceRef.current;
+      if (!p || p.kind !== tool) {
+        patchEditorPlace({
+          kind: tool,
+          spr: lastSprRef.current[tool],
+          anchored: false,
+          pickId: null,
+        });
+      }
+    } else {
+      patchOrClearPlace(null);
+    }
     syncEditorView();
+  };
+
+  /** Полная очистка ставящегося объекта (ref + state). */
+  const patchOrClearPlace = (p: EditorPlace | null) => {
+    editorPlaceRef.current = p;
+    setEditorPlace(p);
+  };
+
+  /** Зажим точки опоры призрака в пределы мира (плюс небольшой запас по краям). */
+  const clampPlacePos = (x: number, y: number): { x: number; y: number } => {
+    const d = editorRef.current;
+    if (!d) return { x, y };
+    return {
+      x: Math.min(d.cols + 0.5, Math.max(-0.5, Math.round(x * 100) / 100)),
+      y: Math.min(d.rows + 1.5, Math.max(-0.2, Math.round(y * 100) / 100)),
+    };
+  };
+
+  /** Препятствие под курсором (для подъёма существующего объекта в призрак).
+ *  Считается расстояние до точки опоры тела; exceptId — чей-то поднятый объект. */
+  const pickObstacleAt = (mx: number, my: number, exceptId: string | null): TestMapObject | null => {
+    const s = settingsRef.current;
+    let best: TestMapObject | null = null;
+    let bestD = 34; // px вокруг точки опоры — щедрый захват
+    for (const ob of testObstacleBodies()) {
+      if (exceptId && ob.o.id === exceptId) continue;
+      const dist = Math.hypot(mx - ob.x * s.field.cellW, my - ob.y * s.field.cellH);
+      if (dist < bestD) {
+        bestD = dist;
+        best = ob.o;
+      }
+    }
+    return best;
+  };
+
+  /** Подъём существующего препятствия в призрак: оригинал остаётся в черновике,
+   * но скрывается — ✓ поставит правленый объект вместо него, ✕ вернёт как было. */
+  const liftObstacleToPlace = (o: TestMapObject) => {
+    const b = objectBase(o);
+    lastSprRef.current[o.kind === 'tree' ? 'tree' : 'stone'] = objectSprite(o);
+    patchEditorPlace({
+      kind: o.kind === 'tree' ? 'tree' : 'stone',
+      spr: objectSprite(o),
+      s: objectScale(o),
+      rot: objectRotDeg(o),
+      x: b.x,
+      y: b.y,
+      anchored: true,
+      pickId: o.id,
+    });
+  };
+
+  /** Клик инструментом камня/дерева: фиксация/перенос точки призрака или подъём
+   *  существующего объекта под курсором. */
+  const editorPlacementClick = (mx: number, my: number) => {
+    const p = editorPlaceRef.current;
+    if (!p) return;
+    const s = settingsRef.current;
+    if (p.anchored) {
+      // клик по другому объекту — поднимаем его; по земле — переносим точку
+      const hit = pickObstacleAt(mx, my, p.pickId);
+      if (hit) {
+        liftObstacleToPlace(hit);
+        return;
+      }
+      const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
+      patchEditorPlace(b);
+      return;
+    }
+    const hit = pickObstacleAt(mx, my, null);
+    if (hit) {
+      liftObstacleToPlace(hit);
+      return;
+    }
+    const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
+    patchEditorPlace({ ...b, anchored: true });
+  };
+
+  /** ✓ — поставить: поднятый объект заменяется, новый добавляется; призрак
+   *  остаётся неприкреплённым — можно ставить следующий сразу. */
+  const confirmEditorPlace = () => {
+    const d = editorRef.current;
+    const p = editorPlaceRef.current;
+    if (!d || !p) return;
+    if (d.objects.length - (p.pickId ? 1 : 0) >= TEST_MAP_LIMITS.objectsMax) {
+      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
+      return;
+    }
+    pushEditorUndo();
+    d.objects = d.objects.filter((o) => o.id !== p.pickId);
+    d.objects.push({
+      id: newObjectId(),
+      kind: p.kind,
+      spr: p.spr,
+      s: p.s,
+      rot: p.rot,
+      x: p.x,
+      y: p.y,
+      c: Math.min(d.cols - 1, Math.max(0, Math.floor(p.x))),
+      r: Math.min(d.rows - 1, Math.max(0, Math.floor(p.y - 0.01))),
+      pos: 'center',
+    });
+    d.dirty = true;
+    lastSprRef.current[p.kind] = p.spr;
+    patchEditorPlace({ pickId: null, anchored: false });
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  /** ✕ — отмена: поднятый объект возвращается (он никуда не удалялся из черновика). */
+  const cancelEditorPlace = () => {
+    const d = editorRef.current;
+    patchOrClearPlace(null);
+    if (d) {
+      applyDraftPreview();
+      syncEditorView();
+    }
   };
 
   /** Смена размера мира: зоны и препятствия, вылезшие за новый край, обрезаются/удаляются. */
@@ -1344,7 +1530,13 @@ export default function Simulator() {
       if (z.c0 <= c1 && z.r0 <= r1) kept.push({ ...z, c1, r1 });
     }
     d.zones = kept;
-    d.objects = d.objects.filter((o) => o.c < nc && o.r < nr);
+    d.objects = d.objects.filter((o) => {
+      if (o.kind === 'stone' || o.kind === 'tree') {
+        const b = objectBase(o);
+        return b.x < nc && b.y - 0.01 < nr;
+      }
+      return o.c < nc && o.r < nr;
+    });
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -1385,8 +1577,17 @@ export default function Simulator() {
     pushEditorUndo();
     if (drag.erase || d.tool === 'erase') {
       d.zones = d.zones.flatMap((z) => subtractFromZone(z, { c0, r0, c1, r1 }));
-      // ластик снимает и препятствия внутри стёртого прямоугольника
-      d.objects = d.objects.filter((o) => !(o.c >= c0 && o.c <= c1 && o.r >= r0 && o.r <= r1));
+      // ластик снимает препятствия (по точке опоры) и клеточные объекты
+      // (землю/покрытие/заход) внутри стёртого прямоугольника
+      d.objects = d.objects.filter((o) => {
+        if (o.kind === 'stone' || o.kind === 'tree') {
+          const b = objectBase(o);
+          const fc = Math.floor(b.x);
+          const fr = Math.floor(b.y - 0.01);
+          return !(fc >= c0 && fc <= c1 && fr >= r0 && fr <= r1);
+        }
+        return !(o.c >= c0 && o.c <= c1 && o.r >= r0 && o.r <= r1);
+      });
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -1453,36 +1654,22 @@ export default function Simulator() {
     syncEditorView();
   };
 
-  /** Постановка/снятие объекта кликом (инструменты «Камень», «Дерево», «Земля»).
-   *  pos — положение спрайта в клетке (центр/лево/право/верх/низ). */
-  const toggleEditorObject = (tool: 'stone' | 'tree' | 'dirt', c: number, r: number): boolean => {
+  /** Протяжка «Земли»/«Покрытия»: насыпает клетки без снятия и без записи отмены
+   *  на каждую клетку (отмена пишется один раз на росчерк — см. pointerdown).
+   *  Земля и покрытие не совмещаются на одной клетке: покрытие заменяет проталину. */
+  const paintEditorCellObject = (kind: 'dirt' | 'ground', c: number, r: number): boolean => {
     const d = editorRef.current;
     if (!d) return false;
-    const idx = d.objects.findIndex((o) => o.c === c && o.r === r);
-    if (idx < 0 && d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return false;
-    }
-    pushEditorUndo();
-    if (idx >= 0) d.objects.splice(idx, 1);
-    else d.objects.push({ id: newObjectId(), kind: tool, c, r, pos: editorObjPosRef.current });
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Протяжка «Земли»: насыпает проталины без снятия и без записи отмены на каждую
-   *  клетку (отмена пишется один раз на росчерк — см. pointerdown). */
-  const paintEditorDirt = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (d.objects.some((o) => o.kind === 'dirt' && o.c === c && o.r === r)) return false;
+    if (d.objects.some((o) => (o.kind === 'dirt' || o.kind === 'ground') && o.c === c && o.r === r)) return false;
     if (d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
       setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
       return false;
     }
-    d.objects.push({ id: newObjectId(), kind: 'dirt', c, r, pos: editorObjPosRef.current });
+    d.objects.push(
+      kind === 'ground'
+        ? { id: newObjectId(), kind: 'ground', c, r, cv: editorCoverRef.current, pos: 'center' }
+        : { id: newObjectId(), kind: 'dirt', c, r, pos: 'center' },
+    );
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -2262,9 +2449,18 @@ export default function Simulator() {
 
     // Колесо мыши над полем «теста» — зум вида: вверх — приблизить, вниз — отдалить.
     // Множитель живёт в camUserZoomRef, камера сама плавно доезжает до нового зума.
+    // В редакторе колесо меняет размер ставящегося объекта (+/− по 0.1), если он есть.
     const onWheelZoom = (ev: WheelEvent) => {
       if (fieldFormatRef.current !== 'test') return;
-      if (editorOpenRef.current) return; // в редакторе вид подгоняется под весь мир
+      if (editorOpenRef.current) {
+        const p = editorPlaceRef.current;
+        if (p) {
+          ev.preventDefault();
+          const step = ev.deltaY < 0 ? 0.1 : -0.1;
+          patchEditorPlace({ s: Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round((p.s + step) * 100) / 100)) });
+        }
+        return;
+      }
       if (ev.ctrlKey) return; // пинч-жест оставляем браузеру
       ev.preventDefault();
       const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
@@ -2515,22 +2711,43 @@ export default function Simulator() {
             }
           }
         }
-        const moving = (vx !== 0 || vy !== 0) && !e.ptarget?.stuck;
-        // Shift — спринт мирного режима: обычная скорость мирной ходьбы, зажатый
-        // Shift ускоряет кота вдвое (SPRINT_MULT) и поднимает комочки из-под лап.
         const sprint = sprintRef.current;
+        // Инерция мирной ходьбы: скорость приближается к желаемой — на разгоне
+        // быстро (полсотни мс), на выбегании плавно: кот не встаёт как вкопанный,
+        // а мягко докатывается. После спринта выбегание дольше — инерция заметнее.
+        const hasInput = vx !== 0 || vy !== 0;
+        const tSpd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (sprint ? SPRINT_MULT : 1);
+        let tvx = 0;
+        let tvy = 0;
+        if (hasInput) {
+          const wxI = vx * cellW;
+          const wyI = vy * cellH;
+          const lenI = Math.hypot(wxI, wyI) || 1;
+          tvx = (wxI / lenI) * tSpd;
+          tvy = (wyI / lenI) * tSpd;
+        }
+        const tau = hasInput ? 45 : now - e.lastSprint < 280 ? 300 : 180;
+        const kv = 1 - Math.exp(-dt / tau);
+        e.pvx += (tvx - e.pvx) * kv;
+        e.pvy += (tvy - e.pvy) * kv;
+        if (!hasInput && Math.hypot(e.pvx, e.pvy) < 6) {
+          e.pvx = 0;
+          e.pvy = 0;
+        }
+        const moving = hasInput || Math.hypot(e.pvx, e.pvy) > 6;
         if (moving) {
-          // нормализация в пиксельном пространстве: клетка неквадратная (100×150),
-          // диагональ обязана быть той же скоростью, что и прямые направления
-          const wx = vx * cellW;
-          const wy = vy * cellH;
-          const len = Math.hypot(wx, wy) || 1;
-          const spd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (sprint ? SPRINT_MULT : 1) * (dt / 1000);
-          const stepFx = (wx / len) * spd / cellW;
-          const stepFy = ((wy / len) * spd) / cellH / Math.max(0.5, camFxRef.current.sq);
+          // шаг кадра — из текущей скорости (px/с → клеточные доли по осям);
+          // по вертикали делим ещё и на сжатие земли — экранный шаг равномерный
+          const stepFx = (e.pvx * dt) / 1000 / cellW;
+          const stepFy = ((e.pvy * dt) / 1000 / cellH) / Math.max(0.5, camFxRef.current.sq);
           // разворот «лицом» по направлению ходьбы (для бейджа и привычки глаза)
-          const deg = wrap360((Math.atan2(wy, wx) * 180) / Math.PI);
-          e.lastDir = (Math.round(deg / 45) * 45) % 360;
+          if (hasInput) {
+            const wx = vx * cellW;
+            const wy = vy * cellH;
+            const len = Math.hypot(wx, wy) || 1;
+            const deg = wrap360((Math.atan2(wy, wx) * 180) / Math.PI);
+            e.lastDir = (Math.round(deg / 45) * 45) % 360;
+          }
           // столкновения с раздельной проверкой осей: у стены кот скользит вдоль неё.
           // Со строгими заходами боевые клетки заперты и для мирной ходьбы —
           // случайно забежать в зону нельзя (вход — только через клетку захода).
@@ -2580,7 +2797,9 @@ export default function Simulator() {
           const nxT = e.fx + stepFx;
           const nyT = e.fy + stepFy;
           if (!blocked(nxT, e.fy)) e.fx = nxT;
+          else e.pvx = 0; // упёрлись — инерция по оси гасится, скольжение продолжается
           if (!blocked(e.fx, nyT)) e.fy = nyT;
+          else e.pvy = 0;
           // Расталкивание: если тела уже пересекаются (спавн рядом, телепорт с
           // клетки захода, правка локации под котами) — мягко выталкиваем своего
           // кота из чужого тела вдоль линии центров, по осям и с проверкой blocked,
@@ -2601,17 +2820,29 @@ export default function Simulator() {
           // спринтим — копим темп и рождаем комочки земли/травы из-под лап:
           // летят против бега веером, гравитация гасит (физика и рисование ниже)
           if (sprint) {
+            e.lastSprint = now;
             sprintAccRef.current += dt;
             const feetX = (e.fx + hb.dx) * cellW;
             const feetY = (e.fy + hb.dy * 2) * cellH;
-            const bdx = wx / len;
-            const bdy = wy / len;
+            const spdNow = Math.hypot(e.pvx, e.pvy) || 1;
+            const bdx = e.pvx / spdNow;
+            const bdy = e.pvy / spdNow;
             while (sprintAccRef.current >= SPRINT_SPAWN_MS) {
               sprintAccRef.current -= SPRINT_SPAWN_MS;
               spawnSprintPart(sprintPartsRef.current, feetX, feetY, bdx, bdy);
             }
           } else {
             sprintAccRef.current = 0;
+          }
+          // Флип «лицом» по горизонтали бега: спрайты котов смотрят влево, при беге
+          // вправо моделька зеркалится. Разворот триггерит лёгкое «желе» — качнётся
+          // и успокоится (см. drawChar). Чисто локальная картинка, по сети не ходит.
+          if (e.pvx > 14 || e.pvx < -14) {
+            const f: 1 | -1 = e.pvx > 0 ? 1 : -1;
+            if (f !== e.face) {
+              e.face = f;
+              jellyRef.current.main = Math.max(jellyRef.current.main ?? 0, 0.5);
+            }
           }
           freeSyncRef.current.moving = true;
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
@@ -2620,6 +2851,8 @@ export default function Simulator() {
             net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), sp: sprint ? 1 : 0 });
           }
         } else if (freeSyncRef.current.moving) {
+          e.pvx = 0;
+          e.pvy = 0;
           freeSyncRef.current.moving = false;
           net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
         }
@@ -2668,12 +2901,22 @@ export default function Simulator() {
         }
       }
 
-      // Чужие коты в свободной ходьбе («тест»): плавное доведение до последней позиции.
+      // Чужие коты в свободной ходьбе («тест»): плавное доведение до последней позиции;
+      // попутно ловим флип — чужая моделька разворачивается по горизонтали их бега
+      // (с лёгким «желе», локально, как у своего кота).
       if (remoteFreeRef.current.size > 0) {
         const kf = 1 - Math.exp(-dt / 80);
-        for (const fr of remoteFreeRef.current.values()) {
+        for (const [idF, fr] of remoteFreeRef.current) {
+          const before = fr.x;
           fr.x += (fr.tx - fr.x) * kf;
           fr.y += (fr.ty - fr.y) * kf;
+          if (fr.tx - before > 0.015 || fr.tx - before < -0.015) {
+            const f: 1 | -1 = fr.tx >= before ? 1 : -1;
+            if (f !== (fr.face ?? -1)) {
+              fr.face = f;
+              jellyRef.current[idF] = Math.max(jellyRef.current[idF] ?? 0, 0.4);
+            }
+          }
         }
       }
 
@@ -3144,6 +3387,17 @@ export default function Simulator() {
           }
           ctx.restore();
         }
+        // покрытия земли (цветы/плитка/пол) — тот же слой грунта, что и проталины:
+        // рисуются паттерном по клетке, ходьбе не мешают, режутся клипом по кромке
+        if (mapObjects.some((o) => o.kind === 'ground')) {
+          ctx.save();
+          ctx.clip(geo.path);
+          for (const o of mapObjects) {
+            if (o.kind !== 'ground') continue;
+            drawGroundCover(ctx, o, s.field.cellW, s.field.cellH);
+          }
+          ctx.restore();
+        }
         // клетки захода — тоже наземная разметка: градиент от боевой клетки и
         // две галочки по центру (вход в бой); режется клипом по кромке локации
         const entryObjs = mapObjects.filter((o) => o.kind === 'entry' && o.dir);
@@ -3321,10 +3575,11 @@ export default function Simulator() {
           ctx.lineWidth = 1.5;
           ctx.strokeRect(0.5, 0.5, wc - 1, wr - 1);
           ctx.setLineDash([]);
-          // препятствия черновика: спрайт + пунктирная рамка клетки. Землю
-          // (проталины) и заходы рисует сам грунт — здесь только камень и дерево.
-          // Спрайт ставится с выбранным положением в клетке (центр/край).
+          // препятствия черновика: спрайт + пунктирный контур тела. Землю,
+          // покрытие и заходы рисует сам грунт — здесь только камень и дерево.
+          // Ставятся свободно (точка опоры — дробные x/y), размер/поворот — из объекта.
           for (const o of ed.objects) {
+            if (o.id === editorPlaceRef.current?.pickId) continue; // поднят в призрак
             if (o.kind === 'entry') {
               if (o.dir) {
                 drawEntryMark(
@@ -3338,22 +3593,35 @@ export default function Simulator() {
               }
               continue;
             }
-            if (o.kind === 'dirt') continue;
-            const poE = objectPosOffset(o);
+            if (o.kind === 'dirt' || o.kind === 'ground') continue;
+            const bE = objectBase(o);
             drawTestObject(
               ctx,
-              o.kind,
+              o,
               s.field.cellW,
               s.field.cellH,
-              (o.c + 0.5 + poE.dx) * s.field.cellW,
-              (o.r + 1 + poE.dy) * s.field.cellH,
+              bE.x * s.field.cellW,
+              bE.y * s.field.cellH,
               1,
               hashStr(o.id) & 7,
             );
+            // контур «обтекаемого» тела — эллипс с масштабом и поворотом объекта
+            const bodyE = obstacleBodyPx(o);
+            const scE = objectScale(o);
             ctx.setLineDash([4, 3]);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
             ctx.lineWidth = 1.2;
-            ctx.strokeRect(o.c * s.field.cellW + 1.5, o.r * s.field.cellH + 1.5, s.field.cellW - 3, s.field.cellH - 3);
+            ctx.beginPath();
+            ctx.ellipse(
+              bE.x * s.field.cellW,
+              bE.y * s.field.cellH,
+              bodyE.hw * scE + 6,
+              bodyE.h * scE + 6,
+              (objectRotDeg(o) * Math.PI) / 180,
+              0,
+              Math.PI * 2,
+            );
+            ctx.stroke();
             ctx.setLineDash([]);
           }
           // тянущийся прямоугольник
@@ -3504,6 +3772,9 @@ export default function Simulator() {
         selected = false,
         whiteC: HTMLCanvasElement | null = null,
         active = false,
+        /** Зеркалирование по горизонтали: 1 — как нарисован (влево), -1 — зеркально
+         *  (вправо). Мирный режим разворачивает кота по направлению бега. */
+        flip = 1,
       ) => {
         const th0 = (s.field.cellH - 10) * (scalePct / 100);
         const groundY = pos.y + th0;
@@ -3528,20 +3799,28 @@ export default function Simulator() {
           ctx.drawImage(whiteC, gx - g, gy - g, twd + g * 2, th + g * 2);
           ctx.restore();
         };
-        // «желе»: сплющивание-растяжение (объём сохраняется) с лёгким поворотом
+        // «желе»: сплющивание-растяжение (объём сохраняется) с лёгким поворотом.
+        // Спрайт всегда рисуется через нижний центр с флипом — разворот модельки
+        // и качание живут в одной системе координат и не мешают друг другу.
         const amp = jellyKey ? (jellyRef.current[jellyKey] ?? 0) : 0;
+        const baseCx = pos.x + twd / 2;
+        const baseY2 = py + th;
         if (amp > 0.01) {
           const wob = Math.sin(now * 0.045);
           ctx.save();
-          ctx.translate(pos.x + twd / 2, py + th);
+          ctx.translate(baseCx, baseY2);
           ctx.rotate(amp * 0.08 * Math.cos(now * 0.045));
-          ctx.scale(1 + amp * 0.22 * wob, 1 - amp * 0.22 * wob);
+          ctx.scale(flip * (1 + amp * 0.22 * wob), 1 - amp * 0.22 * wob);
           glow(-twd / 2, -th);
           ctx.drawImage(sprC, -twd / 2, -th, twd, th);
           ctx.restore();
         } else {
-          glow(pos.x, py);
-          ctx.drawImage(sprC, pos.x, py, twd, th);
+          ctx.save();
+          ctx.translate(baseCx, baseY2);
+          ctx.scale(flip, 1);
+          glow(-twd / 2, -th);
+          ctx.drawImage(sprC, -twd / 2, -th, twd, th);
+          ctx.restore();
         }
       };
 
@@ -3636,6 +3915,10 @@ export default function Simulator() {
         runOrQueue(() => {
           const tp = tpD;
           if (sprT) {
+            // чужой кот в мирной ходьбе разворачивается по направлению своего бега;
+            // мишени и боевые коты рисуются как нарисованы
+            const isRemoteFree = testMode && d.id.startsWith('p') && remoteFmRef.current.get(d.id) === 1;
+            const dFlip = isRemoteFree ? (remoteFreeRef.current.get(d.id)?.face ?? 1) : 1;
             drawChar(
               sprT,
               tp,
@@ -3644,6 +3927,7 @@ export default function Simulator() {
               false,
               whiteSpritesRef.current[d.sprite] ?? null,
               d.id === s.controlled,
+              dFlip,
             );
           } else {
             // PNG ещё не пришёл или битый — кот всё равно стоит на клетке, не пропадает.
@@ -3684,10 +3968,11 @@ export default function Simulator() {
             spr,
             { x: cellX, y: cellY },
             s.character.spriteScale,
-            null,
+            'main',
             false,
             whiteSpritesRef.current[s.character.sprite] ?? null,
             selfId === 'main',
+            selfFree ? e.face : 1,
           );
         // Значок блока (замок) у основания стрелы своего кота — его видит только сам
         // игрок: рисуем только из локального состояния движка, по сети не ходит.
@@ -3764,13 +4049,13 @@ export default function Simulator() {
         const fxcO = camFxRef.current;
         const selfRectO = selfBillRect();
         for (const o of testObjects()) {
-          if (o.kind === 'dirt' || o.kind === 'entry') continue; // земля и заходы — часть грунта
-          const kind = o.kind;
-          // Положение в клетке (центр/край): сдвигает и точку опоры — глубинная
+          if (o.kind === 'dirt' || o.kind === 'entry' || o.kind === 'ground') continue; // земля, покрытие и заходы — часть грунта
+          if (o.id === editorPlaceRef.current?.pickId) continue; // поднят в призрак редактора
+          // Свободная точка опоры (доли клетки): сдвигает и точку опоры — глубинная
           // сортировка считает по ней же, деревья у края перекрывают корректно.
-          const poB = objectPosOffset(o);
-          const objX = (o.c + 0.5 + poB.dx) * s.field.cellW;
-          const by = (o.r + 1 + poB.dy) * s.field.cellH - 2;
+          const bO = objectBase(o);
+          const objX = bO.x * s.field.cellW;
+          const by = bO.y * s.field.cellH - 2;
           // Билборд стоит на наклонной земле: основание сжато тем же множителем,
           // что и точка опоры котов (groundY * sq в drawChar), сам спрайт вертикальный.
           // Без этого дерево в мирной перспективе уезжало на клетку ниже своего
@@ -3782,18 +4067,65 @@ export default function Simulator() {
           // рисуем этот объект полупрозрачным (только на этом экране).
           const covered =
             !!selfRectO &&
-            coveredRatio(testObjectDrawRect(kind, s.field.cellH, objX, byDrawn, mO, vO), selfRectO) >= OCCLUDE_COVER;
+            coveredRatio(testObjectDrawRect(o, s.field.cellH, objX, byDrawn, mO, vO), selfRectO) >= OCCLUDE_COVER;
           bills.push({
             y: by,
             fn: () => {
               if (covered) {
                 ctx.save();
                 ctx.globalAlpha = OCCLUDE_ALPHA;
-                drawTestObject(ctx, kind, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
+                drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
                 ctx.restore();
               } else {
-                drawTestObject(ctx, kind, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
+                drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
               }
+            },
+          });
+        }
+        // «Призрак» редактора: объект, который ставят (клик фиксирует точку, колесо
+        // и панель меняют размер/поворот, ✓ ставит). Полупрозрачный, с контуром тела.
+        const pend = editorOpenRef.current ? editorPlaceRef.current : null;
+        if (pend) {
+          const ghost: TestMapObject = {
+            id: '__ghost',
+            kind: pend.kind,
+            spr: pend.spr,
+            s: pend.s,
+            rot: pend.rot,
+            x: pend.x,
+            y: pend.y,
+            c: Math.min(Math.max(0, Math.floor(pend.x)), currentTestMap().cols - 1),
+            r: Math.min(Math.max(0, Math.floor(pend.y - 0.01)), currentTestMap().rows - 1),
+            pos: 'center',
+          };
+          const gX = pend.x * s.field.cellW;
+          const gYraw = pend.y * s.field.cellH - 2;
+          const gY = gYraw * fxcO.sq;
+          const gM = depthM(gYraw);
+          bills.push({
+            y: gYraw,
+            fn: () => {
+              ctx.save();
+              ctx.globalAlpha = 0.62;
+              drawTestObject(ctx, ghost, s.field.cellW, s.field.cellH, gX, gY, gM, 0);
+              ctx.restore();
+              // контур тела + метка точки опоры: куда «встанет» препятствие
+              const bG = obstacleBodyPx(ghost);
+              ctx.save();
+              ctx.strokeStyle = pend.anchored ? 'rgba(120, 220, 140, 0.95)' : 'rgba(255, 255, 255, 0.75)';
+              ctx.lineWidth = 1.4;
+              ctx.setLineDash([5, 4]);
+              ctx.beginPath();
+              ctx.ellipse(gX, gY, bG.hw * pend.s + 6, bG.h * pend.s + 6, (pend.rot * Math.PI) / 180, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              ctx.beginPath();
+              ctx.moveTo(gX - 5, gY);
+              ctx.lineTo(gX + 5, gY);
+              ctx.moveTo(gX, gY - 5);
+              ctx.lineTo(gX, gY + 5);
+              ctx.stroke();
+              ctx.restore();
             },
           });
         }
@@ -4255,7 +4587,8 @@ export default function Simulator() {
         my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       }
       // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку);
-      // инструмент «Земля» при зажатой кнопке насыпает проталины протяжкой.
+      // «Земля»/«Покрытие» при зажатой кнопке красят протяжкой; «призрак»
+      // камня/дерева следует за курсором, пока точка не зафиксирована кликом.
       const ed = editorRef.current;
       if (editorOpenRef.current && ed) {
         const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
@@ -4264,8 +4597,15 @@ export default function Simulator() {
           ed.drag.c1 = c;
           ed.drag.r1 = r;
         }
-        if (dirtPaintingRef.current && ed.tool === 'dirt' && ev.buttons & 1) {
-          paintEditorDirt(c, r);
+        if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground') && ev.buttons & 1) {
+          paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
+        }
+        const pG = editorPlaceRef.current;
+        if (pG && !pG.anchored) {
+          // пишем прямо в ref: кадр читает его каждый тик, панель позиции не показывает
+          const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
+          pG.x = b.x;
+          pG.y = b.y;
         }
         e.hover = { c, r };
         const cvE = canvasRef.current;
@@ -4345,8 +4685,8 @@ export default function Simulator() {
       }
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
-      // Инструменты препятствий ставят/снимают камень-дерево кликом — без протягивания;
-      // «Земля» насыпает проталину кликом и протяжкой (одна отмена на росчерк);
+      // Инструменты препятствий: призрак постановки (клик — фиксация/подъём);
+      // «Земля» и «Покрытие» красятся кликом и протяжкой (одна отмена на росчерк);
       // ПКМ по-прежнему рисует ластик, чтобы стирать зоны и объекты протяжкой.
       if (ev.button === 0 && ed.tool === 'entry') {
         placeEditorEntry(c, r);
@@ -4354,14 +4694,14 @@ export default function Simulator() {
         return;
       }
       if (ev.button === 0 && (ed.tool === 'stone' || ed.tool === 'tree')) {
-        toggleEditorObject(ed.tool, c, r);
+        editorPlacementClick(mx, my);
         ev.preventDefault();
         return;
       }
-      if (ev.button === 0 && ed.tool === 'dirt') {
+      if (ev.button === 0 && (ed.tool === 'dirt' || ed.tool === 'ground')) {
         pushEditorUndo();
         dirtPaintingRef.current = true;
-        paintEditorDirt(c, r);
+        paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'crosshair';
         ev.preventDefault();
@@ -5309,6 +5649,7 @@ export default function Simulator() {
                       <div className="mt-1.5 flex gap-1.5">
                         {(
                           [
+                            { id: 'ground', label: '🌸 Покрытие' },
                             { id: 'entry', label: '🚪 Заход' },
                           ] as { id: EditorTool; label: string }[]
                         ).map((t) => (
@@ -5359,42 +5700,133 @@ export default function Simulator() {
                           </p>
                         </>
                       ) : null}
-                      {editorView.tool === 'stone' || editorView.tool === 'tree' || editorView.tool === 'dirt' ? (
+                      {editorView.tool === 'stone' || editorView.tool === 'tree' ? (
                         <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Положение в клетке</div>
-                          <div className="flex gap-1.5">
-                            {(
-                              [
-                                { id: 'left', label: '← Лево' },
-                                { id: 'center', label: 'Центр' },
-                                { id: 'right', label: 'Право →' },
-                                { id: 'top', label: 'Верх' },
-                                { id: 'bottom', label: 'Низ' },
-                              ] as { id: TestMapObjectPos; label: string }[]
-                            ).map((p) => (
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">
+                            {editorView.tool === 'tree' ? 'Вид дерева' : 'Вид камня'}
+                          </div>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(editorView.tool === 'tree'
+                              ? TREE_SPRITE_OPTS
+                              : ROCK_SPRITE_OPTS
+                            ).map((v) => (
                               <button
-                                key={p.id}
+                                key={v.id}
                                 type="button"
                                 className={
-                                  editorObjPos === p.id
-                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                                  editorPlace?.kind === editorView.tool && editorPlace?.spr === v.id
+                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
                                 }
-                                onClick={() => setEditorObjPos(p.id)}
+                                onClick={() =>
+                                  patchEditorPlace({ kind: editorView.tool === 'tree' ? 'tree' : 'stone', spr: v.id, pickId: null, anchored: false })
+                                }
                               >
-                                {p.label}
+                                {v.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер и поворот</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-10 text-[var(--sim-text-faint)]">Разм.</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-6 rounded-md"
+                              onClick={() =>
+                                patchEditorPlace({
+                                  s: Math.max(OBJECT_SCALE_MIN, Math.round(((editorPlace?.s ?? 1) - 0.1) * 100) / 100),
+                                })
+                              }
+                            >
+                              −
+                            </button>
+                            <span className="w-10 text-center font-semibold">×{(editorPlace?.s ?? 1).toFixed(1)}</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-6 rounded-md"
+                              onClick={() =>
+                                patchEditorPlace({
+                                  s: Math.min(OBJECT_SCALE_MAX, Math.round(((editorPlace?.s ?? 1) + 0.1) * 100) / 100),
+                                })
+                              }
+                            >
+                              +
+                            </button>
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="w-10 text-[var(--sim-text-faint)]">Поворот</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-6 rounded-md"
+                              onClick={() =>
+                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - OBJECT_ROT_STEP) % 360 + 360) % 360 })
+                              }
+                            >
+                              ↺
+                            </button>
+                            <span className="w-10 text-center font-semibold">{editorPlace?.rot ?? 0}°</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-6 rounded-md"
+                              onClick={() =>
+                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + OBJECT_ROT_STEP) % 360 + 360) % 360 })
+                              }
+                            >
+                              ↻
+                            </button>
+                          </div>
+                          <div className="mt-2 flex gap-1.5">
+                            <button
+                              type="button"
+                              className="flex-1 rounded-md bg-[var(--sim-accent)] px-1.5 py-1.5 font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
+                              onClick={confirmEditorPlace}
+                            >
+                              ✓ Поставить
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1.5"
+                              onClick={cancelEditorPlace}
+                            >
+                              ✕ Отмена
+                            </button>
+                          </div>
+                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                            Призрак следует за курсором — клик фиксирует точку (потом можно перетащить).
+                            Колесо мыши над полем — размер, кнопки — размер и поворот. Клик по уже
+                            стоящему объекту поднимает его для правки. ✓ ставит, ✕ отменяет.
+                          </p>
+                        </>
+                      ) : null}
+                      {editorView.tool === 'ground' ? (
+                        <>
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Вид покрытия</div>
+                          <div className="grid grid-cols-3 gap-1">
+                            {GROUND_COVER_OPTS.map((v) => (
+                              <button
+                                key={v.id}
+                                type="button"
+                                className={
+                                  editorCover === v.id
+                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                                }
+                                onClick={() => setEditorCover(v.id)}
+                              >
+                                {v.label}
                               </button>
                             ))}
                           </div>
                           <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Где внутри клетки будет стоять спрайт: сдвиг к выбранному краю (четверть клетки).
+                            Клик или протяжка красит клетки: цветы, каменная плитка разной густоты,
+                            сплошной пол, просто трава. Соседние клетки сходятся швами в сплошной настил.
                           </p>
                         </>
                       ) : null}
                       <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
-                        Тяните по полю — зона. Камень и дерево — клик по клетке:
-                        поставить, повторный клик — убрать. Через них нельзя пройти.
-                        Земля — клик или протяжка: проталина на траве, ходьбе не мешает.
+                        Тяните по полю — зона. Камень и дерево ставятся свободно: призрак едет за
+                        курсором, размер и поворот подгоняются до ✓ «Поставить» (через них нельзя пройти).
+                        Земля и покрытие — клик или протяжка, ходьбе не мешают.
                         Заход — вход в боевую зону: травяная клетка с галочками,
                         в бою шаг с неё переносит по направлению захода.
                       </p>

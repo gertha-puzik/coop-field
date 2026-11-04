@@ -21,14 +21,20 @@
 
 import {
   TEST_MAP_DEFAULT,
+  OBJECT_DIMS,
   isObstacleKind,
-  objectPosOffset,
+  objectBase,
+  objectRotDeg,
+  objectScale,
+  objectSprite,
+  obstacleBodyPx,
+  groundCoverOf,
   type TestMap,
   type TestMapEntryDir,
   type TestMapObject,
   type TestMapZone,
 } from './test-map';
-import { PACK_TUFT_COUNT, packImg, type PackName } from './textures';
+import { PACK_TUFT_COUNT, coverPattern, packImg, type PackName } from './textures';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -132,42 +138,133 @@ export function nearestWalkableCell(c: number, r: number): { c: number; r: numbe
   return { c: 4, r: 3 };
 }
 
-/* ---------- препятствия: камни и деревья ---------- */
+/* ---------- препятствия: камни и деревья (свободная постановка) ---------- */
 
-/** Индекс препятствий по клеткам — пересобирается при смене конфига локации. */
-let objCache: { map: TestMap; idx: Map<string, TestMapObject> } | null = null;
+/** Тело препятствия для коллизий и индексов: точка опоры (доли клетки),
+ *  размеры у земли (px, уже с масштабом), поворот (рад). */
+export type ObstacleBody = {
+  o: TestMapObject;
+  /** точка опоры в клеточных долях мира */
+  x: number;
+  y: number;
+  /** полуось по x и высота вверх по y, px мира (с масштабом) */
+  hw: number;
+  h: number;
+  /** поворот в радианах */
+  rot: number;
+};
 
-function objectIndex(): Map<string, TestMapObject> {
+/** Расчётные клетки считаются при клетке 100×150 px — как на сервере и в бою;
+ *  мирная ходьба считает точные эллипсы по фактическим размерам клетки. */
+const IDX_CELL_W = 100;
+const IDX_CELL_H = 150;
+
+/** Индексы объектов локации — пересобираются при смене конфига. */
+let objCache: {
+  map: TestMap;
+  /** тела препятствий (камень/дерево) для коллизий и рисования */
+  obstacles: ObstacleBody[];
+  /** клетки (0-based), задетые телом препятствия — маска боя/якорей */
+  cells: Map<string, TestMapObject[]>;
+  /** клеточные объекты (земля/покрытие/заход) по своей клетке */
+  flat: Map<string, TestMapObject[]>;
+} | null = null;
+
+/** Задевает ли эллипс тела клетку (0-based): точный тест в системе эллипса. */
+function ellipseHitsCell(b: ObstacleBody, c: number, r: number): boolean {
+  const cx = b.x * IDX_CELL_W;
+  const cy = b.y * IDX_CELL_H;
+  const rx = b.hw + 2;
+  const ry = b.h + 2;
+  // быстрый отсев по bbox повёрнутого эллипса
+  const ex = Math.hypot(rx * Math.cos(b.rot), ry * Math.sin(b.rot));
+  const ey = Math.hypot(rx * Math.sin(b.rot), ry * Math.cos(b.rot));
+  if (cx + ex < c * IDX_CELL_W || cx - ex > (c + 1) * IDX_CELL_W) return false;
+  if (cy + ey < r * IDX_CELL_H || cy - ey > (r + 1) * IDX_CELL_H) return false;
+  const cos = Math.cos(-b.rot);
+  const sin = Math.sin(-b.rot);
+  const hit = (px: number, py: number): boolean => {
+    const dx = px - cx;
+    const dy = py - cy;
+    const ux = dx * cos - dy * sin;
+    const uy = dx * sin + dy * cos;
+    return (ux * ux) / (rx * rx) + (uy * uy) / (ry * ry) <= 1;
+  };
+  if (hit(cx, cy)) return true; // центр эллипса в клетке (после отсева — точно да)
+  const x0 = c * IDX_CELL_W;
+  const y0 = r * IDX_CELL_H;
+  return hit(x0, y0) || hit(x0 + IDX_CELL_W, y0) || hit(x0, y0 + IDX_CELL_H) || hit(x0 + IDX_CELL_W, y0 + IDX_CELL_H);
+}
+
+function objectIndex(): {
+  obstacles: ObstacleBody[];
+  cells: Map<string, TestMapObject[]>;
+  flat: Map<string, TestMapObject[]>;
+} {
   if (!objCache || objCache.map !== currentMap) {
-    const idx = new Map<string, TestMapObject>();
-    for (const o of currentMap.objects ?? []) idx.set(`${o.c},${o.r}`, o);
-    objCache = { map: currentMap, idx };
+    const obstacles: ObstacleBody[] = [];
+    const cells = new Map<string, TestMapObject[]>();
+    const flat = new Map<string, TestMapObject[]>();
+    for (const o of currentMap.objects ?? []) {
+      if (isObstacleKind(o.kind)) {
+        const base = objectBase(o);
+        const body = obstacleBodyPx(o);
+        const ob: ObstacleBody = {
+          o,
+          x: base.x,
+          y: base.y,
+          hw: body.hw * objectScale(o),
+          h: body.h * objectScale(o),
+          rot: (objectRotDeg(o) * Math.PI) / 180,
+        };
+        obstacles.push(ob);
+        for (let r = Math.max(0, Math.floor(ob.y) - 1); r <= Math.min(currentMap.rows - 1, Math.ceil(ob.y) + 1); r++) {
+          for (let c = Math.max(0, Math.floor(ob.x) - 1); c <= Math.min(currentMap.cols - 1, Math.ceil(ob.x) + 1); c++) {
+            if (ellipseHitsCell(ob, c, r)) {
+              const arr = cells.get(`${c},${r}`);
+              if (arr) arr.push(o);
+              else cells.set(`${c},${r}`, [o]);
+            }
+          }
+        }
+      } else {
+        const key = `${o.c},${o.r}`;
+        const arr = flat.get(key);
+        if (arr) arr.push(o);
+        else flat.set(key, [o]);
+      }
+    }
+    objCache = { map: currentMap, obstacles, cells, flat };
   }
-  return objCache.idx;
+  return objCache;
 }
 
-/** Препятствие, занимающее клетку (0-based), или null — клетка свободна.
- *  Земля препятствием не считается: это наземный декор (проталина). */
+/** Препятствие, задевающее клетку (0-based) телом, или null — клетка свободна.
+ *  Земля и покрытие — не препятствия: это наземный декор, через них ходят. */
 export function testObstacleAt(c: number, r: number): TestMapObject | null {
-  const o = objectIndex().get(`${c},${r}`);
-  return o && isObstacleKind(o.kind) ? o : null;
+  return objectIndex().cells.get(`${c},${r}`)?.[0] ?? null;
 }
 
-/** Любой объект на клетке (включая землю) — для отрисовки. */
+/** Любой объект, чья клетка совпадает с заданной (для редактора). */
 export function testObjectAt(c: number, r: number): TestMapObject | null {
-  return objectIndex().get(`${c},${r}`) ?? null;
+  return objectIndex().flat.get(`${c},${r}`)?.[0] ?? testObstacleAt(c, r);
 }
 
-/** Все препятствия локации — для отрисовки и редактора. */
+/** Все объекты локации — для отрисовки и редактора. */
 export function testObjects(): TestMapObject[] {
   return currentMap.objects ?? [];
+}
+
+/** Тела препятствий (камень/дерево) — для мирных коллизий и контуров редактора. */
+export function testObstacleBodies(): ObstacleBody[] {
+  return objectIndex().obstacles;
 }
 
 /* ---------- клетки захода ---------- */
 
 /** Клетка захода (0-based) на этой клетке или null — там другой объект/пусто. */
 export function testEntryAt(c: number, r: number): TestMapObject | null {
-  const o = objectIndex().get(`${c},${r}`);
+  const o = objectIndex().flat.get(`${c},${r}`)?.[0];
   return o && o.kind === 'entry' && o.dir ? o : null;
 }
 
@@ -205,31 +302,29 @@ export function testBattleRouteBlocked(): { c: number; r: number }[] {
 /* ---------- физические тела препятствий: настоящие размеры, не клетка ---------- */
 
 /**
- * Физическое тело препятствия у основания спрайта — по его настоящим размерам,
- * а не по всей клетке: камень в клетке 100×150 занимает у земли бокс ~40×14 px,
- * дерево — ствол ~28×16 px. Остальная площадь клетки свободна для ходьбы.
- * [полуширина, высота вверх от точки опоры] в px мира.
- */
-function obstacleBody(kind: TestMapObject['kind']): { hw: number; h: number } {
-  return kind === 'tree' ? { hw: 14, h: 16 } : { hw: 20, h: 14 };
-}
-
-/**
  * Свободны ли ноги кота (точка опоры, клеточные доли) от физических тел
- * препятствий. Тела считаются у основания спрайта с его положением в клетке
- * (центр/край) и небольшим запасом на корпус кота; земля и заходы — не тела.
+ * препятствий. Тела — «обтекаемые» эллипсы у основания спрайта с его свободной
+ * позицией, масштабом и поворотом (увеличенный или развёрнутый объект занимает
+ * столько же места, сколько нарисован); земля, покрытие и заходы — не тела.
  */
 export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH: number): boolean {
   const px = x * cellW;
   const py = y * cellH;
-  for (const o of currentMap.objects ?? []) {
-    if (!isObstacleKind(o.kind)) continue;
-    const po = objectPosOffset(o);
-    const bx = (o.c + 0.5 + po.dx) * cellW;
-    const by = (o.r + 1 + po.dy) * cellH; // точка опоры спрайта — низ клетки
-    const b = obstacleBody(o.kind);
-    const m = 4; // запас на ширину корпуса кота у земли
-    if (Math.abs(px - bx) <= b.hw + m && py >= by - b.h - m && py <= by + m) return false;
+  const m = 5; // запас на ширину корпуса кота у земли
+  for (const b of objectIndex().obstacles) {
+    const dx = px - b.x * cellW;
+    const dy = py - b.y * cellH;
+    const rx = b.hw + m;
+    const ry = b.h + m;
+    let ux = dx;
+    let uy = dy;
+    if (b.rot !== 0) {
+      const cos = Math.cos(-b.rot);
+      const sin = Math.sin(-b.rot);
+      ux = dx * cos - dy * sin;
+      uy = dx * sin + dy * cos;
+    }
+    if ((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry) <= 1) return false;
   }
   return true;
 }
@@ -746,17 +841,15 @@ export function drawTestDecorItem(
   ctx.restore();
 }
 
-/* ---------- препятствия: спрайты камня и дерева ---------- */
+/* ---------- препятствия: спрайты камня и дерева (свободные, с масштабом и поворотом) ---------- */
 
 /**
- * Спрайт физического препятствия — рисуется фигурами в стиле локации (никаких
- * внешних картинок: одинаковый вид на всех клиентах, нечего догружать и терять).
- * Точка опоры — (baseX, baseY) = низ клетки (основание ствола / подошва камня),
- * спрайт растёт вверх. m — множитель перспективы, v — зерно вариаций (зеркалит
- * и слегка меняет размер, чтобы деревья не стояли близнецами).
+ * Спрайт физического препятствия — картинка пака, прижатая низом-центром к точке
+ * опоры. Вид, масштаб и поворот берутся из объекта (вариант spr, размер s,
+ * угол rot); поворот — вокруг точки опоры. m — множитель перспективы, v — зерно
+ * вариаций: у старых объектов (без явного масштаба) слегка «гуляет» размер и
+ * зеркало, чтобы деревья не стояли близнецами; у новых масштаб задан в редакторе.
  */
-/** Спрайт пака, прижатый низом-центром к (0, 0) и растянутый до нужной ширины.
- *  Пиксель-арт рисуется без сглаживания — увеличенные пиксели остаются чёткими. */
 function drawPackSprite(
   ctx: CanvasRenderingContext2D,
   name: PackName,
@@ -773,7 +866,7 @@ function drawPackSprite(
 
 export function drawTestObject(
   ctx: CanvasRenderingContext2D,
-  kind: 'stone' | 'tree',
+  o: TestMapObject,
   cellW: number,
   cellH: number,
   baseX: number,
@@ -782,23 +875,33 @@ export function drawTestObject(
   v = 0,
 ): void {
   const flip = v % 2 === 0 ? 1 : -1;
-  const k = 0.94 + (v % 5) * 0.03;
+  const legacy = typeof o.s !== 'number';
+  const k = legacy ? 0.94 + (v % 5) * 0.03 : 1;
+  const scale = objectScale(o);
+  const sprName = objectSprite(o);
+  // ширина: у legacy — «видовая» (дерево от высоты клетки, камень 54 px), у новых —
+  // натуральная ширина спрайта × масштаб: камни разных видов и так разного размера
+  const dims = OBJECT_DIMS[sprName] ?? [57, 42];
+  const baseW = legacy ? (o.kind === 'tree' ? cellH * 0.92 * 0.813 : 54) : dims[0];
+  const w = baseW * scale * m * k;
+  const h = w * (dims[1] / dims[0]);
+  const rot = (objectRotDeg(o) * Math.PI) / 180;
   ctx.save();
   ctx.translate(baseX, baseY);
-  ctx.scale(m * k * flip, m * k);
-  // тень под ногами — общая для обоих видов
-  const tw = kind === 'tree' ? cellH * 0.92 * 0.813 : 54;
+  // тень под ногами — до поворота, остаётся «лежащей на земле»
   ctx.beginPath();
-  ctx.ellipse(0, 1, kind === 'tree' ? tw * 0.28 : 26, kind === 'tree' ? 7 : 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 1, w * (o.kind === 'tree' ? 0.28 : 0.42), o.kind === 'tree' ? 7 : Math.max(4, w * 0.1), 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.fill();
-  // спрайт пака; пока не догрузился — прежняя векторная фигура
-  const ok = kind === 'stone' ? drawPackSprite(ctx, 'rock', 54) : drawPackSprite(ctx, 'tree', cellH * 0.92 * 0.813);
+  if (rot !== 0) ctx.rotate(rot);
+  ctx.scale(k * flip, k);
+  // спрайт пака; пока не догрузился — прежняя векторная фигура (для tree-1/rock-1)
+  const ok = drawPackSprite(ctx, sprName as PackName, w / k);
   if (ok) {
     ctx.restore();
     return;
   }
-  if (kind === 'stone') {
+  if (o.kind === 'stone') {
     // валун: основной корпус, светлая грань сверху-слева, тёмный низ, трещины и мох
     ctx.beginPath();
     ctx.moveTo(-26, 0);
@@ -896,31 +999,87 @@ export function drawTestObject(
 
 /**
  * Габарит отрисовки препятствия (px мира) — тот же расчёт, что в drawTestObject:
- * спрайт пака прижат низом-центром к точке опоры, ширина по виду и зерну v,
- * множитель перспективы m. Пока текстура не догрузилась — габарит векторной
- * фигуры-заменителя. Нужен для проверки «объект закрывает модельку игрока»
- * (прозрачность перекрытия): считать можно только по тем же числам, что рисуют.
+ * ширина по виду/масштабу/зерну, поворот вокруг точки опоры (bbox повёрнутого
+ * прямоугольника). Пока текстура не догрузилась — габарит векторного заменителя.
+ * Нужен для проверки «объект закрывает модельку игрока» (прозрачность перекрытия):
+ * считать можно только по тем же числам, что рисуют.
  */
 export function testObjectDrawRect(
-  kind: 'stone' | 'tree',
+  o: TestMapObject,
   cellH: number,
   baseX: number,
   baseY: number,
   m = 1,
   v = 0,
 ): { x0: number; y0: number; x1: number; y1: number } {
-  const k = 0.94 + (v % 5) * 0.03;
-  const img = packImg(kind === 'tree' ? 'tree' : 'rock');
-  if (img) {
-    const w = (kind === 'tree' ? cellH * 0.92 * 0.813 : 54) * m * k;
-    const h = (w * img.naturalHeight) / img.naturalWidth;
-    return { x0: baseX - w / 2, y0: baseY - h, x1: baseX + w / 2, y1: baseY };
+  const legacy = typeof o.s !== 'number';
+  const k = legacy ? 0.94 + (v % 5) * 0.03 : 1;
+  const sprName = objectSprite(o);
+  const dims = OBJECT_DIMS[sprName] ?? [57, 42];
+  const baseW = legacy ? (o.kind === 'tree' ? cellH * 0.92 * 0.813 : 54) : dims[0];
+  const w = baseW * objectScale(o) * m * k;
+  const h = w * (dims[1] / dims[0]);
+  const rot = (objectRotDeg(o) * Math.PI) / 180;
+  // углы прямоугольника спрайта (низ-центр в точке опоры) до поворота
+  const corners = [
+    [-w / 2, 0],
+    [w / 2, 0],
+    [-w / 2, -h],
+    [w / 2, -h],
+  ];
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [cx, cy] of corners) {
+    const px = baseX + cx * cos - cy * sin;
+    const py = baseY + cx * sin + cy * cos;
+    if (px < x0) x0 = px;
+    if (py < y0) y0 = py;
+    if (px > x1) x1 = px;
+    if (py > y1) y1 = py;
   }
-  // векторные заменители из drawTestObject: камень ≈ 59×37, дерево ≈ 59×110
-  if (kind === 'stone') {
-    return { x0: baseX - 32 * m * k, y0: baseY - 35 * m * k, x1: baseX + 27 * m * k, y1: baseY + 2 * m * k };
+  return { x0, y0, x1, y1 };
+}
+
+/* ---------- наземные покрытия: плитка/цветы/пол на клетке ---------- */
+
+/**
+ * Покрытие земли (kind «ground»): тайл пака ложится паттерном на клетку.
+ * Паттерн повторяется от начала мира — соседние покрашенные клетки сходятся
+ * в сплошной настил без швов. Пока текстура не догрузилась — цветная заливка
+ * в тона покрытия, чтобы клетка не «моргала».
+ */
+export function drawGroundCover(
+  ctx: CanvasRenderingContext2D,
+  o: TestMapObject,
+  cellW: number,
+  cellH: number,
+): void {
+  const cv = groundCoverOf(o);
+  const x0 = o.c * cellW;
+  const y0 = o.r * cellH;
+  const pat = coverPattern(ctx, cv);
+  if (pat) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = pat;
+    ctx.fillRect(x0, y0, cellW + 0.5, cellH + 0.5);
+    ctx.restore();
+    return;
   }
-  return { x0: baseX - 32 * m * k, y0: baseY - 108 * m * k, x1: baseX + 27 * m * k, y1: baseY + 2 * m * k };
+  // запасной фон: примерные тона групп покрытий
+  const tone = cv.startsWith('flower')
+    ? '#4a6b33'
+    : cv.startsWith('slab')
+      ? '#57683f'
+      : cv.startsWith('floor')
+        ? '#8f8d82'
+        : '#42582c';
+  ctx.fillStyle = tone;
+  ctx.fillRect(x0, y0, cellW + 0.5, cellH + 0.5);
 }
 
 /* ---------- наземный декор: проталина земли ---------- */

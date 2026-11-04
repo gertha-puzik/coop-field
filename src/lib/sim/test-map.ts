@@ -15,13 +15,13 @@
 
 export type TestMapZoneKind = 'cells' | 'green';
 
-/** Объект на клетке (0-based). Камень и дерево — физические препятствия: через
- *  них нельзя пройти ни в мирном режиме, ни в боевом (клетка непроходима).
- *  Земля — наземный спрайт-декор (проталина на траве): ходьбу не мешает.
- *  Заход — клетка входа в боевую зону: стоит на траве рядом с боевыми клетками,
- *  стрелка указывает, куда игрока перенесёт шаг в боевом режиме (в бой).
- *  Спрайты рисуются от низа клетки вверх (земля и заход — по всей клетке). */
-export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry';
+/** Объект локации. Камень и дерево — физические препятствия: через них нельзя
+ *  пройти ни в мирном режиме, ни в боевом. Земля — наземный спрайт-декор
+ *  (проталина на траве), покрытие — наземная плитка (цветы/каменная плитка/пол):
+ *  ходьбе не мешают. Заход — клетка входа в боевую зону: стоит на траве рядом
+ *  с боевыми клетками, стрелка указывает, куда игрока перенесёт шаг в бою.
+ *  Спрайты рисуются от точки опоры вверх (земля/покрытие/заход — по всей клетке). */
+export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry' | 'ground';
 
 /** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
  *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
@@ -52,18 +52,145 @@ export function objectPosOffset(o: TestMapObject): { dx: number; dy: number } {
   return TEST_OBJECT_POS_OFFSET[o.pos ?? 'center'] ?? TEST_OBJECT_POS_OFFSET.center;
 }
 
-/** Препятствие это или наземный декор: землю в проверки проходимости не берём. */
+/** Препятствие это или наземный декор: землю и покрытие в проверки проходимости не берём. */
 export function isObstacleKind(kind: TestMapObjectKind): boolean {
   return kind === 'stone' || kind === 'tree';
 }
 
+/* ---------- варианты спрайтов препятствий и покрытий ---------- */
+
+/** Деревья пака (нарезаны из TX Plant.png): три вида на выбор в редакторе. */
+export const TREE_SPRITE_OPTS = [
+  { id: 'tree-1', label: 'Дерево 1' },
+  { id: 'tree-2', label: 'Дерево 2' },
+  { id: 'tree-3', label: 'Дерево 3' },
+] as const;
+
+/** Камни пака (TX Props.png): валун, ряд булышков по возрастанию и плоские камни-ступени. */
+export const ROCK_SPRITE_OPTS = [
+  { id: 'rock-1', label: 'Валун' },
+  { id: 'rock-2', label: 'Булышка' },
+  { id: 'rock-3', label: 'Маленький' },
+  { id: 'rock-4', label: 'Малый' },
+  { id: 'rock-5', label: 'Малый 2' },
+  { id: 'rock-6', label: 'Средний' },
+  { id: 'rock-7', label: 'Крупный' },
+  { id: 'rock-8', label: 'Ступень' },
+  { id: 'rock-9', label: 'Ступень 2' },
+  { id: 'rock-10', label: 'Ступени' },
+] as const;
+
+/** Покрытия земли (тайлы 16 px пака, рисуются паттерном по клетке). */
+export const GROUND_COVER_OPTS = [
+  { id: 'grass-1', label: 'Трава 1' },
+  { id: 'grass-2', label: 'Трава 2' },
+  { id: 'flower-1', label: 'Цветы 1' },
+  { id: 'flower-2', label: 'Цветы 2' },
+  { id: 'flower-3', label: 'Цветы 3' },
+  { id: 'flower-4', label: 'Цветы 4' },
+  { id: 'slab-1', label: 'Плитка 1' },
+  { id: 'slab-2', label: 'Плитка 2' },
+  { id: 'slab-3', label: 'Плитка 3' },
+  { id: 'slab-4', label: 'Плитка 4' },
+  { id: 'floor-1', label: 'Пол 1' },
+  { id: 'floor-2', label: 'Пол 2' },
+  { id: 'floor-3', label: 'Пол 3' },
+] as const;
+
+export type TreeSpr = (typeof TREE_SPRITE_OPTS)[number]['id'];
+export type RockSpr = (typeof ROCK_SPRITE_OPTS)[number]['id'];
+export type GroundCover = (typeof GROUND_COVER_OPTS)[number]['id'];
+
+const TREE_SPRITE_IDS = new Set<string>(TREE_SPRITE_OPTS.map((t) => t.id));
+const ROCK_SPRITE_IDS = new Set<string>(ROCK_SPRITE_OPTS.map((t) => t.id));
+const GROUND_COVER_IDS = new Set<string>(GROUND_COVER_OPTS.map((t) => t.id));
+
+/** Спрайт объекта: заданный в конфиге или дефолт по виду (старые конфиги без spr). */
+export function objectSprite(o: Pick<TestMapObject, 'kind' | 'spr'>): TreeSpr | RockSpr {
+  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as TreeSpr) : 'tree-1';
+  return ROCK_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as RockSpr) : 'rock-1';
+}
+
+/** Покрытие клетки: заданное в конфиге или дефолт (цветы 1). */
+export function groundCoverOf(o: Pick<TestMapObject, 'cv'>): GroundCover {
+  return GROUND_COVER_IDS.has(o.cv ?? '') ? (o.cv as GroundCover) : 'flower-1';
+}
+
+/** Пределы масштаба и поворота объектов в редакторе. */
+export const OBJECT_SCALE_MIN = 0.4;
+export const OBJECT_SCALE_MAX = 3.5;
+export const OBJECT_ROT_STEP = 15;
+
+/** Масштаб объекта (старые конфиги без s — 1). */
+export function objectScale(o: Pick<TestMapObject, 's'>): number {
+  return typeof o.s === 'number' && Number.isFinite(o.s) ? o.s : 1;
+}
+
+/** Поворот объекта в градусах (старые конфиги без rot — 0). */
+export function objectRotDeg(o: Pick<TestMapObject, 'rot'>): number {
+  return typeof o.rot === 'number' && Number.isFinite(o.rot) ? o.rot : 0;
+}
+
+/** Точка опоры объекта в клеточных долях мира: свободная (x, y) у новых конфигов;
+ *  старые (только c/r/pos) — по центру клетки с её сдвигом, низ клетки — опора. */
+export function objectBase(o: TestMapObject): { x: number; y: number } {
+  if (typeof o.x === 'number' && typeof o.y === 'number') return { x: o.x, y: o.y };
+  const po = objectPosOffset(o);
+  return { x: o.c + 0.5 + po.dx, y: o.r + 1 + po.dy };
+}
+
+/** Размеры спрайтов пака в px (нативные, после нарезки): [ширина, высота]. */
+export const OBJECT_DIMS: Record<string, [number, number]> = {
+  'tree-1': [113, 139],
+  'tree-2': [97, 136],
+  'tree-3': [79, 120],
+  'rock-1': [57, 42],
+  'rock-2': [11, 10],
+  'rock-3': [16, 14],
+  'rock-4': [24, 19],
+  'rock-5': [24, 19],
+  'rock-6': [27, 22],
+  'rock-7': [27, 27],
+  'rock-8': [18, 16],
+  'rock-9': [19, 16],
+  'rock-10': [31, 19],
+};
+
+/**
+ * Физическое тело препятствия у земли в px мира (до масштаба): [полуширина, высота
+ * вверх от точки опоры]. У дерева — ствол (крона не мешает ходить под ней в бою
+ * не будет, а в мирном режиме проход за кроной читается), у камня — подошва
+ * пропорционально спрайту. Тело «обтекаемое»: проверяется эллипсом, повёрнутым
+ * вместе с объектом (см. testPeaceObjectsFree / buildCells на сервере).
+ */
+export function obstacleBodyPx(o: Pick<TestMapObject, 'kind' | 'spr'>): { hw: number; h: number } {
+  if (o.kind === 'tree') return { hw: 14, h: 16 };
+  const dims = OBJECT_DIMS[objectSprite(o)] ?? [57, 42];
+  return { hw: dims[0] * 0.38, h: dims[1] * 0.32 };
+}
+
+/** Объект локации: см. описание TestMapObjectKind выше. */
 export type TestMapObject = {
   id: string;
   kind: TestMapObjectKind;
-  /** 0-based клетка, которую объект занимает целиком. */
+  /** 0-based клетка: у земли/покрытия/захода — клетка, которую объект занимает
+   *  целиком; у камня/дерева — клетка точки опоры (для совместимости и списков). */
   c: number;
   r: number;
-  /** Положение спрайта внутри клетки (по умолчанию — центр). */
+  /** Свободная точка опоры (доли клетки, низ спрайта) — у камня/дерева вместо
+   *  привязки к клетке: ставится где угодно. У старых конфигов нет — тогда
+   *  позиция считается из c/r/pos. */
+  x?: number;
+  y?: number;
+  /** Масштаб спрайта (0.4–3.5, 1 — натуральный) и поворот в градусах (0–359). */
+  s?: number;
+  rot?: number;
+  /** Вариант спрайта: дерево (tree-1..3) или камень (rock-1..10). */
+  spr?: string;
+  /** Вариант покрытия земли (только для kind «ground»). */
+  cv?: string;
+  /** Положение спрайта внутри клетки (по умолчанию — центр; legacy, новые
+   *  объекты ставятся свободно и поле не используют). */
   pos?: TestMapObjectPos;
   /** Направление захода (только для kind «entry»): куда перенесёт шаг в бою. */
   dir?: TestMapEntryDir;
@@ -104,7 +231,7 @@ export const TEST_MAP_LIMITS = {
   rowsMin: 3,
   rowsMax: 40,
   zonesMax: 48,
-  objectsMax: 400,
+  objectsMax: 2000,
   nameMax: 24,
 } as const;
 
@@ -224,10 +351,30 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
               ? 'dirt'
               : o.kind === 'entry'
                 ? 'entry'
-                : null;
+                : o.kind === 'ground'
+                  ? 'ground'
+                  : null;
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
-      const c = asInt(o.c);
-      const r = asInt(o.r);
+      // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
+      // считаем из клетки и положения в ней (миграция при первом же сохранении).
+      let x = 0;
+      let y = 0;
+      if (kind === 'stone' || kind === 'tree') {
+        const fx = Number(o.x);
+        const fy = Number(o.y);
+        if (Number.isFinite(fx) && Number.isFinite(fy)) {
+          x = Math.min(cols + 0.5, Math.max(-0.5, Math.round(fx * 100) / 100));
+          y = Math.min(rows + 1.5, Math.max(-0.5, Math.round(fy * 100) / 100));
+        } else {
+          const c0 = asInt(o.c) ?? 0;
+          const r0 = asInt(o.r) ?? 0;
+          const po = TEST_OBJECT_POS_OFFSET[o.pos ?? 'center'] ?? TEST_OBJECT_POS_OFFSET.center;
+          x = Math.min(cols + 0.5, Math.max(-0.5, Math.round((c0 + 0.5 + po.dx) * 100) / 100));
+          y = Math.min(rows + 1.5, Math.max(-0.5, Math.round((r0 + 1 + po.dy) * 100) / 100));
+        }
+      }
+      const c = asInt(o.c ?? Math.floor(x));
+      const r = asInt(o.r ?? Math.floor(y));
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
         return { error: `препятствие №${i + 1}: вне границ мира` };
       }
@@ -242,10 +389,41 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         }
         dir = o.dir;
       }
-      const key = `${c},${r}`;
-      if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
-      taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r, pos, dir });
+      // Масштаб, поворот и вариант спрайта — только у препятствий.
+      let s: number | undefined;
+      let rot: number | undefined;
+      let spr: string | undefined;
+      let cv: string | undefined;
+      if (kind === 'stone' || kind === 'tree') {
+        const sn = Number(o.s);
+        s = Number.isFinite(sn)
+          ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100))
+          : undefined;
+        const rn = Math.round(Number(o.rot));
+        rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
+        const raw = typeof o.spr === 'string' ? o.spr : '';
+        spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(raw) ? raw : 'tree-1') : ROCK_SPRITE_IDS.has(raw) ? raw : 'rock-1';
+      }
+      if (kind === 'ground') {
+        cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
+      }
+      // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно
+      // и на клетку не «схлопываются».
+      if (kind !== 'stone' && kind !== 'tree') {
+        const key = `${c},${r}`;
+        if (taken.has(key)) continue;
+        taken.add(key);
+      }
+      objects.push({
+        id: `o${i + 1}`,
+        kind,
+        c,
+        r,
+        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr } : {}),
+        ...(kind === 'ground' ? { cv } : {}),
+        pos,
+        dir,
+      });
     }
   }
   const zones: TestMapZone[] = [];

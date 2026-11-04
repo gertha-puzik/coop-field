@@ -138,6 +138,8 @@ let TEST_WIDTH = testMap.cols;
 let TEST_HEIGHT = testMap.rows;
 let TEST_ISLAND = [];
 let TEST_CELLS = [];
+/** Клетки (0-based), задетые телами препятствий — для спавна и проверок занятия. */
+let TEST_OBST_CELLS = new Set();
 
 /** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором. */
 function rebuildTestGeometry() {
@@ -145,6 +147,7 @@ function rebuildTestGeometry() {
   TEST_HEIGHT = testMap.rows;
   TEST_ISLAND = buildIsland(testMap);
   TEST_CELLS = buildCells(testMap, TEST_ISLAND);
+  TEST_OBST_CELLS = obstacleBlockedCells(testMap);
 }
 
 /* ---------- геометрия кромки локации — точный порт src/lib/sim/test-field.ts.
@@ -315,8 +318,9 @@ function testCellInIsland(c, r, island = TEST_ISLAND) {
 /** Маска проходимости «теста» (0-based): зоны с клетками минус клетки, задетые
  *  кромкой (сглаженный край подрезает углы зон — такие клетки недоступны для
  *  прыжков, а сетка у кромки на клиенте рисуется с клипом по тому же полигону),
- *  минус клетки, занятые препятствиями (камень/дерево стоят намертво; земля —
- *  наземный декор, ходьбе не мешает).
+ *  минус клетки, задетые телами препятствий — «обтекаемые» эллипсы у земли со
+ *  свободной позицией, масштабом и поворотом (зеркало test-field.ts клиента;
+ *  земля/покрытие — наземный декор, ходьбе не мешают).
  *  Зелёные зоны в бою не участвуют — это только мирная территория. */
 function buildCells(map, island) {
   const mask = Array.from({ length: map.rows }, () => new Array(map.cols).fill(false));
@@ -326,13 +330,126 @@ function buildCells(map, island) {
       for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
     }
   }
-  const blocked = new Set((map.objects || []).filter((o) => o.kind !== "dirt" && o.kind !== "entry").map((o) => `${o.c},${o.r}`));
+  const blocked = obstacleBlockedCells(map);
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
       if (mask[r][c] && (!testCellInIsland(c, r, island) || blocked.has(`${c},${r}`))) mask[r][c] = false;
     }
   }
   return mask;
+}
+
+/** Тела препятствий (камень/дерево): точка опоры, полуоси эллипса и поворот —
+ *  ровно как в ObstacleBody клиента (клетка для индекса — 100×150 px). */
+function obstacleBodiesOf(map) {
+  return (map.objects || [])
+    .filter((o) => o.kind === 'stone' || o.kind === 'tree')
+    .map((o) => {
+      const base = objectBase(o);
+      const body = obstacleBodyPx(o);
+      return {
+        o,
+        x: base.x,
+        y: base.y,
+        hw: body.hw * objectScale(o),
+        h: body.h * objectScale(o),
+        rot: (objectRotDeg(o) * Math.PI) / 180,
+      };
+    });
+}
+
+/** Клетки (0-based), задетые телами препятствий (эллипс против клетки). */
+function obstacleBlockedCells(map) {
+  const blocked = new Set();
+  for (const b of obstacleBodiesOf(map)) {
+    for (let r = Math.max(0, Math.floor(b.y) - 1); r <= Math.min(map.rows - 1, Math.ceil(b.y) + 1); r++) {
+      for (let c = Math.max(0, Math.floor(b.x) - 1); c <= Math.min(map.cols - 1, Math.ceil(b.x) + 1); c++) {
+        if (ellipseHitsCell(b, c, r)) blocked.add(`${c},${r}`);
+      }
+    }
+  }
+  return blocked;
+}
+
+/** Задевает ли эллипс тела клетку (0-based): точный тест в системе эллипса. */
+function ellipseHitsCell(b, c, r) {
+  const cx = b.x * 100;
+  const cy = b.y * 150;
+  const rx = b.hw + 2;
+  const ry = b.h + 2;
+  const ex = Math.hypot(rx * Math.cos(b.rot), ry * Math.sin(b.rot));
+  const ey = Math.hypot(rx * Math.sin(b.rot), ry * Math.cos(b.rot));
+  if (cx + ex < c * 100 || cx - ex > (c + 1) * 100) return false;
+  if (cy + ey < r * 150 || cy - ey > (r + 1) * 150) return false;
+  const cos = Math.cos(-b.rot);
+  const sin = Math.sin(-b.rot);
+  const hit = (px, py) => {
+    const dx = px - cx;
+    const dy = py - cy;
+    const ux = dx * cos - dy * sin;
+    const uy = dx * sin + dy * cos;
+    return (ux * ux) / (rx * rx) + (uy * uy) / (ry * ry) <= 1;
+  };
+  if (hit(cx, cy)) return true;
+  const x0 = c * 100;
+  const y0 = r * 150;
+  return hit(x0, y0) || hit(x0 + 100, y0) || hit(x0, y0 + 150) || hit(x0 + 100, y0 + 150);
+}
+
+/** Точка опоры объекта в клеточных долях (зеркало objectBase из test-map.ts):
+ *  свободные x/y у новых конфигов, у старых — из клетки и положения в ней. */
+function objectBase(o) {
+  if (Number.isFinite(o.x) && Number.isFinite(o.y)) return { x: o.x, y: o.y };
+  const PO = { center: [0, 0], left: [-0.25, 0], right: [0.25, 0], top: [0, -0.25], bottom: [0, 0.25] };
+  const po = PO[o.pos || 'center'] || PO.center;
+  return { x: o.c + 0.5 + po[0], y: o.r + 1 + po[1] };
+}
+
+const OBJECT_DIMS = {
+  'tree-1': [113, 139],
+  'tree-2': [97, 136],
+  'tree-3': [79, 120],
+  'rock-1': [57, 42],
+  'rock-2': [11, 10],
+  'rock-3': [16, 14],
+  'rock-4': [24, 19],
+  'rock-5': [24, 19],
+  'rock-6': [27, 22],
+  'rock-7': [27, 27],
+  'rock-8': [18, 16],
+  'rock-9': [19, 16],
+  'rock-10': [31, 19],
+};
+const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
+const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
+const GROUND_COVER_IDS = new Set([
+  'grass-1', 'grass-2',
+  'flower-1', 'flower-2', 'flower-3', 'flower-4',
+  'slab-1', 'slab-2', 'slab-3', 'slab-4',
+  'floor-1', 'floor-2', 'floor-3',
+]);
+const OBJECT_SCALE_MIN = 0.4;
+const OBJECT_SCALE_MAX = 3.5;
+
+function objectSprite(o) {
+  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1';
+  return ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+}
+
+function objectScale(o) {
+  return Number.isFinite(o.s) ? o.s : 1;
+}
+
+function objectRotDeg(o) {
+  return Number.isFinite(o.rot) ? o.rot : 0;
+}
+
+/** Физическое тело препятствия у земли в px (зеркало obstacleBodyPx из test-map.ts):
+ *  [полуширина, высота вверх] до масштаба. */
+function obstacleBodyPx(o) {
+  if (o.kind === 'tree') return { hw: 14, h: 16 };
+  const dims = OBJECT_DIMS[objectSprite(o)] || [57, 42];
+  return { hw: dims[0] * 0.38, h: dims[1] * 0.32 };
 }
 
 function testCellWalkable(c, r) {
@@ -405,11 +522,12 @@ function sanitizeTestMap(raw) {
   if (!Array.isArray(raw.zones) || raw.zones.length === 0) return { error: 'список зон пуст' };
   if (raw.zones.length > 48) return { error: 'зон не больше 48' };
   // Препятствия необязательны (старые конфиги без objects читаются как «пусто»):
-  // камень/дерево занимают клетку целиком — через неё нельзя пройти ни в бою, ни в мирном.
+  // камень/дерево стоят свободно (точка опоры, масштаб, поворот), через их тело
+  // нельзя пройти ни в бою, ни в мирном; земля и покрытие — наземный декор.
   let objects = [];
   if (raw.objects != null) {
     if (!Array.isArray(raw.objects)) return { error: 'список препятствий не распознан' };
-    if (raw.objects.length > 400) return { error: 'объектов не больше 400' };
+    if (raw.objects.length > 2000) return { error: 'объектов не больше 2000' };
     const taken = new Set();
     for (let i = 0; i < raw.objects.length; i++) {
       const o = raw.objects[i];
@@ -423,10 +541,31 @@ function sanitizeTestMap(raw) {
               ? 'dirt'
               : o.kind === 'entry'
                 ? 'entry'
-                : null);
+                : o.kind === 'ground'
+                  ? 'ground'
+                  : null);
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
-      const c = asInt(o.c);
-      const r = asInt(o.r);
+      // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
+      // считаем из клетки и положения в ней (зеркало sanitizeTestMap клиента).
+      let x = 0;
+      let y = 0;
+      if (kind === 'stone' || kind === 'tree') {
+        const fx = Number(o.x);
+        const fy = Number(o.y);
+        if (Number.isFinite(fx) && Number.isFinite(fy)) {
+          x = Math.min(cols + 0.5, Math.max(-0.5, Math.round(fx * 100) / 100));
+          y = Math.min(rows + 1.5, Math.max(-0.5, Math.round(fy * 100) / 100));
+        } else {
+          const c0 = Number.isFinite(Number(o.c)) ? Math.round(Number(o.c)) : 0;
+          const r0 = Number.isFinite(Number(o.r)) ? Math.round(Number(o.r)) : 0;
+          const PO = { center: [0, 0], left: [-0.25, 0], right: [0.25, 0], top: [0, -0.25], bottom: [0, 0.25] };
+          const po = PO[o.pos || 'center'] || PO.center;
+          x = Math.min(cols + 0.5, Math.max(-0.5, Math.round((c0 + 0.5 + po[0]) * 100) / 100));
+          y = Math.min(rows + 1.5, Math.max(-0.5, Math.round((r0 + 1 + po[1]) * 100) / 100));
+        }
+      }
+      const c = Number.isFinite(Number(o.c)) ? asInt(o.c) : Math.floor(x);
+      const r = Number.isFinite(Number(o.r)) ? asInt(o.r) : Math.floor(y);
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
         return { error: `препятствие №${i + 1}: вне границ мира` };
       }
@@ -440,10 +579,37 @@ function sanitizeTestMap(raw) {
         }
         dir = o.dir;
       }
-      const key = `${c},${r}`;
-      if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
-      taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r, pos, dir });
+      // Масштаб, поворот и вариант спрайта — только у препятствий (зеркало клиента).
+      let s;
+      let rot;
+      let spr;
+      let cv;
+      if (kind === 'stone' || kind === 'tree') {
+        const sn = Number(o.s);
+        s = Number.isFinite(sn) ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100)) : undefined;
+        const rn = Math.round(Number(o.rot));
+        rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
+        spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1') : ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+      }
+      if (kind === 'ground') {
+        cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
+      }
+      // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно.
+      if (kind !== 'stone' && kind !== 'tree') {
+        const key = `${c},${r}`;
+        if (taken.has(key)) continue;
+        taken.add(key);
+      }
+      objects.push({
+        id: `o${i + 1}`,
+        kind,
+        c,
+        r,
+        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr } : {}),
+        ...(kind === 'ground' ? { cv } : {}),
+        pos,
+        dir,
+      });
     }
   }
   const zones = [];
@@ -687,9 +853,7 @@ function spawnCell(room) {
         for (let x = z.c0 + 1; x <= z.c1 + 1; x++) {
           if (x < 1 || y < 1 || x > W || y > H) continue;
           if (!testCellInIsland(x - 1, y - 1)) continue;
-          const onObj = (testMap.objects || []).some(
-            (o) => o.kind !== 'dirt' && o.c === x - 1 && o.r === y - 1,
-          );
+          const onObj = TEST_OBST_CELLS.has(`${x - 1},${y - 1}`);
           if (onObj) continue;
           if (!occupied(room, x, y)) return [x, y];
         }
