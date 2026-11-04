@@ -54,6 +54,7 @@ export type WindowKey = '0' | '45' | '90' | '135' | '180' | '225' | '270' | '315
 /** Идентификатор спрайта персонажа. */
 export type SpriteId =
   | 'puhlyashik'
+  | 'puhlyashshshshshshshsh'
   | 'blestyashka'
   | 'puzatik'
   | 'razdora'
@@ -94,6 +95,7 @@ export interface SpriteMeta {
 /** Доступные спрайты персонажа (экран выбора перед полем). */
 export const SPRITES: SpriteMeta[] = [
   { id: 'puhlyashik', name: 'Пухляшик', src: '/sprites/puhlyashik.png' },
+  { id: 'puhlyashshshshshshshsh', name: 'Пухляшшшшшшшш', src: '/sprites/puhlyashshshshshshshsh.png' },
   { id: 'blestyashka', name: 'Блестяшка', src: '/sprites/blestyashka.png' },
   { id: 'puzatik', name: 'Пузатик', src: '/sprites/puzatik.png' },
   { id: 'razdora', name: 'Пламя Раздора', src: '/sprites/razdora.png' },
@@ -143,7 +145,7 @@ export interface SpriteGroup {
  *  Набор «Малышочки» — отдельно (см. MALYSHOCHKI_SET): он показывается своим
  *  разделом под общей каруселью, а не колонкой среди привычных скинов. */
 export const SPRITE_GROUPS: SpriteGroup[] = [
-  { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puzatik', 'razdora'] },
+  { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puhlyashshshshshshshsh', 'puzatik', 'razdora'] },
   { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel', 'gromoryov', 'gremuchnik'] },
   { id: 'syr', name: 'Сырь', spriteIds: ['ryzhiy'] },
   { id: 'vp', name: 'ВП', spriteIds: ['serebristyy'] },
