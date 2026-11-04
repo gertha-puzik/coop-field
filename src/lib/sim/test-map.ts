@@ -15,10 +15,16 @@
 
 export type TestMapZoneKind = 'cells' | 'green';
 
-/** Физическое препятствие: камень или дерево на клетке (0-based). Через него
- *  нельзя пройти ни в мирном режиме (якоря внутри заняты), ни в боевом
- *  (клетка непроходима). Спрайт рисуется от низа клетки вверх. */
-export type TestMapObjectKind = 'stone' | 'tree';
+/** Объект на клетке (0-based). Камень и дерево — физические препятствия: через
+ *  них нельзя пройти ни в мирном режиме, ни в боевом (клетка непроходима).
+ *  Земля — наземный спрайт-декор (проталина на траве): ходьбу не мешает.
+ *  Спрайты рисуются от низа клетки вверх (земля — по всей клетке). */
+export type TestMapObjectKind = 'stone' | 'tree' | 'dirt';
+
+/** Препятствие это или наземный декор: землю в проверки проходимости не берём. */
+export function isObstacleKind(kind: TestMapObjectKind): boolean {
+  return kind === 'stone' || kind === 'tree';
+}
 
 export type TestMapObject = {
   id: string;
@@ -40,7 +46,9 @@ export type TestMapZone = {
 };
 
 export type TestMap = {
-  v: 1;
+  /** Версия конфига: 1 — клетки везде, 2 — деление поля на траву и боевые клетки.
+   *  Старый файл с v1 сервер поднимает до дефолта v2 при загрузке (миграция). */
+  v: number;
   cols: number;
   rows: number;
   /** Насколько (в долях клетки) нарисованная кромка отступает от зон. */
@@ -53,28 +61,31 @@ export type TestMap = {
   objects?: TestMapObject[];
 };
 
-/** Пределы редактора: мир, число зон и число препятствий. */
+/** Пределы редактора: мир, число зон и число объектов. Лимит объектов крупный:
+ *  проталины земли ставят протяжкой, и их на локации бывает много. */
 export const TEST_MAP_LIMITS = {
   colsMin: 6,
   colsMax: 60,
   rowsMin: 3,
   rowsMax: 40,
   zonesMax: 48,
-  objectsMax: 60,
+  objectsMax: 400,
   nameMax: 24,
 } as const;
 
-/** Локация «тест» по умолчанию — та же раскладка, что была залита в код. */
+/** Локация «тест» по умолчанию — трава с двумя зелёными зонами и боевым полигоном
+ *  посередине: новичок спавнится на траве (мирный режим), бой включается сам на
+ *  жёлтых боевых клетках. Редактором локация меняется и живёт на сервере. */
 export const TEST_MAP_DEFAULT: TestMap = {
-  v: 1,
+  v: 2,
   cols: 19,
   rows: 7,
   margin: 0.5,
   seed: 'test',
   zones: [
-    { id: 'z1', name: 'Лужайка', kind: 'cells', c0: 0, r0: 0, c1: 9, r1: 6 },
-    { id: 'z2', name: 'Переход', kind: 'cells', c0: 10, r0: 1, c1: 12, r1: 5 },
-    { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 0, c1: 18, r1: 5 },
+    { id: 'z1', name: 'Лужайка', kind: 'green', c0: 0, r0: 0, c1: 9, r1: 6 },
+    { id: 'z2', name: 'Полигон', kind: 'cells', c0: 10, r0: 1, c1: 15, r1: 5 },
+    { id: 'z3', name: 'Заросли', kind: 'green', c0: 16, r0: 0, c1: 18, r1: 6 },
   ],
 };
 
@@ -143,7 +154,9 @@ export function testMapConnectivityError(zones: TestMapZone[]): string | null {
 export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string } {
   if (!raw || typeof raw !== 'object') return { error: 'конфиг не распознан' };
   const src = raw as Partial<TestMap> & { v?: unknown };
-  if (src.v !== 1) return { error: 'неизвестная версия конфига' };
+  // v1 — legacy-раскладка «клетки везде» (сервер мигрирует её к дефолту v2),
+  // v2 — текущая: трава (мир) + боевые клетки. Другие версии не знаем.
+  if (src.v !== 1 && src.v !== 2) return { error: 'неизвестная версия конфига' };
   const cols = asInt(src.cols);
   const rows = asInt(src.rows);
   if (cols === null || rows === null) return { error: 'размер мира не распознан' };
@@ -162,13 +175,13 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   if (src.objects != null) {
     if (!Array.isArray(src.objects)) return { error: 'список препятствий не распознан' };
     if (src.objects.length > TEST_MAP_LIMITS.objectsMax) {
-      return { error: `препятствий не больше ${TEST_MAP_LIMITS.objectsMax}` };
+      return { error: `объектов не больше ${TEST_MAP_LIMITS.objectsMax}` };
     }
     const taken = new Set<string>();
     for (let i = 0; i < src.objects.length; i++) {
       const o = src.objects[i] as Partial<TestMapObject>;
-      const kind = o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : null;
-      if (!kind) return { error: `препятствие №${i + 1}: неизвестный тип` };
+      const kind = o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : o.kind === 'dirt' ? 'dirt' : null;
+      if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       const c = asInt(o.c);
       const r = asInt(o.r);
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
@@ -205,7 +218,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   if (conn) return { error: conn };
   return {
     map: {
-      v: 1,
+      v: src.v,
       cols,
       rows,
       margin: 0.5,

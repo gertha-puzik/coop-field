@@ -19,7 +19,7 @@
  * следующая отрисовка и все проверки ходьбы уже считают новую локацию.
  */
 
-import { TEST_MAP_DEFAULT, type TestMap, type TestMapObject, type TestMapZone } from './test-map';
+import { TEST_MAP_DEFAULT, isObstacleKind, type TestMap, type TestMapObject, type TestMapZone } from './test-map';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -70,10 +70,11 @@ export function testCellInIsland(c: number, r: number): boolean {
 }
 
 /** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне с клетками, не задета
- *  кромкой и не занята препятствием (камень/дерево стоят на клетке намертво). */
+ *  кромкой и не занята препятствием (камень/дерево стоят на клетке намертво;
+ *  земля — наземный декор, через неё ходят). */
 export function testWalkableCell(c: number, r: number): boolean {
   if (!currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
-  if (testObjectAt(c, r)) return false;
+  if (testObstacleAt(c, r)) return false;
   return testCellInIsland(c, r);
 }
 
@@ -85,7 +86,7 @@ export function testClippedCells(): { c: number; r: number }[] {
   for (let r = 0; r < currentMap.rows; r++) {
     for (let c = 0; c < currentMap.cols; c++) {
       if (testWalkableCell(c, r)) continue;
-      if (testObjectAt(c, r)) continue;
+      if (testObstacleAt(c, r)) continue;
       if (currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
     }
   }
@@ -136,7 +137,14 @@ function objectIndex(): Map<string, TestMapObject> {
   return objCache.idx;
 }
 
-/** Препятствие, занимающее клетку (0-based), или null — клетка свободна. */
+/** Препятствие, занимающее клетку (0-based), или null — клетка свободна.
+ *  Земля препятствием не считается: это наземный декор (проталина). */
+export function testObstacleAt(c: number, r: number): TestMapObject | null {
+  const o = objectIndex().get(`${c},${r}`);
+  return o && isObstacleKind(o.kind) ? o : null;
+}
+
+/** Любой объект на клетке (включая землю) — для отрисовки. */
 export function testObjectAt(c: number, r: number): TestMapObject | null {
   return objectIndex().get(`${c},${r}`) ?? null;
 }
@@ -147,12 +155,37 @@ export function testObjects(): TestMapObject[] {
 }
 
 /** Все точки внутри клетки препятствия (включая границы) стоят намертво:
- *  и центр, и середины сторон, и углы — так вокруг камня остаётся чистый обход. */
+ *  и центр, и середины сторон, и углы — так вокруг камня остаётся чистый обход.
+ *  Земля (проталина) — наземный декор: точкам она не мешает. */
 function pointBlockedByObject(x: number, y: number): boolean {
   for (const o of currentMap.objects ?? []) {
+    if (!isObstacleKind(o.kind)) continue;
     if (x >= o.c && x <= o.c + 1 && y >= o.r && y <= o.r + 1) return true;
   }
   return false;
+}
+
+/* ---------- точки мира: область боя, кромка, проходимость ---------- */
+
+/** Точка (клеточные доли) внутри боевой зоны (kind «cells»): там мирный режим
+ *  сменяется боем — включается привязка к клеткам и вид сверху. */
+export function testPointInCellsZone(x: number, y: number): boolean {
+  return currentMap.zones.some(
+    (z) => isCellsZone(z) && x >= z.c0 && x <= z.c1 + 1 && y >= z.r0 && y <= z.r1 + 1,
+  );
+}
+
+/** Точка (клеточные доли) внутри нарисованной кромки локации. */
+export function testPointInIsland(x: number, y: number): boolean {
+  return pointInPolygon(islandPolygon(), x, y);
+}
+
+/** Точка проходима в мирном режиме (свободная ходьба по пикселям): внутри кромки
+ *  и не внутри препятствия (камень/дерево). Земля и боевые зоны не мешают:
+ *  вход в боевую зону переключает режим, а не блокирует шаг. */
+export function testPeacePointFree(x: number, y: number): boolean {
+  if (!pointInPolygon(islandPolygon(), x, y)) return false;
+  return !pointBlockedByObject(x, y);
 }
 
 /* ---------- перспектива мирного режима ---------- */
@@ -727,6 +760,87 @@ export function drawTestObject(
       ctx.arc(cx2, cy2, r2, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+  ctx.restore();
+}
+
+/* ---------- наземный декор: проталина земли ---------- */
+
+/**
+ * Спрайт «земля» — проталина на траве, рисуется на самом грунте (под сеткой,
+ * декором и котами). Ходьбе не мешает: это «почва», а не препятствие.
+ * Центр пятна — центр клетки (x, y в px), форма и крапинки зависят от зерна v,
+ * чтобы проталины не были близнецами. m — множитель перспективы.
+ */
+export function drawDirtPatch(
+  ctx: CanvasRenderingContext2D,
+  cellW: number,
+  cellH: number,
+  x: number,
+  y: number,
+  v = 0,
+): void {
+  const flip = v % 2 === 0 ? 1 : -1;
+  const k = 0.92 + (v % 4) * 0.04;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(k * flip, k);
+  const w = cellW * 0.5;
+  const h = cellH * 0.5;
+  // неровное пятно: 8-угольник с дрожью вершин по зерну
+  ctx.beginPath();
+  const n = 8;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const wob = 0.82 + (((v * 37 + i * 61) % 23) / 23) * 0.26;
+    const px = Math.cos(a) * w * wob;
+    const py = Math.sin(a) * h * wob;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  // земля: тёмный край, основа, светлая середина
+  ctx.fillStyle = '#3c2c1c';
+  ctx.fill();
+  ctx.save();
+  ctx.scale(0.88, 0.84);
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const wob = 0.85 + (((v * 53 + i * 29) % 19) / 19) * 0.2;
+    const px = Math.cos(a) * w * wob;
+    const py = Math.sin(a) * h * wob;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#58422c';
+  ctx.fill();
+  ctx.restore();
+  // борозды/крапинки: тёмные комки и светлые крупинки
+  const rndBits = 5 + (v % 3);
+  for (let i = 0; i < rndBits; i++) {
+    const a = (((v * 31 + i * 97) % 100) / 100) * Math.PI * 2;
+    const rr = 0.15 + (((v * 17 + i * 43) % 100) / 100) * 0.55;
+    const px = Math.cos(a) * w * rr;
+    const py = Math.sin(a) * h * rr;
+    const dark = (v + i) % 2 === 0;
+    ctx.beginPath();
+    ctx.ellipse(px, py, 2.4, 1.6, a, 0, Math.PI * 2);
+    ctx.fillStyle = dark ? 'rgba(38, 27, 16, 0.75)' : 'rgba(122, 98, 66, 0.6)';
+    ctx.fill();
+  }
+  // травинки по краю — переход проталины в траву
+  for (let i = 0; i < 3; i++) {
+    const a = (((v * 13 + i * 71) % 100) / 100) * Math.PI * 2;
+    const px = Math.cos(a) * w * 0.95;
+    const py = Math.sin(a) * h * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(px + 2, py - 4, px + (i % 2 === 0 ? 4 : -3), py - 6);
+    ctx.strokeStyle = 'rgba(77, 112, 60, 0.9)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
   }
   ctx.restore();
 }

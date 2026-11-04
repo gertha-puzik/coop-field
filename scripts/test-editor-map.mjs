@@ -15,7 +15,7 @@ const PASS = '1946';
 const connect = () =>
   new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    const state = { inbox: [], waiters: [] };
+    const state = { inbox: [], waiters: [], readIdx: 0 };
     ws.on('message', (raw) => {
       const msg = JSON.parse(String(raw));
       state.inbox.push(msg);
@@ -23,6 +23,9 @@ const connect = () =>
         const w = state.waiters[i];
         if (w.pred(msg)) {
           state.waiters.splice(i, 1);
+          // съедаем всё до этого сообщения включительно: следующий wait
+          // не должен матчить уже использованные сообщения
+          state.readIdx = Math.max(state.readIdx, state.inbox.length);
           clearTimeout(w.timer);
           w.resolve(msg);
         }
@@ -32,11 +35,29 @@ const connect = () =>
     ws.on('error', reject);
   });
 
-const wait = (state, pred, label, ms = 4000) =>
-  new Promise((resolve, reject) => {
+const wait = (state, pred, label, ms = 4000) => {
+  const match = (msg) => {
+    try {
+      return pred(msg);
+    } catch {
+      return false;
+    }
+  };
+  // Сообщения могут прилететь одним чанком: 'map' и следующий за ним 'field'
+  // обрабатываются в одном событии сокета — к моменту регистрации waiter'а
+  // 'field' уже лежит в inbox. Поэтому сначала ищем с позиции курсора,
+  // а найденное съедаем (следующий wait старое не матчит).
+  for (let i = state.readIdx; i < state.inbox.length; i++) {
+    if (match(state.inbox[i])) {
+      state.readIdx = i + 1;
+      return Promise.resolve(state.inbox[i]);
+    }
+  }
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout: ${label}`)), ms);
-    state.waiters.push({ pred, resolve, timer });
+    state.waiters.push({ pred: match, resolve, timer });
   });
+};
 
 const send = (ws, event, payload) => ws.send(JSON.stringify([event, payload]));
 
@@ -57,8 +78,8 @@ const main = async () => {
   // несоединённый конфиг
   const broken = JSON.parse(JSON.stringify(f.map));
   broken.zones.push({ id: 'zx', name: 'Оторванная', kind: 'green', c0: 0, r0: 0, c1: 0, r1: 0 });
-  // разрываем соединение: убираем переход
-  broken.zones = broken.zones.filter((z) => z.name !== 'Переход');
+  // разрываем соединение: убираем боевой полигон между двумя зелёными зонами
+  broken.zones = broken.zones.filter((z) => z.name !== 'Полигон');
   send(ws, 'setmap', { pass: PASS, map: broken });
   const badMap = await wait(state, (m) => m[0] === 'info', 'info (broken map)');
   console.log('3. несоединённые зоны →', badMap[1]);
@@ -86,8 +107,24 @@ const main = async () => {
   if (upd) console.log('5. cellsync в зелёную зону → передвинут на %s,%s', upd[1].x, upd[1].y);
   else console.log('5. cellsync в зелёную зону → сервер молчит (отвергнуто)');
 
-  // восстановление исходной раскладки
-  send(ws, 'setmap', { pass: PASS, map: f.map });
+  // восстановление раскладки по умолчанию: тест не зависит от того, с какой
+  // картой сервер стартовал (f.map мог быть любым валидным)
+  send(ws, 'setmap', {
+    pass: PASS,
+    map: {
+      v: 2,
+      cols: 19,
+      rows: 7,
+      margin: 0.5,
+      seed: 'test',
+      zones: [
+        { id: 'z1', name: 'Лужайка', kind: 'green', c0: 0, r0: 0, c1: 9, r1: 6 },
+        { id: 'z2', name: 'Полигон', kind: 'cells', c0: 10, r0: 1, c1: 15, r1: 5 },
+        { id: 'z3', name: 'Заросли', kind: 'green', c0: 16, r0: 0, c1: 18, r1: 6 },
+      ],
+      objects: [],
+    },
+  });
   await wait(state, (m) => m[0] === 'map' && m[1].rows === 7, 'map (restore)');
   console.log('6. локация восстановлена к исходной');
   ws.close();

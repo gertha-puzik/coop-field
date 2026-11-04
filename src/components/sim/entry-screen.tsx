@@ -152,6 +152,24 @@ export function EntryScreen({
   const [speedOk, setSpeedOk] = useState<number | null>(null);
   const [damageOk, setDamageOk] = useState<number | null>(null);
   const [armorOk, setArmorOk] = useState<number | null>(null);
+  /** Прошлый выбор СП (то, что сохранилось с последнего входа): снимается один
+   *  раз при открытии экрана — дальше ползунки живут своей жизнью. */
+  const prevSpRef = useRef({ speed: Math.round(periodSec * 10) / 10, damage: damageLevel, armor: armorLevel });
+
+  /** «Использовать предыдущие СП»: подтягивает сохранённый выбор и подтверждает
+   *  все три пункта разом — каждый раз тыкать одно и то же не нужно. */
+  const applyPrevSp = () => {
+    const p = prevSpRef.current;
+    setSpeedVal(p.speed);
+    setDamageVal(p.damage);
+    setArmorVal(p.armor);
+    onApplySpeed(p.speed);
+    onApplyDamage(p.damage);
+    onApplyArmor(p.armor);
+    setSpeedOk(p.speed);
+    setDamageOk(p.damage);
+    setArmorOk(p.armor);
+  };
 
   const trimmed = name.trim();
   const speedDone = speedOk !== null && Math.abs(speedOk - speedVal) < 0.05;
@@ -343,6 +361,21 @@ export function EntryScreen({
           </p>
           <p className="mt-2 text-[11px] leading-snug text-[var(--sim-text-faint)]">
             Значения берутся из блока справа и применяются к вам на поле. ✓ — пункт подтверждён.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            disabled={doneCount === 3}
+            aria-label="Использовать предыдущие скрытые параметры"
+            className="mt-3 h-9 w-full bg-[var(--sim-accent)] text-xs font-bold text-black hover:bg-[var(--sim-accent-hover)] disabled:opacity-60"
+            onClick={applyPrevSp}
+          >
+            {doneCount === 3 ? 'СП подтверждены' : 'Использовать предыдущие СП'}
+          </Button>
+          <p className="mt-1.5 text-[11px] leading-snug text-[var(--sim-text-faint)]">
+            Подтягивает выбор вашего прошлого входа ({fmtSec(prevSpRef.current.speed)},{' '}
+            {damageLevelLabel(prevSpRef.current.damage)}, {damageLevelLabel(prevSpRef.current.armor)}) и
+            подтверждает все три пункта разом.
           </p>
         </section>
 

@@ -981,7 +981,7 @@ function handshake(origin) {
   watcher.close();
 }
 
-// ----- комната «тест»: другой формат поля (лужайка + переход + закуток) -----
+// ----- комната «тест»: трава с боевым полигоном — режим по области поля -----
 {
   const ta = await client("Тестер", "test");
   const tYou = (await waitFor(ta, "you"))[1];
@@ -989,32 +989,20 @@ function handshake(origin) {
   if (tField.format !== "test") throw new Error(`field.format=${tField.format}`);
   if (tField.width !== 19 || tField.height !== 7) throw new Error(`field ${tField.width}x${tField.height}`);
   if (tField.room !== "test") throw new Error(`field.room=${tField.room}`);
-  // спавн — на лужайке (1..10 / 1..7)
-  if (tYou.x < 1 || tYou.x > 10 || tYou.y < 1 || tYou.y > 7) {
-    throw new Error(`spawn ${cellKey(tYou)} вне лужайки`);
-  }
-  console.log("ok: test room field 19x7, spawn", cellKey(tYou));
-  // клеточная ходьба по зонам: вправо через лужайку, переход и закуток до кромки
+  // спавн — в мирной зоне (трава): сервер ставит новичка на зелёную зону
+  const greenZones = (tField.map?.zones ?? []).filter((z) => z.kind === "green");
+  const inGreen = greenZones.some(
+    (z) => tYou.x >= z.c0 + 1 && tYou.x <= z.c1 + 1 && tYou.y >= z.r0 + 1 && tYou.y <= z.r1 + 1,
+  );
+  if (!inGreen) throw new Error(`spawn ${cellKey(tYou)} не на зелёной зоне`);
+  console.log("ok: test room field 19x7, spawn on grass", cellKey(tYou));
+  // шаги по траве клетками не проходят: спавн на зелёной зоне, рядом клеток нет
   ta.inbox.length = 0;
-  for (let i = 0; i < 15; i++) {
-    ta.send(JSON.stringify(["move", { x: 1, y: 0 }]));
-    await sleep(100);
-  }
-  await sleep(300);
-  const walkX = ta.inbox.filter((m) => m[0] === "update cat" && m[1].id === tYou.id).map((m) => m[1].x);
-  if (walkX[walkX.length - 1] !== 19) {
-    throw new Error(`walk right ended x=${walkX[walkX.length - 1]}, expected 19 (кромка закутка)`);
-  }
-  console.log("ok: test room walk lawn→passage→nook, x →", walkX[walkX.length - 1]);
-  // вверх из закутка выхода нет: y=1 → y=0 отказ «край»
-  ta.inbox.length = 0;
-  for (let i = 0; i < 3 && !ta.inbox.some((m) => m[0] === "refuse"); i++) {
-    ta.send(JSON.stringify(["move", { x: 0, y: -1 }]));
-    await sleep(110);
-  }
-  const edgeRefuse = ta.inbox.find((m) => m[0] === "refuse" && m[1].code === "edge");
-  if (!edgeRefuse) throw new Error("expected edge refuse above nook");
-  console.log("ok: test room edge refuse at location border");
+  ta.send(JSON.stringify(["move", { x: 1, y: 0 }]));
+  await sleep(120);
+  const grassMove = ta.inbox.find((m) => m[0] === "refuse" && m[1].code === "edge");
+  if (!grassMove) throw new Error("cell move on grass must be refused with edge");
+  console.log("ok: test room cell move refused on grass");
   // свободная ходьба: freemove релеится соседу с логической клеткой, темп и stop
   const tb = await client("Сосед", "test");
   await waitFor(tb, "field");
@@ -1028,8 +1016,8 @@ function handshake(origin) {
   const fm = tb.inbox.find((m) => m[0] === "freemove");
   if (!fm || fm[1].id !== tYou.id) throw new Error(`freemove relay missing: ${JSON.stringify(tb.inbox.find((m) => m[0] === "freemove"))}`);
   if (fm[1].x !== 3.5 || fm[1].y !== 3.5) throw new Error(`freemove pos ${fm[1].x}:${fm[1].y}`);
-  // ближайшая проходимая клетка к (3.5, 3.5) — (5, 5) в 1-based
-  if (fm[1].cx !== 5 || fm[1].cy !== 5) throw new Error(`freemove cell ${fm[1].cx}:${fm[1].cy}, expected 5:5`);
+  // ближайшая боевая клетка к точке на траве (3.5, 3.5) — по спирали (11, 2) 1-based
+  if (fm[1].cx !== 11 || fm[1].cy !== 2) throw new Error(`freemove cell ${fm[1].cx}:${fm[1].cy}, expected 11:2`);
   const fmGap = tb.inbox.filter((m) => m[0] === "freemove");
   if (fmGap.length !== 1) throw new Error(`freemove gap failed: ${fmGap.length} packets`);
   ta.send(JSON.stringify(["freemove", { x: 4.2, y: 3.8, stop: true }]));
@@ -1038,26 +1026,45 @@ function handshake(origin) {
   if (fmStop.length !== 2 || fmStop[1][1].x !== 4.2) {
     throw new Error(`stop freemove: ${JSON.stringify(fmStop.map((m) => m[1]))}`);
   }
-  // возврат в клеточный бой: cellsync рассылает publicCat с fm=0 (и самому игроку)
+  // вход в бой: cellsync на боевую клетку полигона, echo с fm=0 всей комнате
   ta.inbox.length = 0;
   tb.inbox.length = 0;
-  ta.send(JSON.stringify(["cellsync", { x: 5, y: 4 }]));
+  ta.send(JSON.stringify(["cellsync", { x: 12, y: 4 }]));
   await sleep(120);
   const syncSelf = ta.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id);
   const syncPeer = tb.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id);
   if (!syncSelf || !syncPeer) throw new Error("cellsync echo missing");
-  if (syncSelf[1].x !== 5 || syncSelf[1].y !== 4 || syncSelf[1].fm !== 0) {
+  if (syncSelf[1].x !== 12 || syncSelf[1].y !== 4 || syncSelf[1].fm !== 0) {
     throw new Error(`cellsync self ${JSON.stringify(syncSelf[1])}`);
   }
   if (syncPeer[1].fm !== 0) throw new Error("cellsync peer fm must be 0");
-  // клетка, задетая кромкой локации (правый верх закутка), недоступна:
-  // cellsync на неё молчаливо отклоняется, ходьба с кромки даёт отказ «edge»
+  console.log("ok: test room cellsync into battle polygon");
+  // клеточная ходьба по полигону: вправо до правого края (x=16), дальше — отказ «край»
   ta.inbox.length = 0;
-  ta.send(JSON.stringify(["cellsync", { x: 19, y: 1 }]));
+  for (let i = 0; i < 6; i++) {
+    ta.send(JSON.stringify(["move", { x: 1, y: 0 }]));
+    await sleep(100);
+  }
+  await sleep(300);
+  const walkX = ta.inbox.filter((m) => m[0] === "update cat" && m[1].id === tYou.id).map((m) => m[1].x);
+  if (walkX[walkX.length - 1] !== 16) {
+    throw new Error(`walk right ended x=${walkX[walkX.length - 1]}, expected 16 (правый край полигона)`);
+  }
+  ta.inbox.length = 0;
+  for (let i = 0; i < 3 && !ta.inbox.some((m) => m[0] === "refuse"); i++) {
+    ta.send(JSON.stringify(["move", { x: 1, y: 0 }]));
+    await sleep(110);
+  }
+  const edgeRefuse = ta.inbox.find((m) => m[0] === "refuse" && m[1].code === "edge");
+  if (!edgeRefuse) throw new Error("expected edge refuse beyond polygon");
+  console.log("ok: test room walk inside polygon, edge refuse beyond");
+  // клетка вне боевой зоны (трава над полигоном) для cellsync недоступна — молчаливый отказ
+  ta.inbox.length = 0;
+  ta.send(JSON.stringify(["cellsync", { x: 12, y: 1 }]));
   await sleep(120);
-  const clippedEcho = ta.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id && m[1].x === 19 && m[1].y === 1);
-  if (clippedEcho) throw new Error(`cellsync accepted clipped cell: ${JSON.stringify(clippedEcho[1])}`);
-  console.log("ok: test room clipped cell (19:1) refused");
+  const wrongEcho = ta.inbox.find((m) => m[0] === "update cat" && m[1].id === tYou.id && m[1].x === 12 && m[1].y === 1);
+  if (wrongEcho) throw new Error(`cellsync accepted non-battle cell: ${JSON.stringify(wrongEcho[1])}`);
+  console.log("ok: test room cellsync on grass refused");
   // манекен и мишень в «тесте» недоступны: info-отказ, состояния комнаты не рассылаются
   ta.inbox.length = 0;
   ta.send(JSON.stringify(["dummy", { on: true }]));

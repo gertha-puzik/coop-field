@@ -315,7 +315,8 @@ function testCellInIsland(c, r, island = TEST_ISLAND) {
 /** Маска проходимости «теста» (0-based): зоны с клетками минус клетки, задетые
  *  кромкой (сглаженный край подрезает углы зон — такие клетки недоступны для
  *  прыжков, а сетка у кромки на клиенте рисуется с клипом по тому же полигону),
- *  минус клетки, занятые препятствиями (камень/дерево стоят намертво).
+ *  минус клетки, занятые препятствиями (камень/дерево стоят намертво; земля —
+ *  наземный декор, ходьбе не мешает).
  *  Зелёные зоны в бою не участвуют — это только мирная территория. */
 function buildCells(map, island) {
   const mask = Array.from({ length: map.rows }, () => new Array(map.cols).fill(false));
@@ -325,7 +326,7 @@ function buildCells(map, island) {
       for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
     }
   }
-  const blocked = new Set((map.objects || []).map((o) => `${o.c},${o.r}`));
+  const blocked = new Set((map.objects || []).filter((o) => o.kind !== "dirt").map((o) => `${o.c},${o.r}`));
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
       if (mask[r][c] && (!testCellInIsland(c, r, island) || blocked.has(`${c},${r}`))) mask[r][c] = false;
@@ -364,18 +365,18 @@ function nearestTestCell(fx, fy) {
 
 /* ---------- конфиг локации: загрузка, проверка, сохранение, правка редактором ---------- */
 
-/** Раскладка по умолчанию — та же, что раньше была залита в код. */
+/** Раскладка по умолчанию — трава с боевым полигоном (v2), как в src/lib/sim/test-map.ts. */
 function defaultTestMap() {
   return {
-    v: 1,
+    v: 2,
     cols: 19,
     rows: 7,
     margin: 0.5,
     seed: 'test',
     zones: [
-      { id: 'z1', name: 'Лужайка', kind: 'cells', c0: 0, r0: 0, c1: 9, r1: 6 },
-      { id: 'z2', name: 'Переход', kind: 'cells', c0: 10, r0: 1, c1: 12, r1: 5 },
-      { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 0, c1: 18, r1: 5 },
+      { id: 'z1', name: 'Лужайка', kind: 'green', c0: 0, r0: 0, c1: 9, r1: 6 },
+      { id: 'z2', name: 'Полигон', kind: 'cells', c0: 10, r0: 1, c1: 15, r1: 5 },
+      { id: 'z3', name: 'Заросли', kind: 'green', c0: 16, r0: 0, c1: 18, r1: 6 },
     ],
     objects: [],
   };
@@ -388,7 +389,7 @@ function sanitizeTestMap(raw) {
     const n = Math.round(Number(v));
     return Number.isFinite(n) ? n : null;
   };
-  if (raw.v !== 1) return { error: 'неизвестная версия конфига' };
+  if (raw.v !== 1 && raw.v !== 2) return { error: 'неизвестная версия конфига' };
   const cols = asInt(raw.cols);
   const rows = asInt(raw.rows);
   if (cols === null || rows === null) return { error: 'размер мира не распознан' };
@@ -401,12 +402,12 @@ function sanitizeTestMap(raw) {
   let objects = [];
   if (raw.objects != null) {
     if (!Array.isArray(raw.objects)) return { error: 'список препятствий не распознан' };
-    if (raw.objects.length > 60) return { error: 'препятствий не больше 60' };
+    if (raw.objects.length > 400) return { error: 'объектов не больше 400' };
     const taken = new Set();
     for (let i = 0; i < raw.objects.length; i++) {
       const o = raw.objects[i];
-      const kind = o && (o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : null);
-      if (!kind) return { error: `препятствие №${i + 1}: неизвестный тип` };
+      const kind = o && (o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : o.kind === 'dirt' ? 'dirt' : null);
+      if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       const c = asInt(o.c);
       const r = asInt(o.r);
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
@@ -466,7 +467,7 @@ function sanitizeTestMap(raw) {
   }
   return {
     map: {
-      v: 1,
+      v: raw.v,
       cols,
       rows,
       margin: 0.5,
@@ -481,7 +482,21 @@ function loadTestMap() {
   try {
     const raw = JSON.parse(fs.readFileSync(MAP_FILE, 'utf8'));
     const r = sanitizeTestMap(raw);
-    if (r.map) return r.map;
+    if (r.map) {
+      // Миграция legacy-раскладки (v1: клетки везде) — поле теперь делится на
+      // траву (мирный режим) и боевые клетки. Файл без v2 заменяем дефолтом
+      // новой раскладки, чтобы на сервере не жила старая карта навсегда.
+      if (r.map.v < 2) {
+        const fresh = defaultTestMap();
+        try {
+          fs.mkdirSync(DATA_DIR, { recursive: true });
+          fs.writeFileSync(MAP_FILE, JSON.stringify(fresh, null, 2));
+        } catch {}
+        console.warn('map file v1 (legacy) — миграция к раскладке v2 (трава + боевой полигон)');
+        return fresh;
+      }
+      return r.map;
+    }
     console.warn(`map file invalid (${r.error}) — откат к раскладке по умолчанию`);
   } catch {
     /* файла ещё нет — работаем на раскладке по умолчанию */
@@ -621,6 +636,25 @@ function spawnCell(room) {
   const W = test ? TEST_WIDTH : WIDTH;
   const H = test ? TEST_HEIGHT : HEIGHT;
   const ok = (x, y) => (test ? testWalkable(x, y) : true);
+  if (test) {
+    // Новичок в «тесте» появляется в мирном режиме — на траве (зелёная зона):
+    // бой сам включится, когда игрок дойдёт до боевых клеток.
+    const green = testMap.zones.filter((z) => z.kind === 'green');
+    for (const z of green) {
+      for (let y = z.r0 + 1; y <= z.r1 + 1; y++) {
+        for (let x = z.c0 + 1; x <= z.c1 + 1; x++) {
+          if (x < 1 || y < 1 || x > W || y > H) continue;
+          if (!testCellInIsland(x - 1, y - 1)) continue;
+          const onObj = (testMap.objects || []).some(
+            (o) => o.kind !== 'dirt' && o.c === x - 1 && o.r === y - 1,
+          );
+          if (onObj) continue;
+          if (!occupied(room, x, y)) return [x, y];
+        }
+      }
+    }
+    // Зелёных зон нет или все заняты — fallback на боевые клетки.
+  }
   for (const [x, y] of SPAWNS) {
     if (ok(x, y) && !occupied(room, x, y)) return [x, y];
   }
@@ -1416,6 +1450,11 @@ function freeMove(ws, payload = {}) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
   const nx = Math.min(TEST_WIDTH + 0.6, Math.max(-0.6, x));
   const ny = Math.min(TEST_HEIGHT + 0.6, Math.max(-0.6, y));
+  // Точка обязана лежать на локации: клиент зажимает ходьбу нарисованной кромкой,
+  // сервер перепроверяет по тому же полигону. Спрайт крупнее клетки, у кромки его
+  // угол может чуть выходить за полигон при полностью легальной ходьбе — поэтому
+  // достаточно, чтобы внутри была хотя бы одна из двух точек (угол и середина).
+  if (!pointInPolygon(TEST_ISLAND, nx, ny) && !pointInPolygon(TEST_ISLAND, nx + 0.45, ny + 0.45)) return;
   cat.fm = 1;
   cat.fx = Math.round(nx * 100) / 100;
   cat.fy = Math.round(ny * 100) / 100;

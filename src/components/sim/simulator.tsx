@@ -23,22 +23,20 @@ import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@
 import { keyAction } from '@/lib/sim/keys';
 import {
   currentTestMap,
+  drawDirtPatch,
   drawTestDecorItem,
   drawTestObject,
   hashStr,
-  nearestPeaceAnchor,
   nearestWalkableCell,
-  peaceAnchorPoints,
   peaceDepthScale,
-  peaceRoute,
-  peaceStepNeighbor,
-  pointInPolygon,
   setTestMap,
   testClippedCells,
   testFieldGeometry,
   testNonWalkableCells,
-  testObjectAt,
   testObjects,
+  testPeacePointFree,
+  testPointInCellsZone,
+  testPointInIsland,
   testWalkableCell,
 } from '@/lib/sim/test-field';
 import {
@@ -105,11 +103,11 @@ const FREE_EMIT_MS = 80;
 /** Плавность камеры: за ~420 мс камера догоняет игрока на 63% дистанции —
  *  в несколько раз плавнее прежнего (130 мс), кот больше не «дёргает» камеру. */
 const CAMERA_TAU_MS = 420;
-/** Длительность полушага мирного режима (полклетки по оси), мс: и клик, и клавиши
- *  идут с одной и той же скоростью — якорь к якорю. */
-const PEACE_STEP_MS = 210;
-/** Дальность притяжения клика к якорной точке, px (шаг решётки — 50×75 px). */
-const PEACE_SNAP_PX = 46;
+/** Скорость свободной ходьбы мирного режима, px мира в секунду: игрок движется
+ *  по пикселям ровно пока зажаты клавиши (или до цели клика), без привязки к клеткам. */
+const PEACE_SPEED_PX = 320;
+/** Кликом пущенная ходьба отменяется, если столько мс нет прогресса к цели. */
+const PEACE_STUCK_MS = 600;
 /** Зум камеры мирного режима «теста»: поле приближается — «по-домашнему» вид сверху,
  *  как в Don't Starve Together. В бою возвращается 1. */
 const PEACE_ZOOM = 1.5;
@@ -123,8 +121,9 @@ const CAMZOOM_TAU_MS = 350;
 const EDITOR_PASS_KEY = 'catwar-editor-pass';
 
 /** Инструмент редактора локации: зона с клетками, зелёная зона, ластик или
- *  физическое препятствие (камень/дерево ставятся кликом по клетке). */
-type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree';
+ *  объект (камень/дерево — препятствия, земля — проталина-декор; ставятся кликом
+ *  по клетке, земля ещё и протяжкой). */
+type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt';
 
 /** Черновик локации в редакторе: рисуется на поле сразу (WYSIWYG), живёт до закрытия. */
 type EditorDraft = {
@@ -419,13 +418,10 @@ interface Engine {
    *  (левый верх спрайта). В бою совпадает с col/row. */
   fx: number;
   fy: number;
-  /** Мирный режим: оставшиеся якоря маршрута (в свободных долях, под центр спрайта). */
-  proute: { x: number; y: number }[];
-  /** Мирный режим: текущий прыжок по якорю — { start, dur } как кулдаун; само
-   *  перемещение мгновенное (кот уже стоит на целевой точке). null — стоит на месте. */
-  phop: { start: number; dur: number } | null;
-  /** Мирный режим: якорь под курсором (клеточные доли мира) — для подсветки и курсора. */
-  hoverA: { x: number; y: number } | null;
+  /** Мирный режим: цель ходьбы по клику (клеточные доли, левый верх спрайта).
+   *  stuck/lastD — копилка «нет прогресса» (мс) и прошлая дистанция: цель
+   *  упирается в стену — ходьба отменяется. null — стоит на месте. */
+  ptarget: { x: number; y: number; stuck: number; lastD: number } | null;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -718,6 +714,10 @@ export default function Simulator() {
   const savedMapRef = useRef<TestMap>(TEST_MAP_DEFAULT);
   /** Темп рассылки freemove и флаг «сейчас идём» (для финального стоп-пакета). */
   const freeSyncRef = useRef({ at: 0, moving: false });
+  /** Был ли центр модельки внутри боевой зоны на прошлом кадре. Переключение
+   *  режима срабатывает на входе в зону (край, а не «пока внутри») — иначе
+   *  вышедший из зоны мирным шагом кот тут же возвращался бы в бой. */
+  const inZonePrevRef = useRef(true);
   /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
   const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number }>());
   /** Тема оформления: ночь / светлая / пивная. Цвета — CSS-переменные (globals.css). */
@@ -864,6 +864,8 @@ export default function Simulator() {
   const remoteBlockRef = useRef<Set<number>>(new Set());
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
+  /** Идёт росчерк «Земли» протяжкой (редактор): клетки насыпаются на pointermove. */
+  const dirtPaintingRef = useRef(false);
   const engineRef = useRef<Engine>({
     angle: 0,
     col: 4,
@@ -891,9 +893,7 @@ export default function Simulator() {
     moveLockUntil: 0,
     fx: 4,
     fy: 2,
-    proute: [],
-    phop: null,
-    hoverA: null,
+    ptarget: null,
   });
 
   /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
@@ -1096,7 +1096,9 @@ export default function Simulator() {
   };
 
   const draftMap = (d: EditorDraft): TestMap => ({
-    v: 1,
+    // Правки редактора сохраняются в текущей версии конфига (v2 — деление поля
+    // на траву и боевые клетки).
+    v: 2,
     cols: d.cols,
     rows: d.rows,
     margin: savedMapRef.current.margin,
@@ -1140,13 +1142,11 @@ export default function Simulator() {
       /* приватный режим — пароль вводится вручную */
     }
     setEditorOpen(true);
-    // Режим редактирования выключает мирную ходьбу: маршруты и прыжки гасим.
+    // Режим редактирования выключает мирную ходьбу: цель клика и маршрут гасим.
     const e = engineRef.current;
-    e.proute = [];
-    e.phop = null;
+    e.ptarget = null;
     e.path = [];
     e.hover = null;
-    e.hoverA = null;
     camRef.current.init = false;
   };
 
@@ -1293,18 +1293,35 @@ export default function Simulator() {
     syncEditorView();
   };
 
-  /** Постановка/снятие препятствия кликом (инструменты «Камень» и «Дерево»). */
-  const toggleEditorObject = (tool: 'stone' | 'tree', c: number, r: number): boolean => {
+  /** Постановка/снятие объекта кликом (инструменты «Камень», «Дерево», «Земля»). */
+  const toggleEditorObject = (tool: 'stone' | 'tree' | 'dirt', c: number, r: number): boolean => {
     const d = editorRef.current;
     if (!d) return false;
     const idx = d.objects.findIndex((o) => o.c === c && o.r === r);
     if (idx < 0 && d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Препятствий не больше ${TEST_MAP_LIMITS.objectsMax}.`);
+      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
       return false;
     }
     pushEditorUndo();
     if (idx >= 0) d.objects.splice(idx, 1);
     else d.objects.push({ id: newObjectId(), kind: tool, c, r });
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+    return true;
+  };
+
+  /** Протяжка «Земли»: насыпает проталины без снятия и без записи отмены на каждую
+   *  клетку (отмена пишется один раз на росчерк — см. pointerdown). */
+  const paintEditorDirt = (c: number, r: number): boolean => {
+    const d = editorRef.current;
+    if (!d) return false;
+    if (d.objects.some((o) => o.kind === 'dirt' && o.c === c && o.r === r)) return false;
+    if (d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
+      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
+      return false;
+    }
+    d.objects.push({ id: newObjectId(), kind: 'dirt', c, r });
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -1447,10 +1464,14 @@ export default function Simulator() {
             remoteFreeRef.current.set(`p${c.id}`, { x: c.fx!, y: c.fy!, tx: c.fx!, ty: c.fy! });
           }
         }
-        // В «тесте» игрок появляется сразу в боевом режиме (клавиша B выключает).
-        if (fmt === 'test' && !settingsRef.current.arrow.battleMode) {
-          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: true } }));
+        // В «тесте» игрок появляется в мирном режиме (задача: спавн на траве).
+        // Дальше режим переключается сам: боевые клетки включают бой, трава — мир.
+        if (fmt === 'test' && settingsRef.current.arrow.battleMode) {
+          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
         }
+        // Спавн-точка считаем «внутри зоны»: свежий вход в боевую зону срабатывает
+        // только после реального выхода из неё (край, а не «пока внутри»).
+        inZonePrevRef.current = true;
         // Кто из чужих котов держит блок — из снапшота комнаты (после обрыва тоже).
         remoteBlockRef.current = new Set(cats.filter((c) => c.blocking && c.id !== meIdRef.current).map((c) => c.id));
         remoteAimRef.current.clear();
@@ -1882,17 +1903,16 @@ export default function Simulator() {
   }, [settings.field.cols, settings.field.rows, settings.field.cellW, settings.field.cellH]);
 
   /**
-   * Комната «тест»: переход мирная ходьба ↔ боевой режим.
-   *  В бой — щёлкаем на ближайшую проходимую клетку, синхронизируем сервер (cellsync)
+   * Комната «тест»: переход мирная ходьба ↔ боевой режим. Режимом управляет
+   * область под котом (боевые клетки / трава) и выход шагом из боевой зоны.
+   *  В бой — привязка к ближайшей проходимой клетке, синхронизация (cellsync)
    *  и предикт; в мирный — свободная позиция стартует с текущей клетки.
    */
   useEffect(() => {
     if (fieldFormat !== 'test') return;
     const e = engineRef.current;
     const net = netRef.current;
-    e.proute = [];
-    e.phop = null;
-    e.hoverA = null;
+    e.hover = null;
     if (settings.arrow.battleMode) {
       const cell = nearestWalkableCell(e.fx, e.fy);
       e.col = cell.c;
@@ -1901,6 +1921,7 @@ export default function Simulator() {
       e.fy = cell.r;
       e.step = null;
       e.path = [];
+      e.ptarget = null;
       netMovesRef.current = { server: { col: cell.c, row: cell.r }, pending: [] };
       net?.emit('cellsync', { x: cell.c + 1, y: cell.r + 1 });
     } else {
@@ -1939,12 +1960,11 @@ export default function Simulator() {
       const editorOn = editorState().on;
       const peaceWalk = testMode && !s.arrow.battleMode && s.controlled === 'main' && !editorOn;
       // Блок (удержание К): двигаться, крутить стрелу и бить нельзя. Гасим всё,
-      // что могло прийти, пока блок держится (маршрут по клику, удержания).
+      // что могло прийти, пока блок держится (цель клика, удержания).
       if (e.blocking) {
         e.held = [];
         e.path = [];
-        e.proute = [];
-        e.phop = null;
+        e.ptarget = null;
         e.rot = 0;
         e.strikeHeld = false;
         e.step = null;
@@ -2012,7 +2032,7 @@ export default function Simulator() {
       };
 
       startStepRef.current = (dir: number) => {
-        if (peaceWalk) return; // в мирном «тесте» движения свободные, шаги по клеткам отключены
+        if (peaceWalk) return; // в мирном «тесте» движение свободное, шаги по клеткам отключены
         if (e.step) return; // предыдущий шаг ещё в кулдауне — спам не ускоряет движение
         if (performance.now() < e.moveLockUntil) return; // только что был откат — даём серверу догнать
         const self = s.controlled;
@@ -2024,7 +2044,18 @@ export default function Simulator() {
         // в «тесте» дополнительно — только внутри зон клеточной ходьбы
         if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras())) return;
         const inField = tc >= 0 && tc < s.field.cols && tr >= 0 && tr < s.field.rows;
-        if (inField && (!testMode || testWalkableCell(tc, tr))) requestStep(d.deg, tc, tr);
+        if (!inField) return;
+        if (testMode && !testWalkableCell(tc, tr)) {
+          // Край боевой зоны по направлению клавиши: за клетками — трава локации
+          // (не боевая зона и не подрезанная кромкой клетка внутри зоны)?
+          // Выходим в мирный режим, зажатая клавиша унесёт кота по пикселям.
+          if (!testPointInCellsZone(tc + 0.5, tr + 0.5) && testPointInIsland(tc + 0.5, tr + 0.5)) {
+            inZonePrevRef.current = true; // ещё внутри зоны — бой выключится по выходу центра
+            setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
+          }
+          return;
+        }
+        requestStep(d.deg, tc, tr);
       };
 
       // ручное вращение стрелы: J — против часовой, L — по часовой.
@@ -2062,15 +2093,22 @@ export default function Simulator() {
           const d = dirByDeg(e.held[e.held.length - 1]);
           const tc = e.col + d.dx;
           const tr = e.row + d.dy;
-          if (
+          const clear =
             !isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras()) &&
             tc >= 0 &&
             tc < s.field.cols &&
             tr >= 0 &&
-            tr < s.field.rows &&
-            (!testMode || testWalkableCell(tc, tr))
-          )
+            tr < s.field.rows;
+          if (clear && testMode && !testWalkableCell(tc, tr)) {
+            // Край боевой зоны по направлению клавиши: за клетками трава —
+            // выключаем бой, зажатая клавиша продолжает мирную ходьбу.
+            if (!testPointInCellsZone(tc + 0.5, tr + 0.5) && testPointInIsland(tc + 0.5, tr + 0.5)) {
+              inZonePrevRef.current = true;
+              setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
+            }
+          } else if (clear && (!testMode || testWalkableCell(tc, tr))) {
             requestStep(d.deg, tc, tr);
+          }
         } else if (e.path.length > 0) {
           const nx = e.path[0];
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
@@ -2089,55 +2127,102 @@ export default function Simulator() {
         }
       }
 
-      // «Тест», мирный режим: прыжки по якорным точкам — центр, середины сторон
-      // и углы клеток. Один прыжок переносит ровно на одну соседнюю точку (как шаг
-      // в бою — мгновенно, а длительность работает кулдауном), клик строит маршрут
-      // по соседним якорям (BFS), зажатые клавиши дают по прыжку за раз. Остановиться
-      // можно на любом якоре — приземление строго в точку.
+      // «Тест», мирный режим: свободная ходьба по пикселям. Привязки к клеткам и
+      // якорным точкам нет: зажатые клавиши двигают кота по всем направлениям ровно
+      // столько, сколько держат; клик пускает ходьбу до точки (прямой линией,
+      // стены обкатываются скольжением по осям). Препятствия: кромка локации,
+      // камни/деревья и клетки остальных котов. Вход в боевую зону переключает
+      // режим — см. автопереключение ниже.
       if (peaceWalk) {
         const net = netRef.current;
         const cellW = s.field.cellW;
         const cellH = s.field.cellH;
         const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        const hopReady = !e.phop || now - e.phop.start >= e.phop.dur;
-        // маршрута нет, но клавиши зажаты — один прыжок к соседнему якорю в направлении
-        if (hopReady && e.proute.length === 0 && e.held.length > 0) {
-          const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, cellW, cellH, 1e9);
-          const nb = here ? peaceStepNeighbor(here.i, e.held[e.held.length - 1], cellW, cellH) : null;
-          if (nb !== null) {
-            const p = peaceAnchorPoints()[nb];
-            e.proute.push({ x: p.x - hb.dx, y: p.y - hb.dy });
-          }
+        // вектор направления: зажатые клавиши (8 направлений) или цель клика
+        let vx = 0;
+        let vy = 0;
+        for (const dir of e.held) {
+          const d = dirByDeg(dir);
+          vx += d.dx;
+          vy += d.dy;
         }
-        // прыжки по маршруту: один прыжок — одна точка, приземление строго в якорь
-        if (hopReady && e.proute.length > 0) {
-          const seg = e.proute[0];
-          const dx = seg.x - e.fx;
-          const dy = seg.y - e.fy;
-          if (dx !== 0 || dy !== 0) {
-            const maxAxis = Math.max(Math.abs(dx), Math.abs(dy));
-            const dur = Math.max(1, (maxAxis / 0.5) * PEACE_STEP_MS);
-            const deg = wrap360((Math.atan2(dy * cellH, dx * cellW) * 180) / Math.PI);
-            e.lastDir = (Math.round(deg / 45) * 45) % 360;
-            e.fx = seg.x;
-            e.fy = seg.y;
-            e.phop = { start: now, dur };
-            freeSyncRef.current.moving = true;
-            if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
-              freeSyncRef.current.at = now;
-              net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
+        if (vx !== 0 || vy !== 0) e.ptarget = null; // клавиши перебивают клик-цель
+        if ((vx === 0 && vy === 0) && e.ptarget) {
+          const dx = e.ptarget.x - e.fx;
+          const dy = e.ptarget.y - e.fy;
+          const distPx = Math.hypot(dx * cellW, dy * cellH);
+          if (distPx <= 3) {
+            e.ptarget = null; // дошли
+          } else {
+            vx = dx;
+            vy = dy;
+            // нет прогресса (упёрлись в стену) — отменяем цель
+            if (distPx >= e.ptarget.lastD - 0.5) {
+              e.ptarget.stuck += dt;
+              if (e.ptarget.stuck >= PEACE_STUCK_MS) e.ptarget = null;
+            } else {
+              e.ptarget.stuck = 0;
+              e.ptarget.lastD = distPx;
             }
           }
-          e.proute.shift();
         }
-        // маршрут исчерпан и последний прыжок приземлился — финальный стоп-пакет
-        if (
-          e.proute.length === 0 &&
-          (!e.phop || now - e.phop.start >= e.phop.dur) &&
-          freeSyncRef.current.moving
-        ) {
+        const moving = (vx !== 0 || vy !== 0) && !e.ptarget?.stuck;
+        if (moving) {
+          // нормализация в пиксельном пространстве: клетка неквадратная (100×150),
+          // диагональ обязана быть той же скоростью, что и прямые направления
+          const wx = vx * cellW;
+          const wy = vy * cellH;
+          const len = Math.hypot(wx, wy) || 1;
+          const spd = PEACE_SPEED_PX * (dt / 1000);
+          const stepFx = (wx / len) * spd / cellW;
+          const stepFy = ((wy / len) * spd) / cellH / Math.max(0.5, camFxRef.current.sq);
+          // разворот «лицом» по направлению ходьбы (для бейджа и привычки глаза)
+          const deg = wrap360((Math.atan2(wy, wx) * 180) / Math.PI);
+          e.lastDir = (Math.round(deg / 45) * 45) % 360;
+          // столкновения с раздельной проверкой осей: у стены кот скользит вдоль неё
+          const blocked = (fxT: number, fyT: number) => {
+            const px = fxT + hb.dx;
+            const py = fyT + hb.dy;
+            if (!testPeacePointFree(px, py)) return true;
+            for (const t of othersOf(s, s.controlled, mainSavedRef.current, liveRemotesRef.current, objectExtras())) {
+              if (px >= t.col && px <= t.col + 1 && py >= t.row && py <= t.row + 1) return true;
+            }
+            return false;
+          };
+          const nxT = e.fx + stepFx;
+          const nyT = e.fy + stepFy;
+          if (!blocked(nxT, e.fy)) e.fx = nxT;
+          if (!blocked(e.fx, nyT)) e.fy = nyT;
+          freeSyncRef.current.moving = true;
+          if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
+            freeSyncRef.current.at = now;
+            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
+          }
+        } else if (freeSyncRef.current.moving) {
           freeSyncRef.current.moving = false;
           net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+        }
+      }
+
+      // Автопереключение режима по области под котом: центр модельки на боевых
+      // клетках — принудительный бой (привязка к клеткам, вид сверху), на траве —
+      // мирный режим с перспективой. Срабатывание — на входе в зону (край), чтобы
+      // мирный выход из зоны не откатывался обратно в бой.
+      if (testMode && !editorOn && s.controlled === 'main') {
+        const hbR = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        const pxR = s.arrow.battleMode ? e.col + 0.5 : e.fx + hbR.dx;
+        const pyR = s.arrow.battleMode ? e.row + 0.5 : e.fy + hbR.dy;
+        const inZone = testPointInCellsZone(pxR, pyR);
+        const prevZone = inZonePrevRef.current;
+        if (s.arrow.battleMode && !inZone) {
+          inZonePrevRef.current = false;
+          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
+        } else if (!s.arrow.battleMode && inZone && !prevZone) {
+          inZonePrevRef.current = true;
+          e.ptarget = null;
+          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: true } }));
+        } else {
+          inZonePrevRef.current = inZone;
         }
       }
 
@@ -2559,10 +2644,29 @@ export default function Simulator() {
         grad.addColorStop(1, '#233b18');
         ctx.fillStyle = grad;
         ctx.fill(geo.path);
-        // зоны клеточной ходьбы: доска с сеткой (цвета — настройки поля).
-        // Доска с сеткой режется клипом по кромке локации: сглаженный край
-        // подрезает углы зон, и ничего не вылезает за нарисованный островок.
-        // Зелёные зоны доски не получают — они остаются травой с цветами.
+        // проталины «земли» — наземный декор на самой почве: под сеткой, декором
+        // и котами; на ходьбу не влияет, режется клипом по кромке локации
+        const mapObjects = currentTestMap().objects ?? [];
+        if (mapObjects.some((o) => o.kind === 'dirt')) {
+          ctx.save();
+          ctx.clip(geo.path);
+          for (const o of mapObjects) {
+            if (o.kind !== 'dirt') continue;
+            drawDirtPatch(
+              ctx,
+              s.field.cellW,
+              s.field.cellH,
+              (o.c + 0.5) * s.field.cellW,
+              (o.r + 0.5) * s.field.cellH,
+              hashStr(o.id) & 7,
+            );
+          }
+          ctx.restore();
+        }
+        // боевые зоны: мягкая жёлтая подсветка по области + жёлтая сетка, которая
+        // видна всегда — внутри зоны кот в бою привязан к клеткам (как на обычном
+        // поле). Сетка режется клипом по кромке: сглаженный край подрезает углы
+        // зон, и ничего не вылезает за нарисованный островок.
         ctx.save();
         ctx.clip(geo.path);
         const mapZones = currentTestMap().zones;
@@ -2572,30 +2676,33 @@ export default function Simulator() {
           const zy = z.r0 * s.field.cellH;
           const zw = (z.c1 - z.c0 + 1) * s.field.cellW;
           const zh = (z.r1 - z.r0 + 1) * s.field.cellH;
-          ctx.fillStyle = s.field.bgColor;
+          // мягкий жёлтый свет по области боевой зоны
+          ctx.fillStyle = 'rgba(250, 214, 80, 0.14)';
           ctx.fillRect(zx, zy, zw, zh);
-          if (s.field.checker) {
-            ctx.fillStyle = s.field.bgColorAlt;
-            for (let r = z.r0; r <= z.r1; r++) {
-              for (let c = z.c0; c <= z.c1; c++) {
-                if ((c + r) % 2 === 0) ctx.fillRect(c * s.field.cellW, r * s.field.cellH, s.field.cellW, s.field.cellH);
-              }
-            }
+        }
+        for (const z of mapZones) {
+          if (z.kind !== 'cells') continue;
+          const zx = z.c0 * s.field.cellW;
+          const zy = z.r0 * s.field.cellH;
+          const zw = (z.c1 - z.c0 + 1) * s.field.cellW;
+          const zh = (z.r1 - z.r0 + 1) * s.field.cellH;
+          // жёлтая сетка боевых клеток — всегда включена внутри зоны
+          ctx.strokeStyle = 'rgba(233, 196, 61, 0.8)';
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          for (let c = z.c0; c <= z.c1 + 1; c++) {
+            ctx.moveTo(c * s.field.cellW + 0.5, zy);
+            ctx.lineTo(c * s.field.cellW + 0.5, zy + zh);
           }
-          if (s.field.showGrid) {
-            ctx.strokeStyle = s.field.gridColor;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for (let c = z.c0; c <= z.c1 + 1; c++) {
-              ctx.moveTo(c * s.field.cellW + 0.5, zy);
-              ctx.lineTo(c * s.field.cellW + 0.5, zy + zh);
-            }
-            for (let r = z.r0; r <= z.r1 + 1; r++) {
-              ctx.moveTo(zx, r * s.field.cellH + 0.5);
-              ctx.lineTo(zx + zw, r * s.field.cellH + 0.5);
-            }
-            ctx.stroke();
+          for (let r = z.r0; r <= z.r1 + 1; r++) {
+            ctx.moveTo(zx, r * s.field.cellH + 0.5);
+            ctx.lineTo(zx + zw, r * s.field.cellH + 0.5);
           }
+          ctx.stroke();
+          // рамка зоны — чуть ярче сетки
+          ctx.strokeStyle = 'rgba(246, 208, 61, 0.95)';
+          ctx.lineWidth = 2.2;
+          ctx.strokeRect(zx + 1, zy + 1, zw - 2, zh - 2);
         }
         // клетки, задетые кромкой (не целиком внутри полигона): в бою они
         // недоступны для прыжков — помечаем лёгкой красной заливкой
@@ -2628,26 +2735,7 @@ export default function Simulator() {
           ctx.fillRect(bbG.x0, bbG.y0, bbG.x1 - bbG.x0, bbG.y1 - bbG.y0);
           ctx.restore();
         }
-        // мирный режим: якорные точки прыжков (центр, середины сторон и углы клетки)
-        // и подсветка той, что под курсором; в редакторе точки скрывает сетка.
-        // Радиус точки растёт с глубиной — решётка сама подсказывает перспективу.
-        if (!s.arrow.battleMode && !editorOn) {
-          ctx.beginPath();
-          for (const p of peaceAnchorPoints()) {
-            const mR = 1 + (peaceDepthScale(p.y) - 1) * fxc.dp;
-            ctx.moveTo(p.x * s.field.cellW + 1.7 * mR, p.y * s.field.cellH);
-            ctx.arc(p.x * s.field.cellW, p.y * s.field.cellH, 1.7 * mR, 0, Math.PI * 2);
-          }
-          ctx.fillStyle = 'rgba(235, 240, 225, 0.34)';
-          ctx.fill();
-          if (e.hoverA) {
-            ctx.beginPath();
-            ctx.arc(e.hoverA.x * s.field.cellW, e.hoverA.y * s.field.cellH, 5.5, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-            ctx.lineWidth = 1.6;
-            ctx.stroke();
-          }
-        }
+        // мирный режим: точек привязки больше нет — ходьба свободная, по пикселям.
         // Оверлей редактора: границы мира, бледная сетка всего мира, подсветка
         // зелёных зон и тянущийся прямоугольник. Клетки: c=0..cols, r=0..rows.
         if (editorOn && ed) {
@@ -2678,8 +2766,10 @@ export default function Simulator() {
           ctx.lineWidth = 1.5;
           ctx.strokeRect(0.5, 0.5, wc - 1, wr - 1);
           ctx.setLineDash([]);
-          // препятствия черновика: спрайт + пунктирная рамка клетки
+          // препятствия черновика: спрайт + пунктирная рамка клетки. Землю
+          // (проталины) рисует сам грунт — здесь только камень и дерево.
           for (const o of ed.objects) {
+            if (o.kind === 'dirt') continue;
             drawTestObject(
               ctx,
               o.kind,
@@ -3096,16 +3186,19 @@ export default function Simulator() {
       runOrQueue(drawSelf, cellY + (s.field.cellH - 10) * (s.character.spriteScale / 100));
 
       // глубинная отрисовка «теста»: препятствия встают в общую очередь с котами —
-      // дерево перекрывает кота позади себя и скрывается за котом перед собой
+      // дерево перекрывает кота позади себя и скрывается за котом перед собой.
+      // Земля (проталины) — часть грунта, в очередь билбордов не попадает.
       if (testMode) {
         for (const o of testObjects()) {
+          if (o.kind === 'dirt') continue;
+          const kind = o.kind;
           const by = (o.r + 1) * s.field.cellH - 2;
           bills.push({
             y: by,
             fn: () =>
               drawTestObject(
                 ctx,
-                o.kind,
+                kind,
                 s.field.cellW,
                 s.field.cellH,
                 (o.c + 0.5) * s.field.cellW,
@@ -3293,8 +3386,8 @@ export default function Simulator() {
             z: Math.round(camFxRef.current.z * 100) / 100,
             sq: Math.round(camFxRef.current.sq * 100) / 100,
           },
-          hopping: !!st.phop,
-          route: st.proute.length,
+          hopping: false,
+          route: st.ptarget ? 1 : 0,
           stepping: !!st.step,
           stepDur: st.step ? Math.round(st.step.dur) : 0,
           stepLeft: st.step ? Math.max(0, Math.round(st.step.dur - (performance.now() - st.step.start))) : 0,
@@ -3408,7 +3501,11 @@ export default function Simulator() {
         return;
       }
       if (action.type === 'battle') {
-        setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: !p.arrow.battleMode } }));
+        // В «тесте» режимом управляет область под котом (боевые клетки / трава) —
+        // ручной тумблер B не нужен и отключён.
+        if (fieldFormatRef.current !== 'test') {
+          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: !p.arrow.battleMode } }));
+        }
         return;
       }
       if (action.type === 'strike') {
@@ -3425,18 +3522,11 @@ export default function Simulator() {
         e.held.push(action.dir);
         e.path = [];
       }
-      // мирный «тест»: тап — немедленный шаг к соседнему якорю (зажатие довершает
-      // шаги циклом); клавиши перебивают клик-маршрут, как в бою
+      // мирный «тест»: ходьба свободная (по пикселям) — её ведёт игровой цикл
+      // по зажатым клавишам; клик-цель перебивается клавишами там же.
       const sK = settingsRef.current;
       if (fieldFormatRef.current === 'test' && !sK.arrow.battleMode && sK.controlled === 'main') {
-        e.proute = [];
-        const hb = peaceHalfBox(sK, spritesRef.current[sK.character.sprite]);
-        const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, sK.field.cellW, sK.field.cellH, 1e9);
-        const nb = here ? peaceStepNeighbor(here.i, action.dir, sK.field.cellW, sK.field.cellH) : null;
-        if (nb !== null) {
-          const p = peaceAnchorPoints()[nb];
-          e.proute.push({ x: p.x - hb.dx, y: p.y - hb.dy });
-        }
+        e.ptarget = null;
         return;
       }
       // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
@@ -3543,7 +3633,8 @@ export default function Simulator() {
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
         my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       }
-      // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку).
+      // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку);
+      // инструмент «Земля» при зажатой кнопке насыпает проталины протяжкой.
       const ed = editorRef.current;
       if (editorOpenRef.current && ed) {
         const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
@@ -3552,8 +3643,10 @@ export default function Simulator() {
           ed.drag.c1 = c;
           ed.drag.r1 = r;
         }
+        if (dirtPaintingRef.current && ed.tool === 'dirt' && ev.buttons & 1) {
+          paintEditorDirt(c, r);
+        }
         e.hover = { c, r };
-        e.hoverA = null;
         const cvE = canvasRef.current;
         if (cvE) cvE.style.cursor = 'crosshair';
         return;
@@ -3597,18 +3690,8 @@ export default function Simulator() {
     else e.hover = null;
     const cv = canvasRef.current;
     if (testMode) {
-      // манекена в «тесте» нет — таскать нечего; в мирном режиме подсвечиваем якорь
-      // под курсором (клик по нему задаёт шаг), в бою — обычный курсор
-      if (!s.arrow.battleMode) {
-        const wx = mx / s.field.cellW;
-        const wy = my / s.field.cellH;
-        const a = nearestPeaceAnchor(wx, wy, s.field.cellW, s.field.cellH, PEACE_SNAP_PX);
-        e.hoverA = a ? { x: a.x, y: a.y } : null;
-        if (cv) cv.style.cursor = a ? 'pointer' : '';
-      } else {
-        e.hoverA = null;
-        if (cv) cv.style.cursor = '';
-      }
+      // манекена в «тесте» нет — таскать нечего; ходьба свободная, курсор обычный
+      if (cv) cv.style.cursor = '';
       return;
     }
     const hov = hitTargetAt(s, mx, my);
@@ -3619,7 +3702,6 @@ export default function Simulator() {
   const onLeave = () => {
     const e = engineRef.current;
     e.hover = null;
-    e.hoverA = null;
     const cv = canvasRef.current;
     if (cv && !dragRef.current) cv.style.cursor = '';
   };
@@ -3643,9 +3725,19 @@ export default function Simulator() {
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
       // Инструменты препятствий ставят/снимают камень-дерево кликом — без протягивания;
+      // «Земля» насыпает проталину кликом и протяжкой (одна отмена на росчерк);
       // ПКМ по-прежнему рисует ластик, чтобы стирать зоны и объекты протяжкой.
       if (ev.button === 0 && (ed.tool === 'stone' || ed.tool === 'tree')) {
         toggleEditorObject(ed.tool, c, r);
+        ev.preventDefault();
+        return;
+      }
+      if (ev.button === 0 && ed.tool === 'dirt') {
+        pushEditorUndo();
+        dirtPaintingRef.current = true;
+        paintEditorDirt(c, r);
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+        ev.currentTarget.style.cursor = 'crosshair';
         ev.preventDefault();
         return;
       }
@@ -3767,8 +3859,10 @@ export default function Simulator() {
   };
 
   const onUp = (ev: React.PointerEvent<HTMLCanvasElement>) => {
-    // Редактор: отпускание кнопки завершает рисунок — прямоугольник становится зоной.
+    // Редактор: отпускание кнопки завершает рисунок — прямоугольник становится
+    // зоной; росчерк «Земли» просто заканчивается (отмена уже записана).
     const ed = editorRef.current;
+    dirtPaintingRef.current = false;
     if (editorOpenRef.current && ed) {
       try {
         ev.currentTarget.releasePointerCapture(ev.pointerId);
@@ -3815,38 +3909,63 @@ export default function Simulator() {
       mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
       my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       if (!s.arrow.battleMode) {
-        // мирный «тест»: клик по якорной точке — шагаем к ней по соседним якорям;
-        // новый клик перезапускает маршрут с текущего места
-        const a = nearestPeaceAnchor(mx / s.field.cellW, my / s.field.cellH, s.field.cellW, s.field.cellH, PEACE_SNAP_PX);
-        if (!a) return;
+        // мирный «тест»: клик пускает свободную ходьбу до точки (по прямой,
+        // стены обкатываются скольжением); клавиши перебивают цель
+        const wx = mx / s.field.cellW;
+        const wy = my / s.field.cellH;
+        if (!testPointInIsland(wx, wy)) return;
         const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, s.field.cellW, s.field.cellH, 1e9);
-        if (!here) return;
-        e.proute = peaceRoute(here.i, a.i).map((i) => {
-          const p = peaceAnchorPoints()[i];
-          return { x: p.x - hb.dx, y: p.y - hb.dy };
-        });
+        e.ptarget = { x: wx - hb.dx, y: wy - hb.dy, stuck: 0, lastD: 1e9 };
         return;
       }
+      // боевой «тест»: клик по проходимой клетке строит маршрут по клеткам,
+      // клик по траве вне боевых клеток — выход в мирный режим и ходьба к точке
+      const wxB = mx / s.field.cellW;
+      const wyB = my / s.field.cellH;
+      const cB = Math.floor(wxB);
+      const rB = Math.floor(wyB);
+      const walkableClick =
+        cB >= 0 && cB < s.field.cols && rB >= 0 && rB < s.field.rows && testWalkableCell(cB, rB);
+      if (!walkableClick && !testPointInCellsZone(wxB, wyB) && testPointInIsland(wxB, wyB)) {
+        const hbB = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        e.ptarget = { x: wxB - hbB.dx, y: wyB - hbB.dy, stuck: 0, lastD: 1e9 };
+        inZonePrevRef.current = true; // ещё внутри зоны — бой выключится по выходу центра
+        setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
+        return;
+      }
+      if (!walkableClick) return;
+      const c = cB;
+      const r = rB;
+      // клетки персонажей непроходимы — маршрут через/на них не строится;
+      // в «тесте» непроходимы и клетки вне зон клеточной ходьбы
+      const mp = s.controlled === 'main' ? null : mainSavedRef.current;
+      e.path = bfsPath(
+        e.col,
+        e.row,
+        c,
+        r,
+        s.field.cols,
+        s.field.rows,
+        [
+          ...othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
+          ...(testMode ? testNonWalkableCells() : []),
+        ],
+      );
+      return;
     }
-    const c = Math.floor(mx / s.field.cellW);
-    const r = Math.floor(my / s.field.cellH);
-    if (c < 0 || c >= s.field.cols || r < 0 || r >= s.field.rows) return;
-    if (testMode && !testWalkableCell(c, r)) return;
-    // клетки персонажей непроходимы — маршрут через/на них не строится;
-    // в «тесте» непроходимы и клетки вне зон клеточной ходьбы
-    const mp = s.controlled === 'main' ? null : mainSavedRef.current;
+    const c2 = Math.floor(mx / s.field.cellW);
+    const r2 = Math.floor(my / s.field.cellH);
+    if (c2 < 0 || c2 >= s.field.cols || r2 < 0 || r2 >= s.field.rows) return;
+    // клетки персонажей непроходимы — маршрут через/на них не строится
+    const mp2 = s.controlled === 'main' ? null : mainSavedRef.current;
     e.path = bfsPath(
       e.col,
       e.row,
-      c,
-      r,
+      c2,
+      r2,
       s.field.cols,
       s.field.rows,
-      [
-        ...othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
-        ...(testMode ? testNonWalkableCells() : []),
-      ],
+      othersOf(s, s.controlled, mp2, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
     );
   };
 
@@ -4393,18 +4512,27 @@ export default function Simulator() {
               Редактор локации
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            variant={settings.arrow.battleMode ? 'default' : 'outline'}
-            className={
-              settings.arrow.battleMode
-                ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                : 'btn-neutral h-8 text-xs'
-            }
-            onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
-          >
-            Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
-          </Button>
+          {testField ? (
+            <span
+              className="flex h-8 items-center rounded-md border border-[var(--sim-line-strong)] px-2.5 text-xs text-[var(--sim-text-muted)]"
+              title="Режим включается сам: на боевых клетках — бой, на траве — мирный режим"
+            >
+              Режим по области поля
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant={settings.arrow.battleMode ? 'default' : 'outline'}
+              className={
+                settings.arrow.battleMode
+                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
+                  : 'btn-neutral h-8 text-xs'
+              }
+              onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
+            >
+              Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
+            </Button>
+          )}
           <Button
             size="sm"
             variant={settingsOpen ? 'default' : 'outline'}
@@ -4499,6 +4627,7 @@ export default function Simulator() {
                           [
                             { id: 'stone', label: '⛰ Камень' },
                             { id: 'tree', label: '🌲 Дерево' },
+                            { id: 'dirt', label: '🟫 Земля' },
                           ] as { id: EditorTool; label: string }[]
                         ).map((t) => (
                           <button
@@ -4518,6 +4647,7 @@ export default function Simulator() {
                       <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
                         Тяните по полю — зона. Камень и дерево — клик по клетке:
                         поставить, повторный клик — убрать. Через них нельзя пройти.
+                        Земля — клик или протяжка: проталина на траве, ходьбе не мешает.
                       </p>
                     </div>
                     <div>
@@ -4635,10 +4765,10 @@ export default function Simulator() {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
-            <span>W A S D — шаг (те же клавиши на русской: ц ф ы в; зажатие — раз в 120 мс с учётом замедления; спам быстрее не сделает)</span>
+            <span>W A S D — идти (зажать; на траве — свободная ходьба по пикселям, в боевых клетках — шаг по клеткам)</span>
             <span>Q E Z X — диагонали</span>
-            <span>ЛКМ — маршрут · манекен — тянуть</span>
-            <span>B — бой</span>
+            <span>ЛКМ — идти к точке · манекен — тянуть</span>
+            <span>{testField ? 'режим включается сам: жёлтая сетка — бой, трава — мир' : 'B — бой'}</span>
             <span>Enter — чат</span>
             <span>I — удар</span>
             <span>K (удерживать) — блок</span>
