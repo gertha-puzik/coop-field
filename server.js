@@ -1051,6 +1051,7 @@ function publicCat(cat, room) {
     deg: cat.deg,
     size: cat.size,
     blocking: !!cat.blocking,
+    sq: cat.spaceHold ? 1 : 0,
   };
   // Комната «тест»: режим свободной ходьбы и позиция в клеточных долях —
   // новичкам и после переподключения (иначе свободный кот замрёт на клетке).
@@ -1807,6 +1808,27 @@ function block(ws, payload = {}) {
   broadcast(room, "block", { id: cat.id, on: cat.blocking }, ws);
 }
 
+/**
+ * Присед-желе на пробеле (удержание). Клиент → ["space", { on: true }] при нажатии и
+ * ["space", { on: false, hold, cancel? }] при отпускании: hold — сколько мс держал
+ * (по нему чужие клиенты считают заряд «выстрела»), cancel — окно потеряло фокус,
+ * выстрела не будет (кот просто выпрямляется). Комнате (кроме отправителя — он
+ * анимирует локально) → ["space", { id, on, hold?, cancel? }]. Состояние «держит
+ * пробел» входит в publicCat (sq) — новички и после обрыва видят приплющенного кота.
+ */
+function space(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat) return;
+  cat.spaceHold = !!payload.on;
+  const msg = { id: cat.id, on: cat.spaceHold };
+  if (!cat.spaceHold) {
+    msg.hold = Math.max(0, Math.min(4000, Math.round(Number(payload.hold) || 0)));
+    msg.cancel = !!payload.cancel;
+  }
+  broadcast(room, "space", msg, ws);
+}
+
 /** Темп рассылки свободных позиций: чаще — спам, реже — рваное движение у соседей. */
 const FREE_MOVE_GAP_MS = 50;
 
@@ -1935,6 +1957,7 @@ function onMessage(ws, raw) {
   else if (event === "rab") rabToggle(ws, payload || {});
   else if (event === "rabHit") rabHit(ws, payload || {});
   else if (event === "block") block(ws, payload || {});
+  else if (event === "space") space(ws, payload || {});
   else if (event === "armor") armor(ws, payload || {});
   else if (event === "freemove") freeMove(ws, payload || {});
   else if (event === "cellsync") cellsync(ws, payload || {});

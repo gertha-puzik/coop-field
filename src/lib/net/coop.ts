@@ -38,6 +38,8 @@ export type CoopCat = {
   size?: number;
   /** Кот держит блок (удержание К): любые удары по нему проводятся в «Лапы». */
   blocking?: boolean;
+  /** Кот держит пробел (присед-желе): 1 — рисуем приплющивание/выстрел. */
+  sq?: number;
   /** Комната «тест»: 1 — кот в свободной ходьбе (fx/fy — позиция в клеточных долях),
    *  0/нет — кот ходит по клеткам. */
   fm?: number;
@@ -138,6 +140,10 @@ export type CoopHandlers = {
   onRabHit?: (info: CoopRabHit) => void;
   /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
   onBlock?: (info: { id: number; on: boolean }) => void;
+  /** Чужой кот присел на пробел / отпустил его (отправителю эхо не приходит).
+   *  hold — сколько мс держал (для заряда «выстрела»), cancel — окно потеряло
+   *  фокус: выстрела не будет, кот просто выпрямляется. */
+  onSpace?: (info: { id: number; on: boolean; hold?: number; cancel?: boolean }) => void;
   /** Чужой кот идёт свободно (комната «тест», мирный режим): свежая позиция
    *  в клеточных долях мира; cx/cy — ближайшая клетка сервера (1-based). */
   onFreeMove?: (m: { id: number; x: number; y: number; cx?: number; cy?: number; sp?: boolean }) => void;
@@ -403,6 +409,16 @@ export function createCoopClient(handlers: CoopHandlers) {
         const row = payload as { id?: unknown; on?: unknown } | null;
         if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
           handlers.onBlock?.({ id: Number(row.id), on: !!row.on });
+        }
+      } else if (event === "space") {
+        const row = payload as { id?: unknown; on?: unknown; hold?: unknown; cancel?: unknown } | null;
+        if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
+          handlers.onSpace?.({
+            id: Number(row.id),
+            on: !!row.on,
+            hold: Number.isFinite(Number(row.hold)) ? Number(row.hold) : undefined,
+            cancel: !!row.cancel,
+          });
         }
       } else if (event === "roomsinfo") {
         if (!Array.isArray(payload)) return;

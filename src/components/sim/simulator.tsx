@@ -1096,6 +1096,10 @@ export default function Simulator() {
   /** Кто из чужих котов держит блок (их числовые id): любой удар по такому — в «Лапы»,
    *  кроме удара в хвост — хвост блок не ловит. */
   const remoteBlockRef = useRef<Set<number>>(new Set());
+  /** Присед-желе на пробеле у чужих котов (ключи p<id>): Holding — держит пробел,
+   *  releaseAt/charge — желейный «выстрел» после отпускания. Времена — в локальных
+   *  часах, длительность удержания приходит в пакете отпускания (hold). */
+  const remoteSpaceRef = useRef<Map<string, { holding: boolean; since: number; releaseAt: number; charge: number }>>(new Map());
   /** После перетаскивания один клик подавляется — чтобы не строился маршрут. */
   const skipClickRef = useRef(false);
   /** Идёт росчерк «Земли» протяжкой (редактор): клетки насыпаются на pointermove. */
@@ -1930,6 +1934,11 @@ export default function Simulator() {
         inZonePrevRef.current = true;
         // Кто из чужих котов держит блок — из снапшота комнаты (после обрыва тоже).
         remoteBlockRef.current = new Set(cats.filter((c) => c.blocking && c.id !== meIdRef.current).map((c) => c.id));
+        // Кто из чужих котов держит пробел (присед) — тоже из снапшота комнаты.
+        remoteSpaceRef.current.clear();
+        for (const c of others) {
+          if (c.sq === 1) remoteSpaceRef.current.set(`p${c.id}`, { holding: true, since: performance.now(), releaseAt: 0, charge: 0 });
+        }
         remoteAimRef.current.clear();
         remoteDrawRef.current.clear();
         for (const d of liveRemotesRef.current) remoteDrawRef.current.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
@@ -1986,6 +1995,7 @@ export default function Simulator() {
           remoteAimRef.current.delete(`p${cat.id}`);
           remoteDrawRef.current.delete(`p${cat.id}`);
           remoteBlockRef.current.delete(cat.id);
+          remoteSpaceRef.current.delete(`p${cat.id}`);
           remoteFmRef.current.delete(`p${cat.id}`);
           remoteFreeRef.current.delete(`p${cat.id}`);
           liveRemotesRef.current = liveRemotesRef.current.filter((d) => d.id !== `p${cat.id}`);
@@ -2102,6 +2112,29 @@ export default function Simulator() {
         if (info.id === meIdRef.current) return;
         if (info.on) remoteBlockRef.current.add(info.id);
         else remoteBlockRef.current.delete(info.id);
+      },
+      onSpace: (info) => {
+        // Присед-желе чужого кота: времена якорим к локальным часам, а длительность
+        // удержания приходит в пакете отпускания — заряд считается без синхронизации
+        // часов клиентов. Своему коту анимация и так рисуется локально (эхо не шлём).
+        if (info.id === meIdRef.current) return;
+        const key = `p${info.id}`;
+        if (info.on) {
+          remoteSpaceRef.current.set(key, { holding: true, since: performance.now(), releaseAt: 0, charge: 0 });
+          return;
+        }
+        if (info.cancel) {
+          // Окно отправителя потеряло фокус — чужой кот просто выпрямляется.
+          remoteSpaceRef.current.set(key, { holding: false, since: 0, releaseAt: 0, charge: 0 });
+          return;
+        }
+        const hold = Math.max(0, Math.min(4000, Math.round(info.hold ?? 0)));
+        remoteSpaceRef.current.set(key, {
+          holding: false,
+          since: 0,
+          releaseAt: performance.now(),
+          charge: 0.15 + 0.85 * (hold / 4000),
+        });
       },
       onFreeMove: (m) => {
         // Чужой кот идёт свободно («тест», мирный режим): обновляем цель доведения
@@ -3906,8 +3939,14 @@ export default function Simulator() {
         let extraRot = 0;
         let swayX = 0;
         let lift = 0;
-        if (jellyKey === 'main') {
-          const sp = spaceHoldRef.current;
+        // Пробел (свой кот или чужой): удержание — плавное приплющивание вниз (полный эффект
+        // за 4 с) с нарастающей дрожью и поводкой корпуса; отпускание — желейный
+        // «выстрел» вверх: резкое вытяжение с подпрыгом и пружинное затухание в норму.
+        // Свои данные — из локального состояния, чужие — из сетевых событий (p<id>).
+        const sp = jellyKey === 'main'
+          ? spaceHoldRef.current
+          : (jellyKey ? remoteSpaceRef.current.get(jellyKey) : undefined);
+        if (sp) {
           if (sp.holding) {
             const p = Math.min(1, (now - sp.since) / 4000);
             sqY *= 1 - 0.42 * p;
@@ -4542,6 +4581,8 @@ export default function Simulator() {
             sp.since = performance.now();
             sp.releaseAt = 0;
             sp.charge = 0;
+            // Присед видят все: комнату ставим в известность (эхо себе не приходит).
+            netRef.current?.emit('space', { on: true });
           }
         }
         return;
@@ -4629,6 +4670,9 @@ export default function Simulator() {
           // не был нулевым, а верхняя ровно 1 — дальше заряд не растёт).
           sp.charge = 0.15 + 0.85 * Math.min(1, (performance.now() - sp.since) / 4000);
           sp.releaseAt = performance.now();
+          // hold — длительность удержания: чужие клиенты посчитают по ней заряд,
+          // не сверяя часы (у каждого свои performance.now()).
+          netRef.current?.emit('space', { on: false, hold: Math.round(sp.releaseAt - sp.since) });
         }
         return;
       }
@@ -4663,6 +4707,8 @@ export default function Simulator() {
       if (sp.holding) {
         sp.holding = false;
         sp.releaseAt = 0;
+        // Присед снят без «выстрела» — чужим тоже (cancel: кот просто выпрямится).
+        netRef.current?.emit('space', { on: false, cancel: true });
       }
       // Окно потеряло фокус при зажатом блоке — стойку снимаем, иначе кот
       // остался бы в блоке навсегда (keyup уже не пришёл бы).
