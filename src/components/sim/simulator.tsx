@@ -43,6 +43,7 @@ import {
   testObjects,
   testObjectDrawRect,
   testPeaceBattleBlocked,
+  testPeaceBattleDepth,
   testPeaceObjectsFree,
   testPeacePointFree,
   testPointInCellsZone,
@@ -56,6 +57,7 @@ import {
   newZoneId,
   objectBase,
   objectPosOffset,
+  objectMir,
   objectRotDeg,
   objectScale,
   objectSprite,
@@ -144,6 +146,12 @@ const PEACE_ZOOM = 1.5;
 /** Наклон земли мирного режима: вертикаль грунта сжата до этой доли, спрайты остаются
  *  вертикальными билбордами — та самая псевдо-глубина Don't Starve / Transformice Adventures. */
 const PEACE_TILT = 0.8;
+/** Насколько центр мирного кота может углубиться в боевую зону по вертикали
+ *  (доли клетки). Перпектива сжимает землю до PEACE_TILT, из-за чего при той же
+ *  стенке видимый заход в зону сверху/снизу выходит заметно мельче бокового —
+ *  по вертикали стенку отодвигаем вглубь, чтобы визуально кот везде заходил
+ *  «до половины», как сбоку. */
+const PEACE_BATTLE_LEAN_Y = 0.12;
 /** Плавность перехода зума и наклона между мирным и боевым видом, мс. */
 const CAMZOOM_TAU_MS = 350;
 /** Границы зума колесом мыши: множитель поверх базового зума вида (1 — как задано
@@ -224,6 +232,8 @@ type EditorPlace = {
   spr: string;
   s: number;
   rot: number;
+  /** отзеркален ли спрайт по горизонтали */
+  mir: 0 | 1;
   /** точка опоры в клеточных долях мира */
   x: number;
   y: number;
@@ -878,7 +888,7 @@ export default function Simulator() {
   const editorPlaceRef = useRef<EditorPlace | null>(null);
   /** Правка и зеркалирование ставящегося объекта: одним входом, чтобы ref и state не разъехались. */
   const patchEditorPlace = (p: Partial<EditorPlace>) => {
-    const next = { ...(editorPlaceRef.current ?? { kind: 'tree', spr: 'tree-1', s: 1, rot: 0, x: 0, y: 0, anchored: false, pickId: null }), ...p } as EditorPlace;
+    const next = { ...(editorPlaceRef.current ?? { kind: 'tree', spr: 'tree-1', s: 1, rot: 0, mir: 0, x: 0, y: 0, anchored: false, pickId: null }), ...p } as EditorPlace;
     editorPlaceRef.current = next;
     setEditorPlace(next);
   };
@@ -1063,6 +1073,10 @@ export default function Simulator() {
   /** «Желе»: амплитуда дрожи каждого манекена (0..1) — растёт от тряски мышью при
    *  перетаскивании, дальше качается и гаснет сама. */
   const jellyRef = useRef<Record<string, number>>({});
+  /** Анимация удержания пробела (свой кот): пока держится — моделька плавно
+   *  приплющивается вниз с нарастающей дрожью (полный эффект за 4 с), при
+   *  отпускании — желейный «выстрел» вверх и пружинный возврат в норму. */
+  const spaceHoldRef = useRef({ holding: false, since: 0, releaseAt: 0 });
   /** Позиция манекена в клеточных долях (левый верх спрайта); null — выключен. */
   const dummyPosRef = useRef<CoopDummyPos | null>(null);
   /** Манекен включён — зеркало для игрового цикла: state в замыкание кадра не попадает. */
@@ -1114,7 +1128,9 @@ export default function Simulator() {
     ptarget: null,
     pvx: 0,
     pvy: 0,
-    face: -1,
+    // Спрайты котов смотрят влево «как нарисованы» (flip=1): покой и бег влево —
+    // без зеркала, бег вправо — зеркалит (flip=-1).
+    face: 1,
     lastSprint: 0,
   });
 
@@ -1304,8 +1320,8 @@ export default function Simulator() {
         d.rows === map.rows &&
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
           JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
-        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null]));
+        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) ===
+          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null]));
       if (same) {
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
@@ -1460,6 +1476,7 @@ export default function Simulator() {
       spr: objectSprite(o),
       s: objectScale(o),
       rot: objectRotDeg(o),
+      mir: objectMir(o),
       x: b.x,
       y: b.y,
       anchored: true,
@@ -1511,6 +1528,7 @@ export default function Simulator() {
       spr: p.spr,
       s: p.s,
       rot: p.rot,
+      mir: p.mir,
       x: p.x,
       y: p.y,
       c: Math.min(d.cols - 1, Math.max(0, Math.floor(p.x))),
@@ -1902,6 +1920,7 @@ export default function Simulator() {
         // принудительный мирный режим — только на самом входе в комнату (после you).
         if (fmt === 'test' && settingsRef.current.arrow.battleMode && freshJoinRef.current) {
           freshJoinRef.current = false;
+          suppressExitTeleportRef.current = true;
           setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
         }
         // Спавн-точка считаем «внутри зоны»: свежий вход в боевую зону срабатывает
@@ -2379,11 +2398,19 @@ export default function Simulator() {
    * (спавн в зоне, правка локации под котом) — к ближайшей боевой клетке. Выход
    * телепортирует кота на клетку захода (battleExitRef), если он стоит в зоне.
    */
+  /** Каким был боевой режим на прошлом срабатывании эффекта ниже: отличаем
+   *  настоящий выход из боя (телепорт на заход) от простых перерисовок. */
+  const prevBattleModeRef = useRef(false);
+  /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
+   *  «выход из боя», телепорт на клетку выхода не нужен. */
+  const suppressExitTeleportRef = useRef(false);
   useEffect(() => {
     if (fieldFormat !== 'test') return;
     const e = engineRef.current;
     const net = netRef.current;
     e.hover = null;
+    const wasBattle = prevBattleModeRef.current;
+    prevBattleModeRef.current = settings.arrow.battleMode;
     if (settings.arrow.battleMode) {
       const forced = battleEntryRef.current;
       battleEntryRef.current = null;
@@ -2404,8 +2431,17 @@ export default function Simulator() {
         e.col = exit.c;
         e.row = exit.r;
       }
-      e.fx = e.col;
-      e.fy = e.row;
+      const skipTeleport = suppressExitTeleportRef.current;
+      suppressExitTeleportRef.current = false;
+      // Телепорт на клетку выхода — только при настоящем выходе из боя. При
+      // простом перерасчёте эффекта (вход в комнату, загрузка настроек) мирную
+      // точку не трогаем: сброс в e.col/e.row телепортировал кота, стоящего
+      // «в lean» у кромки боевой зоны, внутрь клетки — и страховка сразу
+      // вгоняла его в бой (баг «сохранение локации перебрасывает в бой»).
+      if (wasBattle && !skipTeleport) {
+        e.fx = e.col;
+        e.fy = e.row;
+      }
       e.step = null;
       e.path = [];
       freeSyncRef.current.moving = false;
@@ -2821,11 +2857,17 @@ export default function Simulator() {
             }
           }
           const myR = peaceBodyRadius(hb.dx * 2 * cellW);
-          const blocked = (fxT: number, fyT: number) => {
+          // Стенка боевых зон для мирной ходьбы — по глубине внутри зоны вдоль оси
+          // движения. По горизонтали стенка на кромке (depth > 0 нельзя), по вертикали
+          // центр может углубиться на PEACE_BATTLE_LEAN_Y: перспектива сжимает землю,
+          // и без этого видимый заход сверху/снизу заметно мельче бокового.
+          const battleWall = (fxT: number, fyT: number, axis: 'x' | 'y') =>
+            strictEntries && testPeaceBattleDepth(fxT, fyT, axis) > (axis === 'y' ? PEACE_BATTLE_LEAN_Y : 0);
+          const blocked = (fxT: number, fyT: number, axis: 'x' | 'y') => {
             const px = fxT + hb.dx;
             const py = fyT + hb.dy;
             if (!testPeacePointFree(px, py)) return true;
-            if (strictEntries && testPeaceBattleBlocked(px, py)) return true;
+            if (battleWall(px, py, axis)) return true;
             if (!testPeaceObjectsFree(fxT + hb.dx, fyT + hb.dy * 2, cellW, cellH)) return true;
             const feetX = (fxT + hb.dx) * cellW;
             const feetY = (fyT + hb.dy * 2) * cellH;
@@ -2841,9 +2883,9 @@ export default function Simulator() {
           };
           const nxT = e.fx + stepFx;
           const nyT = e.fy + stepFy;
-          if (!blocked(nxT, e.fy)) e.fx = nxT;
+          if (!blocked(nxT, e.fy, 'x')) e.fx = nxT;
           else e.pvx = 0; // упёрлись — инерция по оси гасится, скольжение продолжается
-          if (!blocked(e.fx, nyT)) e.fy = nyT;
+          if (!blocked(e.fx, nyT, 'y')) e.fy = nyT;
           else e.pvy = 0;
           // Расталкивание: если тела уже пересекаются (спавн рядом, телепорт с
           // клетки захода, правка локации под котами) — мягко выталкиваем своего
@@ -2859,8 +2901,8 @@ export default function Simulator() {
             const k = (min - dist) / dist;
             const pushFx = (ddx * k) / cellW;
             const pushFy = (ddy * k) / cellH;
-            if (!blocked(e.fx + pushFx, e.fy)) e.fx += pushFx;
-            if (!blocked(e.fx, e.fy + pushFy)) e.fy += pushFy;
+            if (!blocked(e.fx + pushFx, e.fy, 'x')) e.fx += pushFx;
+            if (!blocked(e.fx, e.fy + pushFy, 'y')) e.fy += pushFy;
           }
           // спринтим — копим темп и рождаем комочки земли/травы из-под лап:
           // летят против бега веером, гравитация гасит (физика и рисование ниже)
@@ -2879,11 +2921,12 @@ export default function Simulator() {
           } else {
             sprintAccRef.current = 0;
           }
-          // Флип «лицом» по горизонтали бега: спрайты котов смотрят влево, при беге
-          // вправо моделька зеркалится. Разворот триггерит лёгкое «желе» — качнётся
-          // и успокоится (см. drawChar). Чисто локальная картинка, по сети не ходит.
+          // Флип «лицом» по горизонтали бега: спрайты котов смотрят влево «как
+          // нарисованы», поэтому бег вправо зеркалит модельку (flip=-1), бег влево —
+          // нет. Разворот триггерит лёгкое «желе» — качнётся и успокоится (см.
+          // drawChar). Чисто локальная картинка, по сети не ходит.
           if (e.pvx > 14 || e.pvx < -14) {
-            const f: 1 | -1 = e.pvx > 0 ? 1 : -1;
+            const f: 1 | -1 = e.pvx > 0 ? -1 : 1;
             if (f !== e.face) {
               e.face = f;
               jellyRef.current.main = Math.max(jellyRef.current.main ?? 0, 0.5);
@@ -2933,8 +2976,15 @@ export default function Simulator() {
         const ccR = s.arrow.battleMode ? e.col : Math.floor(e.fx + hbR.dx);
         const crR = s.arrow.battleMode ? e.row : Math.floor(e.fy + hbR.dy);
         const onBattle = testWalkableCell(ccR, crR);
+        // Мирный кот у кромки теперь легально углубляется центром на
+        // PEACE_BATTLE_LEAN_Y (компенсация перспективы) — аварией считаем только
+        // кота в глубине зоны: боевые и чуть выше, и чуть ниже центра. Кот у самой
+        // кромки от такой проверки бой не ловит, а заброшенный в середину зоны — да.
+        const deepInBattle =
+          testWalkableCell(ccR, Math.floor(e.fy + hbR.dy - 0.25)) &&
+          testWalkableCell(ccR, Math.floor(e.fy + hbR.dy + 0.25));
         const onEntry = !!testEntryAt(ccR, crR);
-        if (!s.arrow.battleMode && onBattle && !onEntry) {
+        if (!s.arrow.battleMode && deepInBattle && !onEntry) {
           inZonePrevRef.current = true;
           e.ptarget = null;
           setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: true } }));
@@ -2956,8 +3006,9 @@ export default function Simulator() {
           fr.x += (fr.tx - fr.x) * kf;
           fr.y += (fr.ty - fr.y) * kf;
           if (fr.tx - before > 0.015 || fr.tx - before < -0.015) {
-            const f: 1 | -1 = fr.tx >= before ? 1 : -1;
-            if (f !== (fr.face ?? -1)) {
+            // Чужой кот бежит вправо — зеркалим (flip=-1), влево — как нарисован (1).
+            const f: 1 | -1 = fr.tx >= before ? -1 : 1;
+            if (f !== (fr.face ?? 1)) {
               fr.face = f;
               jellyRef.current[idF] = Math.max(jellyRef.current[idF] ?? 0, 0.4);
             }
@@ -3829,11 +3880,6 @@ export default function Simulator() {
         // билборд: земля в мирном «тесте» наклонена (сжата по вертикали), спрайт
         // остаётся вертикальным — низ прижат к сжатой земле, верх не заваливается
         const py = testMode ? groundY * camFxRef.current.sq - th : pos.y;
-        // тень под ногами — следует за нижним краем спрайта
-        ctx.beginPath();
-        ctx.ellipse(pos.x + twd / 2, py + th - 4, twd * 0.34, 5.5, 0, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0,0,0,0.35)';
-        ctx.fill();
         // подсветка модели, выбранной в панели (не той, за которую играют):
         // слегка увеличенный светлый силуэт за спрайтом
         const glow = (gx: number, gy: number) => {
@@ -3850,23 +3896,45 @@ export default function Simulator() {
         const amp = jellyKey ? (jellyRef.current[jellyKey] ?? 0) : 0;
         const baseCx = pos.x + twd / 2;
         const baseY2 = py + th;
-        if (amp > 0.01) {
-          const wob = Math.sin(now * 0.045);
-          ctx.save();
-          ctx.translate(baseCx, baseY2);
-          ctx.rotate(amp * 0.08 * Math.cos(now * 0.045));
-          ctx.scale(flip * (1 + amp * 0.22 * wob), 1 - amp * 0.22 * wob);
-          glow(-twd / 2, -th);
-          ctx.drawImage(sprC, -twd / 2, -th, twd, th);
-          ctx.restore();
-        } else {
-          ctx.save();
-          ctx.translate(baseCx, baseY2);
-          ctx.scale(flip, 1);
-          glow(-twd / 2, -th);
-          ctx.drawImage(sprC, -twd / 2, -th, twd, th);
-          ctx.restore();
+        // Пробел (свой кот): удержание — плавное приплющивание вниз (полный эффект
+        // за 4 с) с нарастающей дрожью и поводкой корпуса; отпускание — желейный
+        // «выстрел» вверх: резкое вытяжение с подпрыгом и пружинное затухание в норму.
+        let sqY = 1;
+        let sqX = 1;
+        let extraRot = 0;
+        let swayX = 0;
+        let lift = 0;
+        if (jellyKey === 'main') {
+          const sp = spaceHoldRef.current;
+          if (sp.holding) {
+            const p = Math.min(1, (now - sp.since) / 4000);
+            sqY *= 1 - 0.42 * p;
+            sqX *= 1 + 0.2 * p;
+            extraRot += Math.sin(now * 0.05) * 0.05 * p;
+            swayX += Math.sin(now * 0.031) * 1.4 * p;
+          } else if (sp.releaseAt) {
+            const t = now - sp.releaseAt;
+            if (t < 1100) {
+              const q = Math.exp(-t / 220) * Math.cos(t * 0.042); // 1 → качание → 0
+              sqY *= 1 + 0.55 * q;
+              sqX *= 1 - 0.3 * q;
+              extraRot += 0.05 * q;
+              lift = Math.max(0, th * 0.22 * q); // подпрыг — тело выстреливает вверх
+            } else {
+              sp.releaseAt = 0; // пружина успокоилась — снова статичное состояние
+            }
+          }
         }
+        const wob = Math.sin(now * 0.045);
+        const jx = 1 + amp * 0.22 * wob;
+        const jy = 1 - amp * 0.22 * wob;
+        ctx.save();
+        ctx.translate(baseCx + swayX, baseY2 - lift);
+        ctx.rotate(amp * 0.08 * Math.cos(now * 0.045) + extraRot);
+        ctx.scale(flip * sqX * jx, sqY * jy);
+        glow(-twd / 2, -th);
+        ctx.drawImage(sprC, -twd / 2, -th, twd, th);
+        ctx.restore();
       };
 
       // Боевая мишень «РАБ»: общая для комнаты, в боевом режиме (по ней проходят
@@ -4137,6 +4205,7 @@ export default function Simulator() {
             spr: pend.spr,
             s: pend.s,
             rot: pend.rot,
+            mir: pend.mir,
             x: pend.x,
             y: pend.y,
             c: Math.min(Math.max(0, Math.floor(pend.x)), currentTestMap().cols - 1),
@@ -4458,6 +4527,21 @@ export default function Simulator() {
         }
         return;
       }
+      // Пробел — «приседание-желе» своего кота: удержание приплющивает модельку
+      // (полный эффект за 4 с, с дрожью), отпускание выстреливает её вверх.
+      // Автоповтор ОС не перезапускает приседание — важен только первый нажатие.
+      if (ev.code === 'Space' || ev.key === ' ') {
+        ev.preventDefault();
+        if (!ev.repeat && settingsRef.current.controlled === 'main' && !engineRef.current.blocking) {
+          const sp = spaceHoldRef.current;
+          if (!sp.holding) {
+            sp.holding = true;
+            sp.since = performance.now();
+            sp.releaseAt = 0;
+          }
+        }
+        return;
+      }
       const action = keyAction(ev);
       const t = ev.target as HTMLElement | null;
       if (t && t.tagName === 'BUTTON' && (action?.type === 'chat' || ev.code === 'Space' || ev.key === ' ')) t.blur();
@@ -4531,6 +4615,15 @@ export default function Simulator() {
     };
     const up = (ev: KeyboardEvent) => {
       if (ev.key === 'Shift') sprintRef.current = false;
+      // Отпускание пробела — желейный «выстрел» вверх из приплющенного состояния.
+      if (ev.code === 'Space' || ev.key === ' ') {
+        const sp = spaceHoldRef.current;
+        if (sp.holding) {
+          sp.holding = false;
+          sp.releaseAt = performance.now();
+        }
+        return;
+      }
       const e = engineRef.current;
       const action = keyAction(ev);
       if (!action) return;
@@ -4556,6 +4649,13 @@ export default function Simulator() {
       e.rot = 0;
       e.strikeHeld = false;
       sprintRef.current = false; // Shift при потере фокуса уже не поймаем
+      // Пробел при потере фокуса: keyup не придёт — тихо снимаем присед без
+      // «выстрела», иначе кот застыл бы приплющенным навсегда.
+      const sp = spaceHoldRef.current;
+      if (sp.holding) {
+        sp.holding = false;
+        sp.releaseAt = 0;
+      }
       // Окно потеряло фокус при зажатом блоке — стойку снимаем, иначе кот
       // остался бы в блоке навсегда (keyup уже не пришёл бы).
       if (e.blocking) {
@@ -5803,26 +5903,63 @@ export default function Simulator() {
                               +
                             </button>
                           </div>
-                          <div className="mt-1 flex items-center gap-1.5">
+                          <div className="mt-1 flex items-center gap-1">
                             <span className="w-10 text-[var(--sim-text-faint)]">Поворот</span>
                             <button
                               type="button"
                               className="btn-neutral h-6 w-6 rounded-md"
+                              title="На шаг против часовой (15°)"
                               onClick={() =>
                                 patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - OBJECT_ROT_STEP) % 360 + 360) % 360 })
                               }
                             >
                               ↺
                             </button>
-                            <span className="w-10 text-center font-semibold">{editorPlace?.rot ?? 0}°</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
+                              title="Поворот на 90° против часовой"
+                              onClick={() =>
+                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - 90) % 360 + 360) % 360 })
+                              }
+                            >
+                              ⟲90°
+                            </button>
+                            <span className="w-9 text-center font-semibold">{editorPlace?.rot ?? 0}°</span>
+                            <button
+                              type="button"
+                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
+                              title="Поворот на 90° по часовой"
+                              onClick={() =>
+                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + 90) % 360 + 360) % 360 })
+                              }
+                            >
+                              ⟳90°
+                            </button>
                             <button
                               type="button"
                               className="btn-neutral h-6 w-6 rounded-md"
+                              title="На шаг по часовой (15°)"
                               onClick={() =>
                                 patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + OBJECT_ROT_STEP) % 360 + 360) % 360 })
                               }
                             >
                               ↻
+                            </button>
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="w-10 text-[var(--sim-text-faint)]">Зеркало</span>
+                            <button
+                              type="button"
+                              className={
+                                (editorPlace?.mir ?? 0) === 1
+                                  ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                  : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                              }
+                              title="Отзеркалить спрайт по горизонтали"
+                              onClick={() => patchEditorPlace({ mir: (editorPlace?.mir ?? 0) === 1 ? 0 : 1 })}
+                            >
+                              ⇋ {(editorPlace?.mir ?? 0) === 1 ? 'отзеркален' : 'как есть'}
                             </button>
                           </div>
                           <div className="mt-2 flex gap-1.5">

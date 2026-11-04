@@ -104,7 +104,7 @@ const SPAWNS = [
 ];
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
-const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek"];
+const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik"];
 /**
  * Манекен «ПОЧУХАТЬ»: общий предмет комнаты, не персонаж. Не в боевом режиме,
  * но клетка под ним непроходима. Позиция в клеточных долях (x — по ширине,
@@ -592,12 +592,14 @@ function sanitizeTestMap(raw) {
       let rot;
       let spr;
       let cv;
+      let mir;
       if (kind === 'stone' || kind === 'tree') {
         const sn = Number(o.s);
         s = Number.isFinite(sn) ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100)) : undefined;
         const rn = Math.round(Number(o.rot));
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
         spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1') : ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+        mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
         cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
@@ -613,7 +615,7 @@ function sanitizeTestMap(raw) {
         kind,
         c,
         r,
-        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr } : {}),
+        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr, mir } : {}),
         ...(kind === 'ground' ? { cv } : {}),
         pos,
         dir,

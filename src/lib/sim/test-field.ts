@@ -24,6 +24,7 @@ import {
   OBJECT_DIMS,
   isObstacleKind,
   objectBase,
+  objectMir,
   objectRotDeg,
   objectScale,
   objectSprite,
@@ -284,6 +285,28 @@ export function testEntryStrict(): boolean {
  *  при строгих заходах такие клетки заперты — свободная ходьба в зону не пускает. */
 export function testPeaceBattleBlocked(x: number, y: number): boolean {
   return testWalkableCell(Math.floor(x), Math.floor(y));
+}
+
+/** Насколько глубоко точка (клеточные доли) внутри боевых зон вдоль оси —
+ *  расстояние в долях клетки до ближайшей кромки зоны по этой оси; 0 — точка
+ *  вне зон (или на самой кромке). Для стенки мирной ходьбы: перспектива сжимает
+ *  землю по вертикали, поэтому по оси Y стенку отодвигают вглубь зоны — см.
+ *  PEACE_BATTLE_LEAN_Y в симуляторе. */
+export function testPeaceBattleDepth(x: number, y: number, axis: 'x' | 'y'): number {
+  let best = 0;
+  for (const z of currentMap.zones) {
+    if (!isCellsZone(z)) continue;
+    if (axis === 'x') {
+      if (y >= z.r0 && y <= z.r1 + 1 && x > z.c0 && x < z.c1 + 1) {
+        best = Math.max(best, Math.min(x - z.c0, z.c1 + 1 - x));
+      }
+    } else {
+      if (x >= z.c0 && x <= z.c1 + 1 && y > z.r0 && y < z.r1 + 1) {
+        best = Math.max(best, Math.min(y - z.r0, z.r1 + 1 - y));
+      }
+    }
+  }
+  return best;
 }
 /** Клетки, непроходимые для боевого маршрута по клику: всё вне зон клеточной
  *  ходьбы, КРОМЕ клеток захода — маршрут может завершаться на заходе (выход). */
@@ -753,17 +776,11 @@ export function drawTestDecorItem(
   // зеркало и разброс размера остаются
   ctx.rotate(d.rot * 0.3);
   const flip = d.v % 2 === 0 ? 1 : -1;
-  const sprite = (name: PackName, sc: number, shadow = false): boolean => {
+  const sprite = (name: PackName, sc: number): boolean => {
     const img = packImg(name);
     if (!img) return false;
     const w = img.naturalWidth * sc;
     const h = img.naturalHeight * sc;
-    if (shadow) {
-      ctx.beginPath();
-      ctx.ellipse(0, 0, w * 0.34, w * 0.13, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fill();
-    }
     ctx.imageSmoothingEnabled = false;
     ctx.scale(flip, 1);
     ctx.drawImage(img, -w / 2, -h, w, h);
@@ -774,11 +791,11 @@ export function drawTestDecorItem(
     // травинка: 16 нарезанных вариантов по зерну
     drawn = sprite(`tuft-${String(d.v % PACK_TUFT_COUNT).padStart(2, '0')}` as PackName, d.s * m * 1.7);
   } else if (d.kind <= 4) {
-    drawn = sprite('bush-s', d.s * m * 1.15, true);
+    drawn = sprite('bush-s', d.s * m * 1.15);
   } else if (d.kind <= 6) {
-    drawn = sprite('bush-m', d.s * m * 1.15, true);
+    drawn = sprite('bush-m', d.s * m * 1.15);
   } else {
-    drawn = sprite('bush-h', d.s * m, true);
+    drawn = sprite('bush-h', d.s * m);
   }
   ctx.restore();
   if (drawn) return;
@@ -874,7 +891,7 @@ export function drawTestObject(
   m = 1,
   v = 0,
 ): void {
-  const flip = v % 2 === 0 ? 1 : -1;
+  const flip = (v % 2 === 0 ? 1 : -1) * (objectMir(o) === 1 ? -1 : 1);
   const legacy = typeof o.s !== 'number';
   const k = legacy ? 0.94 + (v % 5) * 0.03 : 1;
   const scale = objectScale(o);
@@ -888,11 +905,6 @@ export function drawTestObject(
   const rot = (objectRotDeg(o) * Math.PI) / 180;
   ctx.save();
   ctx.translate(baseX, baseY);
-  // тень под ногами — до поворота, остаётся «лежащей на земле»
-  ctx.beginPath();
-  ctx.ellipse(0, 1, w * (o.kind === 'tree' ? 0.28 : 0.42), o.kind === 'tree' ? 7 : Math.max(4, w * 0.1), 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.32)';
-  ctx.fill();
   if (rot !== 0) ctx.rotate(rot);
   ctx.scale(k * flip, k);
   // спрайт пака; пока не догрузился — прежняя векторная фигура (для tree-1/rock-1)

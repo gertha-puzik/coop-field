@@ -59,6 +59,8 @@ export type SpriteId =
   | 'razdora'
   | 'pohititel'
   | 'syrstyashka'
+  | 'gromoryov'
+  | 'gremuchnik'
   | 'ryzhiy'
   | 'trehcvetny'
   | 'negr'
@@ -74,6 +76,9 @@ export type SpriteId =
   | 'sumrak'
   | 'izya'
   | 'kameshechek'
+  | 'klubochek'
+  | 'podushka'
+  | 'plyushik'
   | 'rab';
 
 export interface SpriteMeta {
@@ -89,6 +94,8 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'puzatik', name: 'Пузатик', src: '/sprites/puzatik.png' },
   { id: 'razdora', name: 'Пламя Раздора', src: '/sprites/razdora.png' },
   { id: 'pohititel', name: 'Похититель Пламени', src: '/sprites/pohititel.png' },
+  { id: 'gromoryov', name: 'Громорёв', src: '/sprites/gromoryov.png' },
+  { id: 'gremuchnik', name: 'Гремучник', src: '/sprites/gremuchnik.png' },
   { id: 'syrstyashka', name: 'Сырстяшка', src: '/sprites/syrstyashka.png' },
   { id: 'ryzhiy', name: 'Сырь', src: '/sprites/ryzhiy.png' },
   { id: 'trehcvetny', name: 'Негрик', src: '/sprites/trehcvetny.png' },
@@ -105,6 +112,9 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'sumrak', name: 'Сумрак', src: '/sprites/sumrak.png' },
   { id: 'izya', name: 'Изя', src: '/sprites/izya.png' },
   { id: 'kameshechek', name: 'Камешечек', src: '/sprites/kameshechek.png' },
+  { id: 'klubochek', name: 'Клубочек', src: '/sprites/klubochek.png' },
+  { id: 'podushka', name: 'Подушечка', src: '/sprites/podushka.png' },
+  { id: 'plyushik', name: 'Плюшик', src: '/sprites/plyushik.png' },
 ];
 
 /**
@@ -121,10 +131,12 @@ export interface SpriteGroup {
   spriteIds: SpriteId[];
 }
 
-/** Персонажи выбора скина: общее имя → спрайты (листаются внутри колонки). */
+/** Персонажи выбора скина: общее имя → спрайты (листаются внутри колонки).
+ *  Набор «Малышочки» — отдельно (см. MALYSHOCHKI_SET): он показывается своим
+ *  разделом под общей каруселью, а не колонкой среди привычных скинов. */
 export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puzatik', 'razdora'] },
-  { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel'] },
+  { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel', 'gromoryov', 'gremuchnik'] },
   { id: 'syr', name: 'Сырь', spriteIds: ['ryzhiy'] },
   { id: 'vp', name: 'ВП', spriteIds: ['serebristyy'] },
   { id: 'negrik', name: 'Негрик', spriteIds: ['trehcvetny', 'negr'] },
@@ -137,13 +149,21 @@ export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'drel', name: 'Дрель', spriteIds: ['drel'] },
   { id: 'izya', name: 'Изя', spriteIds: ['izya'] },
   { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
-  { id: 'malyshochki', name: 'Малышочки', spriteIds: ['kameshechek'] },
 ];
+
+/** Набор скинов №2 «Малышочки» — отдельный раздел выбора: маленькие спящие
+ *  зверьки, не персонажи общей карусели. Рисуются на поле как обычные скины. */
+export const MALYSHOCHKI_SET: SpriteGroup = {
+  id: 'malyshochki',
+  name: 'Малышочки',
+  spriteIds: ['kameshechek', 'klubochek', 'podushka', 'plyushik'],
+};
 
 /** Все id спрайтов, покрытые группами (контроль полноты на этапе сборки не нужен —
  *  но карусель и подсказки строятся ровно по этому списку). */
 export function spriteGroupOf(id: SpriteId): SpriteGroup | undefined {
-  return SPRITE_GROUPS.find((g) => g.spriteIds.includes(id));
+  return SPRITE_GROUPS.find((g) => g.spriteIds.includes(id)) ??
+    (MALYSHOCHKI_SET.spriteIds.includes(id) ? MALYSHOCHKI_SET : undefined);
 }
 
 /**

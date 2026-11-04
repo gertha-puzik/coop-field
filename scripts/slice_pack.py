@@ -52,9 +52,13 @@ def classify(tile):
             r, g, b, a = px[x, y]
             if a < 200:
                 continue
-            if r > 215 and g > 205 and b > 165 and not (abs(r-g) < 10 and abs(g-b) < 10):
+            # цветы пака — мелкие белые/оранжевые соцветия в 3–8 px на тайл,
+            # порог в прошлой версии (>=14) не ловил ни одного тайла и файлы
+            # flower-*.png вообще не нарезались (в игре покрытие «цветы»
+            # превращалось в плоскую зелёную заливку)
+            if r > 195 and g > 185 and b > 150 and not (abs(r-g) < 12 and abs(g-b) < 12):
                 flower += 1
-            elif r > 190 and 110 < g < 195 and b < 120:
+            elif r > 185 and 110 < g < 195 and b < 120:
                 flower += 1
             mx, mn = max(r, g, b), min(r, g, b)
             if mx - mn < 26 and 105 < r < 215:
@@ -67,7 +71,7 @@ for ty in range(16):
     for tx in range(16):
         f, s = classify(tile_at(grass, tx, ty))
         stats.append((tx, ty, f, s))
-flowers = sorted([t for t in stats if t[2] >= 14], key=lambda t: (-t[2], t[0], t[1]))
+flowers = sorted([t for t in stats if t[2] >= 4], key=lambda t: (-t[2], t[0], t[1]))
 slabs = sorted([t for t in stats if t[3] >= 40 and t[2] < 10], key=lambda t: (t[3], t[0], t[1]))
 plains = sorted([t for t in stats if t[2] < 3 and t[3] < 8], key=lambda t: (t[0], t[1]))
 # разносим выбранные тайлы по листу (не соседние)
@@ -97,9 +101,12 @@ for i, (tx, ty, *_ ) in enumerate(sel_slabs):
     COVERS[f'slab-{i+1}'] = (tx, ty)
 
 stone = Image.open(f'{PACK}/TX Tileset Stone Ground.png').convert('RGBA')
-# сплошной каменный пол: три чистых квадрата 32×32 без переходных кромок
-# (проверено сканером коричневых линий; floor-3 — плита с «заклёпками»)
-FLOORS = {'floor-1': (8, 8), 'floor-2': (56, 24), 'floor-3': (184, 8)}
+# сплошной каменный пол: три чистых квадрата 32×32 без переходных кромок.
+# Прежние координаты (56,24)/(184,8) попадали в прозрачные пустоты листа —
+# все три floor-*.png были полностью прозрачными и пол в игре не ставился
+# вовсе. Проверено сканом альфы: эти три блока непрозрачны целиком и бесшовны.
+# координаты в ПИКСЕЛЯХ листа (не индексы тайлов): блоки 32×32
+FLOORS = {'floor-1': (8, 8), 'floor-2': (168, 8), 'floor-3': (8, 0)}
 
 # ---------- нарезка ----------
 def trim(im):
@@ -120,7 +127,7 @@ for name, (tx, ty) in COVERS.items():
     t.save(f'{OUT}/{name}.png')
     saved.append(name)
 for name, (tx, ty) in FLOORS.items():
-    t = stone.crop((tx*16, ty*16, tx*16+32, ty*16+32)).resize((32*SC, 32*SC), Image.NEAREST)
+    t = stone.crop((tx, ty, tx + 32, ty + 32)).resize((32*SC, 32*SC), Image.NEAREST)
     t.save(f'{OUT}/{name}.png')
     saved.append(name)
 

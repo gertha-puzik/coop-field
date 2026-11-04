@@ -131,6 +131,11 @@ export function objectRotDeg(o: Pick<TestMapObject, 'rot'>): number {
   return typeof o.rot === 'number' && Number.isFinite(o.rot) ? o.rot : 0;
 }
 
+/** Отзеркален ли спрайт объекта по горизонтали (конфиги без mir — нет). */
+export function objectMir(o: Pick<TestMapObject, 'mir'>): 0 | 1 {
+  return o.mir === 1 ? 1 : 0;
+}
+
 /** Точка опоры объекта в клеточных долях мира: свободная (x, y) у новых конфигов;
  *  старые (только c/r/pos) — по центру клетки с её сдвигом, низ клетки — опора. */
 export function objectBase(o: TestMapObject): { x: number; y: number } {
@@ -187,6 +192,9 @@ export type TestMapObject = {
   rot?: number;
   /** Вариант спрайта: дерево (tree-1..3) или камень (rock-1..10). */
   spr?: string;
+  /** Отзеркален ли спрайт по горизонтали (1 — да). Картинка — тело препятствия
+   *  симметрично, физика не меняется. */
+  mir?: number;
   /** Вариант покрытия земли (только для kind «ground»). */
   cv?: string;
   /** Положение спрайта внутри клетки (по умолчанию — центр; legacy, новые
@@ -394,6 +402,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       let rot: number | undefined;
       let spr: string | undefined;
       let cv: string | undefined;
+      let mir: 0 | 1 | undefined;
       if (kind === 'stone' || kind === 'tree') {
         const sn = Number(o.s);
         s = Number.isFinite(sn)
@@ -403,6 +412,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
         const raw = typeof o.spr === 'string' ? o.spr : '';
         spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(raw) ? raw : 'tree-1') : ROCK_SPRITE_IDS.has(raw) ? raw : 'rock-1';
+        mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
         cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
@@ -419,7 +429,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         kind,
         c,
         r,
-        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr } : {}),
+        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr, mir } : {}),
         ...(kind === 'ground' ? { cv } : {}),
         pos,
         dir,

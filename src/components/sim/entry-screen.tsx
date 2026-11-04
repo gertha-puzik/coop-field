@@ -9,6 +9,7 @@ import {
   GAME_CREDITS,
   SPRITES,
   SPRITE_GROUPS,
+  MALYSHOCHKI_SET,
   armorLevelMultiplier,
   damageLevelLabel,
   spriteGroupOf,
@@ -193,6 +194,10 @@ export function EntryScreen({
       .map((id) => spriteById.get(id))
       .filter((sp): sp is SpriteMeta => Boolean(sp)),
   })).filter((g) => g.sprites.length > 0);
+  /** Набор №2 «Малышочки» — отдельный раздел под каруселью, не колонка общих скинов. */
+  const malyshSprites = MALYSHOCHKI_SET.spriteIds
+    .map((id) => spriteById.get(id))
+    .filter((sp): sp is SpriteMeta => Boolean(sp));
   /** Группа выбранного при открытии экрана скина — на неё карусель скроллится при монтировании. */
   const initialGroupRef = useRef<ReturnType<typeof spriteGroupOf>>(spriteGroupOf(initialSprite));
   useEffect(() => {
@@ -365,6 +370,44 @@ export function EntryScreen({
             <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">
               Спрайты собраны под общими именами персонажей. Листайте карусель: тяните мышью, колесом или кнопками ‹ ›.
             </p>
+            {/* Отдельный раздел: набор скинов №2 «Малышочки» — маленькие спящие зверьки,
+                живут вне общей карусели, своим блоком (выбор работает так же). */}
+            {malyshSprites.length > 0 ? (
+              <div className="mt-3 rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+                <div className="mb-1.5 text-center text-[11px] font-bold uppercase tracking-wide text-[var(--sim-text-soft)]">
+                  {MALYSHOCHKI_SET.name}
+                </div>
+                <div role="radiogroup" aria-label="Набор скинов «Малышочки»" className="flex flex-wrap justify-center gap-1.5">
+                  {malyshSprites.map((sp) => {
+                    const active = sprite === sp.id;
+                    return (
+                      <button
+                        key={sp.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={`${MALYSHOCHKI_SET.name} — ${sp.name}`}
+                        onClick={() => setSprite(sp.id)}
+                        className={`flex w-20 flex-col items-center gap-0.5 rounded-lg border px-1 pb-1 pt-1 transition-colors ${
+                          active
+                            ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_1px_var(--sim-accent-glow-strong)]'
+                            : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                        }`}
+                      >
+                        <img src={sp.src} alt="" className="h-10 w-auto object-contain" draggable={false} />
+                        <span
+                          className={`w-full truncate text-center text-[10px] font-medium ${
+                            active ? 'text-[var(--sim-accent-text)]' : 'text-[var(--sim-text-soft)]'
+                          }`}
+                        >
+                          {sp.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-4">
