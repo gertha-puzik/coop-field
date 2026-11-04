@@ -1480,11 +1480,12 @@ function block(ws, payload = {}) {
 const FREE_MOVE_GAP_MS = 50;
 
 /**
- * Свободная ходьба в мирном режиме комнаты «тест». Клиент → ["freemove", { x, y, stop? }]
+ * Свободная ходьба в мирном режиме комнаты «тест». Клиент → ["freemove", { x, y, stop?, sp? }]
  * — позиция в клеточных долях мира (уже зажатая кромкой локации). Сервер перепроверяет
  * (конечные числа, запас за кромку), обновляет логическую клетку кота (ближайшая
  * проходимая — для ударов и препятствий) и раз в FREE_MOVE_GAP_MS рассылает остальным
- * ["freemove", { id, x, y, cx, cy }]. stop=true — финальная позиция остановки, уходит без темпа.
+ * ["freemove", { id, x, y, cx, cy, sp }]. stop=true — финальная позиция остановки, уходит без темпа.
+ * sp=1 — кот спринтит (Shift): чужие клиенты рисуют комочки земли/травы из-под лап.
  */
 function freeMove(ws, payload = {}) {
   const room = ws.room;
@@ -1503,6 +1504,7 @@ function freeMove(ws, payload = {}) {
   cat.fm = 1;
   cat.fx = Math.round(nx * 100) / 100;
   cat.fy = Math.round(ny * 100) / 100;
+  cat.fsp = payload.stop ? 0 : payload.sp === 1 || payload.sp === true ? 1 : 0;
   const cell = nearestTestCell(cat.fx, cat.fy);
   if (cell) {
     cat.x = cell.x;
@@ -1511,7 +1513,7 @@ function freeMove(ws, payload = {}) {
   const now = Date.now();
   if (!payload.stop && now - (cat.lastFree || 0) < FREE_MOVE_GAP_MS) return;
   cat.lastFree = now;
-  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y }, ws);
+  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0 }, ws);
 }
 
 /**

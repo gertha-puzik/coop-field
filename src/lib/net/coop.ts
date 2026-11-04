@@ -139,7 +139,7 @@ export type CoopHandlers = {
   onBlock?: (info: { id: number; on: boolean }) => void;
   /** Чужой кот идёт свободно (комната «тест», мирный режим): свежая позиция
    *  в клеточных долях мира; cx/cy — ближайшая клетка сервера (1-based). */
-  onFreeMove?: (m: { id: number; x: number; y: number; cx?: number; cy?: number }) => void;
+  onFreeMove?: (m: { id: number; x: number; y: number; cx?: number; cy?: number; sp?: boolean }) => void;
   /** Состав комнат в ответ на requestRooms(): по запрошенным id, пустые — с нулями. */
   onRooms?: (rooms: CoopRoomInfo[]) => void;
   onOpen?: () => void;
@@ -351,7 +351,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       }
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
       else if (event === "freemove") {
-        const row = payload as { id?: unknown; x?: unknown; y?: unknown; cx?: unknown; cy?: unknown } | null;
+        const row = payload as { id?: unknown; x?: unknown; y?: unknown; cx?: unknown; cy?: unknown; sp?: unknown } | null;
         if (row && typeof row === "object" && Number.isFinite(Number(row.id)) && Number.isFinite(Number(row.x)) && Number.isFinite(Number(row.y))) {
           handlers.onFreeMove?.({
             id: Number(row.id),
@@ -359,6 +359,7 @@ export function createCoopClient(handlers: CoopHandlers) {
             y: Number(row.y),
             cx: Number.isFinite(Number(row.cx)) ? Number(row.cx) : undefined,
             cy: Number.isFinite(Number(row.cy)) ? Number(row.cy) : undefined,
+            sp: Number(row.sp) === 1,
           });
         }
       }

@@ -22,6 +22,7 @@
 import {
   TEST_MAP_DEFAULT,
   isObstacleKind,
+  objectPosOffset,
   type TestMap,
   type TestMapEntryDir,
   type TestMapObject,
@@ -187,7 +188,6 @@ export function testEntryStrict(): boolean {
 export function testPeaceBattleBlocked(x: number, y: number): boolean {
   return testWalkableCell(Math.floor(x), Math.floor(y));
 }
-
 /** Клетки, непроходимые для боевого маршрута по клику: всё вне зон клеточной
  *  ходьбы, КРОМЕ клеток захода — маршрут может завершаться на заходе (выход). */
 export function testBattleRouteBlocked(): { c: number; r: number }[] {
@@ -202,15 +202,36 @@ export function testBattleRouteBlocked(): { c: number; r: number }[] {
   return out;
 }
 
-/** Все точки внутри клетки препятствия (включая границы) стоят намертво:
- *  и центр, и середины сторон, и углы — так вокруг камня остаётся чистый обход.
- *  Земля (проталина) — наземный декор: точкам она не мешает. */
-function pointBlockedByObject(x: number, y: number): boolean {
+/* ---------- физические тела препятствий: настоящие размеры, не клетка ---------- */
+
+/**
+ * Физическое тело препятствия у основания спрайта — по его настоящим размерам,
+ * а не по всей клетке: камень в клетке 100×150 занимает у земли бокс ~40×14 px,
+ * дерево — ствол ~28×16 px. Остальная площадь клетки свободна для ходьбы.
+ * [полуширина, высота вверх от точки опоры] в px мира.
+ */
+function obstacleBody(kind: TestMapObject['kind']): { hw: number; h: number } {
+  return kind === 'tree' ? { hw: 14, h: 16 } : { hw: 20, h: 14 };
+}
+
+/**
+ * Свободны ли ноги кота (точка опоры, клеточные доли) от физических тел
+ * препятствий. Тела считаются у основания спрайта с его положением в клетке
+ * (центр/край) и небольшим запасом на корпус кота; земля и заходы — не тела.
+ */
+export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH: number): boolean {
+  const px = x * cellW;
+  const py = y * cellH;
   for (const o of currentMap.objects ?? []) {
     if (!isObstacleKind(o.kind)) continue;
-    if (x >= o.c && x <= o.c + 1 && y >= o.r && y <= o.r + 1) return true;
+    const po = objectPosOffset(o);
+    const bx = (o.c + 0.5 + po.dx) * cellW;
+    const by = (o.r + 1 + po.dy) * cellH; // точка опоры спрайта — низ клетки
+    const b = obstacleBody(o.kind);
+    const m = 4; // запас на ширину корпуса кота у земли
+    if (Math.abs(px - bx) <= b.hw + m && py >= by - b.h - m && py <= by + m) return false;
   }
-  return false;
+  return true;
 }
 
 /* ---------- точки мира: область боя, кромка, проходимость ---------- */
@@ -229,11 +250,10 @@ export function testPointInIsland(x: number, y: number): boolean {
 }
 
 /** Точка проходима в мирном режиме (свободная ходьба по пикселям): внутри кромки
- *  и не внутри препятствия (камень/дерево). Земля и боевые зоны не мешают:
- *  вход в боевую зону переключает режим, а не блокирует шаг. */
+ *  локации. Препятствия проверяет testPeaceObjectsFree по точке опоры кота —
+ *  у них физические тела по настоящим размерам спрайтов, а не вся клетка. */
 export function testPeacePointFree(x: number, y: number): boolean {
-  if (!pointInPolygon(islandPolygon(), x, y)) return false;
-  return !pointBlockedByObject(x, y);
+  return pointInPolygon(islandPolygon(), x, y);
 }
 
 /* ---------- перспектива мирного режима ---------- */
@@ -458,7 +478,7 @@ function peaceAnchorData(): PeaceAnchors {
     const k = `${x},${y}`;
     if (seen.has(k)) return;
     if (!pointInPolygon(poly, x, y)) return;
-    if (pointBlockedByObject(x, y)) return; // клетка с камнем/деревом непроходима
+    if (testObstacleAt(Math.floor(x), Math.floor(y))) return; // клетка с камнем/деревом непроходима
     seen.add(k);
     pts.push({ x, y });
   };
@@ -956,9 +976,10 @@ export function drawDirtPatch(
 }
 
 /**
- * Клетка захода: лёгкий градиент от «последующей» боевой клетки (ярче у края в
- * направлении шага — свет как будто вытекает из зоны) плюс две небольшие галочки
- * по центру — так вход в бой читается интуитивно. cx/cy — центр клетки в px мира.
+ * Разметка клетки захода: светло-жёлтый градиент, вытекающий из боевой клетки
+ * (яркое ребро со стороны шага, дальше — прозрачность), плюс при withCheck —
+ * две галочки по центру. Галочки можно не рисовать здесь, чтобы наложить их
+ * поверх спрайтов отдельным проходом (см. drawEntryCheck). cx/cy — центр клетки.
  */
 export function drawEntryMark(
   ctx: CanvasRenderingContext2D,
@@ -967,6 +988,7 @@ export function drawEntryMark(
   cx: number,
   cy: number,
   dir: TestMapEntryDir,
+  withCheck = true,
 ): void {
   const x0 = cx - cellW / 2;
   const y0 = cy - cellH / 2;
@@ -1000,6 +1022,17 @@ export function drawEntryMark(
     ctx.lineTo(x0 + cellW - 1, y0 + cellH - 1);
   }
   ctx.stroke();
+  ctx.restore();
+  if (withCheck) drawEntryCheck(ctx, cx, cy);
+}
+
+/**
+ * Галочки клетки захода — отдельным проходом: их рисуют поверх котов и
+ * препятствий, чтобы вход в бой читался по любой картинке на земле.
+ * cx/cy — центр клетки захода в px мира.
+ */
+export function drawEntryCheck(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+  ctx.save();
   // две галочки по центру: тёмная подложка + светлый штрих сверху (видно на траве)
   const check = (dx: number, dy: number) => {
     for (const pass of [0, 1]) {

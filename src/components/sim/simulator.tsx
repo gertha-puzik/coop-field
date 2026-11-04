@@ -24,6 +24,7 @@ import { keyAction } from '@/lib/sim/keys';
 import {
   currentTestMap,
   drawDirtPatch,
+  drawEntryCheck,
   drawEntryMark,
   drawTestDecorItem,
   drawTestObject,
@@ -39,6 +40,7 @@ import {
   testFieldGeometry,
   testObjects,
   testPeaceBattleBlocked,
+  testPeaceObjectsFree,
   testPeacePointFree,
   testPointInCellsZone,
   testPointInIsland,
@@ -836,7 +838,7 @@ export default function Simulator() {
   const [battleHint, setBattleHint] = useState<string | null>(null);
   const battleHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
-  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number }>());
+  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number; sp?: boolean }>());
   /** Режим чужих котов «теста» по сети (поле fm из publicCat): 1 — мирный (стрела
    *  и проценты не рисуются), 0 — боевой. Раньше чужие стрелы рисовались всегда —
    *  отсюда «багованные» стрелы над мирными котами у соседей. */
@@ -1819,15 +1821,17 @@ export default function Simulator() {
       onFreeMove: (m) => {
         // Чужой кот идёт свободно («тест», мирный режим): обновляем цель доведения
         // и логическую клетку — по ней работают удары и препятствия. Режим — мирный:
-        // стрела и проценты у такого кота не рисуются.
+        // стрела и проценты у такого кота не рисуются. sp — чужой спринт: под этим
+        // котом сыплются комочки земли/травы (см. игровой цикл).
         const key = `p${m.id}`;
         remoteFmRef.current.set(key, 1);
         const fr = remoteFreeRef.current.get(key);
         if (fr) {
           fr.tx = m.x;
           fr.ty = m.y;
+          fr.sp = m.sp;
         } else {
-          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y });
+          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y, sp: m.sp });
         }
         if (m.cx != null && m.cy != null) {
           const prev = liveRemotesRef.current.find((d) => d.id === key);
@@ -2498,12 +2502,16 @@ export default function Simulator() {
           // столкновения с раздельной проверкой осей: у стены кот скользит вдоль неё.
           // Со строгими заходами боевые клетки заперты и для мирной ходьбы —
           // случайно забежать в зону нельзя (вход — только через клетку захода).
+          // Препятствия (камень/дерево) — по точке опоры и их настоящим размерам:
+          // тело спрайта у земли, не вся клетка — свободную часть клетки можно
+          // обходить (см. testPeaceObjectsFree).
           const strictEntries = testEntryStrict();
           const blocked = (fxT: number, fyT: number) => {
             const px = fxT + hb.dx;
             const py = fyT + hb.dy;
             if (!testPeacePointFree(px, py)) return true;
             if (strictEntries && testPeaceBattleBlocked(px, py)) return true;
+            if (!testPeaceObjectsFree(fxT + hb.dx, fyT + hb.dy * 2, cellW, cellH)) return true;
             for (const t of othersOf(s, s.controlled, mainSavedRef.current, liveRemotesRef.current, objectExtras())) {
               if (px >= t.col && px <= t.col + 1 && py >= t.row && py <= t.row + 1) return true;
             }
@@ -2531,7 +2539,8 @@ export default function Simulator() {
           freeSyncRef.current.moving = true;
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
             freeSyncRef.current.at = now;
-            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
+            // sp — флаг спринта: чужие клиенты рисуют комочки из-под лап этого кота
+            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), sp: sprint ? 1 : 0 });
           }
         } else if (freeSyncRef.current.moving) {
           freeSyncRef.current.moving = false;
@@ -2588,6 +2597,30 @@ export default function Simulator() {
         for (const fr of remoteFreeRef.current.values()) {
           fr.x += (fr.tx - fr.x) * kf;
           fr.y += (fr.ty - fr.y) * kf;
+        }
+      }
+
+      // Чужой спринт: комочки земли/травы из-под лап котов с флагом sp (freemove).
+      // Позиция — текущая доведённая (экранная), направление — к цели доведения;
+      // темп тот же, что у своего спринта (~1 комочек на SPRINT_SPAWN_MS).
+      if (testMode && remoteFreeRef.current.size > 0) {
+        const cellWR = s.field.cellW;
+        const cellHR = s.field.cellH;
+        for (const [key, fr] of remoteFreeRef.current) {
+          if (!fr.sp) continue;
+          const rem = liveRemotesRef.current.find((t) => t.id === key);
+          const imgR = spritesRef.current[rem?.sprite ?? s.character.sprite];
+          const aspectR = imgR && imgR.height > 0 ? imgR.width / imgR.height : 2 / 3;
+          const boxR = spriteBoxOf(s, aspectR, 0, 0, rem?.scale ?? s.character.spriteScale);
+          const feetX = fr.x * cellWR + boxR.w / 2;
+          const feetY = fr.y * cellHR + boxR.h;
+          const dvx = (fr.tx - fr.x) * cellWR;
+          const dvy = (fr.ty - fr.y) * cellHR;
+          const dl = Math.hypot(dvx, dvy);
+          if (dl < 2) continue; // стоит на месте (доведение дотухло) — комочков нет
+          if (Math.random() < dt / SPRINT_SPAWN_MS) {
+            spawnSprintPart(sprintPartsRef.current, feetX, feetY, dvx / dl, dvy / dl);
+          }
         }
       }
 
@@ -3042,6 +3075,8 @@ export default function Simulator() {
           ctx.clip(geo.path);
           for (const o of entryObjs) {
             if (!o.dir) continue;
+            // только градиент и ребро; галочки накладываются отдельным проходом
+            // поверх котов и препятствий (см. проход после глубинной очереди)
             drawEntryMark(
               ctx,
               s.field.cellW,
@@ -3049,6 +3084,7 @@ export default function Simulator() {
               (o.c + 0.5) * s.field.cellW,
               (o.r + 0.5) * s.field.cellH,
               o.dir,
+              false,
             );
           }
           ctx.restore();
@@ -3415,26 +3451,6 @@ export default function Simulator() {
           ctx.drawImage(whiteC, gx - g, gy - g, twd + g * 2, th + g * 2);
           ctx.restore();
         };
-        // тонкая обводка того, кем управляем: светлый силуэт со сдвигом 1.5 px
-        // по контуру спрайта, без растушёвки. Чужих и манекенов не обводим.
-        const contour = (gx: number, gy: number) => {
-          if (!active || !whiteC) return;
-          const o = 1.5;
-          ctx.save();
-          ctx.globalAlpha = 0.9;
-          const shifts: Array<[number, number]> = [
-            [o, 0],
-            [-o, 0],
-            [0, o],
-            [0, -o],
-            [o, o],
-            [o, -o],
-            [-o, o],
-            [-o, -o],
-          ];
-          for (const [ox, oy] of shifts) ctx.drawImage(whiteC, gx + ox, gy + oy, twd, th);
-          ctx.restore();
-        };
         // «желе»: сплющивание-растяжение (объём сохраняется) с лёгким поворотом
         const amp = jellyKey ? (jellyRef.current[jellyKey] ?? 0) : 0;
         if (amp > 0.01) {
@@ -3444,12 +3460,10 @@ export default function Simulator() {
           ctx.rotate(amp * 0.08 * Math.cos(now * 0.045));
           ctx.scale(1 + amp * 0.22 * wob, 1 - amp * 0.22 * wob);
           glow(-twd / 2, -th);
-          contour(-twd / 2, -th);
           ctx.drawImage(sprC, -twd / 2, -th, twd, th);
           ctx.restore();
         } else {
           glow(pos.x, py);
-          contour(pos.x, py);
           ctx.drawImage(sprC, pos.x, py, twd, th);
         }
       };
@@ -3670,6 +3684,24 @@ export default function Simulator() {
         }
         bills.sort((a, b) => a.y - b.y);
         for (const b of bills) b.fn();
+      }
+
+      // галочки клеток захода — поверх любых спрайтов на земле: коты и препятствия
+      // выходят билбордами поверх грунта и могут прятать разметку под собой, а вход
+      // в бой должен читаться всегда. Проход в проекции грунта (наклон), после
+      // глубинной очереди; в редакторе галочки уже рисует оверлей черновика.
+      if (testMode && !editorOn) {
+        const marks = (currentTestMap().objects ?? []).filter((o) => o.kind === 'entry' && o.dir);
+        if (marks.length > 0) {
+          ctx.save();
+          ctx.scale(1, camFxRef.current.sq);
+          ctx.clip(testFieldGeometry(s.field.cellW, s.field.cellH).path);
+          for (const o of marks) {
+            if (!o.dir) continue;
+            drawEntryCheck(ctx, (o.c + 0.5) * s.field.cellW, (o.r + 0.5) * s.field.cellH);
+          }
+          ctx.restore();
+        }
       }
 
       // параметры управляемого персонажа (спрайт/рост — для стрелы, маркера и бейджа скорости)
