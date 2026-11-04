@@ -1075,8 +1075,10 @@ export default function Simulator() {
   const jellyRef = useRef<Record<string, number>>({});
   /** Анимация удержания пробела (свой кот): пока держится — моделька плавно
    *  приплющивается вниз с нарастающей дрожью (полный эффект за 4 с), при
-   *  отпускании — желейный «выстрел» вверх и пружинный возврат в норму. */
-  const spaceHoldRef = useRef({ holding: false, since: 0, releaseAt: 0 });
+   *  отпускании — желейный «выстрел» вверх и пружинный возврат в норму.
+   *  charge — заряд на момент отпускания (0.15 тап → 1 полные 4 с): амплитуда
+   *  «выстрела» растёт вместе с приседом, короткое нажатие подбрасывает едва-едва. */
+  const spaceHoldRef = useRef({ holding: false, since: 0, releaseAt: 0, charge: 0 });
   /** Позиция манекена в клеточных долях (левый верх спрайта); null — выключен. */
   const dummyPosRef = useRef<CoopDummyPos | null>(null);
   /** Манекен включён — зеркало для игрового цикла: state в замыкание кадра не попадает. */
@@ -3916,10 +3918,11 @@ export default function Simulator() {
             const t = now - sp.releaseAt;
             if (t < 1100) {
               const q = Math.exp(-t / 220) * Math.cos(t * 0.042); // 1 → качание → 0
-              sqY *= 1 + 0.55 * q;
-              sqX *= 1 - 0.3 * q;
-              extraRot += 0.05 * q;
-              lift = Math.max(0, th * 0.22 * q); // подпрыг — тело выстреливает вверх
+              const ch = sp.charge; // амплитуда — по заряду: тап едва подбрасывает
+              sqY *= 1 + 0.55 * ch * q;
+              sqX *= 1 - 0.3 * ch * q;
+              extraRot += 0.05 * ch * q;
+              lift = Math.max(0, th * 0.22 * ch * q); // подпрыг — тело выстреливает вверх
             } else {
               sp.releaseAt = 0; // пружина успокоилась — снова статичное состояние
             }
@@ -4538,6 +4541,7 @@ export default function Simulator() {
             sp.holding = true;
             sp.since = performance.now();
             sp.releaseAt = 0;
+            sp.charge = 0;
           }
         }
         return;
@@ -4620,6 +4624,10 @@ export default function Simulator() {
         const sp = spaceHoldRef.current;
         if (sp.holding) {
           sp.holding = false;
+          // Заряд «выстрела» по времени удержания: тап — минимальный подпрыг,
+          // полные 4 с приседа — максимальный (нижняя планка 0.15, чтобы тап
+          // не был нулевым, а верхняя ровно 1 — дальше заряд не растёт).
+          sp.charge = 0.15 + 0.85 * Math.min(1, (performance.now() - sp.since) / 4000);
           sp.releaseAt = performance.now();
         }
         return;

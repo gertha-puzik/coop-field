@@ -79,6 +79,10 @@ export type SpriteId =
   | 'klubochek'
   | 'podushka'
   | 'plyushik'
+  | 'rvanitse'
+  | 'puhlyashik-kit'
+  | 'blestyashka-kit'
+  | 'chistolapik-kit'
   | 'rab';
 
 export interface SpriteMeta {
@@ -115,6 +119,10 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'klubochek', name: 'Клубочек', src: '/sprites/klubochek.png' },
   { id: 'podushka', name: 'Подушечка', src: '/sprites/podushka.png' },
   { id: 'plyushik', name: 'Плюшик', src: '/sprites/plyushik.png' },
+  { id: 'rvanitse', name: 'Рванитсе', src: '/sprites/rvanitse.png' },
+  { id: 'puhlyashik-kit', name: 'Пухляшик', src: '/sprites/puhlyashik-kit.png' },
+  { id: 'blestyashka-kit', name: 'Блестяшка', src: '/sprites/blestyashka-kit.png' },
+  { id: 'chistolapik-kit', name: 'Чистолапик', src: '/sprites/chistolapik-kit.png' },
 ];
 
 /**
@@ -151,12 +159,14 @@ export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
 ];
 
-/** Набор скинов №2 «Малышочки» — отдельный раздел выбора: маленькие спящие
- *  зверьки, не персонажи общей карусели. Рисуются на поле как обычные скины. */
+/** Набор скинов №2 «Малышочки» — отдельный раздел выбора: маленькие зверьки
+ *  (готовые пиксель-спрайты автора), не персонажи общей карусели. Клубочек,
+ *  Подушечка и Плюшик остались в пуле спрайтов (совместимость), но из набора
+ *  убраны — их место заняли готовые малыши. Рисуются на поле как обычные скины. */
 export const MALYSHOCHKI_SET: SpriteGroup = {
   id: 'malyshochki',
   name: 'Малышочки',
-  spriteIds: ['kameshechek', 'klubochek', 'podushka', 'plyushik'],
+  spriteIds: ['kameshechek', 'rvanitse', 'puhlyashik-kit', 'blestyashka-kit', 'chistolapik-kit'],
 };
 
 /** Все id спрайтов, покрытые группами (контроль полноты на этапе сборки не нужен —
