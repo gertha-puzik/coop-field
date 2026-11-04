@@ -95,6 +95,14 @@ const CAMERA_TAU_MS = 420;
 const PEACE_STEP_MS = 210;
 /** Дальность притяжения клика к якорной точке, px (шаг решётки — 50×75 px). */
 const PEACE_SNAP_PX = 46;
+/** Зум камеры мирного режима «теста»: поле приближается — «по-домашнему» вид сверху,
+ *  как в Don't Starve Together. В бою возвращается 1. */
+const PEACE_ZOOM = 1.5;
+/** Наклон земли мирного режима: вертикаль грунта сжата до этой доли, спрайты остаются
+ *  вертикальными билбордами — та самая псевдо-глубина Don't Starve / Transformice Adventures. */
+const PEACE_TILT = 0.85;
+/** Плавность перехода зума и наклона между мирным и боевым видом, мс. */
+const CAMZOOM_TAU_MS = 350;
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -375,6 +383,9 @@ interface Engine {
   fy: number;
   /** Мирный режим: оставшиеся якоря маршрута (в свободных долях, под центр спрайта). */
   proute: { x: number; y: number }[];
+  /** Мирный режим: текущий прыжок по якорю — { start, dur } как кулдаун; само
+   *  перемещение мгновенное (кот уже стоит на целевой точке). null — стоит на месте. */
+  phop: { start: number; dur: number } | null;
   /** Мирный режим: якорь под курсором (клеточные доли мира) — для подсветки и курсора. */
   hoverA: { x: number; y: number } | null;
 }
@@ -649,6 +660,8 @@ export default function Simulator() {
   const fieldFormatRef = useRef<'grid' | 'test'>('grid');
   /** Плавная камера «теста»: центр взгляда в px мира; init — встать на игрока без анимации. */
   const camRef = useRef({ x: 0, y: 0, init: false });
+  /** Зум и наклон камеры «теста»: 1/1 — вид сверху как в бою, PEACE_ZOOM/PEACE_TILT — мирный. */
+  const camFxRef = useRef({ z: 1, sq: 1 });
   /** Темп рассылки freemove и флаг «сейчас идём» (для финального стоп-пакета). */
   const freeSyncRef = useRef({ at: 0, moving: false });
   /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
@@ -825,6 +838,7 @@ export default function Simulator() {
     fx: 4,
     fy: 2,
     proute: [],
+    phop: null,
     hoverA: null,
   });
 
@@ -1483,6 +1497,7 @@ export default function Simulator() {
     const e = engineRef.current;
     const net = netRef.current;
     e.proute = [];
+    e.phop = null;
     e.hoverA = null;
     if (settings.arrow.battleMode) {
       const cell = nearestWalkableCell(e.fx, e.fy);
@@ -1527,6 +1542,7 @@ export default function Simulator() {
         e.held = [];
         e.path = [];
         e.proute = [];
+        e.phop = null;
         e.rot = 0;
         e.strikeHeld = false;
         e.step = null;
@@ -1671,17 +1687,19 @@ export default function Simulator() {
         }
       }
 
-      // «Тест», мирный режим: шаги по якорным точкам — центр клетки и середины её
-      // сторон. Клик строит маршрут по соседним якорям (BFS), зажатые клавиши дают
-      // по шагу за раз. Полушаг (полклетки по оси) длится PEACE_STEP_MS — скорость
-      // одна и та же и для клика, и для клавиш; остановиться можно на любом якоре.
+      // «Тест», мирный режим: прыжки по якорным точкам — центр, середины сторон
+      // и углы клеток. Один прыжок переносит ровно на одну соседнюю точку (как шаг
+      // в бою — мгновенно, а длительность работает кулдауном), клик строит маршрут
+      // по соседним якорям (BFS), зажатые клавиши дают по прыжку за раз. Остановиться
+      // можно на любом якоре — приземление строго в точку.
       if (peaceWalk) {
         const net = netRef.current;
         const cellW = s.field.cellW;
         const cellH = s.field.cellH;
         const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        // маршрута нет, но клавиши зажаты — один шаг к соседнему якорю в направлении
-        if (e.proute.length === 0 && e.held.length > 0) {
+        const hopReady = !e.phop || now - e.phop.start >= e.phop.dur;
+        // маршрута нет, но клавиши зажаты — один прыжок к соседнему якорю в направлении
+        if (hopReady && e.proute.length === 0 && e.held.length > 0) {
           const here = nearestPeaceAnchor(e.fx + hb.dx, e.fy + hb.dy, cellW, cellH, 1e9);
           const nb = here ? peaceStepNeighbor(here.i, e.held[e.held.length - 1], cellW, cellH) : null;
           if (nb !== null) {
@@ -1689,37 +1707,33 @@ export default function Simulator() {
             e.proute.push({ x: p.x - hb.dx, y: p.y - hb.dy });
           }
         }
-        // движение по маршруту: сегмент идёт с постоянной скоростью, обе оси
-        // доезжают одновременно (длительность — по самой длинной оси)
-        if (e.proute.length > 0) {
-          let budget = dt;
-          let moveDeg: number | null = null;
-          while (budget > 0 && e.proute.length > 0) {
-            const seg = e.proute[0];
-            const dx = seg.x - e.fx;
-            const dy = seg.y - e.fy;
-            if (dx !== 0 || dy !== 0) {
-              moveDeg = wrap360((Math.atan2(dy * cellH, dx * cellW) * 180) / Math.PI);
-            }
+        // прыжки по маршруту: один прыжок — одна точка, приземление строго в якорь
+        if (hopReady && e.proute.length > 0) {
+          const seg = e.proute[0];
+          const dx = seg.x - e.fx;
+          const dy = seg.y - e.fy;
+          if (dx !== 0 || dy !== 0) {
             const maxAxis = Math.max(Math.abs(dx), Math.abs(dy));
-            const segMs = Math.max(1, (maxAxis / 0.5) * PEACE_STEP_MS);
-            const stepMs = Math.min(budget, segMs);
-            e.fx += dx * (stepMs / segMs);
-            e.fy += dy * (stepMs / segMs);
-            budget -= stepMs;
-            if (stepMs >= segMs) {
-              e.fx = seg.x;
-              e.fy = seg.y;
-              e.proute.shift();
+            const dur = Math.max(1, (maxAxis / 0.5) * PEACE_STEP_MS);
+            const deg = wrap360((Math.atan2(dy * cellH, dx * cellW) * 180) / Math.PI);
+            e.lastDir = (Math.round(deg / 45) * 45) % 360;
+            e.fx = seg.x;
+            e.fy = seg.y;
+            e.phop = { start: now, dur };
+            freeSyncRef.current.moving = true;
+            if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
+              freeSyncRef.current.at = now;
+              net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
             }
           }
-          if (moveDeg !== null) e.lastDir = (Math.round(moveDeg / 45) * 45) % 360;
-          if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
-            freeSyncRef.current.at = now;
-            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy) });
-          }
-          freeSyncRef.current.moving = true;
-        } else if (freeSyncRef.current.moving) {
+          e.proute.shift();
+        }
+        // маршрут исчерпан и последний прыжок приземлился — финальный стоп-пакет
+        if (
+          e.proute.length === 0 &&
+          (!e.phop || now - e.phop.start >= e.phop.dur) &&
+          freeSyncRef.current.moving
+        ) {
           freeSyncRef.current.moving = false;
           net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
         }
@@ -1735,18 +1749,27 @@ export default function Simulator() {
       }
 
       // Плавная камера «теста»: догоняет своего кота, упирается в кромку локации.
+      // В мирном режиме добавляются зум и наклон земли (псевдо-3D), переход туда
+      // и обратно — с той же экспоненциальной плавностью, что и сама камера.
       if (testMode) {
         const vw = cv.clientWidth || 1;
         const vh = cv.clientHeight || 1;
         const cellW = s.field.cellW;
         const cellH = s.field.cellH;
+        const kz = 1 - Math.exp(-dt / CAMZOOM_TAU_MS);
+        camFxRef.current.z += ((peaceWalk ? PEACE_ZOOM : 1) - camFxRef.current.z) * kz;
+        camFxRef.current.sq += ((peaceWalk ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
+        const { z, sq } = camFxRef.current;
         const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
         const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
         const bb = testFieldGeometry(cellW, cellH).bboxPx;
+        // видимое окно мира: зум сужает его, наклон дополнительно сжимает вертикаль
+        const vwG = vw / z;
+        const vhG = vh / (z * sq);
         const cxT =
-          bb.x1 - bb.x0 >= vw ? Math.min(Math.max(txP, bb.x0 + vw / 2), bb.x1 - vw / 2) : (bb.x0 + bb.x1) / 2;
+          bb.x1 - bb.x0 >= vwG ? Math.min(Math.max(txP, bb.x0 + vwG / 2), bb.x1 - vwG / 2) : (bb.x0 + bb.x1) / 2;
         const cyT =
-          bb.y1 - bb.y0 >= vh ? Math.min(Math.max(tyP, bb.y0 + vh / 2), bb.y1 - vh / 2) : (bb.y0 + bb.y1) / 2;
+          bb.y1 - bb.y0 >= vhG ? Math.min(Math.max(tyP, bb.y0 + vhG / 2), bb.y1 - vhG / 2) : (bb.y0 + bb.y1) / 2;
         if (!camRef.current.init) {
           camRef.current.x = cxT;
           camRef.current.y = cyT;
@@ -2092,8 +2115,17 @@ export default function Simulator() {
         ctx.fillStyle = outside;
         ctx.fillRect(0, 0, vw, vh);
         ctx.save();
-        ctx.translate(Math.round(vw / 2 - camRef.current.x), Math.round(vh / 2 - camRef.current.y));
+        // камера «теста»: экран → зум → мир. В мирном режиме зум приближает поле,
+        // а наклон (sq) сжимает землю по вертикали — псевдо-глубина 2.5D
+        const fxc = camFxRef.current;
+        ctx.translate(Math.round(vw / 2), Math.round(vh / 2));
+        ctx.scale(fxc.z, fxc.z);
+        ctx.translate(-Math.round(camRef.current.x), -Math.round(camRef.current.y));
         const geo = testFieldGeometry(s.field.cellW, s.field.cellH);
+        // ГРУНТ — наклонённая плоскость: трава, доска с сеткой, кромка и якорные
+        // точки лежат на земле и сжимаются по вертикали вместе с ней
+        ctx.save();
+        ctx.scale(1, fxc.sq);
         // трава локации — природная тёмная зелень
         const grad = ctx.createLinearGradient(0, geo.bboxPx.y0, 0, geo.bboxPx.y1);
         grad.addColorStop(0, '#31511f');
@@ -2154,9 +2186,7 @@ export default function Simulator() {
         ctx.lineWidth = 2;
         ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
         ctx.stroke(geo.path);
-        // трава и цветы — чисто визуальный фон, под персонажами
-        for (const d of geo.decor) drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH);
-        // мирный режим: якорные точки шагов (центр и середины сторон клетки)
+        // мирный режим: якорные точки прыжков (центр, середины сторон и углы клетки)
         // и подсветка той, что под курсором
         if (!s.arrow.battleMode) {
           ctx.beginPath();
@@ -2173,6 +2203,15 @@ export default function Simulator() {
             ctx.lineWidth = 1.6;
             ctx.stroke();
           }
+        }
+        ctx.restore();
+        // трава и цветы — билборды: стоят вертикально, основание следует за сжатой
+        // землёй (как объекты в Don't Starve)
+        for (const d of geo.decor) {
+          ctx.save();
+          ctx.translate(0, d.y * s.field.cellH * (fxc.sq - 1));
+          drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH);
+          ctx.restore();
         }
       } else {
         // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
@@ -2278,9 +2317,12 @@ export default function Simulator() {
       ) => {
         const th = (s.field.cellH - 10) * (scalePct / 100);
         const twd = th * (sprC.width / sprC.height);
+        // билборд: земля в мирном «тесте» наклонена (сжата по вертикали), спрайт
+        // остаётся вертикальным — низ прижат к сжатой земле, верх не заваливается
+        const py = testMode ? (pos.y + th) * camFxRef.current.sq - th : pos.y;
         // тень под ногами — следует за нижним краем спрайта
         ctx.beginPath();
-        ctx.ellipse(pos.x + twd / 2, pos.y + th - 4, twd * 0.34, 5.5, 0, 0, Math.PI * 2);
+        ctx.ellipse(pos.x + twd / 2, py + th - 4, twd * 0.34, 5.5, 0, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         ctx.fill();
         // подсветка модели, выбранной в панели (не той, за которую играют):
@@ -2318,7 +2360,7 @@ export default function Simulator() {
         if (amp > 0.01) {
           const wob = Math.sin(now * 0.045);
           ctx.save();
-          ctx.translate(pos.x + twd / 2, pos.y + th);
+          ctx.translate(pos.x + twd / 2, py + th);
           ctx.rotate(amp * 0.08 * Math.cos(now * 0.045));
           ctx.scale(1 + amp * 0.22 * wob, 1 - amp * 0.22 * wob);
           glow(-twd / 2, -th);
@@ -2326,9 +2368,9 @@ export default function Simulator() {
           ctx.drawImage(sprC, -twd / 2, -th, twd, th);
           ctx.restore();
         } else {
-          glow(pos.x, pos.y);
-          contour(pos.x, pos.y);
-          ctx.drawImage(sprC, pos.x, pos.y, twd, th);
+          glow(pos.x, py);
+          contour(pos.x, py);
+          ctx.drawImage(sprC, pos.x, py, twd, th);
         }
       };
 
@@ -2430,14 +2472,15 @@ export default function Simulator() {
         }
         if (liveRemotesRef.current.length > 0) {
           const th = (s.field.cellH - 10) * (d.scale / 100);
+          const ny = testMode ? (tp.y + th) * camFxRef.current.sq - th : tp.y;
           const nameX = sprT ? tp.x + (sprT.width / sprT.height) * th * 0.5 : tp.x + s.field.cellW / 2;
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillText(d.name, nameX + 1, tp.y - 16);
+          ctx.fillText(d.name, nameX + 1, ny - 16);
           ctx.fillStyle = '#f4f4f5';
-          ctx.fillText(d.name, nameX, tp.y - 17);
+          ctx.fillText(d.name, nameX, ny - 17);
         }
       }
 
@@ -2673,6 +2716,12 @@ export default function Simulator() {
           format: fieldFormatRef.current,
           battle: settingsRef.current.arrow.battleMode,
           cam: { x: Math.round(camRef.current.x), y: Math.round(camRef.current.y), init: camRef.current.init },
+          camFx: {
+            z: Math.round(camFxRef.current.z * 100) / 100,
+            sq: Math.round(camFxRef.current.sq * 100) / 100,
+          },
+          hopping: !!st.phop,
+          route: st.proute.length,
           stepping: !!st.step,
           stepDur: st.step ? Math.round(st.step.dur) : 0,
           stepLeft: st.step ? Math.max(0, Math.round(st.step.dur - (performance.now() - st.step.start))) : 0,
@@ -2908,8 +2957,10 @@ export default function Simulator() {
       const cvp = canvasRef.current;
       if (cvp) {
         const rect = cvp.getBoundingClientRect();
-        mx = ev.clientX - rect.left + camRef.current.x - cvp.clientWidth / 2;
-        my = ev.clientY - rect.top + camRef.current.y - cvp.clientHeight / 2;
+        // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
+        const fxc = camFxRef.current;
+        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
+        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       }
     }
     const dg = dragRef.current;
@@ -3114,8 +3165,10 @@ export default function Simulator() {
       const cvp = canvasRef.current;
       if (!cvp) return;
       const rect = cvp.getBoundingClientRect();
-      mx = ev.clientX - rect.left + camRef.current.x - cvp.clientWidth / 2;
-      my = ev.clientY - rect.top + camRef.current.y - cvp.clientHeight / 2;
+      // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
+      const fxc = camFxRef.current;
+      mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
+      my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       if (!s.arrow.battleMode) {
         // мирный «тест»: клик по якорной точке — шагаем к ней по соседним якорям;
         // новый клик перезапускает маршрут с текущего места
