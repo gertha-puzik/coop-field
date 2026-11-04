@@ -1,44 +1,58 @@
 /**
  * Поле комнаты «тест» — другой формат играбельной площади вместо жёсткой сетки 10×6.
  *
- * Мир: лужайка 10×7 клеток, переход направо 3×5 и закуток 6×6 (клетка 100×150 px,
- * как на обычном поле). Поверх зон нарисована локация с неровным («природным»)
- * краем: тёмная трава и земляная кромка. В боевом режиме ходьба идёт строго по
- * клеткам трёх зон, в мирном — шагами по якорным точкам (центр клетки и середины
- * её сторон), по ним же наводится мышь.
+ * Мир: зоны из конфига локации (см. test-map.ts; раскладка по умолчанию — лужайка
+ * 10×7, переход 3×5 и закуток 6×6, клетка 100×150 px как на обычном поле). Поверх
+ * зон нарисована локация с неровным («природным») краем: тёмная трава и земляная
+ * кромка. В боевом режиме ходьба идёт строго по клеткам зон вида «cells», в мирном —
+ * шагами по якорным точкам (центр клетки и середины её сторон, а в зелёных зонах —
+ * просто трава), по ним же наводится мышь.
  *
- * Кромка строится один раз детерминированно (сид от кода комнаты): расширяем зоны
- * на полклетки, снимаем контур маски (марширующие квадраты), сглаживаем алгоритмом
+ * Кромка строится детерминированно (сид от кода комнаты): расширяем зоны на
+ * полклетки, снимаем контур маски (марширующие квадраты), сглаживаем алгоритмом
  * Чайкина и добавляем лёгкую дрожь вершин. Сглаживание подрезает углы зон, поэтому
  * клетка считается проходимой только когда целиком внутри кромки — сетку у кромки
  * рисуем с клипом по полигону, и картинка с ходьбой всегда совпадают.
+ *
+ * Конфиг локации редактируется редактором локации и приходит с сервера событием
+ * «map»/полем field.map: setTestMap подменяет конфиг и сбрасывает все кэши —
+ * следующая отрисовка и все проверки ходьбы уже считают новую локацию.
  */
+
+import { TEST_MAP_DEFAULT, type TestMap, type TestMapZone } from './test-map';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
 
-/** Размер мира в клетках: 19 колонок × 7 рядов. */
-export const TEST_COLS = 19;
-export const TEST_ROWS = 7;
+/** Текущий конфиг локации: по умолчанию — зашитая раскладка, замещается с сервера. */
+let currentMap: TestMap = TEST_MAP_DEFAULT;
 
-/** Зоны клеточной ходьбы (боевой режим), 0-based, включительно: [c0, r0, c1, r1]. */
-export const TEST_ZONES: { name: string; c0: number; r0: number; c1: number; r1: number }[] = [
-  { name: 'Лужайка', c0: 0, r0: 0, c1: 9, r1: 6 },
-  { name: 'Переход', c0: 10, r0: 1, c1: 12, r1: 5 },
-  { name: 'Закуток', c0: 13, r0: 0, c1: 18, r1: 5 },
-];
+/** Активный конфиг локации (для отрисовки доски, списка зон редактора и т.п.). */
+export function currentTestMap(): TestMap {
+  return currentMap;
+}
 
-/** Насколько (в долях клетки) нарисованная кромка отступает от играбельных зон. */
-export const TEST_MARGIN = 0.5;
+/** Подмена конфига локации: все кэши геометрии, якорей и декора сбрасываются. */
+export function setTestMap(map: TestMap): void {
+  currentMap = map;
+  islandPoly = null;
+  peaceCache = null;
+  geoCache = null;
+}
+
+/** Зона — боевая (с клетками) или зелёная (только мирный режим). */
+function isCellsZone(z: TestMapZone): boolean {
+  return z.kind === 'cells';
+}
 
 export type Pt = { x: number; y: number };
 
 /* ---------- проходимость клетки с учётом кромки ---------- */
 
-/** Полигон локации в клеточных долях — считается один раз (мир фиксированный). */
+/** Полигон локации в клеточных долях — считается один раз на конфиг. */
 let islandPoly: Pt[] | null = null;
 function islandPolygon(): Pt[] {
-  if (!islandPoly) islandPoly = buildTestPolygon(TEST_ROOM_ID);
+  if (!islandPoly) islandPoly = buildTestPolygon(currentMap.seed);
   return islandPoly;
 }
 
@@ -54,19 +68,19 @@ export function testCellInIsland(c: number, r: number): boolean {
   return true;
 }
 
-/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне и не задета кромкой. */
+/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне с клетками и не задета кромкой. */
 export function testWalkableCell(c: number, r: number): boolean {
-  if (!TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
+  if (!currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
   return testCellInIsland(c, r);
 }
 
-/** Клетка в зоне, но задетая кромкой (не целиком внутри) — для красной пометки. */
+/** Клетка зоны с клетками, задетая кромкой (не целиком внутри) — для красной пометки. */
 export function testClippedCells(): { c: number; r: number }[] {
   const out: { c: number; r: number }[] = [];
-  for (let r = 0; r < TEST_ROWS; r++) {
-    for (let c = 0; c < TEST_COLS; c++) {
+  for (let r = 0; r < currentMap.rows; r++) {
+    for (let c = 0; c < currentMap.cols; c++) {
       if (testWalkableCell(c, r)) continue;
-      if (TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
+      if (currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
     }
   }
   return out;
@@ -75,8 +89,8 @@ export function testClippedCells(): { c: number; r: number }[] {
 /** Все непроходимые клетки мира — для BFS-маршрута по клику (боевой режим). */
 export function testNonWalkableCells(): { c: number; r: number }[] {
   const out: { c: number; r: number }[] = [];
-  for (let r = 0; r < TEST_ROWS; r++) {
-    for (let c = 0; c < TEST_COLS; c++) {
+  for (let r = 0; r < currentMap.rows; r++) {
+    for (let c = 0; c < currentMap.cols; c++) {
       if (!testWalkableCell(c, r)) out.push({ c, r });
     }
   }
@@ -85,16 +99,16 @@ export function testNonWalkableCells(): { c: number; r: number }[] {
 
 /** Ближайшая проходимая клетка (0-based) к точке в клеточных долях: спиральный поиск. */
 export function nearestWalkableCell(c: number, r: number): { c: number; r: number } {
-  const c0 = Math.min(TEST_COLS - 1, Math.max(0, Math.round(c)));
-  const r0 = Math.min(TEST_ROWS - 1, Math.max(0, Math.round(r)));
+  const c0 = Math.min(currentMap.cols - 1, Math.max(0, Math.round(c)));
+  const r0 = Math.min(currentMap.rows - 1, Math.max(0, Math.round(r)));
   if (testWalkableCell(c0, r0)) return { c: c0, r: r0 };
-  for (let rad = 1; rad < Math.max(TEST_COLS, TEST_ROWS); rad++) {
+  for (let rad = 1; rad < Math.max(currentMap.cols, currentMap.rows); rad++) {
     for (let dr = -rad; dr <= rad; dr++) {
       for (let dc = -rad; dc <= rad; dc++) {
         if (Math.max(Math.abs(dc), Math.abs(dr)) !== rad) continue;
         const cc = c0 + dc;
         const rr = r0 + dr;
-        if (cc < 0 || cc >= TEST_COLS || rr < 0 || rr >= TEST_ROWS) continue;
+        if (cc < 0 || cc >= currentMap.cols || rr < 0 || rr >= currentMap.rows) continue;
         if (testWalkableCell(cc, rr)) return { c: cc, r: rr };
       }
     }
@@ -181,11 +195,11 @@ function polygonBBox(poly: Pt[]): { x0: number; y0: number; x1: number; y1: numb
  */
 function traceMaskOutline(): [number, number][] {
   const G = 2; // единиц сетки в клетке (шаг 0,5 клетки)
-  const rects = TEST_ZONES.map((z) => ({
-    gx0: Math.round((z.c0 - TEST_MARGIN) * G),
-    gy0: Math.round((z.r0 - TEST_MARGIN) * G),
-    gx1: Math.round((z.c1 + 1 + TEST_MARGIN) * G),
-    gy1: Math.round((z.r1 + 1 + TEST_MARGIN) * G),
+  const rects = currentMap.zones.map((z) => ({
+    gx0: Math.round((z.c0 - currentMap.margin) * G),
+    gy0: Math.round((z.r0 - currentMap.margin) * G),
+    gx1: Math.round((z.c1 + 1 + currentMap.margin) * G),
+    gy1: Math.round((z.r1 + 1 + currentMap.margin) * G),
   }));
   const minX = Math.min(...rects.map((r) => r.gx0));
   const maxX = Math.max(...rects.map((r) => r.gx1));
@@ -251,10 +265,10 @@ export function buildTestPolygon(seed: string): Pt[] {
   if (outline.length === 0) {
     // страховка (теоретически недостижимо): прямоугольник вокруг всех зон
     return [
-      { x: -TEST_MARGIN, y: -TEST_MARGIN },
-      { x: TEST_COLS + TEST_MARGIN, y: -TEST_MARGIN },
-      { x: TEST_COLS + TEST_MARGIN, y: TEST_ROWS + TEST_MARGIN },
-      { x: -TEST_MARGIN, y: TEST_ROWS + TEST_MARGIN },
+      { x: -currentMap.margin, y: -currentMap.margin },
+      { x: currentMap.cols + currentMap.margin, y: -currentMap.margin },
+      { x: currentMap.cols + currentMap.margin, y: currentMap.rows + currentMap.margin },
+      { x: -currentMap.margin, y: currentMap.rows + currentMap.margin },
     ];
   }
   // в клеточные доли со схлопыванием коллинеарных вершин (длинные прямые участки)
@@ -313,9 +327,9 @@ function peaceAnchorData(): PeaceAnchors {
     seen.add(k);
     pts.push({ x, y });
   };
-  for (let r = 0; r < TEST_ROWS; r++) {
-    for (let c = 0; c < TEST_COLS; c++) {
-      if (!TEST_ZONES.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) continue;
+  for (let r = 0; r < currentMap.rows; r++) {
+    for (let c = 0; c < currentMap.cols; c++) {
+      if (!currentMap.zones.some((z) => c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) continue;
       add(c + 0.5, r + 0.5);
       add(c + 0.5, r);
       add(c + 0.5, r + 1);
@@ -438,9 +452,12 @@ export type DecorItem = {
   v: number;
 };
 
-/** Точка в играбельных зонах (клеточных долях) — декор туда не ставим, чтобы сетка читалась. */
+/** Точка в зонах с клетками — декор туда не ставим, чтобы сетка читалась.
+ *  Зелёные зоны наоборот живут декором: трава и цветы — их смысл. */
 function inZones(x: number, y: number): boolean {
-  return TEST_ZONES.some((z) => x >= z.c0 && x <= z.c1 + 1 && y >= z.r0 && y <= z.r1 + 1);
+  return currentMap.zones.some(
+    (z) => isCellsZone(z) && x >= z.c0 && x <= z.c1 + 1 && y >= z.r0 && y <= z.r1 + 1,
+  );
 }
 
 /** Пресеты травы и цветов: раскиданы по сиду комнаты, одинаковые у всех. */
@@ -553,7 +570,7 @@ let geoCache: GeoCache | null = null;
 export function testFieldGeometry(cellW = 100, cellH = 150): GeoCache {
   const key = `${cellW}x${cellH}`;
   if (geoCache && geoCache.key === key) return geoCache;
-  const polygon = buildTestPolygon(TEST_ROOM_ID);
+  const polygon = buildTestPolygon(currentMap.seed);
   const path = new Path2D();
   polygon.forEach((p, i) => {
     const px = p.x * cellW;
@@ -568,7 +585,7 @@ export function testFieldGeometry(cellW = 100, cellH = 150): GeoCache {
     polygon,
     path,
     bboxPx: { x0: bb.x0 * cellW, y0: bb.y0 * cellH, x1: bb.x1 * cellW, y1: bb.y1 * cellH },
-    decor: buildTestDecor(polygon, TEST_ROOM_ID),
+    decor: buildTestDecor(polygon, currentMap.seed),
   };
   return geoCache;
 }

@@ -1,5 +1,6 @@
 import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
+import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
 
 export const PRODUCTION_WS = "wss://coop.89-232-184-77.sslip.io";
 export const LOCAL_WS = "ws://localhost:3780";
@@ -106,11 +107,15 @@ export type CoopHandlers = {
     format?: string;
     room?: string;
     cats?: CoopCat[];
+    /** Конфиг локации «теста»: зоны с клетками и зелёные зоны (рисование поля, редактор). */
+    map?: TestMap;
     /** Манекен «ПОЧУХАТЬ» комнаты: null — выключен. */
     dummy?: CoopDummyState | null;
     /** Боевая мишень «РАБ» комнаты: null — выключена. */
     rab?: CoopRabState | null;
   }) => void;
+  /** Кто-то сохранил локацию «теста» в редакторе: сервер разослал новый конфиг всем в комнате. */
+  onMap?: (map: TestMap) => void;
   onCat?: (cat: Partial<CoopCat> & { id: number }) => void;
   onFight?: (entry: CoopFight) => void;
   onChat?: (message: CoopChatMessage) => void;
@@ -337,7 +342,13 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === "map") {
+        // Конфиг локации проходит ту же проверку, что и на сервере:
+        // битый или чужой пакет просто игнорируется.
+        const checked = sanitizeTestMap(payload);
+        if (checked.map) handlers.onMap?.(checked.map);
+      }
       else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
       else if (event === "freemove") {
         const row = payload as { id?: unknown; x?: unknown; y?: unknown; cx?: unknown; cy?: unknown } | null;

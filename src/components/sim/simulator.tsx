@@ -22,10 +22,7 @@ import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, THEMES, type Them
 import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import { keyAction } from '@/lib/sim/keys';
 import {
-  TEST_COLS,
-  TEST_ROOM_ID,
-  TEST_ROWS,
-  TEST_ZONES,
+  currentTestMap,
   drawTestDecorItem,
   nearestPeaceAnchor,
   nearestWalkableCell,
@@ -33,11 +30,22 @@ import {
   peaceRoute,
   peaceStepNeighbor,
   pointInPolygon,
+  setTestMap,
   testClippedCells,
   testFieldGeometry,
   testNonWalkableCells,
   testWalkableCell,
 } from '@/lib/sim/test-field';
+import {
+  newZoneId,
+  sanitizeTestMap,
+  TEST_MAP_DEFAULT,
+  TEST_MAP_LIMITS,
+  testMapConnectivityError,
+  type TestMap,
+  type TestMapZone,
+  type TestMapZoneKind,
+} from '@/lib/sim/test-map';
 import {
   DEFAULT_SETTINGS,
   DIRECTIONS,
@@ -103,6 +111,24 @@ const PEACE_ZOOM = 1.5;
 const PEACE_TILT = 0.85;
 /** Плавность перехода зума и наклона между мирным и боевым видом, мс. */
 const CAMZOOM_TAU_MS = 350;
+
+/** Ключ localStorage: пароль редактора локации (вводится один раз). */
+const EDITOR_PASS_KEY = 'catwar-editor-pass';
+
+/** Инструмент редактора локации: зона с клетками, зелёная зона или ластик. */
+type EditorTool = 'cells' | 'green' | 'erase';
+
+/** Черновик локации в редакторе: рисуется на поле сразу (WYSIWYG), живёт до закрытия. */
+type EditorDraft = {
+  zones: TestMapZone[];
+  cols: number;
+  rows: number;
+  tool: EditorTool;
+  /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
+  drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
+  undo: { zones: TestMapZone[]; cols: number; rows: number }[];
+  dirty: boolean;
+};
 
 /**
  * Доля ширины/высоты спрайта, к которой закреплена стрела.
@@ -662,6 +688,21 @@ export default function Simulator() {
   const camRef = useRef({ x: 0, y: 0, init: false });
   /** Зум и наклон камеры «теста»: 1/1 — вид сверху как в бою, PEACE_ZOOM/PEACE_TILT — мирный. */
   const camFxRef = useRef({ z: 1, sq: 1 });
+  /** Редактор локации: открыт/закрыт (ref — для игрового цикла и обработчиков мыши). */
+  const [editorOpen, setEditorOpen] = useState(false);
+  const editorOpenRef = useRef(false);
+  useEffect(() => {
+    editorOpenRef.current = editorOpen;
+  }, [editorOpen]);
+  /** Черновик редактора и его зеркальный снапшот для панели (перерисовка по React). */
+  const editorRef = useRef<EditorDraft | null>(null);
+  const [editorView, setEditorView] = useState<EditorDraft | null>(null);
+  /** Пароль редактора: хранится в localStorage, подставляется при открытии. */
+  const [editorPass, setEditorPass] = useState('');
+  /** Строка состояния редактора: ошибка проверки / «Сохраняем…» / «Сохранено». */
+  const [editorMsg, setEditorMsg] = useState<string | null>(null);
+  /** Последняя локация, подтверждённая сервером: к ней откатывается поле и черновик. */
+  const savedMapRef = useRef<TestMap>(TEST_MAP_DEFAULT);
   /** Темп рассылки freemove и флаг «сейчас идём» (для финального стоп-пакета). */
   const freeSyncRef = useRef({ at: 0, moving: false });
   /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения. */
@@ -1000,6 +1041,265 @@ export default function Simulator() {
     return ids;
   }, []);
 
+  /* ---------- редактор локации «теста» ---------- */
+
+  /** Применение конфига локации (с сервера или черновика редактора): setTestMap
+   *  сбрасывает кэши — картинка и проверки ходьбы сразу считают новую локацию. */
+  const applyTestMap = useCallback((map: TestMap) => {
+    setTestMap(map);
+    savedMapRef.current = map;
+    const d = editorRef.current;
+    if (d) {
+      // Свой только что сохранённый конфиг возвращается рассылкой «map»:
+      // черновик совпал с сохранённой локацией — метка «не сохранено» гаснет.
+      const same =
+        d.cols === map.cols &&
+        d.rows === map.rows &&
+        JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
+          JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1]));
+      if (same) {
+        d.dirty = false;
+        d.zones = map.zones.map((z) => ({ ...z }));
+        setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), undo: [...d.undo] });
+        return;
+      }
+    }
+    if (d && !d.dirty) {
+      d.zones = map.zones.map((z) => ({ ...z }));
+      d.cols = map.cols;
+      d.rows = map.rows;
+      setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), undo: [...d.undo] });
+    }
+  }, []);
+
+  const syncEditorView = () => {
+    const d = editorRef.current;
+    if (!d) return;
+    setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), undo: [...d.undo] });
+  };
+
+  const draftMap = (d: EditorDraft): TestMap => ({
+    v: 1,
+    cols: d.cols,
+    rows: d.rows,
+    margin: savedMapRef.current.margin,
+    seed: savedMapRef.current.seed,
+    zones: d.zones.map((z) => ({ ...z })),
+  });
+
+  /** Черновик сразу рисуется на поле (WYSIWYG): setTestMap пересобирает кэши. */
+  const applyDraftPreview = () => {
+    const d = editorRef.current;
+    if (d) setTestMap(draftMap(d));
+  };
+
+  const pushEditorUndo = () => {
+    const d = editorRef.current;
+    if (!d) return;
+    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), cols: d.cols, rows: d.rows });
+    if (d.undo.length > 40) d.undo.shift();
+  };
+
+  const openEditor = () => {
+    const m = savedMapRef.current;
+    const draft: EditorDraft = {
+      zones: m.zones.map((z) => ({ ...z })),
+      cols: m.cols,
+      rows: m.rows,
+      tool: 'cells',
+      drag: null,
+      undo: [],
+      dirty: false,
+    };
+    editorRef.current = draft;
+    setEditorView({ ...draft, zones: draft.zones.map((z) => ({ ...z })), undo: [] });
+    setEditorMsg(null);
+    try {
+      setEditorPass(localStorage.getItem(EDITOR_PASS_KEY) || '');
+    } catch {
+      /* приватный режим — пароль вводится вручную */
+    }
+    setEditorOpen(true);
+    // Режим редактирования выключает мирную ходьбу: маршруты и прыжки гасим.
+    const e = engineRef.current;
+    e.proute = [];
+    e.phop = null;
+    e.path = [];
+    e.hover = null;
+    e.hoverA = null;
+    camRef.current.init = false;
+  };
+
+  const closeEditor = () => {
+    editorRef.current = null;
+    setEditorOpen(false);
+    setEditorView(null);
+    setEditorMsg(null);
+    // Черновик без записи: поле возвращается к сохранённой сервером локации.
+    setTestMap(savedMapRef.current);
+    camRef.current.init = false;
+  };
+
+  const setEditorTool = (tool: EditorTool) => {
+    const d = editorRef.current;
+    if (!d) return;
+    d.tool = tool;
+    syncEditorView();
+  };
+
+  /** Смена размера мира: зоны, вылезшие за новый край, обрезаются, пустые — удаляются. */
+  const resizeEditorWorld = (cols: number, rows: number) => {
+    const d = editorRef.current;
+    if (!d) return;
+    const nc = Math.min(TEST_MAP_LIMITS.colsMax, Math.max(TEST_MAP_LIMITS.colsMin, cols));
+    const nr = Math.min(TEST_MAP_LIMITS.rowsMax, Math.max(TEST_MAP_LIMITS.rowsMin, rows));
+    if (nc === d.cols && nr === d.rows) return;
+    pushEditorUndo();
+    d.cols = nc;
+    d.rows = nr;
+    const kept: TestMapZone[] = [];
+    for (const z of d.zones) {
+      const c1 = Math.min(z.c1, nc - 1);
+      const r1 = Math.min(z.r1, nr - 1);
+      if (z.c0 <= c1 && z.r0 <= r1) kept.push({ ...z, c1, r1 });
+    }
+    d.zones = kept;
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  /** Вычитание прямоугольника из зоны: остаток распадается максимум на 4 полосы. */
+  const subtractFromZone = (
+    z: TestMapZone,
+    cut: { c0: number; r0: number; c1: number; r1: number },
+  ): TestMapZone[] => {
+    const c0 = Math.max(z.c0, cut.c0);
+    const r0 = Math.max(z.r0, cut.r0);
+    const c1 = Math.min(z.c1, cut.c1);
+    const r1 = Math.min(z.r1, cut.r1);
+    if (c0 > c1 || r0 > r1) return [z];
+    const pieces: TestMapZone[] = [];
+    if (z.r0 < r0) pieces.push({ ...z, id: newZoneId(), r0: z.r0, r1: r0 - 1 });
+    if (z.r1 > r1) pieces.push({ ...z, id: newZoneId(), r0: r1 + 1, r1: z.r1 });
+    if (z.c0 < c0) pieces.push({ ...z, id: newZoneId(), c0: z.c0, c1: c0 - 1, r0, r1 });
+    if (z.c1 > c1) pieces.push({ ...z, id: newZoneId(), c0: c1 + 1, c1: z.c1, r0, r1 });
+    return pieces;
+  };
+
+  /** Завершение рисунка: прямоугольник становится зоной (или стирает зоны ластиком). */
+  const commitEditorDrag = () => {
+    const d = editorRef.current;
+    if (!d || !d.drag) return;
+    const drag = d.drag;
+    d.drag = null;
+    const c0 = Math.min(drag.c0, drag.c1);
+    const c1 = Math.max(drag.c0, drag.c1);
+    const r0 = Math.min(drag.r0, drag.r1);
+    const r1 = Math.max(drag.r0, drag.r1);
+    if (c1 < c0 || r1 < r0) {
+      syncEditorView();
+      return;
+    }
+    pushEditorUndo();
+    if (drag.erase || d.tool === 'erase') {
+      d.zones = d.zones.flatMap((z) => subtractFromZone(z, { c0, r0, c1, r1 }));
+    } else {
+      const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
+      const n = d.zones.filter((z) => z.kind === kind).length + 1;
+      d.zones = [
+        ...d.zones,
+        {
+          id: newZoneId(),
+          name: kind === 'cells' ? `Клетки ${n}` : `Зелёная зона ${n}`,
+          kind,
+          c0,
+          r0,
+          c1,
+          r1,
+        },
+      ];
+    }
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  const deleteEditorZone = (id: string) => {
+    const d = editorRef.current;
+    if (!d) return;
+    pushEditorUndo();
+    d.zones = d.zones.filter((z) => z.id !== id);
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  const renameEditorZone = (id: string, name: string) => {
+    const d = editorRef.current;
+    if (!d) return;
+    const z = d.zones.find((zz) => zz.id === id);
+    if (!z) return;
+    z.name = name.slice(0, TEST_MAP_LIMITS.nameMax);
+    d.dirty = true;
+    syncEditorView();
+  };
+
+  const undoEditor = () => {
+    const d = editorRef.current;
+    if (!d || d.undo.length === 0) return;
+    const back = d.undo.pop()!;
+    d.zones = back.zones.map((z) => ({ ...z }));
+    d.cols = back.cols;
+    d.rows = back.rows;
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  const resetEditor = () => {
+    const d = editorRef.current;
+    if (!d) return;
+    pushEditorUndo();
+    const m = savedMapRef.current;
+    d.zones = m.zones.map((z) => ({ ...z }));
+    d.cols = m.cols;
+    d.rows = m.rows;
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+  };
+
+  /** Предварительная проверка черновика — те же правила, что у сервера. */
+  const editorDraftError = (): string | null => {
+    const d = editorRef.current;
+    if (!d) return null;
+    if (d.zones.length === 0) return 'Нужна хотя бы одна зона.';
+    if (!d.zones.some((z) => z.kind === 'cells')) return 'Нужна хотя бы одна зона с клетками.';
+    return testMapConnectivityError(d.zones);
+  };
+
+  const saveEditorMap = () => {
+    const d = editorRef.current;
+    const net = netRef.current;
+    if (!d || !net) return;
+    if (!net.ready) {
+      setEditorMsg('Нет связи с сервером.');
+      return;
+    }
+    const err = editorDraftError();
+    if (err) {
+      setEditorMsg(err);
+      return;
+    }
+    try {
+      localStorage.setItem(EDITOR_PASS_KEY, editorPass);
+    } catch {
+      /* приватный режим — просто не запоминаем */
+    }
+    net.emit('setmap', { pass: editorPass, map: draftMap(d) });
+    setEditorMsg('Сохраняем…');
+  };
+
   useEffect(() => {
     if (!loaded || !netStarted) return;
     const pending = pendingJoinRef.current;
@@ -1048,6 +1348,14 @@ export default function Simulator() {
         if (fmt !== fieldFormatRef.current) {
           fieldFormatRef.current = fmt;
           setFieldFormat(fmt);
+          // Ушли из «теста» (переход в другой комнате) — редактор закрывается сам.
+          if (fmt !== 'test' && editorOpenRef.current) closeEditor();
+        }
+        // Конфиг локации «теста»: применяется до любой отрисовки — setTestMap
+        // сбрасывает кэши, и поле рисуется уже по новому конфигу.
+        if (field.map) {
+          const checkedMap = sanitizeTestMap(field.map).map;
+          if (checkedMap) applyTestMap(checkedMap);
         }
         camRef.current.init = false;
         remoteFreeRef.current.clear();
@@ -1099,6 +1407,11 @@ export default function Simulator() {
           dummyGrabRef.current = null;
         }
         applyRab(!!field.rab?.on);
+      },
+      onMap: (map) => {
+        // Кто-то сохранил локацию в редакторе (и мы сами — сервер шлёт map и автору).
+        applyTestMap(map);
+        setEditorMsg('Локация обновлена.');
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
@@ -1529,13 +1842,21 @@ export default function Simulator() {
     let raf = 0;
     let prev = performance.now();
 
+    // Флаги редактора обновляются каждый кадр: update и draw видят одно и то же.
+    const editorState = () => ({
+      on: editorOpenRef.current && editorRef.current !== null,
+      draft: editorRef.current,
+    });
+
     const update = (now: number, dt: number) => {
       stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current, now);
       const s = settingsRef.current;
       const e = engineRef.current;
       // Комната «тест» и мирный режим: свободная ходьба по всей локации вместо клеток.
+      // В редакторе ходьба останавливается: кот стоит на месте, мышь рисует зоны.
       const testMode = fieldFormatRef.current === 'test';
-      const peaceWalk = testMode && !s.arrow.battleMode && s.controlled === 'main';
+      const editorOn = editorState().on;
+      const peaceWalk = testMode && !s.arrow.battleMode && s.controlled === 'main' && !editorOn;
       // Блок (удержание К): двигаться, крутить стрелу и бить нельзя. Гасим всё,
       // что могло прийти, пока блок держится (маршрут по клику, удержания).
       if (e.blocking) {
@@ -1757,27 +2078,47 @@ export default function Simulator() {
         const cellW = s.field.cellW;
         const cellH = s.field.cellH;
         const kz = 1 - Math.exp(-dt / CAMZOOM_TAU_MS);
-        camFxRef.current.z += ((peaceWalk ? PEACE_ZOOM : 1) - camFxRef.current.z) * kz;
-        camFxRef.current.sq += ((peaceWalk ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
-        const { z, sq } = camFxRef.current;
-        const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
-        const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
-        const bb = testFieldGeometry(cellW, cellH).bboxPx;
-        // видимое окно мира: зум сужает его, наклон дополнительно сжимает вертикаль
-        const vwG = vw / z;
-        const vhG = vh / (z * sq);
-        const cxT =
-          bb.x1 - bb.x0 >= vwG ? Math.min(Math.max(txP, bb.x0 + vwG / 2), bb.x1 - vwG / 2) : (bb.x0 + bb.x1) / 2;
-        const cyT =
-          bb.y1 - bb.y0 >= vhG ? Math.min(Math.max(tyP, bb.y0 + vhG / 2), bb.y1 - vhG / 2) : (bb.y0 + bb.y1) / 2;
-        if (!camRef.current.init) {
-          camRef.current.x = cxT;
-          camRef.current.y = cyT;
-          camRef.current.init = true;
+        if (editorOn) {
+          // Редактор: камера отъезжает, чтобы весь мир был виден целиком, вид — сверху.
+          const bbE = testFieldGeometry(cellW, cellH).bboxPx;
+          const pad = 90;
+          const zT = Math.max(0.1, Math.min(1.15, Math.min(vw / (bbE.x1 - bbE.x0 + pad), vh / (bbE.y1 - bbE.y0 + pad))));
+          camFxRef.current.z += (zT - camFxRef.current.z) * kz;
+          camFxRef.current.sq += (1 - camFxRef.current.sq) * kz;
+          const cxT = (bbE.x0 + bbE.x1) / 2;
+          const cyT = (bbE.y0 + bbE.y1) / 2;
+          if (!camRef.current.init) {
+            camRef.current.x = cxT;
+            camRef.current.y = cyT;
+            camRef.current.init = true;
+          } else {
+            const kcE = 1 - Math.exp(-dt / CAMERA_TAU_MS);
+            camRef.current.x += (cxT - camRef.current.x) * kcE;
+            camRef.current.y += (cyT - camRef.current.y) * kcE;
+          }
         } else {
-          const kc = 1 - Math.exp(-dt / CAMERA_TAU_MS);
-          camRef.current.x += (cxT - camRef.current.x) * kc;
-          camRef.current.y += (cyT - camRef.current.y) * kc;
+          camFxRef.current.z += ((peaceWalk ? PEACE_ZOOM : 1) - camFxRef.current.z) * kz;
+          camFxRef.current.sq += ((peaceWalk ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
+          const { z, sq } = camFxRef.current;
+          const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
+          const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
+          const bb = testFieldGeometry(cellW, cellH).bboxPx;
+          // видимое окно мира: зум сужает его, наклон дополнительно сжимает вертикаль
+          const vwG = vw / z;
+          const vhG = vh / (z * sq);
+          const cxT =
+            bb.x1 - bb.x0 >= vwG ? Math.min(Math.max(txP, bb.x0 + vwG / 2), bb.x1 - vwG / 2) : (bb.x0 + bb.x1) / 2;
+          const cyT =
+            bb.y1 - bb.y0 >= vhG ? Math.min(Math.max(tyP, bb.y0 + vhG / 2), bb.y1 - vhG / 2) : (bb.y0 + bb.y1) / 2;
+          if (!camRef.current.init) {
+            camRef.current.x = cxT;
+            camRef.current.y = cyT;
+            camRef.current.init = true;
+          } else {
+            const kc = 1 - Math.exp(-dt / CAMERA_TAU_MS);
+            camRef.current.x += (cxT - camRef.current.x) * kc;
+            camRef.current.y += (cyT - camRef.current.y) * kc;
+          }
         }
       }
 
@@ -2094,6 +2435,7 @@ export default function Simulator() {
       const W = s.field.cols * s.field.cellW;
       const H = s.field.rows * s.field.cellH;
       const testMode = fieldFormatRef.current === 'test';
+      const { on: editorOn, draft: ed } = editorState();
       let vw = 0;
       let vh = 0;
       if (testMode) {
@@ -2136,9 +2478,12 @@ export default function Simulator() {
         // зоны клеточной ходьбы: доска с сеткой (цвета — настройки поля).
         // Доска с сеткой режется клипом по кромке локации: сглаженный край
         // подрезает углы зон, и ничего не вылезает за нарисованный островок.
+        // Зелёные зоны доски не получают — они остаются травой с цветами.
         ctx.save();
         ctx.clip(geo.path);
-        for (const z of TEST_ZONES) {
+        const mapZones = currentTestMap().zones;
+        for (const z of mapZones) {
+          if (z.kind !== 'cells') continue;
           const zx = z.c0 * s.field.cellW;
           const zy = z.r0 * s.field.cellH;
           const zw = (z.c1 - z.c0 + 1) * s.field.cellW;
@@ -2170,7 +2515,7 @@ export default function Simulator() {
         }
         // клетки, задетые кромкой (не целиком внутри полигона): в бою они
         // недоступны для прыжков — помечаем лёгкой красной заливкой
-        if (s.arrow.battleMode) {
+        if (s.arrow.battleMode && !editorOn) {
           ctx.fillStyle = 'rgba(214, 69, 65, 0.16)';
           for (const k of testClippedCells()) {
             ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH, s.field.cellW, s.field.cellH);
@@ -2187,8 +2532,8 @@ export default function Simulator() {
         ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
         ctx.stroke(geo.path);
         // мирный режим: якорные точки прыжков (центр, середины сторон и углы клетки)
-        // и подсветка той, что под курсором
-        if (!s.arrow.battleMode) {
+        // и подсветка той, что под курсором; в редакторе точки скрывает сетка
+        if (!s.arrow.battleMode && !editorOn) {
           ctx.beginPath();
           for (const p of peaceAnchorPoints()) {
             ctx.moveTo(p.x * s.field.cellW + 1.7, p.y * s.field.cellH);
@@ -2202,6 +2547,59 @@ export default function Simulator() {
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
             ctx.lineWidth = 1.6;
             ctx.stroke();
+          }
+        }
+        // Оверлей редактора: границы мира, бледная сетка всего мира, подсветка
+        // зелёных зон и тянущийся прямоугольник. Клетки: c=0..cols, r=0..rows.
+        if (editorOn && ed) {
+          const wc = ed.cols * s.field.cellW;
+          const wr = ed.rows * s.field.cellH;
+          // сетка всего мира — чтобы было видно, какие клетки свободны под новые зоны
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let c = 0; c <= ed.cols; c++) {
+            ctx.moveTo(c * s.field.cellW + 0.5, 0);
+            ctx.lineTo(c * s.field.cellW + 0.5, wr);
+          }
+          for (let r = 0; r <= ed.rows; r++) {
+            ctx.moveTo(0, r * s.field.cellH + 0.5);
+            ctx.lineTo(wc, r * s.field.cellH + 0.5);
+          }
+          ctx.stroke();
+          // зелёные зоны — лёгкая зелёная заливка (доски у них нет, край уже нарисован)
+          ctx.fillStyle = 'rgba(112, 178, 92, 0.16)';
+          for (const z of ed.zones) {
+            if (z.kind !== 'green') continue;
+            ctx.fillRect(z.c0 * s.field.cellW, z.r0 * s.field.cellH, (z.c1 - z.c0 + 1) * s.field.cellW, (z.r1 - z.r0 + 1) * s.field.cellH);
+          }
+          // граница мира
+          ctx.setLineDash([7, 5]);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(0.5, 0.5, wc - 1, wr - 1);
+          ctx.setLineDash([]);
+          // тянущийся прямоугольник
+          const dr = ed.drag;
+          if (dr) {
+            const dc0 = Math.min(dr.c0, dr.c1);
+            const dc1 = Math.max(dr.c0, dr.c1);
+            const dr0 = Math.min(dr.r0, dr.r1);
+            const dr1 = Math.max(dr.r0, dr.r1);
+            const dx0 = dc0 * s.field.cellW;
+            const dy0 = dr0 * s.field.cellH;
+            const dw = (dc1 - dc0 + 1) * s.field.cellW;
+            const dh = (dr1 - dr0 + 1) * s.field.cellH;
+            const erase = dr.erase || ed.tool === 'erase';
+            ctx.fillStyle = erase
+              ? 'rgba(224, 92, 92, 0.34)'
+              : ed.tool === 'green'
+                ? 'rgba(112, 178, 92, 0.34)'
+                : 'rgba(120, 170, 250, 0.30)';
+            ctx.fillRect(dx0, dy0, dw, dh);
+            ctx.strokeStyle = erase ? 'rgba(255, 150, 150, 0.9)' : 'rgba(255, 255, 255, 0.75)';
+            ctx.lineWidth = 1.6;
+            ctx.strokeRect(dx0 + 0.5, dy0 + 0.5, dw - 1, dh - 1);
           }
         }
         ctx.restore();
@@ -2786,6 +3184,14 @@ export default function Simulator() {
     const down = (ev: KeyboardEvent) => {
       if (!enteredRef.current) return;
       if (isForm(ev.target)) return;
+      // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
+      if (editorOpenRef.current) {
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          closeEditor();
+        }
+        return;
+      }
       const action = keyAction(ev);
       const t = ev.target as HTMLElement | null;
       if (t && t.tagName === 'BUTTON' && (action?.type === 'chat' || ev.code === 'Space' || ev.key === ' ')) t.blur();
@@ -2962,6 +3368,21 @@ export default function Simulator() {
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
         my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
       }
+      // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку).
+      const ed = editorRef.current;
+      if (editorOpenRef.current && ed) {
+        const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
+        const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
+        if (ed.drag) {
+          ed.drag.c1 = c;
+          ed.drag.r1 = r;
+        }
+        e.hover = { c, r };
+        e.hoverA = null;
+        const cvE = canvasRef.current;
+        if (cvE) cvE.style.cursor = 'crosshair';
+        return;
+      }
     }
     const dg = dragRef.current;
     if (dg) {
@@ -3028,8 +3449,30 @@ export default function Simulator() {
     if (cv && !dragRef.current) cv.style.cursor = '';
   };
 
-  /** Захват манекена: зажатая ЛКМ на его спрайте начинает перетаскивание. */
+  /** Захват манекена: зажатая ЛКМ на его спрайте начинает перетаскивание.
+   *  В редакторе локации зажатая кнопка начинает рисунок зоны (ПКМ — стирание). */
   const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+    const ed = editorRef.current;
+    if (editorOpenRef.current && ed) {
+      if (ev.button !== 0 && ev.button !== 2) return;
+      const s = settingsRef.current;
+      const cvp = canvasRef.current;
+      let mx = 0;
+      let my = 0;
+      if (cvp) {
+        const rect = cvp.getBoundingClientRect();
+        const fxc = camFxRef.current;
+        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
+        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
+      }
+      const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
+      const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
+      ed.drag = { c0: c, r0: r, c1: c, r1: r, erase: ev.button === 2 };
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+      ev.currentTarget.style.cursor = 'crosshair';
+      ev.preventDefault();
+      return;
+    }
     if (ev.button !== 0) return;
     const s = settingsRef.current;
     const { mx, my } = canvasPoint(ev);
@@ -3142,6 +3585,19 @@ export default function Simulator() {
   };
 
   const onUp = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+    // Редактор: отпускание кнопки завершает рисунок — прямоугольник становится зоной.
+    const ed = editorRef.current;
+    if (editorOpenRef.current && ed) {
+      try {
+        ev.currentTarget.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* захват мог уже сняться */
+      }
+      commitEditorDrag();
+      const cvE = canvasRef.current;
+      if (cvE) cvE.style.cursor = 'crosshair';
+      return;
+    }
     if (!dragRef.current) return;
     try {
       ev.currentTarget.releasePointerCapture(ev.pointerId);
@@ -3151,12 +3607,19 @@ export default function Simulator() {
     dropTarget();
   };
 
+  /** ПКМ в редакторе — стирание без смены инструмента; вне редактора меню не нужно. */
+  const onContextMenu = (ev: React.MouseEvent<HTMLCanvasElement>) => {
+    ev.preventDefault();
+  };
+
   const onClick = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     // клик сразу после перетаскивания маршрут не строит
     if (skipClickRef.current) {
       skipClickRef.current = false;
       return;
     }
+    // В редакторе клики обрабатывает рисунок зон (pointer down/up) — маршруты не строим.
+    if (editorOpenRef.current && editorRef.current) return;
     const s = settingsRef.current;
     const e = engineRef.current;
     const testMode = fieldFormatRef.current === 'test';
@@ -3734,6 +4197,20 @@ export default function Simulator() {
               ))}
             </select>
           </label>
+          {fieldFormat === 'test' ? (
+            <Button
+              size="sm"
+              variant={editorOpen ? 'default' : 'outline'}
+              className={
+                editorOpen
+                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
+                  : 'btn-neutral h-8 text-xs'
+              }
+              onClick={() => (editorOpen ? closeEditor() : openEditor())}
+            >
+              Редактор локации
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant={settings.arrow.battleMode ? 'default' : 'outline'}
@@ -3777,7 +4254,7 @@ export default function Simulator() {
               ref={fieldFrameRef}
               role="region"
               aria-label="Игровое поле"
-              className="overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
+              className="relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
             >
               <canvas
                 ref={canvasRef}
@@ -3794,8 +4271,141 @@ export default function Simulator() {
                 onPointerUp={onUp}
                 onPointerCancel={onUp}
                 onPointerLeave={onLeave}
+                onContextMenu={onContextMenu}
                 onClick={onClick}
               />
+              {editorOpen && editorView ? (
+                <div className="absolute left-3 top-3 z-20 flex max-h-[calc(100%-24px)] w-[272px] flex-col overflow-hidden rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] shadow-xl">
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
+                    <div className="text-xs font-bold">Редактор локации</div>
+                    <button
+                      type="button"
+                      aria-label="Закрыть редактор"
+                      className="btn-neutral flex h-6 w-6 items-center justify-center rounded-md text-xs"
+                      onClick={closeEditor}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 text-[11px]">
+                    <div>
+                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Инструмент</div>
+                      <div className="flex gap-1.5">
+                        {(
+                          [
+                            { id: 'cells', label: 'Клетки' },
+                            { id: 'green', label: 'Зелёная' },
+                            { id: 'erase', label: 'Ластик' },
+                          ] as { id: EditorTool; label: string }[]
+                        ).map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className={
+                              editorView.tool === t.id
+                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
+                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
+                            }
+                            onClick={() => setEditorTool(t.id)}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
+                        Тяните по полю, чтобы нарисовать зону. Правая кнопка — стереть.
+                      </p>
+                    </div>
+                    <div>
+                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Размер мира</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-4 text-[var(--sim-text-faint)]">Ш</span>
+                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols - 1, editorView.rows)}>
+                          −
+                        </button>
+                        <span className="w-7 text-center font-semibold">{editorView.cols}</span>
+                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols + 1, editorView.rows)}>
+                          +
+                        </button>
+                        <span className="ml-2 w-4 text-[var(--sim-text-faint)]">В</span>
+                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows - 1)}>
+                          −
+                        </button>
+                        <span className="w-7 text-center font-semibold">{editorView.rows}</span>
+                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows + 1)}>
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={undoEditor}>
+                        Отменить
+                      </button>
+                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={resetEditor}>
+                        Сбросить
+                      </button>
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold text-[var(--sim-text-muted)]">Зоны ({editorView.zones.length})</span>
+                        {editorView.dirty ? <span className="text-[10px] text-[var(--sim-text-faint)]">не сохранено</span> : null}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {editorView.zones.map((z) => (
+                          <div key={z.id} className="flex items-center gap-1.5 rounded-md border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] px-1.5 py-1">
+                            <span
+                              aria-hidden
+                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+                              style={{ background: z.kind === 'cells' ? 'rgba(120,170,250,0.85)' : 'rgba(112,178,92,0.9)' }}
+                            />
+                            <input
+                              value={z.name}
+                              onChange={(ev2) => renameEditorZone(z.id, ev2.target.value)}
+                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-0.5 py-0.5 text-[11px] outline-none focus:border-[var(--sim-line-strong)] focus:bg-[var(--sim-input-bg)]"
+                              aria-label="Название зоны"
+                            />
+                            <span className="shrink-0 text-[10px] text-[var(--sim-text-faint)]">
+                              {z.c1 - z.c0 + 1}×{z.r1 - z.r0 + 1}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label={`Удалить зону ${z.name}`}
+                              className="btn-neutral flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px]"
+                              onClick={() => deleteEditorZone(z.id)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        {editorView.zones.length === 0 ? (
+                          <p className="text-[var(--sim-text-faint)]">Пока пусто — нарисуйте первую зону.</p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mt-auto flex flex-col gap-1.5 border-t border-[var(--sim-line)] pt-2.5">
+                      <input
+                        type="password"
+                        value={editorPass}
+                        onChange={(ev2) => setEditorPass(ev2.target.value)}
+                        placeholder="Пароль редактора"
+                        aria-label="Пароль редактора локации"
+                        className="h-7 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-2 text-[11px] text-[var(--sim-text)] outline-none"
+                      />
+                      <button
+                        type="button"
+                        className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
+                        onClick={saveEditorMap}
+                      >
+                        Сохранить локацию
+                      </button>
+                      {editorMsg ? <p className="leading-snug text-[var(--sim-text-muted)]">{editorMsg}</p> : null}
+                      <p className="leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                        Сохранение применяет локацию всем в комнате сразу.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">

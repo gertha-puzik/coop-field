@@ -125,14 +125,27 @@ const RAB_CELL = { x: 4, y: 2 };
  * логическую клетку — ближайшую проходимую — для ударов и препятствий).
  */
 const TEST_ROOM = 'test';
-const TEST_WIDTH = 19;
-const TEST_HEIGHT = 7;
-/** Зоны клеточной ходьбы (0-based, включительно): лужайка 10×7, переход 3×5, закуток 6×6. */
-const TEST_ZONE_RECTS = [
-  [0, 0, 9, 6],
-  [10, 1, 12, 5],
-  [13, 0, 18, 5],
-];
+/** Пароль редактора локации (событие setmap). По умолчанию — как в настройках клиента. */
+const ADMIN_PASS = String(process.env.ADMIN_PASS || "1946");
+/** Конфиг локации «теста» живёт в data/test-map.json рядом с server.js: правится
+ *  редактором локации и переживает перезапуски (apply.sh копирует только server.js
+ *  и package*.json — каталог data не трогает). */
+const DATA_DIR = path.join(__dirname, "data");
+const MAP_FILE = path.join(DATA_DIR, "test-map.json");
+
+let testMap = loadTestMap();
+let TEST_WIDTH = testMap.cols;
+let TEST_HEIGHT = testMap.rows;
+let TEST_ISLAND = [];
+let TEST_CELLS = [];
+
+/** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором. */
+function rebuildTestGeometry() {
+  TEST_WIDTH = testMap.cols;
+  TEST_HEIGHT = testMap.rows;
+  TEST_ISLAND = buildIsland(testMap);
+  TEST_CELLS = buildCells(testMap, TEST_ISLAND);
+}
 
 /* ---------- геометрия кромки локации — точный порт src/lib/sim/test-field.ts.
    Клиент и сервер обязаны считать одно и то же: сид и сглаживание совпадают,
@@ -189,13 +202,13 @@ function pointInPolygon(poly, x, y) {
 }
 
 /** Контур расширенных на полклетки зон на сетке 0,5 клетки (марширующие квадраты). */
-function traceMaskOutline() {
+function traceMaskOutline(zoneRects, margin) {
   const G = 2; // единиц сетки в клетке (шаг 0,5 клетки)
-  const rects = TEST_ZONE_RECTS.map(([c0, r0, c1, r1]) => ({
-    gx0: (c0 - 0.5) * G,
-    gy0: (r0 - 0.5) * G,
-    gx1: (c1 + 1 + 0.5) * G,
-    gy1: (r1 + 1 + 0.5) * G,
+  const rects = zoneRects.map(([c0, r0, c1, r1]) => ({
+    gx0: (c0 - margin) * G,
+    gy0: (r0 - margin) * G,
+    gx1: (c1 + 1 + margin) * G,
+    gy1: (r1 + 1 + margin) * G,
   }));
   const minX = Math.min(...rects.map((r) => r.gx0));
   const maxX = Math.max(...rects.map((r) => r.gx1));
@@ -254,15 +267,16 @@ function traceMaskOutline() {
 }
 
 /** Полигон кромки в клеточных долях: зоны + полклетки, Чайкин ×3, дрожь ±5%, Чайкин ×1. */
-const TEST_ISLAND = (() => {
-  const rnd = mulberry32(hashStr(TEST_ROOM));
-  const outline = traceMaskOutline();
+function buildIsland(map) {
+  const rnd = mulberry32(hashStr(map.seed || TEST_ROOM));
+  const zoneRects = map.zones.map((z) => [z.c0, z.r0, z.c1, z.r1]);
+  const outline = traceMaskOutline(zoneRects, map.margin);
   if (outline.length === 0) {
     return [
-      { x: -0.5, y: -0.5 },
-      { x: TEST_WIDTH + 0.5, y: -0.5 },
-      { x: TEST_WIDTH + 0.5, y: TEST_HEIGHT + 0.5 },
-      { x: -0.5, y: TEST_HEIGHT + 0.5 },
+      { x: -map.margin, y: -map.margin },
+      { x: map.cols + map.margin, y: -map.margin },
+      { x: map.cols + map.margin, y: map.rows + map.margin },
+      { x: -map.margin, y: map.rows + map.margin },
     ];
   }
   const pts = [];
@@ -286,35 +300,37 @@ const TEST_ISLAND = (() => {
   }));
   poly = chaikin(poly, 1);
   return poly;
-})();
+}
 
 /** Клетка целиком внутри кромки: 4 угла, середины сторон и центр. */
-function testCellInIsland(c, r) {
+function testCellInIsland(c, r, island = TEST_ISLAND) {
   for (let dy = 0; dy <= 2; dy++) {
     for (let dx = 0; dx <= 2; dx++) {
-      if (!pointInPolygon(TEST_ISLAND, c + dx * 0.5, r + dy * 0.5)) return false;
+      if (!pointInPolygon(island, c + dx * 0.5, r + dy * 0.5)) return false;
     }
   }
   return true;
 }
 
-/** Маска проходимости «теста» (0-based): зоны минус клетки, задетые кромкой
- *  (сглаженный край подрезает углы зон — такие клетки недоступны для прыжков,
- *  а сетка у кромки на клиенте рисуется с клипом по тому же полигону). */
-const TEST_CELLS = (() => {
-  const mask = Array.from({ length: TEST_HEIGHT }, () => new Array(TEST_WIDTH).fill(false));
-  for (const [c0, r0, c1, r1] of TEST_ZONE_RECTS) {
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) mask[r][c] = true;
+/** Маска проходимости «теста» (0-based): зоны с клетками минус клетки, задетые
+ *  кромкой (сглаженный край подрезает углы зон — такие клетки недоступны для
+ *  прыжков, а сетка у кромки на клиенте рисуется с клипом по тому же полигону).
+ *  Зелёные зоны в бою не участвуют — это только мирная территория. */
+function buildCells(map, island) {
+  const mask = Array.from({ length: map.rows }, () => new Array(map.cols).fill(false));
+  for (const z of map.zones) {
+    if (z.kind !== 'cells') continue;
+    for (let r = z.r0; r <= z.r1; r++) {
+      for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
     }
   }
-  for (let r = 0; r < TEST_HEIGHT; r++) {
-    for (let c = 0; c < TEST_WIDTH; c++) {
-      if (mask[r][c] && !testCellInIsland(c, r)) mask[r][c] = false;
+  for (let r = 0; r < map.rows; r++) {
+    for (let c = 0; c < map.cols; c++) {
+      if (mask[r][c] && !testCellInIsland(c, r, island)) mask[r][c] = false;
     }
   }
   return mask;
-})();
+}
 
 function testCellWalkable(c, r) {
   return TEST_CELLS[r]?.[c] === true;
@@ -342,6 +358,174 @@ function nearestTestCell(fx, fy) {
     }
   }
   return null;
+}
+
+/* ---------- конфиг локации: загрузка, проверка, сохранение, правка редактором ---------- */
+
+/** Раскладка по умолчанию — та же, что раньше была залита в код. */
+function defaultTestMap() {
+  return {
+    v: 1,
+    cols: 19,
+    rows: 7,
+    margin: 0.5,
+    seed: 'test',
+    zones: [
+      { id: 'z1', name: 'Лужайка', kind: 'cells', c0: 0, r0: 0, c1: 9, r1: 6 },
+      { id: 'z2', name: 'Переход', kind: 'cells', c0: 10, r0: 1, c1: 12, r1: 5 },
+      { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 0, c1: 18, r1: 5 },
+    ],
+  };
+}
+
+/** Порт sanitizeTestMap из src/lib/sim/test-map.ts — правила совпадают один в один. */
+function sanitizeTestMap(raw) {
+  if (!raw || typeof raw !== 'object') return { error: 'конфиг не распознан' };
+  const asInt = (v) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? n : null;
+  };
+  if (raw.v !== 1) return { error: 'неизвестная версия конфига' };
+  const cols = asInt(raw.cols);
+  const rows = asInt(raw.rows);
+  if (cols === null || rows === null) return { error: 'размер мира не распознан' };
+  if (cols < 6 || cols > 60) return { error: 'ширина мира должна быть 6–60' };
+  if (rows < 3 || rows > 40) return { error: 'высота мира должна быть 3–40' };
+  if (!Array.isArray(raw.zones) || raw.zones.length === 0) return { error: 'список зон пуст' };
+  if (raw.zones.length > 24) return { error: 'зон не больше 24' };
+  const zones = [];
+  for (let i = 0; i < raw.zones.length; i++) {
+    const z = raw.zones[i];
+    const kind = z && (z.kind === 'green' ? 'green' : z.kind === 'cells' ? 'cells' : null);
+    if (!kind) return { error: `зона №${i + 1}: неизвестный тип` };
+    const c0 = asInt(z.c0);
+    const r0 = asInt(z.r0);
+    const c1 = asInt(z.c1);
+    const r1 = asInt(z.r1);
+    if (c0 === null || r0 === null || c1 === null || r1 === null) {
+      return { error: `зона №${i + 1}: координаты не распознаны` };
+    }
+    if (c0 < 0 || r0 < 0 || c0 > c1 || r0 > r1 || c1 >= cols || r1 >= rows) {
+      return { error: `зона №${i + 1}: выходит за границы мира` };
+    }
+    const name =
+      String(z.name ?? '').trim().slice(0, 24) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
+    zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
+  }
+  if (!zones.some((z) => z.kind === 'cells')) {
+    return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
+  }
+  // Зоны обязаны срастаться в один островок (касание сторонами, не углами):
+  // иначе контур кромки распадается на несколько петель и локация собирается неверно.
+  const cells = new Set();
+  for (const z of zones) {
+    for (let r = z.r0; r <= z.r1; r++) {
+      for (let c = z.c0; c <= z.c1; c++) cells.add(`${c},${r}`);
+    }
+  }
+  const start = cells.values().next().value;
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const [c, r] = queue.pop().split(',').map(Number);
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = `${c + dc},${r + dr}`;
+      if (cells.has(k) && !seen.has(k)) {
+        seen.add(k);
+        queue.push(k);
+      }
+    }
+  }
+  if (seen.size !== cells.size) {
+    return { error: 'зоны должны соединяться в одну локацию (касаться сторонами, не углами)' };
+  }
+  return {
+    map: {
+      v: 1,
+      cols,
+      rows,
+      margin: 0.5,
+      seed: typeof raw.seed === 'string' && raw.seed.trim() ? raw.seed.trim().slice(0, 24) : 'test',
+      zones,
+    },
+  };
+}
+
+function loadTestMap() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(MAP_FILE, 'utf8'));
+    const r = sanitizeTestMap(raw);
+    if (r.map) return r.map;
+    console.warn(`map file invalid (${r.error}) — откат к раскладке по умолчанию`);
+  } catch {
+    /* файла ещё нет — работаем на раскладке по умолчанию */
+  }
+  return defaultTestMap();
+}
+
+function saveTestMap() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(MAP_FILE, JSON.stringify(testMap, null, 2));
+}
+
+rebuildTestGeometry();
+
+/**
+ * Редактор локации: клиент → ["setmap", { pass, map }]. При верном пароле и
+ * корректном конфиге локация сохраняется в data/test-map.json, геометрия
+ * перестраивается, всем в комнате уходит ["map", map] и свежий field (коты,
+ * оставшиеся за пределами новой локации, переезжают на ближайшую клетку).
+ */
+const SETMAP_MIN_GAP_MS = 1000;
+
+function setMap(ws, payload = {}) {
+  const now = Date.now();
+  // Лимит — только для неверного пароля (перебор): верный пароль отвечает сразу,
+  // даже на ошибочный конфиг — редактор не должен молча терять нажатия.
+  if (String(payload?.pass || '') !== ADMIN_PASS) {
+    if (now - (ws.lastBadMap || 0) < SETMAP_MIN_GAP_MS) return;
+    ws.lastBadMap = now;
+    send(ws, 'info', 'Редактор: неверный пароль.');
+    return;
+  }
+  const r = sanitizeTestMap(payload?.map);
+  if (!r.map) {
+    send(ws, 'info', `Редактор: ${r.error}.`);
+    return;
+  }
+  testMap = r.map;
+  rebuildTestGeometry();
+  try {
+    saveTestMap();
+  } catch (e) {
+    console.warn('map save failed:', e?.message || e);
+  }
+  const room = rooms.get(TEST_ROOM);
+  if (room && room.sockets.size > 0) {
+    for (const cat of room.cats.values()) {
+      if (cat.fm === 1) {
+        const fx = Number.isFinite(cat.fx) ? cat.fx : 0;
+        const fy = Number.isFinite(cat.fy) ? cat.fy : 0;
+        if (!pointInPolygon(TEST_ISLAND, fx, fy)) {
+          const c = nearestTestCell(fx, fy);
+          if (c) {
+            cat.fm = 0;
+            cat.x = c.x;
+            cat.y = c.y;
+          }
+        }
+      } else if (!testWalkable(cat.x, cat.y)) {
+        const c = nearestTestCell(cat.x - 1, cat.y - 1);
+        if (c) {
+          cat.x = c.x;
+          cat.y = c.y;
+        }
+      }
+    }
+    for (const w of room.sockets.keys()) send(w, 'map', testMap);
+    broadcast(room, 'field', fieldPayload(room));
+  }
+  console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}`);
 }
 
 const rooms = new Map();
@@ -467,6 +651,9 @@ function fieldPayload(room) {
     height: H,
     format: test ? 'test' : undefined,
     room: room.code,
+    // Конфиг локации «теста»: клиент рисует поле по нему и хранит как эталон
+    // сохранённой локации (редактор откатывается к нему при закрытии без записи).
+    ...(test ? { map: testMap } : {}),
     users,
     cats: [...room.cats.values()].map((c) => publicCat(c, room)),
     location: { name: test ? 'Пробная лужайка' : 'Расщелина меж скал', bg: test ? 4234811 : 71085 },
@@ -1304,6 +1491,7 @@ function onMessage(ws, raw) {
   else if (event === "armor") armor(ws, payload || {});
   else if (event === "freemove") freeMove(ws, payload || {});
   else if (event === "cellsync") cellsync(ws, payload || {});
+  else if (event === "setmap") setMap(ws, payload || {});
   else if (event === "rooms") roomsInfo(ws, payload || {});
 }
 
