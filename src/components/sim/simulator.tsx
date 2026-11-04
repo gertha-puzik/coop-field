@@ -44,7 +44,7 @@ import {
   testPointInIsland,
   testWalkableCell,
 } from '@/lib/sim/test-field';
-import { grassPattern, stonePattern } from '@/lib/sim/textures';
+import { grassPattern } from '@/lib/sim/textures';
 import {
   entryDirDelta,
   newObjectId,
@@ -136,6 +136,52 @@ const CAM_USER_ZOOM_MIN = 0.55;
 const CAM_USER_ZOOM_MAX = 2;
 /** Шаг зума на один щелчок колеса (множитель, вверх/вниз). */
 const CAM_USER_ZOOM_STEP = 1.12;
+/** Множитель спринта в мирном режиме: зажатый Shift ускоряет кота вдвое. */
+const SPRINT_MULT = 2;
+/** Темп появления частиц спринта: один комочек каждые столько мс бега. */
+const SPRINT_SPAWN_MS = 26;
+/** Гравитация частиц спринта, px мира / с²: взлетев — падают обратно в траву. */
+const SPRINT_GRAVITY = 520;
+/** Палитры частиц спринта: комочки земли и клочки травы. */
+const SPRINT_DIRT = ['#5b4632', '#6d5740', '#7e684b', '#4e3d2b'];
+const SPRINT_GRASS = ['#3f6d2a', '#4d7f33', '#5b913d', '#356023'];
+
+/** Частица спринта: комочек земли/травы, вылетающий из-под лап. x/y — точка
+ *  на грунте (px мира), z — высота над землёй; vz тянется вниз гравитацией,
+ *  приземлившаяся или отжившая частица убирается. */
+type SprintPart = {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  ttl: number;
+  size: number;
+  col: string;
+};
+
+/** Новый комочек из-под лап: летит против направления бега веером вверх. */
+function spawnSprintPart(arr: SprintPart[], fxPx: number, fyPx: number, bx: number, by: number) {
+  const dirt = Math.random() < 0.55;
+  const pal = dirt ? SPRINT_DIRT : SPRINT_GRASS;
+  const back = 36 + Math.random() * 84;
+  const side = (Math.random() - 0.5) * 64;
+  arr.push({
+    x: fxPx + (Math.random() - 0.5) * 10,
+    y: fyPx + (Math.random() - 0.5) * 6,
+    z: 2 + Math.random() * 4,
+    vx: -bx * back + side * -by,
+    vy: -by * back + side * bx,
+    vz: 95 + Math.random() * 150,
+    life: 0,
+    ttl: 300 + Math.random() * 320,
+    size: 2 + Math.random() * 2.5,
+    col: pal[(Math.random() * pal.length) | 0],
+  });
+  if (arr.length > 90) arr.splice(0, arr.length - 90); // страховка от переполнения
+}
 
 /** Ключ localStorage: пароль редактора локации (вводится один раз). */
 const EDITOR_PASS_KEY = 'catwar-editor-pass';
@@ -736,6 +782,12 @@ export default function Simulator() {
   /** Зум колесом мыши — множитель поверх базового зума вида (1 — как задано режимом).
    *  Меняется колесом над полем «теста», сам плавно догоняется камерой (kz). */
   const camUserZoomRef = useRef(1);
+  /** Shift зажат — спринт мирного режима: скорость ×2 и частицы из-под лап. */
+  const sprintRef = useRef(false);
+  /** Копилка темпа спавна частиц спринта (мс бега с прошлого комочка). */
+  const sprintAccRef = useRef(0);
+  /** Живые частицы спринта: обновляет игровой цикл, рисует секция грунта. */
+  const sprintPartsRef = useRef<SprintPart[]>([]);
   /** Редактор локации: открыт/закрыт (ref — для игрового цикла и обработчиков мыши). */
   const [editorOpen, setEditorOpen] = useState(false);
   const editorOpenRef = useRef(false);
@@ -2428,13 +2480,16 @@ export default function Simulator() {
           }
         }
         const moving = (vx !== 0 || vy !== 0) && !e.ptarget?.stuck;
+        // Shift — спринт мирного режима: обычная скорость мирной ходьбы, зажатый
+        // Shift ускоряет кота вдвое (SPRINT_MULT) и поднимает комочки из-под лап.
+        const sprint = sprintRef.current;
         if (moving) {
           // нормализация в пиксельном пространстве: клетка неквадратная (100×150),
           // диагональ обязана быть той же скоростью, что и прямые направления
           const wx = vx * cellW;
           const wy = vy * cellH;
           const len = Math.hypot(wx, wy) || 1;
-          const spd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (dt / 1000);
+          const spd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (sprint ? SPRINT_MULT : 1) * (dt / 1000);
           const stepFx = (wx / len) * spd / cellW;
           const stepFy = ((wy / len) * spd) / cellH / Math.max(0.5, camFxRef.current.sq);
           // разворот «лицом» по направлению ходьбы (для бейджа и привычки глаза)
@@ -2458,6 +2513,21 @@ export default function Simulator() {
           const nyT = e.fy + stepFy;
           if (!blocked(nxT, e.fy)) e.fx = nxT;
           if (!blocked(e.fx, nyT)) e.fy = nyT;
+          // спринтим — копим темп и рождаем комочки земли/травы из-под лап:
+          // летят против бега веером, гравитация гасит (физика и рисование ниже)
+          if (sprint) {
+            sprintAccRef.current += dt;
+            const feetX = (e.fx + hb.dx) * cellW;
+            const feetY = (e.fy + hb.dy * 2) * cellH;
+            const bdx = wx / len;
+            const bdy = wy / len;
+            while (sprintAccRef.current >= SPRINT_SPAWN_MS) {
+              sprintAccRef.current -= SPRINT_SPAWN_MS;
+              spawnSprintPart(sprintPartsRef.current, feetX, feetY, bdx, bdy);
+            }
+          } else {
+            sprintAccRef.current = 0;
+          }
           freeSyncRef.current.moving = true;
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
             freeSyncRef.current.at = now;
@@ -2467,6 +2537,26 @@ export default function Simulator() {
           freeSyncRef.current.moving = false;
           net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
         }
+      }
+
+      // Физика частиц спринта (даже когда бег кончился — комочки в полёте):
+      // полёт по инерции, гравитация тянет вниз, приземлившиеся и отжившие — долой.
+      const parts = sprintPartsRef.current;
+      if (parts.length > 0) {
+        const dts = dt / 1000;
+        let alive = 0;
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          p.life += dt;
+          if (p.life >= p.ttl) continue;
+          p.x += p.vx * dts;
+          p.y += p.vy * dts;
+          p.z += p.vz * dts;
+          p.vz -= SPRINT_GRAVITY * dts;
+          if (p.z <= 0) continue; // приземлился в траву
+          parts[alive++] = p;
+        }
+        parts.length = alive;
       }
 
       // Режим «теста» — страховка от «не туда»: бой включается кнопкой с клетки
@@ -2983,32 +3073,20 @@ export default function Simulator() {
         if (battleCells.size > 0) {
           const cw = s.field.cellW;
           const chh = s.field.cellH;
-          // вся боевая область заливается одним контуром: каменный пол пака —
-          // рисунок одинаков у всех клиентов и не наслаивается; поверх — тёплая
-          // вуаль, чтобы зона читалась «боевой». Пока текстура не догрузилась —
-          // прежняя мягкая жёлтая заливка.
+          // боевая область — только тонировка: никакой светлой подложки, трава
+          // просвечивает сквозь 10% тёплой вуали (по просьбе: «прозрачность 10%»);
+          // читаемость зоны держат сетка, рамка и клетки захода
           const bpath = new Path2D();
           for (const key of battleCells) {
             const [c, r] = key.split(',').map(Number);
             bpath.rect(c * cw, r * chh, cw, chh);
           }
-          const spat = stonePattern(ctx);
-          if (spat) {
-            ctx.save();
-            ctx.imageSmoothingEnabled = false;
-            ctx.fillStyle = spat;
-            ctx.fill(bpath);
-            ctx.restore();
-            ctx.fillStyle = 'rgba(250, 214, 80, 0.1)';
-            ctx.fill(bpath);
-          } else {
-            ctx.fillStyle = 'rgba(250, 214, 80, 0.14)';
-            ctx.fill(bpath);
-          }
+          ctx.fillStyle = 'rgba(250, 214, 80, 0.1)';
+          ctx.fill(bpath);
           // сетка боевых клеток: у каждой клетки — верх и лево, граничные
           // клетки достраивают низ и право; каждое ребро рисуется один раз
           ctx.strokeStyle = 'rgba(233, 196, 61, 0.8)';
-          ctx.lineWidth = 1.4;
+          ctx.lineWidth = 0.75;
           ctx.beginPath();
           for (const key of battleCells) {
             const [c, r] = key.split(',').map(Number);
@@ -3030,7 +3108,7 @@ export default function Simulator() {
           ctx.stroke();
           // рамка боевой области — чуть ярче сетки, только по краю объединения
           ctx.strokeStyle = 'rgba(246, 208, 61, 0.95)';
-          ctx.lineWidth = 2.2;
+          ctx.lineWidth = 1.25;
           ctx.beginPath();
           for (const key of battleCells) {
             const [c, r] = key.split(',').map(Number);
@@ -3062,6 +3140,19 @@ export default function Simulator() {
           for (const k of testClippedCells()) {
             ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH, s.field.cellW, s.field.cellH);
           }
+        }
+        // частицы спринта: комочки земли/травы над землёй. Высота z уходит вверх
+        // экрана: грунт наклонён (экранный y = мир*sq), поэтому рисуем y - z/sq —
+        // комочки взлетают вертикально, а не сползают по наклонной плоскости
+        const partsD = sprintPartsRef.current;
+        if (partsD.length > 0) {
+          const invSq = 1 / Math.max(0.2, fxc.sq);
+          for (const p of partsD) {
+            ctx.globalAlpha = Math.min(1, (1 - p.life / p.ttl) * 1.6);
+            ctx.fillStyle = p.col;
+            ctx.fillRect(p.x - p.size / 2, p.y - p.z * invSq - p.size / 2, p.size, p.size);
+          }
+          ctx.globalAlpha = 1;
         }
         ctx.restore();
         // земляная кромка поверх подрезанной доски: срезанный край сетки
@@ -3830,6 +3921,9 @@ export default function Simulator() {
       return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     };
     const down = (ev: KeyboardEvent) => {
+      // Shift — спринт мирного режима (×2 к скорости + комочки из-под лап):
+      // ловим раньше всех ранних выходов, зажатие не зависит от контекста
+      if (ev.key === 'Shift') sprintRef.current = true;
       if (!enteredRef.current) return;
       if (isForm(ev.target)) return;
       // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
@@ -3912,6 +4006,7 @@ export default function Simulator() {
       startStepRef.current?.(action.dir);
     };
     const up = (ev: KeyboardEvent) => {
+      if (ev.key === 'Shift') sprintRef.current = false;
       const e = engineRef.current;
       const action = keyAction(ev);
       if (!action) return;
@@ -3936,6 +4031,7 @@ export default function Simulator() {
       e.held = [];
       e.rot = 0;
       e.strikeHeld = false;
+      sprintRef.current = false; // Shift при потере фокуса уже не поймаем
       // Окно потеряло фокус при зажатом блоке — стойку снимаем, иначе кот
       // остался бы в блоке навсегда (keyup уже не пришёл бы).
       if (e.blocking) {
