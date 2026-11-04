@@ -241,7 +241,7 @@ export function EntryScreen({
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       <header>
-        <h1 className="text-xl font-bold leading-tight">Общее поле</h1>
+        <h1 className="text-xl font-bold leading-tight">abnocw</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
           Слева — имя и скин, справа — скрытые параметры (выбранное дублируется в центре). Подтвердите три пункта —
           ниже откроется выбор комнаты.

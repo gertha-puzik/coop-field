@@ -783,7 +783,7 @@ export function SettingsPanel(props: Props) {
           max={800}
           step={10}
           suffix="px/с"
-          hint="Свободная ходьба по траве комнаты «тест»: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель)."
+          hint="Свободная ходьба по траве «Элизии Эйдес»: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель)."
           onChange={(v) => props.patchCharacter({ peaceSpeed: v })}
         />
         <div className="mb-1 text-[11px] leading-snug text-[var(--sim-text-muted)]">

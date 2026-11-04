@@ -1354,7 +1354,7 @@ function dummyToggle(ws, payload = {}) {
   }
   // В «тесте» — чистый полигон: манекен и мишень недоступны.
   if (room.fmt === 'test') {
-    send(ws, "info", "В комнате «тест» манекен недоступен.");
+    send(ws, "info", "В «Элизии Эйдес» манекен недоступен.");
     return;
   }
   const on = !!payload.on;
@@ -1433,7 +1433,7 @@ function rabToggle(ws, payload = {}) {
     return;
   }
   if (room.fmt === 'test') {
-    send(ws, "info", "В комнате «тест» мишень недоступна.");
+    send(ws, "info", "В «Элизии Эйдес» мишень недоступна.");
     return;
   }
   const on = !!payload.on;

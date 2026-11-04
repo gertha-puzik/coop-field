@@ -39,6 +39,7 @@ import {
   testEntryStrict,
   testFieldGeometry,
   testObjects,
+  testObjectDrawRect,
   testPeaceBattleBlocked,
   testPeaceObjectsFree,
   testPeacePointFree,
@@ -140,6 +141,13 @@ const CAM_USER_ZOOM_MAX = 2;
 const CAM_USER_ZOOM_STEP = 1.12;
 /** Множитель спринта в мирном режиме: зажатый Shift ускоряет кота вдвое. */
 const SPRINT_MULT = 2;
+/** Порог «объект закрывает игрока»: если препятствие перекрывает прямоугольник
+ *  модельки своего кота хотя бы на эту долю, объект рисуется полупрозрачным —
+ *  игрок видит себя за кроной/камнем. Эффект только на своем экране: чужие
+ *  клиенты рисуют кот целиком спрятанным, как и положено. */
+const OCCLUDE_COVER = 0.7;
+/** Альфа объекта, под которым спрятался свой кот (см. OCCLUDE_COVER). */
+const OCCLUDE_ALPHA = 0.6;
 /** Темп появления частиц спринта: один комочек каждые столько мс бега. */
 const SPRINT_SPAWN_MS = 26;
 /** Гравитация частиц спринта, px мира / с²: взлетев — падают обратно в траву. */
@@ -521,6 +529,23 @@ function peaceHalfBox(s: SimSettings, img: HTMLImageElement | undefined) {
   const aspect = img && img.height > 0 ? img.width / img.height : 2 / 3;
   const b = spriteBoxOf(s, aspect, 0, 0, s.character.spriteScale);
   return { dx: b.w / 2 / s.field.cellW, dy: b.h / 2 / s.field.cellH };
+}
+
+/** Прямоугольник в px мира (габарит модельки/объекта для проверки перекрытия). */
+type PxRect = { x0: number; y0: number; x1: number; y1: number };
+
+/** Какая доля прямоугольника b накрыта прямоугольником a (0..1, по площади). */
+function coveredRatio(a: PxRect, b: PxRect): number {
+  const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
+  const iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const area = (b.x1 - b.x0) * (b.y1 - b.y0);
+  return area > 0 ? (ix * iy) / area : 0;
+}
+
+/** Радиус физического тела мирного кота у земли (px мира): доля ширины модельки —
+ *  крупный кот занимает больше места, мелкий пролезает там, где крупному тесно. */
+function peaceBodyRadius(spriteW: number): number {
+  return Math.max(12, spriteW * 0.3);
 }
 
 /** Ближайшая клетка захода к клетке (манхэттен) — куда телепортировать при выходе
@@ -1755,6 +1780,11 @@ export default function Simulator() {
           x: typeof cat.x === 'number' ? cat.x : (prev?.col ?? 0) + 1,
           y: typeof cat.y === 'number' ? cat.y : (prev?.row ?? 0) + 1,
           deg: cat.deg ?? prev?.angle,
+          // Рост обязан доехать до пересчёта модельки: если size в пакете нет —
+          // держим прежний масштаб соседа, иначе catToDummy вернёт дефолтные 100%
+          // и при каждом шаге сосед «вырастал» до максимума (баг «новичок не видит
+          // истинный рост старых игроков»).
+          size: cat.size ?? prev?.scale,
         });
         // «Тест»: чужой кот в свободной ходьбе — позиция едет в карту плавного
         // доведения, клетка сервера обновляется без анимации шага.
@@ -1772,6 +1802,8 @@ export default function Simulator() {
             prev.name = dummy.name;
             prev.sprite = dummy.sprite;
             prev.angle = dummy.angle;
+            // Рост — как в боевом ходе ниже: только когда он реально приехал в пакете.
+            if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;
           } else {
             // Новый кот сразу в мирном режиме (fm=1 со спавна): ветка боевого
             // добавления не выполняется — добавляем его здесь, иначе соседи
@@ -2505,15 +2537,43 @@ export default function Simulator() {
           // Препятствия (камень/дерево) — по точке опоры и их настоящим размерам:
           // тело спрайта у земли, не вся клетка — свободную часть клетки можно
           // обходить (см. testPeaceObjectsFree).
+          // Соседи — тоже физические тела: у мирного кота круг у земли, радиус
+          // растёт вместе с ростом модельки (scale), поэтому наложиться друг на
+          // друга игроки не могут ни при каком росте. Боевые коты (fm=0) и общие
+          // предметы комнаты остаются клеточными препятствиями: их клетки
+          // раздаёт сервер, там наложений нет и так.
           const strictEntries = testEntryStrict();
+          const others = othersOf(s, s.controlled, mainSavedRef.current, liveRemotesRef.current, objectExtras());
+          const bodies: { x: number; y: number; r: number; cell: { col: number; row: number } | null }[] = [];
+          for (const t of others) {
+            const key = t.id.startsWith('p') ? t.id : null;
+            const fr = key ? remoteFreeRef.current.get(key) : undefined;
+            if (key && fr && remoteFmRef.current.get(key) === 1) {
+              // мирный сосед: тело — круг у точки опоры его модельки
+              const imgT = spritesRef.current[t.sprite];
+              const aspectT = imgT && imgT.height > 0 ? imgT.width / imgT.height : 2 / 3;
+              const boxT = spriteBoxOf(s, aspectT, 0, 0, t.scale);
+              bodies.push({ x: fr.x * cellW + boxT.w / 2, y: fr.y * cellH + boxT.h, r: peaceBodyRadius(boxT.w), cell: null });
+            } else {
+              bodies.push({ x: 0, y: 0, r: 0, cell: { col: t.col, row: t.row } });
+            }
+          }
+          const myR = peaceBodyRadius(hb.dx * 2 * cellW);
           const blocked = (fxT: number, fyT: number) => {
             const px = fxT + hb.dx;
             const py = fyT + hb.dy;
             if (!testPeacePointFree(px, py)) return true;
             if (strictEntries && testPeaceBattleBlocked(px, py)) return true;
             if (!testPeaceObjectsFree(fxT + hb.dx, fyT + hb.dy * 2, cellW, cellH)) return true;
-            for (const t of othersOf(s, s.controlled, mainSavedRef.current, liveRemotesRef.current, objectExtras())) {
-              if (px >= t.col && px <= t.col + 1 && py >= t.row && py <= t.row + 1) return true;
+            const feetX = (fxT + hb.dx) * cellW;
+            const feetY = (fyT + hb.dy * 2) * cellH;
+            for (const b of bodies) {
+              if (b.cell) {
+                if (px >= b.cell.col && px <= b.cell.col + 1 && py >= b.cell.row && py <= b.cell.row + 1) return true;
+              } else {
+                const rr2 = (myR + b.r) * 0.92;
+                if ((feetX - b.x) * (feetX - b.x) + (feetY - b.y) * (feetY - b.y) < rr2 * rr2) return true;
+              }
             }
             return false;
           };
@@ -2521,6 +2581,23 @@ export default function Simulator() {
           const nyT = e.fy + stepFy;
           if (!blocked(nxT, e.fy)) e.fx = nxT;
           if (!blocked(e.fx, nyT)) e.fy = nyT;
+          // Расталкивание: если тела уже пересекаются (спавн рядом, телепорт с
+          // клетки захода, правка локации под котами) — мягко выталкиваем своего
+          // кота из чужого тела вдоль линии центров, по осям и с проверкой blocked,
+          // чтобы выталкивание не закинуло кота в кромку или препятствие.
+          for (const b of bodies) {
+            if (b.cell || b.r <= 0) continue;
+            const ddx = (e.fx + hb.dx) * cellW - b.x;
+            const ddy = (e.fy + hb.dy * 2) * cellH - b.y;
+            const dist = Math.hypot(ddx, ddy);
+            const min = (myR + b.r) * 1.02;
+            if (dist >= min || dist === 0) continue;
+            const k = (min - dist) / dist;
+            const pushFx = (ddx * k) / cellW;
+            const pushFy = (ddy * k) / cellH;
+            if (!blocked(e.fx + pushFx, e.fy)) e.fx += pushFx;
+            if (!blocked(e.fx, e.fy + pushFy)) e.fy += pushFy;
+          }
           // спринтим — копим темп и рождаем комочки земли/травы из-под лап:
           // летят против бега веером, гравитация гасит (физика и рисование ниже)
           if (sprint) {
@@ -3656,30 +3733,68 @@ export default function Simulator() {
       };
       runOrQueue(drawSelf, cellY + (s.field.cellH - 10) * (s.character.spriteScale / 100));
 
+      /** Прямоугольник билборда персонажа (px мира) — тот же расчёт, что в drawChar:
+       *  рост с перспективой, основание прижато к наклонной земле. */
+      const charBillRect = (x: number, y: number, scalePct: number, aspect: number): PxRect => {
+        const th0 = (s.field.cellH - 10) * (scalePct / 100);
+        const groundY = y + th0;
+        const th = th0 * depthM(groundY);
+        const tw = th * aspect;
+        const py = testMode ? groundY * camFxRef.current.sq - th : y;
+        return { x0: x, y0: py, x1: x + tw, y1: py + th };
+      };
+      /** Прямоугольник модельки того, за кого играют: свой кот или манекен под
+       *  управлением. Для проверки «объект закрывает игрока» (см. OCCLUDE_COVER). */
+      const selfBillRect = (): PxRect | null => {
+        if (selfId === 'main') {
+          if (!spr || !mainPos) return null;
+          return charBillRect(cellX, cellY, s.character.spriteScale, spr.width / spr.height);
+        }
+        const d = dummies.find((t) => t.id === selfId);
+        const imgD = d ? spritesRef.current[d.sprite] : null;
+        if (!d || !imgD) return null;
+        const tpD = posOfChar(d.id, d.col, d.row);
+        return charBillRect(tpD.x, tpD.y, d.scale, imgD.width / imgD.height);
+      };
+
       // глубинная отрисовка «теста»: препятствия встают в общую очередь с котами —
       // дерево перекрывает кота позади себя и скрывается за котом перед собой.
       // Земля (проталины) — часть грунта, в очередь билбордов не попадает.
       if (testMode) {
+        const fxcO = camFxRef.current;
+        const selfRectO = selfBillRect();
         for (const o of testObjects()) {
           if (o.kind === 'dirt' || o.kind === 'entry') continue; // земля и заходы — часть грунта
           const kind = o.kind;
           // Положение в клетке (центр/край): сдвигает и точку опоры — глубинная
           // сортировка считает по ней же, деревья у края перекрывают корректно.
           const poB = objectPosOffset(o);
+          const objX = (o.c + 0.5 + poB.dx) * s.field.cellW;
           const by = (o.r + 1 + poB.dy) * s.field.cellH - 2;
+          // Билборд стоит на наклонной земле: основание сжато тем же множителем,
+          // что и точка опоры котов (groundY * sq в drawChar), сам спрайт вертикальный.
+          // Без этого дерево в мирной перспективе уезжало на клетку ниже своего
+          // места из редактора и не могло укрыть кота, вставшего за ним.
+          const byDrawn = by * fxcO.sq;
+          const mO = depthM(by);
+          const vO = hashStr(o.id) & 7;
+          // Свой кот зашёл за объект и объект закрывает его хотя бы на OCCLUDE_COVER —
+          // рисуем этот объект полупрозрачным (только на этом экране).
+          const covered =
+            !!selfRectO &&
+            coveredRatio(testObjectDrawRect(kind, s.field.cellH, objX, byDrawn, mO, vO), selfRectO) >= OCCLUDE_COVER;
           bills.push({
             y: by,
-            fn: () =>
-              drawTestObject(
-                ctx,
-                kind,
-                s.field.cellW,
-                s.field.cellH,
-                (o.c + 0.5 + poB.dx) * s.field.cellW,
-                by,
-                depthM(by),
-                hashStr(o.id) & 7,
-              ),
+            fn: () => {
+              if (covered) {
+                ctx.save();
+                ctx.globalAlpha = OCCLUDE_ALPHA;
+                drawTestObject(ctx, kind, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
+                ctx.restore();
+              } else {
+                drawTestObject(ctx, kind, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
+              }
+            },
           });
         }
         bills.sort((a, b) => a.y - b.y);
@@ -4966,7 +5081,7 @@ export default function Simulator() {
       <ThemeBackdrop theme={theme} />
       <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
         <div>
-          <h1 className="text-base font-bold leading-tight">Общее поле</h1>
+          <h1 className="text-base font-bold leading-tight">abnocw</h1>
           <p className="text-[11px] text-[var(--sim-text-faint)]">
             {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
           </p>

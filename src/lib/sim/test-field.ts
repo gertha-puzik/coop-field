@@ -894,6 +894,35 @@ export function drawTestObject(
   ctx.restore();
 }
 
+/**
+ * Габарит отрисовки препятствия (px мира) — тот же расчёт, что в drawTestObject:
+ * спрайт пака прижат низом-центром к точке опоры, ширина по виду и зерну v,
+ * множитель перспективы m. Пока текстура не догрузилась — габарит векторной
+ * фигуры-заменителя. Нужен для проверки «объект закрывает модельку игрока»
+ * (прозрачность перекрытия): считать можно только по тем же числам, что рисуют.
+ */
+export function testObjectDrawRect(
+  kind: 'stone' | 'tree',
+  cellH: number,
+  baseX: number,
+  baseY: number,
+  m = 1,
+  v = 0,
+): { x0: number; y0: number; x1: number; y1: number } {
+  const k = 0.94 + (v % 5) * 0.03;
+  const img = packImg(kind === 'tree' ? 'tree' : 'rock');
+  if (img) {
+    const w = (kind === 'tree' ? cellH * 0.92 * 0.813 : 54) * m * k;
+    const h = (w * img.naturalHeight) / img.naturalWidth;
+    return { x0: baseX - w / 2, y0: baseY - h, x1: baseX + w / 2, y1: baseY };
+  }
+  // векторные заменители из drawTestObject: камень ≈ 59×37, дерево ≈ 59×110
+  if (kind === 'stone') {
+    return { x0: baseX - 32 * m * k, y0: baseY - 35 * m * k, x1: baseX + 27 * m * k, y1: baseY + 2 * m * k };
+  }
+  return { x0: baseX - 32 * m * k, y0: baseY - 108 * m * k, x1: baseX + 27 * m * k, y1: baseY + 2 * m * k };
+}
+
 /* ---------- наземный декор: проталина земли ---------- */
 
 /**
