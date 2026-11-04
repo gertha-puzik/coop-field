@@ -15,6 +15,19 @@
 
 export type TestMapZoneKind = 'cells' | 'green';
 
+/** Физическое препятствие: камень или дерево на клетке (0-based). Через него
+ *  нельзя пройти ни в мирном режиме (якоря внутри заняты), ни в боевом
+ *  (клетка непроходима). Спрайт рисуется от низа клетки вверх. */
+export type TestMapObjectKind = 'stone' | 'tree';
+
+export type TestMapObject = {
+  id: string;
+  kind: TestMapObjectKind;
+  /** 0-based клетка, которую объект занимает целиком. */
+  c: number;
+  r: number;
+};
+
 export type TestMapZone = {
   id: string;
   name: string;
@@ -35,15 +48,19 @@ export type TestMap = {
   /** Сид дрожи кромки и декора — одинаковая картинка у всех игроков. */
   seed: string;
   zones: TestMapZone[];
+  /** Физические препятствия: камни и деревья (появились позже зон — поэтому
+   *  необязательное поле; старые конфиги без него читаются как «пусто»). */
+  objects?: TestMapObject[];
 };
 
-/** Пределы редактора: мир и число зон. */
+/** Пределы редактора: мир, число зон и число препятствий. */
 export const TEST_MAP_LIMITS = {
   colsMin: 6,
   colsMax: 60,
   rowsMin: 3,
   rowsMax: 40,
-  zonesMax: 24,
+  zonesMax: 48,
+  objectsMax: 60,
   nameMax: 24,
 } as const;
 
@@ -67,6 +84,12 @@ let uidSeq = 0;
 export function newZoneId(): string {
   uidSeq += 1;
   return `z${Date.now().toString(36)}-${uidSeq.toString(36)}`;
+}
+
+/** Уникальный id препятствия (камень/дерево). */
+export function newObjectId(): string {
+  uidSeq += 1;
+  return `o${Date.now().toString(36)}-${uidSeq.toString(36)}`;
 }
 
 function asInt(v: unknown): number | null {
@@ -134,6 +157,29 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   if (src.zones.length > TEST_MAP_LIMITS.zonesMax) {
     return { error: `зон не больше ${TEST_MAP_LIMITS.zonesMax}` };
   }
+  // Препятствия необязательны: старые конфиги без поля objects читаются как «пусто».
+  let objects: TestMapObject[] = [];
+  if (src.objects != null) {
+    if (!Array.isArray(src.objects)) return { error: 'список препятствий не распознан' };
+    if (src.objects.length > TEST_MAP_LIMITS.objectsMax) {
+      return { error: `препятствий не больше ${TEST_MAP_LIMITS.objectsMax}` };
+    }
+    const taken = new Set<string>();
+    for (let i = 0; i < src.objects.length; i++) {
+      const o = src.objects[i] as Partial<TestMapObject>;
+      const kind = o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : null;
+      if (!kind) return { error: `препятствие №${i + 1}: неизвестный тип` };
+      const c = asInt(o.c);
+      const r = asInt(o.r);
+      if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
+        return { error: `препятствие №${i + 1}: вне границ мира` };
+      }
+      const key = `${c},${r}`;
+      if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
+      taken.add(key);
+      objects.push({ id: `o${i + 1}`, kind, c, r });
+    }
+  }
   const zones: TestMapZone[] = [];
   for (let i = 0; i < src.zones.length; i++) {
     const z = src.zones[i] as Partial<TestMapZone>;
@@ -165,6 +211,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       margin: 0.5,
       seed: typeof src.seed === 'string' && src.seed.trim() ? src.seed.trim().slice(0, 24) : 'test',
       zones,
+      objects,
     },
   };
 }

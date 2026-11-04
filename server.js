@@ -314,7 +314,8 @@ function testCellInIsland(c, r, island = TEST_ISLAND) {
 
 /** Маска проходимости «теста» (0-based): зоны с клетками минус клетки, задетые
  *  кромкой (сглаженный край подрезает углы зон — такие клетки недоступны для
- *  прыжков, а сетка у кромки на клиенте рисуется с клипом по тому же полигону).
+ *  прыжков, а сетка у кромки на клиенте рисуется с клипом по тому же полигону),
+ *  минус клетки, занятые препятствиями (камень/дерево стоят намертво).
  *  Зелёные зоны в бою не участвуют — это только мирная территория. */
 function buildCells(map, island) {
   const mask = Array.from({ length: map.rows }, () => new Array(map.cols).fill(false));
@@ -324,9 +325,10 @@ function buildCells(map, island) {
       for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
     }
   }
+  const blocked = new Set((map.objects || []).map((o) => `${o.c},${o.r}`));
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
-      if (mask[r][c] && !testCellInIsland(c, r, island)) mask[r][c] = false;
+      if (mask[r][c] && (!testCellInIsland(c, r, island) || blocked.has(`${c},${r}`))) mask[r][c] = false;
     }
   }
   return mask;
@@ -375,6 +377,7 @@ function defaultTestMap() {
       { id: 'z2', name: 'Переход', kind: 'cells', c0: 10, r0: 1, c1: 12, r1: 5 },
       { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 0, c1: 18, r1: 5 },
     ],
+    objects: [],
   };
 }
 
@@ -392,7 +395,29 @@ function sanitizeTestMap(raw) {
   if (cols < 6 || cols > 60) return { error: 'ширина мира должна быть 6–60' };
   if (rows < 3 || rows > 40) return { error: 'высота мира должна быть 3–40' };
   if (!Array.isArray(raw.zones) || raw.zones.length === 0) return { error: 'список зон пуст' };
-  if (raw.zones.length > 24) return { error: 'зон не больше 24' };
+  if (raw.zones.length > 48) return { error: 'зон не больше 48' };
+  // Препятствия необязательны (старые конфиги без objects читаются как «пусто»):
+  // камень/дерево занимают клетку целиком — через неё нельзя пройти ни в бою, ни в мирном.
+  let objects = [];
+  if (raw.objects != null) {
+    if (!Array.isArray(raw.objects)) return { error: 'список препятствий не распознан' };
+    if (raw.objects.length > 60) return { error: 'препятствий не больше 60' };
+    const taken = new Set();
+    for (let i = 0; i < raw.objects.length; i++) {
+      const o = raw.objects[i];
+      const kind = o && (o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : null);
+      if (!kind) return { error: `препятствие №${i + 1}: неизвестный тип` };
+      const c = asInt(o.c);
+      const r = asInt(o.r);
+      if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
+        return { error: `препятствие №${i + 1}: вне границ мира` };
+      }
+      const key = `${c},${r}`;
+      if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
+      taken.add(key);
+      objects.push({ id: `o${i + 1}`, kind, c, r });
+    }
+  }
   const zones = [];
   for (let i = 0; i < raw.zones.length; i++) {
     const z = raw.zones[i];
@@ -447,6 +472,7 @@ function sanitizeTestMap(raw) {
       margin: 0.5,
       seed: typeof raw.seed === 'string' && raw.seed.trim() ? raw.seed.trim().slice(0, 24) : 'test',
       zones,
+      objects,
     },
   };
 }
@@ -525,7 +551,7 @@ function setMap(ws, payload = {}) {
     for (const w of room.sockets.keys()) send(w, 'map', testMap);
     broadcast(room, 'field', fieldPayload(room));
   }
-  console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}`);
+  console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}`);
 }
 
 const rooms = new Map();

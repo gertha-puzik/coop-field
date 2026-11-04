@@ -19,7 +19,7 @@
  * следующая отрисовка и все проверки ходьбы уже считают новую локацию.
  */
 
-import { TEST_MAP_DEFAULT, type TestMap, type TestMapZone } from './test-map';
+import { TEST_MAP_DEFAULT, type TestMap, type TestMapObject, type TestMapZone } from './test-map';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -38,6 +38,7 @@ export function setTestMap(map: TestMap): void {
   islandPoly = null;
   peaceCache = null;
   geoCache = null;
+  objCache = null;
 }
 
 /** Зона — боевая (с клетками) или зелёная (только мирный режим). */
@@ -68,18 +69,23 @@ export function testCellInIsland(c: number, r: number): boolean {
   return true;
 }
 
-/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне с клетками и не задета кромкой. */
+/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне с клетками, не задета
+ *  кромкой и не занята препятствием (камень/дерево стоят на клетке намертво). */
 export function testWalkableCell(c: number, r: number): boolean {
   if (!currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
+  if (testObjectAt(c, r)) return false;
   return testCellInIsland(c, r);
 }
 
-/** Клетка зоны с клетками, задетая кромкой (не целиком внутри) — для красной пометки. */
+/** Клетка зоны с клетками, задетая кромкой (не целиком внутри) — для красной пометки.
+ *  Клетки с препятствиями (камень/дерево) сюда не попадают: у них своя спрайт-пометка,
+ *  и красная заливка «край локации» рядом с камнем только путала бы. */
 export function testClippedCells(): { c: number; r: number }[] {
   const out: { c: number; r: number }[] = [];
   for (let r = 0; r < currentMap.rows; r++) {
     for (let c = 0; c < currentMap.cols; c++) {
       if (testWalkableCell(c, r)) continue;
+      if (testObjectAt(c, r)) continue;
       if (currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
     }
   }
@@ -114,6 +120,53 @@ export function nearestWalkableCell(c: number, r: number): { c: number; r: numbe
     }
   }
   return { c: 4, r: 3 };
+}
+
+/* ---------- препятствия: камни и деревья ---------- */
+
+/** Индекс препятствий по клеткам — пересобирается при смене конфига локации. */
+let objCache: { map: TestMap; idx: Map<string, TestMapObject> } | null = null;
+
+function objectIndex(): Map<string, TestMapObject> {
+  if (!objCache || objCache.map !== currentMap) {
+    const idx = new Map<string, TestMapObject>();
+    for (const o of currentMap.objects ?? []) idx.set(`${o.c},${o.r}`, o);
+    objCache = { map: currentMap, idx };
+  }
+  return objCache.idx;
+}
+
+/** Препятствие, занимающее клетку (0-based), или null — клетка свободна. */
+export function testObjectAt(c: number, r: number): TestMapObject | null {
+  return objectIndex().get(`${c},${r}`) ?? null;
+}
+
+/** Все препятствия локации — для отрисовки и редактора. */
+export function testObjects(): TestMapObject[] {
+  return currentMap.objects ?? [];
+}
+
+/** Все точки внутри клетки препятствия (включая границы) стоят намертво:
+ *  и центр, и середины сторон, и углы — так вокруг камня остаётся чистый обход. */
+function pointBlockedByObject(x: number, y: number): boolean {
+  for (const o of currentMap.objects ?? []) {
+    if (x >= o.c && x <= o.c + 1 && y >= o.r && y <= o.r + 1) return true;
+  }
+  return false;
+}
+
+/* ---------- перспектива мирного режима ---------- */
+
+/** Масштаб спрайта на глубине wy (в клеточных долях мира): верхний край локации —
+ *  дальний (меньше), нижний — ближний (больше). Сила эффекта анимируется камерой
+ *  (camFx.dp): в бою эффект плавно гаснет до 1. */
+export const PEACE_DEPTH_FAR = 0.72;
+export const PEACE_DEPTH_NEAR = 1.18;
+
+export function peaceDepthScale(wy: number): number {
+  const denom = Math.max(1, currentMap.rows);
+  const t = Math.min(1, Math.max(0, wy / denom));
+  return PEACE_DEPTH_FAR + (PEACE_DEPTH_NEAR - PEACE_DEPTH_FAR) * t;
 }
 
 /* ---------- детерминированный шум ---------- */
@@ -324,6 +377,7 @@ function peaceAnchorData(): PeaceAnchors {
     const k = `${x},${y}`;
     if (seen.has(k)) return;
     if (!pointInPolygon(poly, x, y)) return;
+    if (pointBlockedByObject(x, y)) return; // клетка с камнем/деревом непроходима
     seen.add(k);
     pts.push({ x, y });
   };
@@ -484,19 +538,21 @@ export function buildTestDecor(poly: Pt[], seed: string, count = 110): DecorItem
   return items;
 }
 
-/** Один предмет декора на канвасе: кустики травы (0–2) и цветы (3–7). */
+/** Один предмет декора на канвасе: кустики травы (0–2) и цветы (3–7).
+ *  m — множитель перспективы мирного режима (дальние предметы мельче). */
 export function drawTestDecorItem(
   ctx: CanvasRenderingContext2D,
   d: DecorItem,
   cellW: number,
   cellH: number,
+  m = 1,
 ): void {
   const x = d.x * cellW;
   const y = d.y * cellH;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(d.rot);
-  ctx.scale(d.s * (d.v % 2 === 0 ? 1 : -1), d.s);
+  ctx.scale(d.s * m * (d.v % 2 === 0 ? 1 : -1), d.s * m);
   if (d.kind <= 2) {
     // кустик травы: 4–6 травинок-дуг
     const blades = 4 + (d.v % 3);
@@ -546,6 +602,131 @@ export function drawTestDecorItem(
     ctx.arc(0, -7, 1.7, 0, Math.PI * 2);
     ctx.fillStyle = center;
     ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ---------- препятствия: спрайты камня и дерева ---------- */
+
+/**
+ * Спрайт физического препятствия — рисуется фигурами в стиле локации (никаких
+ * внешних картинок: одинаковый вид на всех клиентах, нечего догружать и терять).
+ * Точка опоры — (baseX, baseY) = низ клетки (основание ствола / подошва камня),
+ * спрайт растёт вверх. m — множитель перспективы, v — зерно вариаций (зеркалит
+ * и слегка меняет размер, чтобы деревья не стояли близнецами).
+ */
+export function drawTestObject(
+  ctx: CanvasRenderingContext2D,
+  kind: 'stone' | 'tree',
+  cellW: number,
+  cellH: number,
+  baseX: number,
+  baseY: number,
+  m = 1,
+  v = 0,
+): void {
+  const flip = v % 2 === 0 ? 1 : -1;
+  const k = 0.94 + (v % 5) * 0.03;
+  ctx.save();
+  ctx.translate(baseX, baseY);
+  ctx.scale(m * k * flip, m * k);
+  // тень под ногами — общая для обоих видов
+  ctx.beginPath();
+  ctx.ellipse(0, 1, kind === 'tree' ? 30 : 25, kind === 'tree' ? 7 : 6, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  ctx.fill();
+  if (kind === 'stone') {
+    // валун: основной корпус, светлая грань сверху-слева, тёмный низ, трещины и мох
+    ctx.beginPath();
+    ctx.moveTo(-26, 0);
+    ctx.quadraticCurveTo(-32, -16, -18, -26);
+    ctx.quadraticCurveTo(-6, -35, 10, -30);
+    ctx.quadraticCurveTo(27, -24, 26, -9);
+    ctx.quadraticCurveTo(25, -2, 18, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#7f858e';
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#4d525a';
+    ctx.stroke();
+    // светлая грань
+    ctx.beginPath();
+    ctx.moveTo(-16, -24);
+    ctx.quadraticCurveTo(-6, -32, 8, -28);
+    ctx.quadraticCurveTo(0, -22, -8, -17);
+    ctx.closePath();
+    ctx.fillStyle = '#9aa0a9';
+    ctx.fill();
+    // тёмный низ
+    ctx.beginPath();
+    ctx.moveTo(-24, -6);
+    ctx.quadraticCurveTo(-2, -12, 24, -6);
+    ctx.quadraticCurveTo(20, -1, 14, 0);
+    ctx.lineTo(-20, 0);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(60, 64, 71, 0.55)';
+    ctx.fill();
+    // трещины
+    ctx.strokeStyle = 'rgba(52, 56, 63, 0.7)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-6, -24);
+    ctx.lineTo(-1, -14);
+    ctx.lineTo(-8, -7);
+    ctx.moveTo(12, -26);
+    ctx.lineTo(9, -15);
+    ctx.stroke();
+    // мох у основания
+    ctx.beginPath();
+    ctx.ellipse(-15, -3, 8, 3.6, -0.25, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(77, 112, 60, 0.85)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(16, -2, 5, 2.6, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // дерево: ствол с корневым расширением и крона из трёх шапок листвы
+    ctx.beginPath();
+    ctx.moveTo(-8, 0);
+    ctx.quadraticCurveTo(-7, -22, -5.5, -44);
+    ctx.lineTo(5.5, -44);
+    ctx.quadraticCurveTo(7, -22, 8, 0);
+    ctx.quadraticCurveTo(12, -1, 14, 2);
+    ctx.lineTo(-14, 2);
+    ctx.quadraticCurveTo(-12, -1, -8, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#66452a';
+    ctx.fill();
+    // тёмная сторона ствола
+    ctx.beginPath();
+    ctx.moveTo(2, 0);
+    ctx.quadraticCurveTo(4, -22, 4.5, -44);
+    ctx.lineTo(5.5, -44);
+    ctx.quadraticCurveTo(7, -22, 8, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#523620';
+    ctx.fill();
+    // крона: общая тёмная подложка и три светлых шапки — каждая окружность отдельным
+    // путём: в одном пути соединительные линии при зеркалировании дают дыры (nonzero)
+    ctx.fillStyle = '#3c5f2a';
+    for (const [cx2, cy2, r2] of [[-22, -60, 24], [23, -58, 25], [0, -78, 30]]) {
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, r2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#4c7434';
+    for (const [cx2, cy2, r2] of [[-14, -66, 17], [14, -64, 16], [0, -86, 20]]) {
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, r2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // блики листвы
+    ctx.fillStyle = 'rgba(122, 168, 84, 0.75)';
+    for (const [cx2, cy2, r2] of [[-8, -88, 9], [-24, -62, 7]]) {
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, r2, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
