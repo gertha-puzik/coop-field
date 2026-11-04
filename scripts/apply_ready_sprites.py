@@ -32,9 +32,10 @@ def fit_bottom_center(src: str, dst: str) -> None:
     out.save(dst)
     print(dst, out.size, 'content', (w, h), 'bbox:', out.getchannel('A').getbbox())
 
-# Ряща: готовые коты
-shift_to_bottom(f'{UP}/zagruzheno_1.png', f'{SP}/gremuchnik.png')
-shift_to_bottom(f'{UP}/6ac8fcabf0cb2111.png', f'{SP}/gromoryov.png')
+# Ряща: готовые коты (Громорёв — чёрно-белый «смокинг», Гремучник — второй).
+# Имена поменяны по просьбе автора: сначала файлы были назначены наоборот.
+shift_to_bottom(f'{UP}/zagruzheno_1.png', f'{SP}/gromoryov.png')
+shift_to_bottom(f'{UP}/6ac8fcabf0cb2111.png', f'{SP}/gremuchnik.png')
 
 # Малышочки: готовые пиксель-спрайты (родной размер, низ-центр)
 fit_bottom_center(f'{UP}/Rvanitse.png', f'{SP}/rvanitse.png')
