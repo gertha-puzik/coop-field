@@ -19,7 +19,14 @@
  * следующая отрисовка и все проверки ходьбы уже считают новую локацию.
  */
 
-import { TEST_MAP_DEFAULT, isObstacleKind, type TestMap, type TestMapObject, type TestMapZone } from './test-map';
+import {
+  TEST_MAP_DEFAULT,
+  isObstacleKind,
+  type TestMap,
+  type TestMapEntryDir,
+  type TestMapObject,
+  type TestMapZone,
+} from './test-map';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -152,6 +159,46 @@ export function testObjectAt(c: number, r: number): TestMapObject | null {
 /** Все препятствия локации — для отрисовки и редактора. */
 export function testObjects(): TestMapObject[] {
   return currentMap.objects ?? [];
+}
+
+/* ---------- клетки захода ---------- */
+
+/** Клетка захода (0-based) на этой клетке или null — там другой объект/пусто. */
+export function testEntryAt(c: number, r: number): TestMapObject | null {
+  const o = objectIndex().get(`${c},${r}`);
+  return o && o.kind === 'entry' && o.dir ? o : null;
+}
+
+/** Все клетки захода локации. */
+export function testEntries(): TestMapObject[] {
+  return (currentMap.objects ?? []).filter((o) => o.kind === 'entry' && !!o.dir);
+}
+
+/** Строгий режим заходов: на локации есть хотя бы одна клетка захода — боевые
+ *  клетки запираются (вход в бой — только с захода в боевом режиме, выход — на
+ *  заход или кнопкой). Нет ни одного захода — работает прежняя открытая логика. */
+export function testEntryStrict(): boolean {
+  return (currentMap.objects ?? []).some((o) => o.kind === 'entry' && !!o.dir);
+}
+
+/** Точка (клеточные доли) на боевой клетке, проходимой в бою: в мирном режиме
+ *  при строгих заходах такие клетки заперты — свободная ходьба в зону не пускает. */
+export function testPeaceBattleBlocked(x: number, y: number): boolean {
+  return testWalkableCell(Math.floor(x), Math.floor(y));
+}
+
+/** Клетки, непроходимые для боевого маршрута по клику: всё вне зон клеточной
+ *  ходьбы, КРОМЕ клеток захода — маршрут может завершаться на заходе (выход). */
+export function testBattleRouteBlocked(): { c: number; r: number }[] {
+  const entries = new Set((currentMap.objects ?? []).filter((o) => o.kind === 'entry').map((o) => `${o.c},${o.r}`));
+  const out: { c: number; r: number }[] = [];
+  for (let r = 0; r < currentMap.rows; r++) {
+    for (let c = 0; c < currentMap.cols; c++) {
+      if (entries.has(`${c},${r}`)) continue;
+      if (!testWalkableCell(c, r)) out.push({ c, r });
+    }
+  }
+  return out;
 }
 
 /** Все точки внутри клетки препятствия (включая границы) стоят намертво:
@@ -842,6 +889,70 @@ export function drawDirtPatch(
     ctx.lineWidth = 1.3;
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+/**
+ * Клетка захода: лёгкий градиент от «последующей» боевой клетки (ярче у края в
+ * направлении шага — свет как будто вытекает из зоны) плюс две небольшие галочки
+ * по центру — так вход в бой читается интуитивно. cx/cy — центр клетки в px мира.
+ */
+export function drawEntryMark(
+  ctx: CanvasRenderingContext2D,
+  cellW: number,
+  cellH: number,
+  cx: number,
+  cy: number,
+  dir: TestMapEntryDir,
+): void {
+  const x0 = cx - cellW / 2;
+  const y0 = cy - cellH / 2;
+  // градиент: от края к боевой клетке (ярко) к противоположному краю (прозрачно)
+  const gx = dir === 'left' ? x0 : dir === 'right' ? x0 + cellW : cx;
+  const gy = dir === 'up' ? y0 : dir === 'down' ? y0 + cellH : cy;
+  const tx = dir === 'left' ? x0 + cellW : dir === 'right' ? x0 : cx;
+  const ty = dir === 'up' ? y0 + cellH : dir === 'down' ? y0 : cy;
+  const g = ctx.createLinearGradient(gx, gy, tx, ty);
+  g.addColorStop(0, 'rgba(250, 214, 80, 0.4)');
+  g.addColorStop(0.55, 'rgba(250, 214, 80, 0.14)');
+  g.addColorStop(1, 'rgba(250, 214, 80, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x0, y0, cellW, cellH);
+  // светлая кромка со стороны боевой клетки — граница «входа»
+  ctx.save();
+  ctx.strokeStyle = 'rgba(246, 208, 61, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (dir === 'left') {
+    ctx.moveTo(x0 + 1, y0 + 1);
+    ctx.lineTo(x0 + 1, y0 + cellH - 1);
+  } else if (dir === 'right') {
+    ctx.moveTo(x0 + cellW - 1, y0 + 1);
+    ctx.lineTo(x0 + cellW - 1, y0 + cellH - 1);
+  } else if (dir === 'up') {
+    ctx.moveTo(x0 + 1, y0 + 1);
+    ctx.lineTo(x0 + cellW - 1, y0 + 1);
+  } else {
+    ctx.moveTo(x0 + 1, y0 + cellH - 1);
+    ctx.lineTo(x0 + cellW - 1, y0 + cellH - 1);
+  }
+  ctx.stroke();
+  // две галочки по центру: тёмная подложка + светлый штрих сверху (видно на траве)
+  const check = (dx: number, dy: number) => {
+    for (const pass of [0, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + dx - 7, cy - 1 + dy);
+      ctx.lineTo(cx + dx - 2.5, cy + 4.5 + dy);
+      ctx.lineTo(cx + dx + 6, cy - 6 + dy);
+      ctx.strokeStyle = pass === 0 ? 'rgba(24, 32, 16, 0.5)' : 'rgba(255, 255, 255, 0.95)';
+      ctx.lineWidth = pass === 0 ? 5.6 : 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+  };
+  check(-6, 0);
+  check(8, 0);
   ctx.restore();
 }
 

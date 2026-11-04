@@ -326,7 +326,7 @@ function buildCells(map, island) {
       for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
     }
   }
-  const blocked = new Set((map.objects || []).filter((o) => o.kind !== "dirt").map((o) => `${o.c},${o.r}`));
+  const blocked = new Set((map.objects || []).filter((o) => o.kind !== "dirt" && o.kind !== "entry").map((o) => `${o.c},${o.r}`));
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
       if (mask[r][c] && (!testCellInIsland(c, r, island) || blocked.has(`${c},${r}`))) mask[r][c] = false;
@@ -361,6 +361,13 @@ function nearestTestCell(fx, fy) {
     }
   }
   return null;
+}
+
+/** Клетка захода (0-based) на этой клетке или null: травяная клетка с направлением
+ *  шага в бой. Проходима и в мирном режиме (это трава), и в боевом — это выход из зоны. */
+function testEntryCell(c, r) {
+  const o = (testMap.objects || []).find((oo) => oo.c === c && oo.r === r);
+  return o && o.kind === 'entry' && o.dir ? o : null;
 }
 
 /* ---------- конфиг локации: загрузка, проверка, сохранение, правка редактором ---------- */
@@ -406,7 +413,17 @@ function sanitizeTestMap(raw) {
     const taken = new Set();
     for (let i = 0; i < raw.objects.length; i++) {
       const o = raw.objects[i];
-      const kind = o && (o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : o.kind === 'dirt' ? 'dirt' : null);
+      const kind =
+        o &&
+        (o.kind === 'stone'
+          ? 'stone'
+          : o.kind === 'tree'
+            ? 'tree'
+            : o.kind === 'dirt'
+              ? 'dirt'
+              : o.kind === 'entry'
+                ? 'entry'
+                : null);
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       const c = asInt(o.c);
       const r = asInt(o.r);
@@ -415,10 +432,18 @@ function sanitizeTestMap(raw) {
       }
       // Положение спрайта в клетке (как в src/lib/sim/test-map.ts): нет — центр.
       const pos = o.pos === 'left' || o.pos === 'right' || o.pos === 'top' || o.pos === 'bottom' ? o.pos : 'center';
+      // Направление захода обязательно и только для заходов (зеркало клиента).
+      let dir = null;
+      if (kind === 'entry') {
+        if (o.dir !== 'left' && o.dir !== 'right' && o.dir !== 'up' && o.dir !== 'down') {
+          return { error: `заход №${i + 1}: не задано направление шага` };
+        }
+        dir = o.dir;
+      }
       const key = `${c},${r}`;
       if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
       taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r, pos });
+      objects.push({ id: `o${i + 1}`, kind, c, r, pos, dir });
     }
   }
   const zones = [];
@@ -442,6 +467,21 @@ function sanitizeTestMap(raw) {
   }
   if (!zones.some((z) => z.kind === 'cells')) {
     return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
+  }
+  // Клетки захода: только на траве, и по направлению шага обязана быть боевая
+  // клетка (зеркало проверки из src/lib/sim/test-map.ts).
+  const battleAt = (c, r) =>
+    c >= 0 && r >= 0 && c < cols && r < rows && zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+  for (const o of objects) {
+    if (o.kind !== 'entry' || !o.dir) continue;
+    if (battleAt(o.c, o.r)) {
+      return { error: `заход на клетке ${o.c}×${o.r}: клетка захода стоит на боевых клетках — поставьте её на траве рядом с зоной` };
+    }
+    const dx = o.dir === 'left' ? -1 : o.dir === 'right' ? 1 : 0;
+    const dy = o.dir === 'up' ? -1 : o.dir === 'down' ? 1 : 0;
+    if (!battleAt(o.c + dx, o.r + dy)) {
+      return { error: `заход на клетке ${o.c}×${o.r}: по направлению шага должна быть боевая клетка` };
+    }
   }
   // Зоны обязаны срастаться в один островок (касание сторонами, не углами):
   // иначе контур кромки распадается на несколько петель и локация собирается неверно.
@@ -805,6 +845,9 @@ function join(ws, payload = {}) {
     // Шаги, ждущие снятия кулдауна (см. queueMove), и их таймер.
     moveQueue: [],
     moveTimer: null,
+    // В «тесте» новый кот — в мирном режиме (спавн на траве): fm=1, чтобы у соседей
+    // до первого freemove не рисовалась боевая стрела (она видна только при fm=0).
+    fm: room.fmt === 'test' ? 1 : 0,
   };
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
@@ -857,7 +900,7 @@ function applyMove(ws, cat, payload) {
   const ny = cat.y + step.dy;
   const inBounds =
     room.fmt === 'test'
-      ? testWalkable(nx, ny)
+      ? testWalkable(nx, ny) || !!testEntryCell(nx - 1, ny - 1)
       : nx >= 1 && nx <= WIDTH && ny >= 1 && ny <= HEIGHT;
   if (!inBounds) {
     send(ws, "info", room.fmt === 'test' ? "Край локации." : "Край поля.");
@@ -1483,7 +1526,9 @@ function cellsync(ws, payload = {}) {
   if (!room || !cat || room.fmt !== 'test') return;
   const x = Math.round(Number(payload.x));
   const y = Math.round(Number(payload.y));
-  if (!Number.isInteger(x) || !Number.isInteger(y) || !testWalkable(x, y)) return;
+  // Проходимая боевая клетка или клетка захода: в бой входят с захода (кнопкой),
+  // и сервер обязан принять его клетку — иначе чужие не увидят смену режима (fm).
+  if (!Number.isInteger(x) || !Number.isInteger(y) || (!testWalkable(x, y) && !testEntryCell(x - 1, y - 1))) return;
   if (occupied(room, x, y, cat.id)) {
     outer: for (let rad = 1; rad <= 6; rad++) {
       for (let dr = -rad; dr <= rad; dr++) {

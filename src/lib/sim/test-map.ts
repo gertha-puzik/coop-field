@@ -18,8 +18,19 @@ export type TestMapZoneKind = 'cells' | 'green';
 /** Объект на клетке (0-based). Камень и дерево — физические препятствия: через
  *  них нельзя пройти ни в мирном режиме, ни в боевом (клетка непроходима).
  *  Земля — наземный спрайт-декор (проталина на траве): ходьбу не мешает.
- *  Спрайты рисуются от низа клетки вверх (земля — по всей клетке). */
-export type TestMapObjectKind = 'stone' | 'tree' | 'dirt';
+ *  Заход — клетка входа в боевую зону: стоит на траве рядом с боевыми клетками,
+ *  стрелка указывает, куда игрока перенесёт шаг в боевом режиме (в бой).
+ *  Спрайты рисуются от низа клетки вверх (земля и заход — по всей клетке). */
+export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry';
+
+/** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
+ *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
+export type TestMapEntryDir = 'left' | 'right' | 'up' | 'down';
+
+/** Сдвиг клетки-назначения для направления захода (0-based клетки). */
+export function entryDirDelta(dir: TestMapEntryDir): { dx: number; dy: number } {
+  return dir === 'left' ? { dx: -1, dy: 0 } : dir === 'right' ? { dx: 1, dy: 0 } : dir === 'up' ? { dx: 0, dy: -1 } : { dx: 0, dy: 1 };
+}
 
 /** Положение спрайта внутри его клетки: по центру (как раньше) или сдвинут к
  *  левому/правому краю, верху или низу — декоративная точность расстановки.
@@ -54,6 +65,8 @@ export type TestMapObject = {
   r: number;
   /** Положение спрайта внутри клетки (по умолчанию — центр). */
   pos?: TestMapObjectPos;
+  /** Направление захода (только для kind «entry»): куда перенесёт шаг в бою. */
+  dir?: TestMapEntryDir;
 };
 
 export type TestMapZone = {
@@ -202,7 +215,16 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     const taken = new Set<string>();
     for (let i = 0; i < src.objects.length; i++) {
       const o = src.objects[i] as Partial<TestMapObject>;
-      const kind = o.kind === 'stone' ? 'stone' : o.kind === 'tree' ? 'tree' : o.kind === 'dirt' ? 'dirt' : null;
+      const kind =
+        o.kind === 'stone'
+          ? 'stone'
+          : o.kind === 'tree'
+            ? 'tree'
+            : o.kind === 'dirt'
+              ? 'dirt'
+              : o.kind === 'entry'
+                ? 'entry'
+                : null;
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       const c = asInt(o.c);
       const r = asInt(o.r);
@@ -212,10 +234,18 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       // Положение спрайта в клетке необязательное: нет — центр (как в старых конфигах).
       const pos: TestMapObjectPos =
         o.pos === 'left' || o.pos === 'right' || o.pos === 'top' || o.pos === 'bottom' ? o.pos : 'center';
+      // Направление захода обязательно и только для заходов.
+      let dir: TestMapEntryDir | undefined;
+      if (kind === 'entry') {
+        if (o.dir !== 'left' && o.dir !== 'right' && o.dir !== 'up' && o.dir !== 'down') {
+          return { error: `заход №${i + 1}: не задано направление шага` };
+        }
+        dir = o.dir;
+      }
       const key = `${c},${r}`;
       if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
       taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r, pos });
+      objects.push({ id: `o${i + 1}`, kind, c, r, pos, dir });
     }
   }
   const zones: TestMapZone[] = [];
@@ -238,6 +268,20 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   }
   if (!zones.some((z) => z.kind === 'cells')) {
     return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
+  }
+  // Клетки захода: только на траве, и по направлению шага обязана быть боевая
+  // клетка — иначе заход не ведёт в бой (проверка тут, потому что зоны уже дочитаны).
+  const battleAt = (c: number, r: number): boolean =>
+    c >= 0 && r >= 0 && c < cols && r < rows && zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+  for (const o of objects) {
+    if (o.kind !== 'entry' || !o.dir) continue;
+    if (battleAt(o.c, o.r)) {
+      return { error: `заход на клетке ${o.c}×${o.r}: клетка захода стоит на боевых клетках — поставьте её на траве рядом с зоной` };
+    }
+    const d = entryDirDelta(o.dir);
+    if (!battleAt(o.c + d.dx, o.r + d.dy)) {
+      return { error: `заход на клетке ${o.c}×${o.r}: по направлению шага должна быть боевая клетка` };
+    }
   }
   const conn = testMapConnectivityError(zones);
   if (conn) return { error: conn };

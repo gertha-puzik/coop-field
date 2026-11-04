@@ -659,12 +659,6 @@ export function SettingsPanel(props: Props) {
           )}
           {tab === 'arrow' && (
             <>
-        <Toggle
-          label="Боевой режим"
-          checked={s.arrow.battleMode}
-          hint="Клавиша B. В мирном режиме замедлений нет."
-          onChange={(v) => props.patchArrow({ battleMode: v })}
-        />
         <SlideNum
           label="Скорость вращения (период оборота)"
           value={s.arrow.periodSec}
