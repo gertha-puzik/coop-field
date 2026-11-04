@@ -42,12 +42,14 @@ import {
 import {
   newObjectId,
   newZoneId,
+  objectPosOffset,
   sanitizeTestMap,
   TEST_MAP_DEFAULT,
   TEST_MAP_LIMITS,
   testMapConnectivityError,
   type TestMap,
   type TestMapObject,
+  type TestMapObjectPos,
   type TestMapZone,
   type TestMapZoneKind,
 } from '@/lib/sim/test-map';
@@ -103,19 +105,29 @@ const FREE_EMIT_MS = 80;
 /** Плавность камеры: за ~420 мс камера догоняет игрока на 63% дистанции —
  *  в несколько раз плавнее прежнего (130 мс), кот больше не «дёргает» камеру. */
 const CAMERA_TAU_MS = 420;
-/** Скорость свободной ходьбы мирного режима, px мира в секунду: игрок движется
- *  по пикселям ровно пока зажаты клавиши (или до цели клика), без привязки к клеткам. */
-const PEACE_SPEED_PX = 320;
+/** Скорость свободной ходьбы мирного режима по умолчанию, px мира в секунду:
+ *  игрок движется по пикселям ровно пока зажаты клавиши (или до цели клика),
+ *  без привязки к клеткам. Точное значение — настройка «Скорость ходьбы (мир)»
+ *  (character.peaceSpeed). */
+const PEACE_SPEED_DEFAULT = 320;
 /** Кликом пущенная ходьба отменяется, если столько мс нет прогресса к цели. */
 const PEACE_STUCK_MS = 600;
 /** Зум камеры мирного режима «теста»: поле приближается — «по-домашнему» вид сверху,
- *  как в Don't Starve Together. В бою возвращается 1. */
+ *  как в Don't Starve Together. В бою возвращается 1. Отключается кнопкой
+ *  «Перспектива» в шапке (character.peaceView); поверх базового зума работает
+ *  зум колесом мыши (CAM_USER_ZOOM_MIN…MAX). */
 const PEACE_ZOOM = 1.5;
 /** Наклон земли мирного режима: вертикаль грунта сжата до этой доли, спрайты остаются
  *  вертикальными билбордами — та самая псевдо-глубина Don't Starve / Transformice Adventures. */
 const PEACE_TILT = 0.8;
 /** Плавность перехода зума и наклона между мирным и боевым видом, мс. */
 const CAMZOOM_TAU_MS = 350;
+/** Границы зума колесом мыши: множитель поверх базового зума вида (1 — как задано
+ *  режимом). Колесо вверх — ближе, вниз — дальше; работает и в мирном виде, и в бою. */
+const CAM_USER_ZOOM_MIN = 0.55;
+const CAM_USER_ZOOM_MAX = 2;
+/** Шаг зума на один щелчок колеса (множитель, вверх/вниз). */
+const CAM_USER_ZOOM_STEP = 1.12;
 
 /** Ключ localStorage: пароль редактора локации (вводится один раз). */
 const EDITOR_PASS_KEY = 'catwar-editor-pass';
@@ -697,6 +709,9 @@ export default function Simulator() {
   /** Зум/наклон/глубина камеры «теста»: z — зум, sq — сжатие земли по вертикали,
    *  dp — сила перспективы (масштаб спрайтов по глубине: 0 — бой, 1 — мирный режим). */
   const camFxRef = useRef({ z: 1, sq: 1, dp: 0 });
+  /** Зум колесом мыши — множитель поверх базового зума вида (1 — как задано режимом).
+   *  Меняется колесом над полем «теста», сам плавно догоняется камерой (kz). */
+  const camUserZoomRef = useRef(1);
   /** Редактор локации: открыт/закрыт (ref — для игрового цикла и обработчиков мыши). */
   const [editorOpen, setEditorOpen] = useState(false);
   const editorOpenRef = useRef(false);
@@ -708,6 +723,14 @@ export default function Simulator() {
   const [editorView, setEditorView] = useState<EditorDraft | null>(null);
   /** Пароль редактора: хранится в localStorage, подставляется при открытии. */
   const [editorPass, setEditorPass] = useState('');
+  /** Положение спрайта в клетке при постановке объектами редактора: центр / левый край /
+   *  правый / верх / низ (сдвиг — четверть клетки, см. objectPosOffset). */
+  const [editorObjPos, setEditorObjPos] = useState<TestMapObjectPos>('center');
+  /** Зеркало для обработчиков поля: pointer-события читают его без перерегистрации. */
+  const editorObjPosRef = useRef<TestMapObjectPos>('center');
+  useEffect(() => {
+    editorObjPosRef.current = editorObjPos;
+  }, [editorObjPos]);
   /** Строка состояния редактора: ошибка проверки / «Сохраняем…» / «Сохранено». */
   const [editorMsg, setEditorMsg] = useState<string | null>(null);
   /** Последняя локация, подтверждённая сервером: к ней откатывается поле и черновик. */
@@ -992,6 +1015,18 @@ export default function Simulator() {
     }
   }, [settings, loaded]);
 
+  /* Вход на боевые клетки — мгновенный: вид сверху (зум 1, без наклона и перспективы)
+   * ставится сразу, поэтому стрела, сетка и проценты энергии появляются сразу, без
+   * плавной анимации перехода. Обратный переход на траву остаётся плавным. */
+  const battleOn = settings.arrow.battleMode;
+  useEffect(() => {
+    if (!battleOn) return;
+    if (editorOpenRef.current) return; // в редакторе камера сама подстраивается
+    camFxRef.current.z = camUserZoomRef.current;
+    camFxRef.current.sq = 1;
+    camFxRef.current.dp = 0;
+  }, [battleOn]);
+
   /** Строка удара из комнаты пишется в тот же боевой лог. Урон цели тоже живёт здесь, не только у бьющего. */
   const applyNetFight = useCallback((fight: CoopFight) => {
     const me = meIdRef.current;
@@ -1070,8 +1105,8 @@ export default function Simulator() {
         d.rows === map.rows &&
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
           JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
-        JSON.stringify(d.objects.map((o) => [o.kind, o.c, o.r])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.c, o.r]));
+        JSON.stringify(d.objects.map((o) => [o.kind, o.c, o.r, o.pos ?? 'center'])) ===
+          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.c, o.r, o.pos ?? 'center']));
       if (same) {
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
@@ -1293,7 +1328,8 @@ export default function Simulator() {
     syncEditorView();
   };
 
-  /** Постановка/снятие объекта кликом (инструменты «Камень», «Дерево», «Земля»). */
+  /** Постановка/снятие объекта кликом (инструменты «Камень», «Дерево», «Земля»).
+   *  pos — положение спрайта в клетке (центр/лево/право/верх/низ). */
   const toggleEditorObject = (tool: 'stone' | 'tree' | 'dirt', c: number, r: number): boolean => {
     const d = editorRef.current;
     if (!d) return false;
@@ -1304,7 +1340,7 @@ export default function Simulator() {
     }
     pushEditorUndo();
     if (idx >= 0) d.objects.splice(idx, 1);
-    else d.objects.push({ id: newObjectId(), kind: tool, c, r });
+    else d.objects.push({ id: newObjectId(), kind: tool, c, r, pos: editorObjPosRef.current });
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -1321,7 +1357,7 @@ export default function Simulator() {
       setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
       return false;
     }
-    d.objects.push({ id: newObjectId(), kind: 'dirt', c, r });
+    d.objects.push({ id: newObjectId(), kind: 'dirt', c, r, pos: editorObjPosRef.current });
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -1944,6 +1980,19 @@ export default function Simulator() {
     let raf = 0;
     let prev = performance.now();
 
+    // Колесо мыши над полем «теста» — зум вида: вверх — приблизить, вниз — отдалить.
+    // Множитель живёт в camUserZoomRef, камера сама плавно доезжает до нового зума.
+    const onWheelZoom = (ev: WheelEvent) => {
+      if (fieldFormatRef.current !== 'test') return;
+      if (editorOpenRef.current) return; // в редакторе вид подгоняется под весь мир
+      if (ev.ctrlKey) return; // пинч-жест оставляем браузеру
+      ev.preventDefault();
+      const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
+      const next = Math.min(CAM_USER_ZOOM_MAX, Math.max(CAM_USER_ZOOM_MIN, camUserZoomRef.current * dir));
+      camUserZoomRef.current = next;
+    };
+    cv.addEventListener('wheel', onWheelZoom, { passive: false });
+
     // Флаги редактора обновляются каждый кадр: update и draw видят одно и то же.
     const editorState = () => ({
       on: editorOpenRef.current && editorRef.current !== null,
@@ -2173,7 +2222,7 @@ export default function Simulator() {
           const wx = vx * cellW;
           const wy = vy * cellH;
           const len = Math.hypot(wx, wy) || 1;
-          const spd = PEACE_SPEED_PX * (dt / 1000);
+          const spd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (dt / 1000);
           const stepFx = (wx / len) * spd / cellW;
           const stepFy = ((wy / len) * spd) / cellH / Math.max(0.5, camFxRef.current.sq);
           // разворот «лицом» по направлению ходьбы (для бейджа и привычки глаза)
@@ -2264,10 +2313,14 @@ export default function Simulator() {
             camRef.current.y += (cyT - camRef.current.y) * kcE;
           }
         } else {
-          camFxRef.current.z += ((peaceWalk ? PEACE_ZOOM : 1) - camFxRef.current.z) * kz;
-          camFxRef.current.sq += ((peaceWalk ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
-          // перспектива (дальние объекты мельче) — только в мирном режиме
-          camFxRef.current.dp += ((peaceWalk ? 1 : 0) - camFxRef.current.dp) * kz;
+          // Базовый зум вида: в мирном режиме с включённой перспективой поле
+          // приближено (Don't Starve), иначе — вид сверху; поверх — зум колесом.
+          const pv = s.character.peaceView;
+          const zBase = (peaceWalk && pv ? PEACE_ZOOM : 1) * camUserZoomRef.current;
+          camFxRef.current.z += (zBase - camFxRef.current.z) * kz;
+          camFxRef.current.sq += ((peaceWalk && pv ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
+          // перспектива (дальние объекты мельче) — только в мирном режиме с перспективой
+          camFxRef.current.dp += ((peaceWalk && pv ? 1 : 0) - camFxRef.current.dp) * kz;
           const { z, sq } = camFxRef.current;
           const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
           const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
@@ -2652,12 +2705,13 @@ export default function Simulator() {
           ctx.clip(geo.path);
           for (const o of mapObjects) {
             if (o.kind !== 'dirt') continue;
+            const poD = objectPosOffset(o);
             drawDirtPatch(
               ctx,
               s.field.cellW,
               s.field.cellH,
-              (o.c + 0.5) * s.field.cellW,
-              (o.r + 0.5) * s.field.cellH,
+              (o.c + 0.5 + poD.dx) * s.field.cellW,
+              (o.r + 0.5 + poD.dy) * s.field.cellH,
               hashStr(o.id) & 7,
             );
           }
@@ -2768,15 +2822,17 @@ export default function Simulator() {
           ctx.setLineDash([]);
           // препятствия черновика: спрайт + пунктирная рамка клетки. Землю
           // (проталины) рисует сам грунт — здесь только камень и дерево.
+          // Спрайт ставится с выбранным положением в клетке (центр/край).
           for (const o of ed.objects) {
             if (o.kind === 'dirt') continue;
+            const poE = objectPosOffset(o);
             drawTestObject(
               ctx,
               o.kind,
               s.field.cellW,
               s.field.cellH,
-              (o.c + 0.5) * s.field.cellW,
-              (o.r + 1) * s.field.cellH,
+              (o.c + 0.5 + poE.dx) * s.field.cellW,
+              (o.r + 1 + poE.dy) * s.field.cellH,
               1,
               hashStr(o.id) & 7,
             );
@@ -3192,7 +3248,10 @@ export default function Simulator() {
         for (const o of testObjects()) {
           if (o.kind === 'dirt') continue;
           const kind = o.kind;
-          const by = (o.r + 1) * s.field.cellH - 2;
+          // Положение в клетке (центр/край): сдвигает и точку опоры — глубинная
+          // сортировка считает по ней же, деревья у края перекрывают корректно.
+          const poB = objectPosOffset(o);
+          const by = (o.r + 1 + poB.dy) * s.field.cellH - 2;
           bills.push({
             y: by,
             fn: () =>
@@ -3201,7 +3260,7 @@ export default function Simulator() {
                 kind,
                 s.field.cellW,
                 s.field.cellH,
-                (o.c + 0.5) * s.field.cellW,
+                (o.c + 0.5 + poB.dx) * s.field.cellW,
                 by,
                 depthM(by),
                 hashStr(o.id) & 7,
@@ -3425,7 +3484,10 @@ export default function Simulator() {
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      cv.removeEventListener('wheel', onWheelZoom);
+    };
   }, [stage]);
 
   /* ---------- ручной угол стрелы ---------- */
@@ -4513,12 +4575,27 @@ export default function Simulator() {
             </Button>
           ) : null}
           {testField ? (
-            <span
-              className="flex h-8 items-center rounded-md border border-[var(--sim-line-strong)] px-2.5 text-xs text-[var(--sim-text-muted)]"
-              title="Режим включается сам: на боевых клетках — бой, на траве — мирный режим"
-            >
-              Режим по области поля
-            </span>
+            <>
+              <Button
+                size="sm"
+                variant={settings.character.peaceView ? 'default' : 'outline'}
+                className={
+                  settings.character.peaceView
+                    ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
+                    : 'btn-neutral h-8 text-xs'
+                }
+                title="Масштаб камеры, наклон земли и глубина в мирном режиме. Выключите — вид сверху, без перспективы; колесо мыши продолжает работать в любом случае."
+                onClick={() => patchCharacter({ peaceView: !settings.character.peaceView })}
+              >
+                Перспектива: {settings.character.peaceView ? 'ВКЛ' : 'ВЫКЛ'}
+              </Button>
+              <span
+                className="flex h-8 items-center rounded-md border border-[var(--sim-line-strong)] px-2.5 text-xs text-[var(--sim-text-muted)]"
+                title="Режим включается сам: на боевых клетках — бой, на траве — мирный режим"
+              >
+                Режим по области поля
+              </span>
+            </>
           ) : (
             <Button
               size="sm"
@@ -4644,6 +4721,38 @@ export default function Simulator() {
                           </button>
                         ))}
                       </div>
+                      {editorView.tool === 'stone' || editorView.tool === 'tree' || editorView.tool === 'dirt' ? (
+                        <>
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Положение в клетке</div>
+                          <div className="flex gap-1.5">
+                            {(
+                              [
+                                { id: 'left', label: '← Лево' },
+                                { id: 'center', label: 'Центр' },
+                                { id: 'right', label: 'Право →' },
+                                { id: 'top', label: 'Верх' },
+                                { id: 'bottom', label: 'Низ' },
+                              ] as { id: TestMapObjectPos; label: string }[]
+                            ).map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                className={
+                                  editorObjPos === p.id
+                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                                }
+                                onClick={() => setEditorObjPos(p.id)}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                            Где внутри клетки будет стоять спрайт: сдвиг к выбранному краю (четверть клетки).
+                          </p>
+                        </>
+                      ) : null}
                       <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
                         Тяните по полю — зона. Камень и дерево — клик по клетке:
                         поставить, повторный клик — убрать. Через них нельзя пройти.
@@ -4767,6 +4876,7 @@ export default function Simulator() {
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
             <span>W A S D — идти (зажать; на траве — свободная ходьба по пикселям, в боевых клетках — шаг по клеткам)</span>
             <span>Q E Z X — диагонали</span>
+            <span>Колесо мыши — приблизить/отдалить вид</span>
             <span>ЛКМ — идти к точке · манекен — тянуть</span>
             <span>{testField ? 'режим включается сам: жёлтая сетка — бой, трава — мир' : 'B — бой'}</span>
             <span>Enter — чат</span>

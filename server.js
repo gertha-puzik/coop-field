@@ -413,10 +413,12 @@ function sanitizeTestMap(raw) {
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
         return { error: `препятствие №${i + 1}: вне границ мира` };
       }
+      // Положение спрайта в клетке (как в src/lib/sim/test-map.ts): нет — центр.
+      const pos = o.pos === 'left' || o.pos === 'right' || o.pos === 'top' || o.pos === 'bottom' ? o.pos : 'center';
       const key = `${c},${r}`;
       if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
       taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r });
+      objects.push({ id: `o${i + 1}`, kind, c, r, pos });
     }
   }
   const zones = [];

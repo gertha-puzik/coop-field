@@ -21,6 +21,26 @@ export type TestMapZoneKind = 'cells' | 'green';
  *  Спрайты рисуются от низа клетки вверх (земля — по всей клетке). */
 export type TestMapObjectKind = 'stone' | 'tree' | 'dirt';
 
+/** Положение спрайта внутри его клетки: по центру (как раньше) или сдвинут к
+ *  левому/правому краю, верху или низу — декоративная точность расстановки.
+ *  Сдвиг — четверть клетки; коллизии (клетка-препятствие) не зависят от него. */
+export type TestMapObjectPos = 'center' | 'left' | 'right' | 'top' | 'bottom';
+
+/** Сдвиг точки опоры спрайта внутри клетки (доли клетки) для каждого положения. */
+const TEST_OBJECT_POS_OFFSET: Record<TestMapObjectPos, { dx: number; dy: number }> = {
+  center: { dx: 0, dy: 0 },
+  left: { dx: -0.25, dy: 0 },
+  right: { dx: 0.25, dy: 0 },
+  top: { dx: 0, dy: -0.25 },
+  bottom: { dx: 0, dy: 0.25 },
+};
+
+/** Сдвиг спрайта объекта внутри клетки (доли клетки): положение выбирается
+ *  в редакторе при постановке; у старых конфигов без pos — центр. */
+export function objectPosOffset(o: TestMapObject): { dx: number; dy: number } {
+  return TEST_OBJECT_POS_OFFSET[o.pos ?? 'center'] ?? TEST_OBJECT_POS_OFFSET.center;
+}
+
 /** Препятствие это или наземный декор: землю в проверки проходимости не берём. */
 export function isObstacleKind(kind: TestMapObjectKind): boolean {
   return kind === 'stone' || kind === 'tree';
@@ -32,6 +52,8 @@ export type TestMapObject = {
   /** 0-based клетка, которую объект занимает целиком. */
   c: number;
   r: number;
+  /** Положение спрайта внутри клетки (по умолчанию — центр). */
+  pos?: TestMapObjectPos;
 };
 
 export type TestMapZone = {
@@ -187,10 +209,13 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       if (c === null || r === null || c < 0 || r < 0 || c >= cols || r >= rows) {
         return { error: `препятствие №${i + 1}: вне границ мира` };
       }
+      // Положение спрайта в клетке необязательное: нет — центр (как в старых конфигах).
+      const pos: TestMapObjectPos =
+        o.pos === 'left' || o.pos === 'right' || o.pos === 'top' || o.pos === 'bottom' ? o.pos : 'center';
       const key = `${c},${r}`;
       if (taken.has(key)) continue; // два объекта на одной клетке схлопываем в один
       taken.add(key);
-      objects.push({ id: `o${i + 1}`, kind, c, r });
+      objects.push({ id: `o${i + 1}`, kind, c, r, pos });
     }
   }
   const zones: TestMapZone[] = [];
