@@ -44,6 +44,7 @@ import {
   testPointInIsland,
   testWalkableCell,
 } from '@/lib/sim/test-field';
+import { grassPattern, stonePattern } from '@/lib/sim/textures';
 import {
   entryDirDelta,
   newObjectId,
@@ -2906,13 +2907,23 @@ export default function Simulator() {
         // точки лежат на земле и сжимаются по вертикали вместе с ней
         ctx.save();
         ctx.scale(1, fxc.sq);
-        // трава локации — природная тёмная зелень
-        const grad = ctx.createLinearGradient(0, geo.bboxPx.y0, 0, geo.bboxPx.y1);
-        grad.addColorStop(0, '#31511f');
-        grad.addColorStop(0.55, '#2a461c');
-        grad.addColorStop(1, '#233b18');
-        ctx.fillStyle = grad;
-        ctx.fill(geo.path);
+        // трава локации: бесшовные тайлы пака (оливковая зелень с цветами);
+        // пока текстура не догрузилась — прежний градиент тёмной зелени
+        const gpat = grassPattern(ctx);
+        if (gpat) {
+          ctx.save();
+          ctx.imageSmoothingEnabled = false;
+          ctx.fillStyle = gpat;
+          ctx.fill(geo.path);
+          ctx.restore();
+        } else {
+          const grad = ctx.createLinearGradient(0, geo.bboxPx.y0, 0, geo.bboxPx.y1);
+          grad.addColorStop(0, '#31511f');
+          grad.addColorStop(0.55, '#2a461c');
+          grad.addColorStop(1, '#233b18');
+          ctx.fillStyle = grad;
+          ctx.fill(geo.path);
+        }
         // проталины «земли» — наземный декор на самой почве: под сеткой, декором
         // и котами; на ходьбу не влияет, режется клипом по кромке локации
         const mapObjects = currentTestMap().objects ?? [];
@@ -2972,11 +2983,27 @@ export default function Simulator() {
         if (battleCells.size > 0) {
           const cw = s.field.cellW;
           const chh = s.field.cellH;
+          // вся боевая область заливается одним контуром: каменный пол пака —
+          // рисунок одинаков у всех клиентов и не наслаивается; поверх — тёплая
+          // вуаль, чтобы зона читалась «боевой». Пока текстура не догрузилась —
+          // прежняя мягкая жёлтая заливка.
+          const bpath = new Path2D();
           for (const key of battleCells) {
             const [c, r] = key.split(',').map(Number);
-            // мягкий жёлтый свет по клетке — ровно один слой на клетку
+            bpath.rect(c * cw, r * chh, cw, chh);
+          }
+          const spat = stonePattern(ctx);
+          if (spat) {
+            ctx.save();
+            ctx.imageSmoothingEnabled = false;
+            ctx.fillStyle = spat;
+            ctx.fill(bpath);
+            ctx.restore();
+            ctx.fillStyle = 'rgba(250, 214, 80, 0.1)';
+            ctx.fill(bpath);
+          } else {
             ctx.fillStyle = 'rgba(250, 214, 80, 0.14)';
-            ctx.fillRect(c * cw, r * chh, cw, chh);
+            ctx.fill(bpath);
           }
           // сетка боевых клеток: у каждой клетки — верх и лево, граничные
           // клетки достраивают низ и право; каждое ребро рисуется один раз

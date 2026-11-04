@@ -27,6 +27,7 @@ import {
   type TestMapObject,
   type TestMapZone,
 } from './test-map';
+import { PACK_TUFT_COUNT, packImg, type PackName } from './textures';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -618,7 +619,9 @@ export function buildTestDecor(poly: Pt[], seed: string, count = 110): DecorItem
   return items;
 }
 
-/** Один предмет декора на канвасе: кустики травы (0–2) и цветы (3–7).
+/** Один предмет декора на канвасе. Спрайты пака: травинки (kind 0–2, 16
+ *  вариантов по зерну v), кустики (3–4 мелкий, 5–6 средний, 7 крупный); пока
+ *  спрайт не догрузился — прежняя векторная графика.
  *  m — множитель перспективы мирного режима (дальние предметы мельче). */
 export function drawTestDecorItem(
   ctx: CanvasRenderingContext2D,
@@ -629,6 +632,43 @@ export function drawTestDecorItem(
 ): void {
   const x = d.x * cellW;
   const y = d.y * cellH;
+  ctx.save();
+  ctx.translate(x, y);
+  // для спрайтов поворот почти убран (пиксель-арт не любит сильных наклонов),
+  // зеркало и разброс размера остаются
+  ctx.rotate(d.rot * 0.3);
+  const flip = d.v % 2 === 0 ? 1 : -1;
+  const sprite = (name: PackName, sc: number, shadow = false): boolean => {
+    const img = packImg(name);
+    if (!img) return false;
+    const w = img.naturalWidth * sc;
+    const h = img.naturalHeight * sc;
+    if (shadow) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, w * 0.34, w * 0.13, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fill();
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.scale(flip, 1);
+    ctx.drawImage(img, -w / 2, -h, w, h);
+    return true;
+  };
+  let drawn = true;
+  if (d.kind <= 2) {
+    // травинка: 16 нарезанных вариантов по зерну
+    drawn = sprite(`tuft-${String(d.v % PACK_TUFT_COUNT).padStart(2, '0')}` as PackName, d.s * m * 1.7);
+  } else if (d.kind <= 4) {
+    drawn = sprite('bush-s', d.s * m * 1.15, true);
+  } else if (d.kind <= 6) {
+    drawn = sprite('bush-m', d.s * m * 1.15, true);
+  } else {
+    drawn = sprite('bush-h', d.s * m, true);
+  }
+  ctx.restore();
+  if (drawn) return;
+
+  // ——— запасной векторный вариант (спрайт ещё не догрузился) ———
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(d.rot);
@@ -695,6 +735,22 @@ export function drawTestDecorItem(
  * спрайт растёт вверх. m — множитель перспективы, v — зерно вариаций (зеркалит
  * и слегка меняет размер, чтобы деревья не стояли близнецами).
  */
+/** Спрайт пака, прижатый низом-центром к (0, 0) и растянутый до нужной ширины.
+ *  Пиксель-арт рисуется без сглаживания — увеличенные пиксели остаются чёткими. */
+function drawPackSprite(
+  ctx: CanvasRenderingContext2D,
+  name: PackName,
+  targetW: number,
+): boolean {
+  const img = packImg(name);
+  if (!img) return false;
+  const w = targetW;
+  const h = (w * img.naturalHeight) / img.naturalWidth;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, -w / 2, -h, w, h);
+  return true;
+}
+
 export function drawTestObject(
   ctx: CanvasRenderingContext2D,
   kind: 'stone' | 'tree',
@@ -711,10 +767,17 @@ export function drawTestObject(
   ctx.translate(baseX, baseY);
   ctx.scale(m * k * flip, m * k);
   // тень под ногами — общая для обоих видов
+  const tw = kind === 'tree' ? cellH * 0.92 * 0.813 : 54;
   ctx.beginPath();
-  ctx.ellipse(0, 1, kind === 'tree' ? 30 : 25, kind === 'tree' ? 7 : 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 1, kind === 'tree' ? tw * 0.28 : 26, kind === 'tree' ? 7 : 6, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.32)';
   ctx.fill();
+  // спрайт пака; пока не догрузился — прежняя векторная фигура
+  const ok = kind === 'stone' ? drawPackSprite(ctx, 'rock', 54) : drawPackSprite(ctx, 'tree', cellH * 0.92 * 0.813);
+  if (ok) {
+    ctx.restore();
+    return;
+  }
   if (kind === 'stone') {
     // валун: основной корпус, светлая грань сверху-слева, тёмный низ, трещины и мох
     ctx.beginPath();
