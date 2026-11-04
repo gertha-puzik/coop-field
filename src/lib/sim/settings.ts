@@ -73,6 +73,7 @@ export type SpriteId =
   | 'buran'
   | 'sumrak'
   | 'izya'
+  | 'kameshechek'
   | 'rab';
 
 export interface SpriteMeta {
@@ -103,6 +104,7 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'buran', name: 'Буран', src: '/sprites/buran.png' },
   { id: 'sumrak', name: 'Сумрак', src: '/sprites/sumrak.png' },
   { id: 'izya', name: 'Изя', src: '/sprites/izya.png' },
+  { id: 'kameshechek', name: 'Камешечек', src: '/sprites/kameshechek.png' },
 ];
 
 /**
@@ -135,6 +137,7 @@ export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'drel', name: 'Дрель', spriteIds: ['drel'] },
   { id: 'izya', name: 'Изя', spriteIds: ['izya'] },
   { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
+  { id: 'malyshochki', name: 'Малышочки', spriteIds: ['kameshechek'] },
 ];
 
 /** Все id спрайтов, покрытые группами (контроль полноты на этапе сборки не нужен —
