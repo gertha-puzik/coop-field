@@ -112,6 +112,37 @@ const SPRITES = ["blestyashka", "puhlyashik", "puzatik", "razdora", "pohititel",
  * держит манекен, комната видит курсор с его именем.
  */
 const DUMMY_DEFAULT = { x: 7, y: 2, sprite: "puhlyashik" };
+
+/* ---------- размеры спрайтов пака и их варианты.
+   Объявлены ДО loadTestMap(): sanitizeTestMap читает их при загрузке карты —
+   раньше константы стояли ниже по файлу, sanitize падал с «Cannot access
+   before initialization», пустой catch молча подменял сохранённую карту
+   дефолтом при каждом старте сервера (карта «слетала» после каждого деплоя). ---------- */
+const OBJECT_DIMS = {
+  'tree-1': [113, 139],
+  'tree-2': [97, 136],
+  'tree-3': [79, 120],
+  'rock-1': [57, 42],
+  'rock-2': [11, 10],
+  'rock-3': [16, 14],
+  'rock-4': [24, 19],
+  'rock-5': [24, 19],
+  'rock-6': [27, 22],
+  'rock-7': [27, 27],
+  'rock-8': [18, 16],
+  'rock-9': [19, 16],
+  'rock-10': [31, 19],
+};
+const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
+const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
+const GROUND_COVER_IDS = new Set([
+  'grass-1', 'grass-2',
+  'flower-1', 'flower-2', 'flower-3', 'flower-4',
+  'slab-1', 'slab-2', 'slab-3', 'slab-4',
+  'floor-1', 'floor-2', 'floor-3',
+]);
+const OBJECT_SCALE_MIN = 0.4;
+const OBJECT_SCALE_MAX = 3.5;
 /**
  * Боевая мишень «РАБ»: общий предмет комнаты в боевом режиме — по ней проходят
  * удары, её клетка непроходима. Спрайт один у всех мишеней, позиция фиксирована.
@@ -140,6 +171,8 @@ let TEST_ISLAND = [];
 let TEST_CELLS = [];
 /** Клетки (0-based), задетые телами препятствий — для спавна и проверок занятия. */
 let TEST_OBST_CELLS = new Set();
+/** Тела препятствий (эллипсы с поворотом) — точечная проверка мирных точек. */
+let TEST_OBST_BODIES = [];
 
 /** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором. */
 function rebuildTestGeometry() {
@@ -148,6 +181,7 @@ function rebuildTestGeometry() {
   TEST_ISLAND = buildIsland(testMap);
   TEST_CELLS = buildCells(testMap, TEST_ISLAND);
   TEST_OBST_CELLS = obstacleBlockedCells(testMap);
+  TEST_OBST_BODIES = obstacleBodiesOf(testMap);
 }
 
 /* ---------- геометрия кромки локации — точный порт src/lib/sim/test-field.ts.
@@ -404,32 +438,6 @@ function objectBase(o) {
   const po = PO[o.pos || 'center'] || PO.center;
   return { x: o.c + 0.5 + po[0], y: o.r + 1 + po[1] };
 }
-
-const OBJECT_DIMS = {
-  'tree-1': [113, 139],
-  'tree-2': [97, 136],
-  'tree-3': [79, 120],
-  'rock-1': [57, 42],
-  'rock-2': [11, 10],
-  'rock-3': [16, 14],
-  'rock-4': [24, 19],
-  'rock-5': [24, 19],
-  'rock-6': [27, 22],
-  'rock-7': [27, 27],
-  'rock-8': [18, 16],
-  'rock-9': [19, 16],
-  'rock-10': [31, 19],
-};
-const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
-const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
-const GROUND_COVER_IDS = new Set([
-  'grass-1', 'grass-2',
-  'flower-1', 'flower-2', 'flower-3', 'flower-4',
-  'slab-1', 'slab-2', 'slab-3', 'slab-4',
-  'floor-1', 'floor-2', 'floor-3',
-]);
-const OBJECT_SCALE_MIN = 0.4;
-const OBJECT_SCALE_MAX = 3.5;
 
 function objectSprite(o) {
   if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1';
@@ -697,24 +705,60 @@ function loadTestMap() {
       if (r.map.v < 2) {
         const fresh = defaultTestMap();
         try {
+          backupTestMap(); // старая раскладка не исчезает — лежит в data/backups
           fs.mkdirSync(DATA_DIR, { recursive: true });
-          fs.writeFileSync(MAP_FILE, JSON.stringify(fresh, null, 2));
+          writeFileAtomic(MAP_FILE, JSON.stringify(fresh, null, 2));
         } catch {}
         console.warn('map file v1 (legacy) — миграция к раскладке v2 (трава + боевой полигон)');
         return fresh;
       }
       return r.map;
     }
+    // Битый/устаревший файл не молча выбрасываем: копия остаётся рядом, чтобы
+    // локацию можно было восстановить, а не собирать заново с нуля.
+    try {
+      const quarantine = path.join(DATA_DIR, `test-map.invalid-${Date.now()}.json`);
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.copyFileSync(MAP_FILE, quarantine);
+      console.warn(`map file invalid (${r.error}) — копия в ${quarantine}`);
+    } catch {}
     console.warn(`map file invalid (${r.error}) — откат к раскладке по умолчанию`);
-  } catch {
-    /* файла ещё нет — работаем на раскладке по умолчанию */
+  } catch (e) {
+    /* файла ещё нет — работаем на раскладке по умолчанию; ошибка чтения существующего
+     * файла (не ENOENT) — видимая, чтобы потеря карты не прошла незамеченной */
+    if (e && e.code !== 'ENOENT') console.warn('map file read failed:', e?.message || e);
   }
   return defaultTestMap();
 }
 
+/** Запись атомарная (tmp + rename): обрыв не оставляет на диске полудохлый JSON —
+ *  именно недописанный файл при загрузке превращается в «карта слетела на старую». */
+function writeFileAtomic(file, data) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
+}
+
+/** Прошлая версия карты — в data/backups (последние 8): неудачную правку редактора
+ *  или потерю файла можно откатить, а не собирать локацию заново. */
+function backupTestMap() {
+  try {
+    if (!fs.existsSync(MAP_FILE)) return;
+    const dir = path.join(DATA_DIR, "backups");
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.copyFileSync(MAP_FILE, path.join(dir, `test-map-${stamp}.json`));
+    const old = fs.readdirSync(dir).filter((f) => f.startsWith("test-map-")).sort();
+    while (old.length > 8) fs.unlinkSync(path.join(dir, old.shift()));
+  } catch (e) {
+    console.warn("map backup failed:", e?.message || e);
+  }
+}
+
 function saveTestMap() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(MAP_FILE, JSON.stringify(testMap, null, 2));
+  backupTestMap();
+  writeFileAtomic(MAP_FILE, JSON.stringify(testMap, null, 2));
 }
 
 rebuildTestGeometry();
@@ -744,10 +788,13 @@ function setMap(ws, payload = {}) {
   }
   testMap = r.map;
   rebuildTestGeometry();
+  // Не сохранившаяся на диск правка умерла бы при первом же рестарте («карта
+  // слетела») — ошибка записи видна автору сразу, а не после деплоя.
   try {
     saveTestMap();
   } catch (e) {
     console.warn('map save failed:', e?.message || e);
+    send(ws, 'info', `Редактор: локация применилась, но записать её на диск не удалось — ${e?.message || e}. После рестарта сервера она потеряется.`);
   }
   const room = rooms.get(TEST_ROOM);
   if (room && room.sockets.size > 0) {
@@ -755,7 +802,7 @@ function setMap(ws, payload = {}) {
       if (cat.fm === 1) {
         const fx = Number.isFinite(cat.fx) ? cat.fx : 0;
         const fy = Number.isFinite(cat.fy) ? cat.fy : 0;
-        if (!pointInPolygon(TEST_ISLAND, fx, fy)) {
+        if (!pointInPolygon(TEST_ISLAND, fx, fy) && !pointInPolygon(TEST_ISLAND, fx + 0.45, fy + 0.45)) {
           const c = nearestTestCell(fx, fy);
           if (c) {
             cat.fm = 0;
@@ -770,11 +817,124 @@ function setMap(ws, payload = {}) {
           cat.y = c.y;
         }
       }
+      rememberCat(cat);
     }
     for (const w of room.sockets.keys()) send(w, 'map', testMap);
     broadcast(room, 'field', fieldPayload(room));
   }
   console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}`);
+}
+
+/* ---------- позиции котов между запусками сервера.
+   Рестарт (деплой) раньше выбрасывал всех на спавн — включая АФК-котов, которые
+   честно стояли на месте. Теперь последняя позиция каждого кота «теста» живёт
+   в data/test-cats.json и возвращается хозяину при join. ---------- */
+const CATS_FILE = path.join(DATA_DIR, "test-cats.json");
+const CATS_TTL_MS = 30 * 24 * 60 * 60 * 1000; // записи старше месяца не восстанавливаем
+const CATS_SAVE_GAP_MS = 3000; // писать на диск не чаще раза в 3 с
+
+let catBook = loadCatBook();
+let catBookDirty = false;
+let catBookLastSave = 0;
+
+function loadCatBook() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CATS_FILE, "utf8"));
+    if (raw && typeof raw === "object" && raw.cats && typeof raw.cats === "object") {
+      return raw.cats;
+    }
+  } catch (e) {
+    if (e && e.code !== "ENOENT") console.warn("cats file read failed:", e?.message || e);
+  }
+  return {};
+}
+
+/** Слив книги позиций на диск: грязный флаг + троттлинг, force — при выходе кота
+ *  и на остановке сервера. Атомарно и с обрезкой устаревших записей. */
+function flushCatBook(force = false) {
+  const now = Date.now();
+  if (!catBookDirty) return;
+  if (!force && now - catBookLastSave < CATS_SAVE_GAP_MS) return;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    for (const key of Object.keys(catBook)) {
+      if (now - (catBook[key]?.ts || 0) > CATS_TTL_MS) delete catBook[key];
+    }
+    writeFileAtomic(CATS_FILE, JSON.stringify({ v: 1, savedAt: now, cats: catBook }, null, 2));
+    catBookDirty = false;
+    catBookLastSave = now;
+  } catch (e) {
+    console.warn("cats save failed:", e?.message || e);
+  }
+}
+
+/** Кот стоит на новом месте — помечаем книгу грязной (пишется общим сливом). */
+function rememberCat(cat) {
+  if (!cat || !cat.login) return;
+  catBook[String(cat.login).toLowerCase()] = {
+    login: cat.login,
+    fm: cat.fm ? 1 : 0,
+    fx: Number.isFinite(cat.fx) ? cat.fx : undefined,
+    fy: Number.isFinite(cat.fy) ? cat.fy : undefined,
+    x: cat.x,
+    y: cat.y,
+    ts: Date.now(),
+  };
+  catBookDirty = true;
+}
+
+/** Мирная точка не внутри тела препятствия (эллипс с поворотом, чуть проще
+ *  клиентского — на граничных точках лучше вернуть кота, чем оставить на спавне). */
+function peacePointFreeOfObjects(fx, fy) {
+  const px = fx * 100;
+  const py = fy * 150;
+  for (const b of TEST_OBST_BODIES) {
+    if (!(b.hw > 0) || !(b.h > 0)) continue;
+    const cos = Math.cos(-b.rot);
+    const sin = Math.sin(-b.rot);
+    const dx = px - b.x * 100;
+    const dy = py - b.y * 150;
+    const ux = dx * cos - dy * sin;
+    const uy = dx * sin + dy * cos;
+    if ((ux * ux) / (b.hw * b.hw) + (uy * uy) / (b.h * b.h) <= 1) return false;
+  }
+  return true;
+}
+
+/** Возврат кота на прежнее место после рестарта сервера. Мирная точка — только
+ *  внутри локации и вне тел препятствий, боевая — на свободной проходимой клетке;
+ *  иначе кот остаётся на обычном спавне. */
+function restoreCatPosition(room, cat) {
+  const rec = catBook[String(cat.login || "").toLowerCase()];
+  if (!rec || Date.now() - (rec.ts || 0) > CATS_TTL_MS) return;
+  if (rec.fm === 1 && Number.isFinite(rec.fx) && Number.isFinite(rec.fy)) {
+    const fx = Math.round(rec.fx * 100) / 100;
+    const fy = Math.round(rec.fy * 100) / 100;
+    const inside =
+      pointInPolygon(TEST_ISLAND, fx, fy) || pointInPolygon(TEST_ISLAND, fx + 0.45, fy + 0.45);
+    if (inside && peacePointFreeOfObjects(fx, fy)) {
+      cat.fm = 1;
+      cat.fx = fx;
+      cat.fy = fy;
+      const cell = nearestTestCell(fx, fy);
+      if (cell) {
+        cat.x = cell.x;
+        cat.y = cell.y;
+      }
+      return;
+    }
+  }
+  if (
+    rec.fm === 0 &&
+    Number.isInteger(rec.x) &&
+    Number.isInteger(rec.y) &&
+    testWalkable(rec.x, rec.y) &&
+    !occupied(room, rec.x, rec.y, cat.id)
+  ) {
+    cat.fm = 0;
+    cat.x = rec.x;
+    cat.y = rec.y;
+  }
 }
 
 const rooms = new Map();
@@ -951,6 +1111,8 @@ function leave(ws) {
     clearMoveTimer(cat);
     cat.moveQueue = [];
     room.cats.delete(cat.id);
+    rememberCat(cat); // последняя позиция уходит в книгу — рестарт вернёт кота на место
+    flushCatBook(true);
     broadcast(room, "move", { id: cat.id, x: 0, y: 0 });
     console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
   }
@@ -1016,6 +1178,9 @@ function join(ws, payload = {}) {
   room.cats.set(cat.id, cat);
   room.sockets.set(ws, cat);
   ws.room = room;
+  // Рестарт сервера не выбрасывает кота на спавн: возвращаем его последнюю позицию
+  // (см. restoreCatPosition) — особенно важно для АФК-котов.
+  restoreCatPosition(room, cat);
   send(ws, "you", publicCat(cat, room));
   send(ws, "field", fieldPayload(room));
   if (room.chat?.length) send(ws, "chatlog", room.chat);
@@ -1675,6 +1840,7 @@ function freeMove(ws, payload = {}) {
     cat.y = cell.y;
   }
   const now = Date.now();
+  rememberCat(cat); // позиция в книге (на диск — общим сливом, не чаще 3 с)
   if (!payload.stop && now - (cat.lastFree || 0) < FREE_MOVE_GAP_MS) return;
   cat.lastFree = now;
   broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0 }, ws);
@@ -1715,6 +1881,7 @@ function cellsync(ws, payload = {}) {
     cat.y = y;
   }
   cat.fm = 0;
+  rememberCat(cat);
   broadcast(room, "update cat", publicCat(cat, room));
 }
 
@@ -1858,4 +2025,25 @@ wss.on("connection", (ws, req) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`coop-field http://${HOST}:${PORT}/?room=demo`);
+});
+
+/** Периодический слив книги позиций: рестарт по kill не теряет последние шаги. */
+const catFlushTimer = setInterval(() => flushCatBook(), 2000);
+catFlushTimer.unref();
+
+/** Остановка: дожимаем книгу позиций и карту (если расходится с диском) в файлы. */
+function flushOnShutdown() {
+  flushCatBook(true);
+  try {
+    const onDisk = fs.readFileSync(MAP_FILE, "utf8");
+    if (onDisk !== JSON.stringify(testMap, null, 2)) saveTestMap();
+  } catch {}
+}
+process.on("SIGTERM", () => {
+  flushOnShutdown();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  flushOnShutdown();
+  process.exit(0);
 });

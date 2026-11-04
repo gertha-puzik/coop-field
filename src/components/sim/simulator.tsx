@@ -891,6 +891,22 @@ export default function Simulator() {
   }, [editorEntryDir]);
   /** Строка состояния редактора: ошибка проверки / «Сохраняем…» / «Сохранено». */
   const [editorMsg, setEditorMsg] = useState<string | null>(null);
+  /** Табличка «Загрузка локации»: на время применения нового конфига локации
+   *  (сохранение в редакторе, вход/переподключение) — игроки видят, что поле
+   *  обновляется, а не «игра сломалась». */
+  const [mapLoading, setMapLoading] = useState(false);
+  const mapLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showMapLoading = useCallback(() => {
+    setMapLoading(true);
+    if (mapLoadingTimerRef.current) clearTimeout(mapLoadingTimerRef.current);
+    mapLoadingTimerRef.current = setTimeout(() => setMapLoading(false), 1500);
+  }, []);
+  useEffect(
+    () => () => {
+      if (mapLoadingTimerRef.current) clearTimeout(mapLoadingTimerRef.current);
+    },
+    [],
+  );
   /** Последняя локация, подтверждённая сервером: к ней откатывается поле и черновик. */
   const savedMapRef = useRef<TestMap>(TEST_MAP_DEFAULT);
   /** Темп рассылки freemove и флаг «сейчас идём» (для финального стоп-пакета). */
@@ -899,6 +915,11 @@ export default function Simulator() {
    *  режима срабатывает на входе в зону (край, а не «пока внутри») — иначе
    *  вышедший из зоны мирным шагом кот тут же возвращался бы в бой. */
   const inZonePrevRef = useRef(true);
+  /** Признак «только что вошли в комнату»: 'you' отмечает вход/переподключение,
+   *  по первому field после него гасим боевой режим (свежий вход — мирный спавн).
+   *  field после сохранения локации приходит без you — флаг уже снят, и бой
+   *  у игроков не выключается при каждой правке локации. */
+  const freshJoinRef = useRef(true);
   /** Клетка захода, с которой включаем бой: переход в бой привязывает кота к ней
    *  (а не к ближайшей боевой клетке) и уходит в cellsync серверу. */
   const battleEntryRef = useRef<{ c: number; r: number } | null>(null);
@@ -1817,14 +1838,22 @@ export default function Simulator() {
         meIdRef.current = cat.id;
         setMeId(cat.id);
         setNetReady(true);
+        freshJoinRef.current = true;
         const e = engineRef.current;
         const col = typeof cat.x === 'number' ? Math.max(0, cat.x - 1) : e.col;
         const row = typeof cat.y === 'number' ? Math.max(0, cat.y - 1) : e.row;
         e.col = col;
         e.row = row;
-        // В «тесте» свободная позиция стартует с клетки сервера (после reconnect тоже).
-        e.fx = col;
-        e.fy = row;
+        // В «тесте» свободная позиция — серверная freemove-точка, а не логическая
+        // клетка: точку сервер хранит в книге позиций и возвращает после рестарта,
+        // поэтому ни вход, ни переподключение не сбрасывают кота на клетку спавна.
+        if (cat.fm === 1 && Number.isFinite(cat.fx) && Number.isFinite(cat.fy)) {
+          e.fx = cat.fx!;
+          e.fy = cat.fy!;
+        } else {
+          e.fx = col;
+          e.fy = row;
+        }
         netMovesRef.current = { server: { col, row }, pending: [] };
         setNetStatus(`Вы — ${cat.login || 'кот'} (#${cat.id})`);
         if (cat.login) setPlayerName(cat.login);
@@ -1849,7 +1878,10 @@ export default function Simulator() {
         // сбрасывает кэши, и поле рисуется уже по новому конфигу.
         if (field.map) {
           const checkedMap = sanitizeTestMap(field.map).map;
-          if (checkedMap) applyTestMap(checkedMap);
+          if (checkedMap) {
+            applyTestMap(checkedMap);
+            showMapLoading();
+          }
         }
         camRef.current.init = false;
         remoteFreeRef.current.clear();
@@ -1863,10 +1895,13 @@ export default function Simulator() {
             remoteFreeRef.current.set(`p${c.id}`, { x: c.fx!, y: c.fy!, tx: c.fx!, ty: c.fy! });
           }
         }
-        // В «тесте» игрок появляется в мирном режиме (спавн на траве). Дальше
+        // В «тесте» свежий вход — в мирном режиме (спавн на траве). Дальше
         // режимом управляет кнопка боя с клетки захода; страховка на боевых
-        // клетках остаётся (см. игровой цикл).
-        if (fmt === 'test' && settingsRef.current.arrow.battleMode) {
+        // клетках остаётся (см. игровой цикл). Правка локации (setmap) тоже
+        // присылает field — гасить боевой режим у всех в этот момент нельзя:
+        // принудительный мирный режим — только на самом входе в комнату (после you).
+        if (fmt === 'test' && settingsRef.current.arrow.battleMode && freshJoinRef.current) {
+          freshJoinRef.current = false;
           setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
         }
         // Спавн-точка считаем «внутри зоны»: свежий вход в боевую зону срабатывает
@@ -1893,8 +1928,17 @@ export default function Simulator() {
           const row = Math.max(0, me.y - 1);
           engineRef.current.col = col;
           engineRef.current.row = row;
-          engineRef.current.fx = col;
-          engineRef.current.fy = row;
+          if (fmt === 'test' && me.fm === 1 && Number.isFinite(me.fx) && Number.isFinite(me.fy)) {
+            // «Тест»: свою мирную точку берём из серверной freemove-позиции, а не из
+            // логической клетки. Раньше каждый снапшот (сохранение локации,
+            // переподключение) ставил кота на клетку сервера — при сохранении
+            // локации все улетали на боевые клетки, а после рестарта — на спавн.
+            engineRef.current.fx = me.fx!;
+            engineRef.current.fy = me.fy!;
+          } else {
+            engineRef.current.fx = col;
+            engineRef.current.fy = row;
+          }
           netMovesRef.current.server = { col, row };
         }
         setNetStatus(`Вы в комнате ${roomTitle(field.room || 'demo')} · ${cats.length} на поле`);
@@ -1913,6 +1957,7 @@ export default function Simulator() {
       onMap: (map) => {
         // Кто-то сохранил локацию в редакторе (и мы сами — сервер шлёт map и автору).
         applyTestMap(map);
+        showMapLoading();
         setEditorMsg('Локация обновлена.');
       },
       onCat: (cat) => {
@@ -5584,6 +5629,11 @@ export default function Simulator() {
               {battleHint ? (
                 <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
                   {battleHint}
+                </div>
+              ) : null}
+              {mapLoading ? (
+                <div className="pointer-events-none absolute left-1/2 top-4 z-40 -translate-x-1/2 animate-pulse rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-4 py-2 text-sm font-semibold text-[var(--sim-text)] shadow-lg">
+                  Загрузка локации…
                 </div>
               ) : null}
               {editorOpen && editorView ? (
