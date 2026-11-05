@@ -3890,7 +3890,19 @@ export default function Simulator() {
       // выводит его с цветокоррекцией, тенями облаков и дождём.
       const cam = camRef.current;
       const cp = camPrevRef.current;
-      atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
+      // Страховка rAF: throw внутри Pixi-слоя не должен рвать цикл — без
+      // перепланирования замерзала бы вся игра, а не только атмосфера.
+      try {
+        atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
+      } catch (error) {
+        console.warn('[atmo] слой упал — выключаю до перезагрузки', error);
+        try {
+          atmoRef.current?.setVisible(false);
+        } catch {
+          /* слой уже мёртв — прятать нечего */
+        }
+        atmoRef.current = null;
+      }
       camPrevRef.current = { x: cam.x, y: cam.y };
       tickAtmo();
       raf = requestAnimationFrame(loop);
