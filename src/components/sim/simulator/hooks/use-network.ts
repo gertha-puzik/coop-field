@@ -284,9 +284,12 @@ export function useSimNet(deps: SimNetDeps) {
       },
       onMap: (map) => {
         // Кто-то сохранил локацию в редакторе (и мы сами — сервер шлёт map и автору).
+        // Строка ставится ДО applyTestMap: при открытом запачканном черновике
+        // applyTestMap сбрасывает его на внешнюю карту и подменяет сообщение
+        // предупреждением о потерянной правке (applyTestMap в simulator.tsx).
+        setEditorMsg('Локация обновлена.');
         applyTestMap(map);
         showMapLoading();
-        setEditorMsg('Локация обновлена.');
       },
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
