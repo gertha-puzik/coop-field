@@ -27,12 +27,14 @@ import {
   drawEntryCheck,
   drawEntryMark,
   drawGroundCover,
-  drawTerrainCell,
+  drawTerrainTop,
+  drawTerrainWall,
   drawTestDecorItem,
   drawTestObject,
   elevAny,
   elevLevelAt,
   elevLiftAtPoint,
+  groundPointAtWorld,
   hashStr,
   nearestWalkableCell,
   peaceDepthScale,
@@ -46,6 +48,7 @@ import {
   setPaintOverride,
   setTestMap,
   TERRAIN_LIFT_PX,
+  terrainWallBottomY,
   testBattleRouteBlocked,
   testClippedCells,
   testEntries,
@@ -1529,6 +1532,10 @@ export default function Simulator() {
   const atmoRef = useRef<AtmosphereLike | null>(null);
   /** Прошлая позиция камеры — для сдвига теней облаков (лёгкий параллакс). */
   const camPrevRef = useRef<{ x: number; y: number } | null>(null);
+  /** Курсор над полем в мировых координатах (с поправкой на подъём земли):
+   *  прицел прыжка — конечная точка привязана к мышке, игрок сам выбирает
+   *  дистанцию в пределах максимальной. */
+  const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
    * Своя клетка на сервере и шаги, которые уже нарисовали, но ещё не подтвердили.
@@ -3546,14 +3553,18 @@ export default function Simulator() {
     });
 
     /** Прогноз посадки прыжка с данным зарядом (0.15..1): мирный режим ищет точку
-     *  вдоль направления бега, боевой — клетки вдоль стрелы. Один и тот же поиск
-     *  работает и на сам прыжок (consumeLeapRequest в update), и на маркер посадки
-     *  в отрисовке: во время приседа-заряда и полёта видно, куда кот приземлится,
-     *  в том числе на возвышенности и вниз с обрыва (маркер лежит на поднятой земле).
+     *  вдоль направления бега или — если есть прицел — к точке под мышкой
+     *  (игрок сам выбирает дистанцию, максимум — три клетки), боевой — клетки
+     *  вдоль стрелы. Один и тот же поиск работает и на сам прыжок
+     *  (consumeLeapRequest в update), и на маркер посадки в отрисовке: во время
+     *  приседа-заряда и полёта видно, куда кот приземлится, в том числе на
+     *  возвышенности и вниз с обрыва (маркер лежит на поднятой земле).
+     *  aim — точка курсора в px мира (уже с поправкой на подъём земли).
      *  sx/sy — точка опоры (низ-центр модельки) в клеточных долях; l1 — подъём
      *  земли в точке посадки (px мира). */
     const leapLandingAt = (
       charge: number,
+      aim?: { x: number; y: number } | null,
     ): { sx: number; sy: number; x1: number; y1: number; l1: number; dur: number; zH: number; deg: number; battle: boolean; cell: { c: number; r: number } | null } | null => {
       const s = settingsRef.current;
       const e = engineRef.current;
@@ -3563,19 +3574,34 @@ export default function Simulator() {
       if (performance.now() < e.moveLockUntil) return null;
       if (!testMode || editorOn) return null; // вне «теста» и в редакторе — только желейный присед
       if (s.controlled !== 'main') return null; // прыгает только свой кот под управлением
-      const maxDrop = Math.min(TERRAIN_MAX_LEVEL, Math.floor(charge * 4)); // 0..3
+      // Перепад, который берёт заряд: тап уже закидывает на уступ в 1 уровень
+      // (раньше тап был бессилен — кот «упирался в стенку»), полный заряд — 3.
+      const maxDrop = 1 + Math.min(TERRAIN_MAX_LEVEL - 1, Math.floor(charge * 2.99)); // 1..3
       if (!s.arrow.battleMode) {
         const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
         const ax = e.fx + hb.dx;
         const ay = e.fy + hb.dy * 2; // точка опоры (низ-центр модельки)
         const curLevel = elevLevelAt(Math.floor(ax), Math.floor(ay));
-        // направление: последнее направление бега, без него — куда смотрит моделька
-        const deg = e.lastDir ?? (e.face === -1 ? 0 : 180);
+        // направление: к прицелу (если курсор на поле), иначе — последнее
+        // направление бега, без него — куда смотрит моделька
+        let deg: number;
+        if (aim) {
+          const adx = (aim.x / s.field.cellW - ax) * s.field.cellW;
+          const ady = (aim.y / s.field.cellH - ay) * s.field.cellH;
+          if (Math.hypot(adx, ady) >= 4) deg = wrap360((Math.atan2(ady, adx) * 180) / Math.PI);
+          else deg = e.lastDir ?? (e.face === -1 ? 0 : 180);
+        } else {
+          deg = e.lastDir ?? (e.face === -1 ? 0 : 180);
+        }
         const rad = (deg * Math.PI) / 180;
         const wl = Math.hypot(Math.cos(rad) * s.field.cellW, Math.sin(rad) * s.field.cellH) || 1;
         const ux = (Math.cos(rad) * s.field.cellW) / wl;
         const uy = (Math.sin(rad) * s.field.cellH) / wl;
-        const maxCells = 1.25 + charge * 1.75; // тап ≈ полторы клетки, полный заряд — три
+        // Дальность выбирает игрок прицелом (до трёх клеток); без прицела —
+        // как раньше, из заряда (тап ≈ полторы клетки, полный заряд — три).
+        const maxCells = aim
+          ? Math.min(3, Math.max(0.3, Math.hypot(aim.x / s.field.cellW - ax, aim.y / s.field.cellH - ay)))
+          : 1.25 + charge * 1.75;
         const strict = testEntryStrict();
         let bestD = 0;
         let bestLvl = curLevel;
@@ -3665,8 +3691,9 @@ export default function Simulator() {
       /* ---------- прыжок через обрыв ---------- */
 
       /** Забрать запрос прыжка (заряд 0.15..1 из отпускания Пробела) и запустить
-       *  рывок: мирный — по точкам посадки вдоль направления бега, боевой — по
-       *  клеткам вдоль стрелы. Перепад, который перепрыгиваем, определяет заряд. */
+       *  рывок: мирный — к точке под мышкой (если курсор на поле; она и есть
+       *  конечная точка прыжка, игрок сам выбирает дистанцию) или вдоль
+       *  направления бега, боевой — по клеткам вдоль стрелы. */
       const consumeLeapRequest = () => {
         const charge = leapRequestRef.current;
         leapRequestRef.current = null;
@@ -3674,7 +3701,10 @@ export default function Simulator() {
         if (performance.now() < e.moveLockUntil) return;
         if (!testMode || editorOn) return; // вне «теста» и в редакторе — только желейный присед
         if (s.controlled !== 'main') return; // прыгает только свой кот под управлением
-        const land = leapLandingAt(charge);
+        // Прицел мышкой: мирная точка посадки — под курсором (в пределах максимума);
+        // в бою прицел не участвует — там рулит стрела и серверные клетки.
+        const aimCursor = !s.arrow.battleMode ? cursorWorldRef.current : null;
+        const land = leapLandingAt(charge, aimCursor);
         if (!land) return; // садиться некуда — остаётся присед-желе на месте
         if (!land.battle) {
           e.leap = {
@@ -3689,7 +3719,7 @@ export default function Simulator() {
             l1: land.l1,
             zH: land.zH,
           };
-          e.lastDir = land.deg;
+          e.lastDir = (Math.round(wrap360(land.deg) / 45) * 45) % 360;
           e.ptarget = null;
           e.path = [];
           e.pvx = 0;
@@ -4775,16 +4805,19 @@ export default function Simulator() {
           }
           ctx.restore();
         }
-        // маркер посадки прыжка: во время приседа-заряда — прогноз точки приземления
-        // (едет с ростом заряда), в полёте — точка, куда кот опустится. Лежит на
-        // поднятой земле (l1), поэтому прыжок вверх-вниз читается: кольцо показывает,
-        // на какой уровень кот прилетит. Рисуется в плоскости грунта — под котами.
+        // маркер посадки прыжка: во время приседа-заряда — точка, куда кот
+        // приземлится (прицел — под мышкой, кольцо следует за курсором; если
+        // туда не долететь — кольцо встаёт на крайшую достижимую точку и краснеет),
+        // в полёте — точка, куда кот опустится. Лежит на поднятой земле (l1),
+        // поэтому прыжок вверх-вниз читается: кольцо показывает, на какой уровень
+        // кот прилетит. Рисуется в плоскости грунта — под котами.
         if (testMode && !editorOn && s.controlled === 'main') {
           const spH = spaceHoldRef.current;
           const lpM = e.leap;
           let mx = -1;
           let my = -1;
           let mlift = 0;
+          let shortM = false; // посадка не долетает до прицела — предупредить цветом
           if (lpM) {
             // полёт: точка посадки известна заранее
             if (lpM.battle) {
@@ -4797,13 +4830,33 @@ export default function Simulator() {
             }
             mlift = lpM.l1;
           } else if (spH.holding) {
-            // заряд: прогноз по текущему заряду приседа
+            // заряд: прогноз по текущему заряду приседа; прицел — курсор.
+            // Посадиться некуда — кольцо встаёт у лап и краснеет: сюда прыжок не выйдет.
             const chM = 0.15 + 0.85 * Math.min(1, (performance.now() - spH.since) / 4000);
-            const landM = leapLandingAt(chM);
+            const aimM = !s.arrow.battleMode ? cursorWorldRef.current : null;
+            const landM = leapLandingAt(chM, aimM);
             if (landM) {
               mx = landM.sx * s.field.cellW;
               my = landM.sy * s.field.cellH;
               mlift = landM.l1;
+              if (aimM) {
+                const shortPx = Math.hypot(aimM.x - mx, aimM.y - my);
+                shortM = shortPx > s.field.cellH * 0.45;
+              }
+            } else {
+              // Посадиться некуда: кольцо у лап (мирный — свободная позиция,
+              // боевой — клетка) и красным: отсюда прыжок не выйдет.
+              if (s.arrow.battleMode) {
+                mx = (e.col + 0.5) * s.field.cellW;
+                my = (e.row + 0.5) * s.field.cellH;
+                mlift = elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX;
+              } else {
+                const hbM = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+                mx = (e.fx + hbM.dx) * s.field.cellW;
+                my = (e.fy + hbM.dy * 2) * s.field.cellH;
+                mlift = e.liftV;
+              }
+              shortM = true;
             }
           }
           if (mx >= 0) {
@@ -4811,12 +4864,12 @@ export default function Simulator() {
             const rrM = 9 * pulse;
             ctx.save();
             ctx.translate(mx, my - mlift);
-            ctx.fillStyle = 'rgba(126, 247, 156, 0.2)';
+            ctx.fillStyle = shortM ? 'rgba(255, 178, 126, 0.22)' : 'rgba(126, 247, 156, 0.2)';
             ctx.beginPath();
             ctx.arc(0, 0, rrM, 0, Math.PI * 2);
             ctx.fill();
             ctx.lineWidth = 2;
-            ctx.strokeStyle = 'rgba(214, 255, 226, 0.85)';
+            ctx.strokeStyle = shortM ? 'rgba(255, 205, 178, 0.9)' : 'rgba(214, 255, 226, 0.85)';
             ctx.stroke();
             ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
             ctx.beginPath();
@@ -5327,11 +5380,13 @@ export default function Simulator() {
       };
       const selfDrawV = selfDraw();
 
-      // плато рельефа: стены обрывов и поднятая земля — в общую глубинную очередь,
-      // чтобы кот позади обрыва честно прятался за ним, а кот перед обрывом и на
-      // самом плато рисовался поверх. Ключ сортировки — низ стены (нижняя точка
-      // клетки на экране); разметку клетки (бой/покрытия/заход) рисуем следом
-      // за верхом плато, внутри того же билборда.
+      // плато рельефа: верх и стена обрыва — РАЗНЫЕ билборды глубинной очереди.
+      // У верха ключ = ПОДНЯТЫЙ верхний край клетки: кот на плато (лапы всегда
+      // ниже поднятого верха своей клетки) рисуется поверх своей земли и больше
+      // не проваливается в неё на половине клетки; коты позади плато на низкой
+      // земле прячутся под ним. У стены ключ = низ стены: она прячет котов
+      // позади обрыва и скрывается за котами перед ним. Разметка клетки
+      // (бой/покрытия/заход) едет вместе с верхом плато.
       if (testMode && elevAny()) {
         const fxcT = camFxRef.current;
         const geoT = testFieldGeometry(s.field.cellW, s.field.cellH);
@@ -5358,33 +5413,20 @@ export default function Simulator() {
           if (!Number.isFinite(cT) || !Number.isFinite(rT)) continue;
           if (cT < 0 || rT < 0 || cT >= s.field.cols || rT >= s.field.rows) continue;
           const liftT = lvT * TERRAIN_LIFT_PX;
-          // Ключ сортировки — верх клетки (+3): всё, что стоит НА плато (лапы
-          // минимум на cellTop+58 из-за 10px запаса спрайта), рисуется поверх
-          // своей земли; коты позади плато (лапы выше cellTop) прячутся под ним.
-          const billYT = rT * chT + 3;
           const battleT = isBattleCellT(cT, rT);
           const flatsT = flatsByCellT.get(key);
           const sameLvlBattleT = (cc: number, rr: number): boolean =>
             isBattleCellT(cc, rr) && elevLevelAt(cc, rr) === lvT;
-          // Плато закрывает своего кота (ключ билборда выше линии лап) и перекрывает
-          // его билборд на OCCLUDE_COVER — рисуется полупрозрачно, как деревья и
-          // камни: моделька не «утопает» в поднятой клетке (скрин владельца).
-          const coveredT =
-            !!selfDrawV.rect &&
-            billYT > selfDrawV.key &&
-            coveredRatio(
-              { x0: cT * cwT, y0: rT * chT - liftT, x1: (cT + 1) * cwT, y1: (rT + 1) * chT },
-              selfDrawV.rect,
-            ) >= OCCLUDE_COVER;
+          // ВЕРХ: ключ — поднятая верхняя грань клетки; всё, что стоит на этой
+          // земле (лапы строго ниже верхней грани), рисуется поверх.
           bills.push({
-            y: billYT,
+            y: rT * chT - liftT,
             fn: () => {
               ctx.save();
-              if (coveredT) ctx.globalAlpha = OCCLUDE_ALPHA;
               ctx.scale(1, fxcT.sq);
               ctx.clip(geoT.path);
-              // стена обрыва + поднятая трава этой клетки
-              drawTerrainCell(ctx, cwT, chT, cT, rT, gpatT, pcvT);
+              // поднятая земля этой клетки
+              drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT);
               // разметка клетки поверх поднятой земли
               if (flatsT) {
                 for (const oT of flatsT) {
@@ -5427,6 +5469,21 @@ export default function Simulator() {
               ctx.restore();
             },
           });
+          // СТЕНА: рисуем только там, где сосед снизу ниже; ключ — низ стены
+          // (минус пиксель, чтобы кот вплотную к обрыву спереди рисовался поверх).
+          const wallYT = terrainWallBottomY(cT, rT, chT);
+          if (wallYT != null) {
+            bills.push({
+              y: wallYT - 1,
+              fn: () => {
+                ctx.save();
+                ctx.scale(1, fxcT.sq);
+                ctx.clip(geoT.path);
+                drawTerrainWall(ctx, cwT, chT, cT, rT);
+                ctx.restore();
+              },
+            });
+          }
         }
       }
 
@@ -6452,6 +6509,10 @@ export default function Simulator() {
         if (cvE) cvE.style.cursor = 'crosshair';
         return;
       }
+      // Прицел прыжка: курсор в мире с поправкой на подъём земли — клик по
+      // видимой поверхности возвышенности указывает в её клетку, а не в землю
+      // перед обрывом. В редакторе прицел не нужен (прыжка там нет).
+      cursorWorldRef.current = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
     }
     const dg = dragRef.current;
     if (dg) {
@@ -6759,6 +6820,12 @@ export default function Simulator() {
       const fxc = camFxRef.current;
       mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
       my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
+      // Поправка на подъём земли: клик по видимой поверхности возвышенности
+      // указывает в её клетку, а не в землю перед обрывом — с ближнего ракурса
+      // на возвышенность теперь можно и кликнуть, и забраться.
+      const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
+      mx = ground.x;
+      my = ground.y;
       if (!s.arrow.battleMode) {
         // мирный «тест»: клик пускает свободную ходьбу до точки (по прямой,
         // стены обкатываются скольжением); клавиши перебивают цель.

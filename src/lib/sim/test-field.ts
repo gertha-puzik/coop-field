@@ -32,6 +32,7 @@ import {
   objectSprite,
   obstacleBodyPx,
   groundCoverOf,
+  TERRAIN_MAX_LEVEL,
   type TestMap,
   type TestMapEntryDir,
   type TestMapObject,
@@ -727,6 +728,34 @@ export function elevLiftAtPoint(x: number, y: number): number {
   return elevLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
 }
 
+/**
+ * Грунт под визуальной точкой экрана (px мира): поднятая земля рисуется
+ * со сдвигом вверх на уровень рельефа, поэтому обратная проекция камеры без
+ * поправки попадает НЕ в ту клетку: клик по видимой поверхности возвышенности
+ * (ближний ракурс) без неё указывает в клетку ПЕРЕД обрывом — кот «упирается
+ * в стенку» вместо подъёма. Ищем с ряда курсора вверх (рельеф не выше 3):
+ * первая клетка (с самой южной стороны), чей поднятый верх накрывает точку,
+ * и есть грунт под курсором; её сдвиг возвращаем в мировые координаты.
+ */
+export function groundPointAtWorld(
+  x: number,
+  y: number,
+  cellW: number,
+  cellH: number,
+): { x: number; y: number } {
+  const c = Math.floor(x / cellW);
+  if (c < 0 || c >= currentMap.cols) return { x, y };
+  const r0 = Math.floor(y / cellH);
+  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
+    const r = r0 + k;
+    if (r < 0 || r >= currentMap.rows) break;
+    const lift = elevLevelAt(c, r) * TERRAIN_LIFT_PX;
+    const top = r * cellH - lift; // экранная верхняя грань поднятого верха (в мире)
+    if (y >= top && y < top + cellH) return { x, y: y + lift };
+  }
+  return { x, y };
+}
+
 /** Уровень клетки-соседа для стены обрыва: вне мира или за нарисованной кромкой
  *  базы нет — считаем 0 (стена уходит до самой земли). */
 function elevNeighborForWall(c: number, r: number): number {
@@ -735,13 +764,71 @@ function elevNeighborForWall(c: number, r: number): number {
   return elevLevelAt(c, r);
 }
 
+/** Низ южной стены обрыва клетки (px мира) или null — стены нет (сосед снизу
+ *  той же высоты или выше). Единый источник для ключа глубины билборда стены
+ *  в симуляторе и для самой отрисовки — они не разъезжаются. */
+export function terrainWallBottomY(c: number, r: number, cellH: number): number | null {
+  const e = elevLevelAt(c, r);
+  if (e <= 0) return null;
+  const sNb = elevNeighborForWall(c, r + 1);
+  if (sNb >= e) return null;
+  return (r + 1) * cellH - sNb * TERRAIN_LIFT_PX;
+}
+
 /**
- * Одна клетка плато: южная стена обрыва (если сосед ниже), боковые складки на
- * востоке/западе и верх — трава, сдвинутая вверх на уровень рельефа. Вызывается
- * из глубинной очереди симулятора: плато честно перекрывает котов позади себя
- * и скрывается за котами перед собой. pat — паттерн травы (null — заливка).
+ * Южная стена обрыва одной клетки плато (если сосед снизу ниже) — срез дёрна
+ * с градиентом почвы. Рисуется ОТДЕЛЬНО от верха: у стены свой ключ глубинной
+ * сортировки (низ стены) — она честно прячет котов позади себя и скрывается
+ * за котами перед собой, не трогая тех, кто стоит на самом плато.
  */
-export function drawTerrainCell(
+export function drawTerrainWall(
+  ctx: CanvasRenderingContext2D,
+  cellW: number,
+  cellH: number,
+  c: number,
+  r: number,
+): void {
+  const e = elevLevelAt(c, r);
+  if (e <= 0) return;
+  const sNb = elevNeighborForWall(c, r + 1);
+  if (sNb >= e) return;
+  const lift = e * TERRAIN_LIFT_PX;
+  const x = c * cellW;
+  const y = r * cellH;
+  const yTop = y + cellH - lift;
+  const yBot = y + cellH - sNb * TERRAIN_LIFT_PX;
+  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+  g.addColorStop(0, '#6d5438');
+  g.addColorStop(0.3, '#58412b');
+  g.addColorStop(1, '#382a1a');
+  ctx.fillStyle = g;
+  ctx.fillRect(x, yTop, cellW, yBot - yTop);
+  // нависшая трава: тонкая тёмная линия под верхом среза + светлый срез дёрна
+  ctx.fillStyle = 'rgba(18, 13, 5, 0.5)';
+  ctx.fillRect(x, yTop, cellW, 2);
+  ctx.fillStyle = 'rgba(214, 196, 140, 0.14)';
+  ctx.fillRect(x, yTop + 2, cellW, Math.min(3, yBot - yTop - 2));
+  // детерминированные камешки на срезе (по клетке — у всех игроков одинаковые)
+  const v = (c * 7 + r * 13 + e * 5) % 4;
+  ctx.fillStyle = 'rgba(24, 18, 10, 0.35)';
+  for (let i = 0; i <= v; i++) {
+    const px = x + cellW * (0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60);
+    const py = yTop + (yBot - yTop) * (0.35 + ((r * 23 + i * 29) % 10) / 22);
+    const rr2 = 1.6 + ((c + r + i) % 3);
+    ctx.beginPath();
+    ctx.arc(px, py, rr2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/**
+ * Верх плато одной клетки: поднятая на уровень рельефа земля (пиксельный рисунок
+ * клетки или травяной тайл), лёгкая подсветка уровней 2+ и боковые складки.
+ * Рисуется с ключом глубины = ПОДНЯТЫЙ верхний край клетки: тогда кот, стоящий
+ * на плато (его лапы всегда ниже поднятого верха своей клетки), рисуется
+ * ПОВЕРХ своей земли и больше не «проваливается» в неё на половине клетки.
+ */
+export function drawTerrainTop(
   ctx: CanvasRenderingContext2D,
   cellW: number,
   cellH: number,
@@ -756,34 +843,6 @@ export function drawTerrainCell(
   const lift = e * TERRAIN_LIFT_PX;
   const x = c * cellW;
   const y = r * cellH;
-  // южная стена: перепад вниз по экрану — срез дёрна с градиентом почвы
-  const sNb = elevNeighborForWall(c, r + 1);
-  if (sNb < e) {
-    const yTop = y + cellH - lift;
-    const yBot = y + cellH - sNb * TERRAIN_LIFT_PX;
-    const g = ctx.createLinearGradient(0, yTop, 0, yBot);
-    g.addColorStop(0, '#6d5438');
-    g.addColorStop(0.3, '#58412b');
-    g.addColorStop(1, '#382a1a');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, yTop, cellW, yBot - yTop);
-    // нависшая трава: тонкая тёмная линия под верхом среза + светлый срез дёрна
-    ctx.fillStyle = 'rgba(18, 13, 5, 0.5)';
-    ctx.fillRect(x, yTop, cellW, 2);
-    ctx.fillStyle = 'rgba(214, 196, 140, 0.14)';
-    ctx.fillRect(x, yTop + 2, cellW, Math.min(3, yBot - yTop - 2));
-    // детерминированные камешки на срезе (по клетке — у всех игроков одинаковые)
-    const v = (c * 7 + r * 13 + e * 5) % 4;
-    ctx.fillStyle = 'rgba(24, 18, 10, 0.35)';
-    for (let i = 0; i <= v; i++) {
-      const px = x + cellW * (0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60);
-      const py = yTop + (yBot - yTop) * (0.35 + ((r * 23 + i * 29) % 10) / 22);
-      const rr2 = 1.6 + ((c + r + i) % 3);
-      ctx.beginPath();
-      ctx.arc(px, py, rr2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
   // верх плато: кусок пиксельной отрисовки клетки, поднятый на уровень; чем
   // выше — тем светлее. Без рисунка — травяной тайл пака, как раньше.
   if (paintSrc) {

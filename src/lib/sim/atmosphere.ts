@@ -55,9 +55,11 @@ const DAYPART_PROFILE: Record<DayPart, AtmoProfile> = {
   night:   { gain: [0.64, 0.72, 1.05], sat: 0.85, bright: 0.64, cloudCount: 7, cloudAlpha: 0.12, cloudSpeed: 18, cloudTint: [0.24, 0.28, 0.42], rain: 0 },
 };
 
-/** Пресеты погоды (тени облаков и дождь — целиком погодные параметры). */
+/** Пресеты погоды (тени облаков и дождь — целиком погодные параметры).
+ *  Солнечно — небо ЧИСТОЕ: ни облаков, ни дождя, ничего не «наложено» на поле;
+ *  тени облаков принадлежат только пасмурной погоде и дождю. */
 const WEATHER_PROFILE: Record<WeatherKind, AtmoProfile> = {
-  sun:   { gain: [1.02, 1.01, 0.99], sat: 1.05, bright: 1.04, cloudCount: 3,  cloudAlpha: 0.05, cloudSpeed: 10, cloudTint: [0.42, 0.48, 0.62], rain: 0 },
+  sun:   { gain: [1.02, 1.01, 0.99], sat: 1.05, bright: 1.04, cloudCount: 0,  cloudAlpha: 0,    cloudSpeed: 10, cloudTint: [0.42, 0.48, 0.62], rain: 0 },
   cloud: { gain: [0.98, 1.0, 1.04],  sat: 0.84, bright: 0.9,  cloudCount: 10, cloudAlpha: 0.13, cloudSpeed: 22, cloudTint: [0.3, 0.35, 0.48], rain: 0 },
   rain:  { gain: [0.92, 0.97, 1.06], sat: 0.62, bright: 0.78, cloudCount: 14, cloudAlpha: 0.18, cloudSpeed: 32, cloudTint: [0.22, 0.26, 0.38], rain: 1 },
 };
@@ -340,10 +342,11 @@ export class Atmosphere {
     const dt = Math.min(50, Math.max(1, dtMs)) / 1000;
     // Цель пересчитывается каждый кадр: сутки едут непрерывно, погода включается
     // событием. К цели сглаживаем двумя темпами: цветокоррекция — быстро,
-    // облака и дождь — плавно (несколько секунд), чтобы смена погоды не щёлкала.
+    // облака и дождь — за пару секунд, чтобы смена погоды не щёлкала, но и
+    // не «висела» на экране после её окончания.
     this.target = stateOf(combine(this.blendDaypart(), WEATHER_PROFILE[this.wKind] ?? WEATHER_PROFILE.sun));
     const kc = 1 - Math.exp(-dt / 0.6);
-    const kw = 1 - Math.exp(-dt / 3.5);
+    const kw = 1 - Math.exp(-dt / 1.2);
     const c = this.cur;
     const t = this.target;
     c.gain[0] = lerp(c.gain[0], t.gain[0], kc);
@@ -358,6 +361,13 @@ export class Atmosphere {
     c.cloudTint[1] = lerp(c.cloudTint[1], t.cloudTint[1], kw);
     c.cloudTint[2] = lerp(c.cloudTint[2], t.cloudTint[2], kw);
     c.rain = lerp(c.rain, t.rain, kw);
+    // Хвост экспоненты срезается: без этого последние доли процента дождя и
+    // облаков висят на экране заметно дольше видимой части перехода.
+    if (t.rain === 0 && c.rain < 0.02) c.rain = 0;
+    if (t.cloudAlpha === 0 && c.cloudAlpha < 0.004) {
+      c.cloudAlpha = 0;
+      c.cloudCount = 0;
+    }
 
     // Мир: свежая текстура 2D-холста + текущая цветокоррекция. update() сам
     // подхватывает изменение размера холста (ресайз окна, перетаскивание колонок
