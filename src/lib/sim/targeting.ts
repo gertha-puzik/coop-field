@@ -9,8 +9,9 @@
  * — pure functions over explicit arguments only.
  *
  * MYSTIC MIRROR: pickStrikeTarget mirrors server.js aimedNeighbor
- * (server.js:1816) — change only in sync, see ARCHITECTURE §4 (the server
- * decides the same «whom to cut» rule; parity tests land in W3).
+ * (server.js:1806) — change only in sync, see ARCHITECTURE §4 (the server
+ * decides the same «whom to cut» rule; parity is gated in CI since W3 —
+ * `npm run test:protocol-parity`).
  * The remote-draw helpers (rememberRemoteCell/stepRemoteDraws) intentionally
  * stay in simulator.tsx: they consume lib/net/move-book, and lib/sim must not
  * know the wire layer (ARCHITECTURE §1).

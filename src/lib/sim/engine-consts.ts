@@ -7,7 +7,7 @@
  * sibling src/lib/sim modules (geometry, targeting). Nothing is imported here.
  *
  * [MIRROR] marks a value hand-copied in server.js — change both sides in one
- * PR (docs/ARCHITECTURE.md §4; parity tests land in W3).
+ * PR (docs/ARCHITECTURE.md §4; parity is gated in CI since W3).
  */
 
 /** Ключ localStorage с настройками сессии (главное хранилище движка). */

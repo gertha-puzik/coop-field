@@ -159,14 +159,14 @@ constants live in two mirrored registries — `server/protocol.js` (server side)
 | Инвариант | Клиент | Сервер | Комментарий |
 | --- | --- | --- | --- |
 | Кривая брони ARMOR_CURVE | `src/lib/sim/settings.ts` (re-exported by `protocol.ts`) | `server/protocol.js` | single source per side (W3); интерполяция урона по пресету 0–0,9 |
-| Правило «в кого попадает удар» | `src/lib/sim/targeting.ts` pickStrikeTarget (вынос W5a-1) | `server.js:1816` aimedNeighbor | комментарий сервера: «то же правило, что pickStrikeTarget в симе» |
+| Правило «в кого попадает удар» | `src/lib/sim/targeting.ts` pickStrikeTarget (вынос W5a-1) | `server.js:1806` aimedNeighbor | комментарий сервера: «то же правило, что pickStrikeTarget в симе» |
 | Зоны удара и урон уровней | `settings.ts` DAMAGE_LEVELS (zones re-exported by `protocol.ts`) | `server/protocol.js` STRIKE_ZONES | single source per side (W3); урон/части/диагонали |
 | Отклик удара 170 мс (деф.) | `settings.ts` strikeResponseMs (re-exported as STRIKE_CATCH_MS); движковая копия `src/lib/sim/targeting.ts` STRIKE_RESPONSE_MS (вынос W5a-1) | `server/protocol.js` STRIKE_CATCH_MS | single source per side (W3); плюс clamp 0–600 flightMs |
 | Пропускные клетки земли GROUND_COVER_IDS | исходник `test-map.ts` GROUND_COVER_OPTS → производные списки: `protocol.ts`, `src/lib/sim/paint.ts` (Set, вынос W5a-1) | `server/protocol.js` | single source per side (W3); было три независимые копии |
 | Лимиты локации TEST_MAP_LIMITS | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` (sanitize uses it) | single source per side (W3); редактор не предложит конфиг, который сервер отвергнет |
 | Максимальный уровень высоты TERRAIN_MAX_LEVEL=3 | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` | single source per side (W3); перепад прыжка ≤3 |
 | Дальность/дуга прыжка | `simulator.tsx:2881` (заряд: `1 + min(TERRAIN_MAX_LEVEL−1, floor(charge·2.99))`, 8 направлений, 1–3 клетки) | `server.js jump handler` | кулдаун 450 мс с обеих сторон (`JUMP_COOLDOWN_MS` in both registries, W3) |
-| Заряд приседа по hold | `simulator.tsx:2333` (`0.15 + 0.85·hold/4000`) | `server.js:2257` (clamp hold 0–4000) | формула анимации — клиентская, сервер хранит только флаг sq |
+| Заряд приседа по hold | `simulator.tsx:2333` (`0.15 + 0.85·hold/4000`) | `server.js:2231` (clamp hold 0–4000) | формула анимации — клиентская, сервер хранит только флаг sq |
 | Клетка мишени РАБ | `protocol.ts` RAB_CELL mirror + движковая копия `src/lib/sim/engine-consts.ts` RAB_POS (0-based, вынос W5a-1) | `server/protocol.js` RAB_CELL (1-based) | single source per side (W3); сервер не рассылает позицию |
 | Дефолт манекена DUMMY_DEFAULT | рендер по `dummyState` (сервер присылает всё) | `server/protocol.js` | сервер — источник; клиентские дефолты не дублируются |
 | Формат кадров `[event, payload]` | `coop.ts:325+` (диспетчер, имена через `protocol.ts` EV.*/guards) | `server.js` dispatch 2496–2666 (имена через `server/protocol.js` EV.*) | «move» с x:0/y:0 — маркер выхода: двойной смысл сохраняется (canon: `isCoopCat` guard пропускает оба, потребитель различает по нулям) |
