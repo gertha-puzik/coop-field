@@ -4,8 +4,10 @@
 глубина: слои, потоки данных, зеркала-инварианты, координатные системы и целевая структура
 рефакторинга (волны W3–W5). Читай секцию задачи, не весь файл.
 
-Состояние на 2026-11-05 (main = `1c8f8c8`, плюс ветка W1). Карта as-is честная: в репо есть
-из god-файлов `server.js` (2701, разрезан на server/ волной W4) осталось разрезать только `simulator.tsx` 8221 — размер это долг, а не норма:
+Состояние чисел: `wc -l` на 2026-11-06 (main = `060a51f`; волны W3–W5b слиты; в CI числа бережёт
+гейт `npm run check:landmarks`, W7a). Карта as-is честная: god-файлы разобраны — `server.js` (2701)
+разрезан волной W4 на тонкий вход 10 строк + модули `server/`; из `simulator.tsx` (8221 → 7523 (W5a)
+→ 4388 (W5b) → 4477 сегодня) остаётся разрезать меньшинство. Размер — это долг, а не норма:
 **новые файлы >800 строк запрещены** (`npm run arch:check`).
 
 ## 1. Слои и границы
@@ -32,18 +34,18 @@ server.js             комната: комнаты, клетки, бой, ча
 
 | Модуль | Строк | Ответственность (диапазоны) |
 | --- | ---: | --- |
-| `src/components/sim/simulator.tsx` | 4388 | Остаток после выносов W5a+W5b (behavior-preserving): стейт/refs-пояс и сетевые колбэки 236–782; вызов buildEditorOps 783–927 (тела — ./simulator/editor-ops.ts); атмосфера/комнаты/подсказка боя 928–1187; главный rAF 1188–3892 (оставлен на месте: 2705-строчное замыкание с deps `[stage]` — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); ручной угол/клавиатура/мышь 3893–3986 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек 3987–4121; entry-флоу/theme 4122–4236; JSX-каркас 4237–4388 (панели — ./simulator/components/*) |
-| `src/components/sim/simulator/` вынос W5b | 3995 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving, проверено байт-в-байт diff): hud-canvas.ts 241 (HUD-циферблат день/ночь+погода), sim-model.ts 173 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 230 (window keydown/keyup/blur, deps []), hooks/use-network.ts 621 (сетевой эффект coop-клиента, deps [loaded, netStarted, applyNetFight, wantedRoomIds]), hooks/use-canvas-layers.ts 157 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike, doStrikeRef), editor-ops.ts 785 (операции черновика локации как per-render фабрика), pointer-tools.ts 605 (мышиные обработчики канваса), components/chrome.tsx 367 (SimulatorHeader/ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 621 (панель редактора), components/field-stage.tsx 138 (рамка канвасов+легенда) |
-| `src/lib/sim/` вынос W5a-1 | 922 | Чистые модули, вырезанные из пояса simulator.tsx (behavior-preserving): engine-consts.ts 109 (именованные константы+STORAGE-ключи, пометки [MIRROR] у DUMMY_DEFAULT/RAB_POS), geometry.ts 109 (spriteBoxOf/якоря стрелы/coveredRatio/nearestEntryCell), targeting.ts 150 (правило удара pickStrikeTarget — зеркало server.js aimedNeighbor, STRIKE_RESPONSE_MS), combat-log.ts 158 (layout колонок+STORAGE, mergeLog/CombatState), particles.ts 55 (спринт-частицы), paint.ts 253 (кисть PaintXP: материалы/штампы/undo/encode), editor-model.ts 88 (типы редактора+EDITOR_PASS_KEY) |
-| `src/lib/sim/settings.ts` | 1122 | Модель боя: STRIKE_ZONES, ARMOR_CURVE (:556), DAMAGE_LEVELS (:527), спрайты (31), замедление, атмосфера-типы; ~54 экспорта |
+| `src/components/sim/simulator.tsx` | 4477 | Остаток после выносов W5a+W5b (behavior-preserving): стейт/refs-пояс и сетевые колбэки 233–868; вызов buildEditorOps :869 (тела — ./simulator/editor-ops.ts); эффекты атмосферы/комнат/подсказки боя ~1014–1248; главный rAF 1249–3978 (оставлен на месте: ~2700-строчное замыкание с deps `[stage]`, `const loop` :3947 — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); ручной угол/клавиатура/мышь 3979–4075, вызов buildPointerTools :4014 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек 4076–~4210 (patchField :4076, сброс СП :4140–4141, лог-ротация :4153); entry-флоу/theme ~4211–4323; JSX-каркас 4324–4477 (панели — ./simulator/components/*) |
+| `src/components/sim/simulator/` вынос W5b | 4271 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving, проверено байт-в-байт diff): hud-canvas.ts 241 (HUD-циферблат день/ночь+погода), sim-model.ts 174 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 230 (window keydown/keyup/blur, deps []), hooks/use-network.ts 624 (сетевой эффект coop-клиента, deps [loaded, netStarted, applyNetFight, wantedRoomIds]), hooks/use-canvas-layers.ts 181 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike, doStrikeRef), editor-ops.ts 785 (операции черновика локации как per-render фабрика), pointer-tools.ts 619 (мышиные обработчики канваса), components/chrome.tsx 373 (SimulatorHeader/ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 621 (панель редактора), components/field-stage.tsx 146 (рамка канвасов+легенда) |
+| `src/lib/sim/` вынос W5a-1 | 952 | Чистые модули, вырезанные из пояса simulator.tsx (behavior-preserving): engine-consts.ts 109 (именованные константы+STORAGE-ключи, пометки [MIRROR] у DUMMY_DEFAULT/RAB_POS), geometry.ts 109 (spriteBoxOf/якоря стрелы/coveredRatio/nearestEntryCell), targeting.ts 151 (правило удара pickStrikeTarget — зеркало server.js aimedNeighbor, STRIKE_RESPONSE_MS), combat-log.ts 187 (layout колонок+STORAGE, mergeLog/CombatState), particles.ts 55 (спринт-частицы), paint.ts 253 (кисть PaintXP: материалы/штампы/undo/encode), editor-model.ts 88 (типы редактора+EDITOR_PASS_KEY) |
+| `src/lib/sim/settings.ts` | 1138 | Модель боя: STRIKE_ZONES, ARMOR_CURVE (:572), DAMAGE_LEVELS (:527), спрайты (31), замедление, атмосфера-типы; ~54 экспорта |
 | `src/lib/sim/test-field.ts` | 1822 | Играбельная площадь «Элизии»: проходимость клеток и anchor-точек, route-граф, рендер кромки (марширующие квадраты + Чайкин), paint-маска, кэши; мутабельные модульные синглтоны (раздел 5) |
 | `src/lib/sim/test-map.ts` | 634 | Модель конфига локации v1/v2 + клиентский sanitize; TEST_MAP_LIMITS (:304) — зеркало серверных лимитов |
-| `src/lib/sim/atmosphere.ts` | 453 | Pixi-оверлей погоды/времени суток |
-| `src/lib/sim/` прочее | ~330 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 136, theme.ts 54 |
+| `src/lib/sim/atmosphere.ts` | 527 | Pixi-оверлей погоды/времени суток |
+| `src/lib/sim/` прочее | ~355 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 136, theme.ts 54 |
 | `src/lib/net/coop.ts` | 537 | Транспорт: выбор сокета (prod по домену, `?ws=` на localhost), reconnect backoff, диспетчер входящих 325+; имена событий и guard-валидаторы — из `./protocol` (W3) |
 | `src/lib/net/protocol.ts` | 329 | Client-side protocol canon (W3): mirrored `EV.*` registries, payload types, guards; re-exports sim-owned constants from `settings.ts`/`test-map.ts` |
 | `src/lib/net/move-book.ts` | 89 | Предикт своих шагов (≤1 неподтверждённый), откат по refuse, достройка чужих котов. Эталон чистоты для новых модулей |
-| `src/components/sim/` прочее | ~2600 | settings-panel.tsx 1290 (панель настроек, 25 пропсов/10 колбэков — разрез в W5), entry-screen.tsx 586, room-picker 129, room-chat 126, fight-log 71, beer/theme-бэкдропы |
+| `src/components/sim/` прочее | ~2650 | settings-panel.tsx 1299 (панель настроек, 25 пропсов/10 колбэков — разрез в W5), entry-screen.tsx 586, room-picker 129, room-chat 126, fight-log 71, beer/theme-бэкдропы |
 
 ### Сервер (тонкий вход `server.js` 10 строк + 12 модулей `server/`; разрез волной W4, behavior-preserving)
 
@@ -68,7 +70,7 @@ server.js             комната: комнаты, клетки, бой, ча
 
 ### Сценарии и деплой
 
-`scripts/` — 31 файл: к npm подключены test:ws (контракт комнаты, 1104 строки),
+`scripts/` — 37 файлов: к npm подключены test:ws (контракт комнаты, 1104 строки),
 test:queue (self-spawn), test:unit (3 юнита движка), arch:check; прочие — ручные пробы
 и ops, часть с прод-дефолтами (чистятся в W2). `deploy/vps/` — образец systemd-юнита,
 apply.sh (health-check, рестарт только при изменении), nginx-www.conf, отдельный
@@ -165,8 +167,8 @@ constants live in two mirrored registries — `server/protocol.js` (server side)
 | Пропускные клетки земли GROUND_COVER_IDS | исходник `test-map.ts` GROUND_COVER_OPTS → производные списки: `protocol.ts`, `src/lib/sim/paint.ts` (Set, вынос W5a-1) | `server/protocol.js` | single source per side (W3); было три независимые копии |
 | Лимиты локации TEST_MAP_LIMITS | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` (sanitize uses it) | single source per side (W3); редактор не предложит конфиг, который сервер отвергнет |
 | Максимальный уровень высоты TERRAIN_MAX_LEVEL=3 | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` | single source per side (W3); перепад прыжка ≤3 |
-| Дальность/дуга прыжка | `simulator.tsx:1257` (заряд: `1 + min(TERRAIN_MAX_LEVEL−1, floor(charge·2.99))`, 8 направлений, 1–3 клетки) | `server/movement.js` jump (:224; W4-carve) | кулдаун 450 мс с обеих сторон (`JUMP_COOLDOWN_MS` in both registries, W3) |
-| Заряд приседа по hold | `simulator.tsx:2513` (`0.15 + 0.85·hold/4000`) | `server/room.js` space (:377; clamp hold 0–4000; W4-carve) | формула анимации — клиентская, сервер хранит только флаг sq |
+| Дальность/дуга прыжка | `simulator.tsx:1318` (заряд: `1 + min(TERRAIN_MAX_LEVEL−1, floor(charge·2.99))`, 8 направлений, 1–3 клетки) | `server/movement.js` jump (:224; W4-carve) | кулдаун 450 мс с обеих сторон (`JUMP_COOLDOWN_MS` in both registries, W3) |
+| Заряд приседа по hold | `simulator.tsx:2587` (`0.15 + 0.85·hold/4000`) | `server/room.js` space (:377; clamp hold 0–4000; W4-carve) | формула анимации — клиентская, сервер хранит только флаг sq |
 | Клетка мишени РАБ | `protocol.ts` RAB_CELL mirror + движковая копия `src/lib/sim/engine-consts.ts` RAB_POS (0-based, вынос W5a-1) | `server/protocol.js` RAB_CELL (1-based) | single source per side (W3); сервер не рассылает позицию |
 | Дефолт манекена DUMMY_DEFAULT | рендер по `dummyState` (сервер присылает всё) | `server/protocol.js` | сервер — источник; клиентские дефолты не дублируются |
 | Формат кадров `[event, payload]` | `coop.ts:325+` (диспетчер, имена через `protocol.ts` EV.*/guards) | `server/net.js` onMessage-диспетчер (имена через `server/protocol.js` EV.*) | «move» с x:0/y:0 — маркер выхода: двойной смысл сохраняется (canon: `isCoopCat` guard пропускает оба, потребитель различает по нулям) |
@@ -282,8 +284,8 @@ hookless factories (editor-ops 785, pointer-tools 605 — per-render builders, n
 HUD dial (hud-canvas 241), sim-model (types, fmtSec, remote-draw helpers — lives in
 components because it consumes lib/net), JSX chrome (chrome.tsx 367, editor-overlay 621,
 field-stage 138) — 11 modules, byte-identical bodies against pre-carve git snapshots.
-simulator.tsx: 7523 → 4388 lines. Kept ON PURPOSE (behavior > counters): the main rAF
-closure (~2700 lines, single `useEffect` with deps `[stage]`, `const loop` at :3873) —
+simulator.tsx: 8221 → 7523 (W5a) → 4388 lines at the W5b landing — 4477 today, after the post-carve fix PRs (atmo lifecycle, cols clamp, cursor DPR, editor draft WYSIWYG). Kept ON PURPOSE (behavior > counters): the main rAF
+closure (~2700 lines, single `useEffect` with deps `[stage]`, `const loop` at :3947) —
 extracting it whole would recreate a >800-line file, splitting it would re-wire engine
 variables; state/refs belt of `Simulator()`; small callback/patch belts (мелкая крошка —
 запрет пере-дробления). Stage-1 leftovers (angles/persist/leap/peace-walk/camera/
@@ -300,5 +302,5 @@ weather-clock) remain — they interlock with the same rAF closure and are follo
 - W3 догму сделала гейтом: `check:protocol` (док-таблицы == реестры, без строк-дублей в
   server.js + server/*.js) и `test:protocol-parity` (клиент == сервер == golden) уже в CI — зеркала
   раздела 4 больше не держатся одним ревью.
-- Размерные числа в картах сверяны с `wc -l` на 2026-11-05; при расхождении доверяй
+- Размерные числа в картах сверяны с `wc -l` на 2026-11-06 (W7a; в CI — гейт `check:landmarks`); при расхождении доверяй
   `wc -l`, а не этой таблице, и обнови её.

@@ -48,6 +48,10 @@ jobs:
       # и в server.js нет строковых дублей имён событий (только импорт EV.*).
       - name: Синхронизация протокола и доков
         run: npm run check:protocol
+      # Гейт док-подсказок (W7a): числа размеров модулей в картах кода
+      # (AGENTS.md, docs/ARCHITECTURE.md §2) равны фактическим wc -l — дрейф = красный чек.
+      - name: Актуальность док-подсказок
+        run: npm run check:landmarks
       # Юнит-тесты движка через strip-types; на node 22 гоняются по-настоящему.
       - name: Юнит-тесты движка
         run: npm run test:unit
