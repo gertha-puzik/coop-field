@@ -34,10 +34,16 @@ jobs:
           cache: npm
       - name: Установка зависимостей
         run: npm ci
-      # next.config.ts держит typescript.ignoreBuildErrors: true, поэтому типовая
-      # защита фронта живёт здесь — ошибка типов падает в CI, а не молчит в сборке
+      # C W1 build проверяет типы сам (next.config.ts больше не глушит ошибки),
+      # но typecheck остаётся быстрой отдельной проверкой и главным гейтом CI.
       - name: Проверка типов
         run: npm run typecheck
+      # Гейт архитектуры: лимит 800 строк + запрет lib -> components (W1).
+      - name: Архитектурные границы
+        run: npm run arch:check
+      # Юнит-тесты движка через strip-types; на node 22 гоняются по-настоящему.
+      - name: Юнит-тесты движка
+        run: npm run test:unit
       - name: Версия ws в двух lockfile
         run: node scripts/check-ws-versions.mjs
       # Интеграционный тест: сервер поднимается сам, проверяет очередь шагов
