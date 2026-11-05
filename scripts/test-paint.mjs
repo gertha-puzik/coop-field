@@ -1,12 +1,25 @@
 // Пиксельная отрисовка локации: setmap принимает рисунок (PNG base64) и боевые
 // клетки на закрашенных местах, отказывает боевой клетке на некрашеном месте,
 // free-ходьба ходит только по закрашенному, спавн новичка — на закрашенной земле.
-// Запуск: PORT=3784 WS_PORT=3784 DATA_DIR=$(mktemp -d) node server.js
-//         WS_URL=ws://127.0.0.1:3784 node scripts/test-paint.mjs
+// Запуск: node scripts/test-paint.mjs — из чистого клона, сам поднимает свой
+// server.js на случайном порту с временным DATA_DIR. Внешний сервер:
+// WS_URL=ws://… node scripts/test-paint.mjs.
+// Вторая setmap-правка уходит с НОВОГО сокета: сервер троттлит любые setmap-кадры
+// раз в 10 с НА СОКЕТ. Пароль редактора по умолчанию — 1946 (совпадает с серверным
+// legacy-дефолтом); переопределение — env MAP_PASS (спавненному серверу передаётся
+// ADMIN_PASS с тем же значением).
 import { WebSocket } from "ws";
 import zlib from "node:zlib";
+import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-const url = process.env.WS_URL || "ws://127.0.0.1:3784";
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || "1946";
+
+const PORT = 3993 + Math.floor(Math.random() * 40);
+const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 const room = "test";
 const rnd = Date.now().toString(36);
 let fails = 0;
@@ -14,6 +27,45 @@ const ok = (cond, label) => {
   console.log(`${cond ? "PASS" : "FAIL"}  ${label}`);
   if (!cond) fails++;
 };
+
+// Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+const srv = process.env.WS_URL
+  ? null
+  : spawn(process.execPath, ["server.js"], {
+      cwd: path.resolve(new URL("..", import.meta.url).pathname),
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        HOST: "127.0.0.1",
+        DATA_DIR: mkdtempSync(path.join(tmpdir(), "coop-paint-")),
+        ADMIN_PASS: PASS,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+if (srv) {
+  srv.stdout.on("data", () => {});
+  srv.stderr.on("data", (d) => process.stderr.write(d));
+  process.on("exit", () => srv.kill("SIGTERM"));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitServer() {
+  for (let i = 0; i < 100; i++) {
+    const ready = await new Promise((resolve) => {
+      const probe = new WebSocket(url);
+      probe.once("open", () => {
+        probe.terminate();
+        resolve(true);
+      });
+      probe.once("error", () => resolve(false));
+    });
+    if (ready) return;
+    await sleep(100);
+  }
+  throw new Error("сервер не поднялся");
+}
+await waitServer();
 
 /* ---------- минимальный PNG-энкодер (RGBA, фильтр 0) ---------- */
 const CRC_TABLE = (() => {
@@ -133,7 +185,7 @@ const a = await client(`А-${rnd}`);
 await waitFor(a, "you");
 await waitFor(a, "field");
 clear(a);
-a.send(JSON.stringify(["setmap", { pass: "1946", map: baseMap }]));
+a.send(JSON.stringify(["setmap", { pass: PASS, map: baseMap }]));
 await new Promise((r) => setTimeout(r, 600));
 const mapEv = a.inbox.find((m) => m[0] === "map");
 ok(!!mapEv, "setmap с рисунком принят, map разослан");
@@ -148,16 +200,22 @@ ok(
 );
 
 // --- боевая клетка на наполовину закрашенном месте — отказ ---
-clear(a);
+// setmap уходит с НОВОГО сокета: предыдущий кадр прогнан меньше секунды назад,
+// а сервер троттлит любые setmap-кадры раз в 10 с на сокет.
+const admin2 = await client(`Админ2-${rnd}`);
+await waitFor(admin2, "you");
+await waitFor(admin2, "field");
+clear(admin2);
 const badMap = JSON.parse(JSON.stringify(baseMap));
 badMap.objects.push({ id: "o9", kind: "battle", c: 9, r: 4, pos: "center" });
-a.send(JSON.stringify(["setmap", { pass: "1946", map: badMap }]));
+admin2.send(JSON.stringify(["setmap", { pass: PASS, map: badMap }]));
 await new Promise((r) => setTimeout(r, 500));
-const info = a.inbox.find((m) => m[0] === "info");
+const info = admin2.inbox.find((m) => m[0] === "info");
 ok(
   !!info && /не целиком/.test(info[1]),
   `боевая клетка на некрашеном месте отказана: ${info?.[1] ?? "нет ответа"}`,
 );
+admin2.close();
 
 // --- мирная ходьба только по закрашенному ---
 const b = await client(`В-${rnd}`);
@@ -182,5 +240,7 @@ ok(
   `спавн новичка на закрашенной земле (${bx}, ${by})`,
 );
 
+a.close();
+b.close();
 console.log(fails === 0 ? "\nВСЕ ПРОВЕРКИ ПРОЙДЕНЫ" : `\nПРОВАЛОВ: ${fails}`);
 process.exit(fails === 0 ? 0 : 1);

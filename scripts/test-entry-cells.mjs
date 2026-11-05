@@ -7,16 +7,57 @@
  *  5. move с захода в зону → применён; move из зоны на заход → применён (выход).
  *  6. freemove после выхода → fm=1.
  *  7. Возврат к раскладке по умолчанию (восстановление после теста).
+ *
+ * Запуск: node scripts/test-entry-cells.mjs — из чистого клона, сам поднимает
+ * свой server.js на случайном порту с временным DATA_DIR (репозиторный data/
+ * не трогается). Внешний сервер: WS_URL=ws://… node scripts/test-entry-cells.mjs.
+ *
+ * Каждая setmap-правка уходит со своего НОВОГО сокета: сервер троттлит любые
+ * setmap-кадры раз в 10 с НА СОКЕТ — свежее соединение получает свежий счётчик.
+ *
+ * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+ * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
+ * с тем же значением — клиент и сервер теста всегда сходимся).
  */
+import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import WebSocket from 'ws';
 
-const URL = process.env.WS_URL || 'ws://127.0.0.1:3780';
-const PASS = '1946';
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || '1946';
 const ROOM = 'test';
+
+const PORT = 3973 + Math.floor(Math.random() * 40);
+const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
+
+// Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+const srv = process.env.WS_URL
+  ? null
+  : spawn(process.execPath, ['server.js'], {
+      cwd: path.resolve(new URL('..', import.meta.url).pathname),
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        HOST: '127.0.0.1',
+        DATA_DIR: mkdtempSync(path.join(tmpdir(), 'coop-entry-cells-')),
+        ADMIN_PASS: PASS,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+if (srv) {
+  srv.stdout.on('data', () => {});
+  srv.stderr.on('data', (d) => process.stderr.write(d));
+  process.on('exit', () => srv.kill('SIGTERM'));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const connect = () =>
   new Promise((resolve, reject) => {
-    const ws = new WebSocket(URL);
+    const ws = new WebSocket(url);
     const state = { inbox: [], waiters: [], readIdx: 0 };
     ws.on('message', (raw) => {
       const msg = JSON.parse(String(raw));
@@ -55,16 +96,38 @@ const wait = (state, pred, label, ms = 4000) => {
   });
 };
 
+// Готовность: свой server.js поднимается доли секунды, чужой может слушать сразу.
+async function waitServer() {
+  for (let i = 0; i < 100; i++) {
+    const ready = await new Promise((resolve) => {
+      const probe = new WebSocket(url);
+      probe.once('open', () => {
+        probe.terminate();
+        resolve(true);
+      });
+      probe.once('error', () => resolve(false));
+    });
+    if (ready) return;
+    await sleep(100);
+  }
+  throw new Error('сервер не поднялся');
+}
+
 const join = async (sock, name) => {
   sock.ws.send(JSON.stringify(['join', { room: ROOM, login: name }]));
   await wait(sock.state, ([e]) => e === 'you', `you ${name}`);
   await wait(sock.state, ([e]) => e === 'field', `field ${name}`);
 };
 
-const setmap = async (sock, map, expectOk) => {
+// setmap-кадр с нового сокета (троттлинг 10 с — на сокет, см. шапку):
+// отказ приходит только отправителю, а рассылка map — всей комнате.
+const setmap = async (map, expectOk) => {
+  const sock = await connect();
+  await join(sock, `MapAdmin-${Date.now().toString(36)}`);
   sock.ws.send(JSON.stringify(['setmap', { pass: PASS, map }]));
   const info = await wait(sock.state, ([e]) => e === 'info' || e === 'map', 'setmap ответ');
   const [ev] = info;
+  sock.ws.close();
   if (expectOk) {
     if (ev !== 'map') throw new Error(`ожидали map, получили ${ev}: ${JSON.stringify(info[1])}`);
   } else {
@@ -93,6 +156,7 @@ const baseMap = () => ({
 });
 
 try {
+  await waitServer();
   const a = await connect();
   await join(a, 'EntryTestA');
   const b = await connect();
@@ -101,14 +165,14 @@ try {
   // 1. Заход на боевой клетке — отказ.
   const m1 = baseMap();
   m1.objects = [{ id: 'e1', kind: 'entry', c: 8, r: 2, dir: 'right' }];
-  const bad1 = await setmap(a, m1, false);
+  const bad1 = await setmap(m1, false);
   if (!String(bad1[1]).includes('на боевых клетках')) throw new Error(`неожиданный текст: ${bad1[1]}`);
   ok('setmap entry on battle cell refused');
 
   // 2. Заход на траве, но направление в траву — отказ.
   const m2 = baseMap();
   m2.objects = [{ id: 'e1', kind: 'entry', c: 6, r: 2, dir: 'left' }];
-  const bad2 = await setmap(a, m2, false);
+  const bad2 = await setmap(m2, false);
   if (!String(bad2[1]).includes('боевая клетка')) throw new Error(`неожиданный текст: ${bad2[1]}`);
   ok('setmap entry pointing at grass refused');
 
@@ -118,7 +182,7 @@ try {
     { id: 'e1', kind: 'entry', c: 6, r: 2, dir: 'right' },
     { id: 'e2', kind: 'entry', c: 8, r: 0, dir: 'down' },
   ];
-  await setmap(a, m3, true);
+  await setmap(m3, true);
   const fieldMsg = await wait(b.state, ([e, p]) => e === 'field' && p?.map, 'field с map');
   const entries = (fieldMsg[1].map.objects || []).filter((o) => o.kind === 'entry');
   if (entries.length !== 2 || !entries.every((o) => o.dir)) {
@@ -162,7 +226,7 @@ try {
     { id: 'z2', name: 'Полигон', kind: 'cells', c0: 10, r0: 1, c1: 15, r1: 5 },
     { id: 'z3', name: 'Заросли', kind: 'green', c0: 16, r0: 0, c1: 18, r1: 6 },
   ];
-  await setmap(a, def, true);
+  await setmap(def, true);
   ok('default map restored');
 
   a.ws.close();

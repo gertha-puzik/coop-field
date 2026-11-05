@@ -3,12 +3,15 @@
  * «тест». Файл с картой — первый аргумент (по умолчанию data/test-map.json).
  * Запуск: node scripts/set-vps-map.mjs [файл-карты.json] [ws-url]
  * Сервер сам проверит конфиг; ответ info — причина отказа, map — успех.
+ * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+ * переопределение — env MAP_PASS: MAP_PASS=… node scripts/set-vps-map.mjs файл.json
  */
 import WebSocket from 'ws';
 import { readFileSync } from 'node:fs';
 
 const FILE = process.argv[2] || 'data/test-map.json';
 const URL = process.argv[3] || 'wss://coop.89-232-184-77.sslip.io';
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || '1946';
 
 let map;

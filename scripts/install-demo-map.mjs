@@ -2,11 +2,14 @@
  * Одноразовая установка демо-карты для E2E-скриншотов:
  * перекрывающиеся боевые зоны (проверка единого цвета) + три клетки захода.
  * Запуск: node scripts/install-demo-map.mjs  (восстановление: node scripts/install-demo-map.mjs --restore)
+ * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+ * переопределение — env MAP_PASS: MAP_PASS=… node scripts/install-demo-map.mjs
  */
 import WebSocket from 'ws';
 
 const URL = process.env.WS_URL || 'ws://127.0.0.1:3780';
-const PASS = '1946';
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || '1946';
 const restore = process.argv.includes('--restore');
 
 const demoMap = {

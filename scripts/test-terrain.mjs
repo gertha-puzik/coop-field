@@ -1,12 +1,64 @@
 // Рельеф: карта высот переживает setmap/field, шаг на обрыв (перепад ≥ 2)
 // отвергается с кодом cliff, прыжок (jump) переносит кота через обрыв.
-// Запуск: PORT=3782 WS_PORT=3782 DATA_DIR=<временный каталог> node server.js
-// и отдельно: node scripts/test-terrain.mjs
+// Запуск: node scripts/test-terrain.mjs — из чистого клона, сам поднимает свой
+// server.js на случайном порту с временным DATA_DIR. Внешний сервер:
+// WS_URL=ws://… node scripts/test-terrain.mjs.
+// Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+// переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
+// с тем же значением).
 import { WebSocket } from "ws";
+import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-const url = process.env.WS_URL || "ws://127.0.0.1:3782";
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || "1946";
+
+const PORT = 4033 + Math.floor(Math.random() * 40);
+const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
+// тестовая локация живёт только в TEST_ROOM («test»)
 const room = "test";
 const rnd = Date.now().toString(36);
+
+// Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+const srv = process.env.WS_URL
+  ? null
+  : spawn(process.execPath, ["server.js"], {
+      cwd: path.resolve(new URL("..", import.meta.url).pathname),
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        HOST: "127.0.0.1",
+        DATA_DIR: mkdtempSync(path.join(tmpdir(), "coop-terrain-")),
+        ADMIN_PASS: PASS,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+if (srv) {
+  srv.stdout.on("data", () => {});
+  srv.stderr.on("data", (d) => process.stderr.write(d));
+  process.on("exit", () => srv.kill("SIGTERM"));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitServer() {
+  for (let i = 0; i < 100; i++) {
+    const ready = await new Promise((resolve) => {
+      const probe = new WebSocket(url);
+      probe.once("open", () => {
+        probe.terminate();
+        resolve(true);
+      });
+      probe.once("error", () => resolve(false));
+    });
+    if (ready) return;
+    await sleep(100);
+  }
+  throw new Error("сервер не поднялся");
+}
+await waitServer();
 
 function client(name) {
   return new Promise((resolve, reject) => {
@@ -59,7 +111,7 @@ const map = {
 
 const admin = await client(`Админ-${rnd}`);
 await waitFor(admin, "field");
-admin.send(JSON.stringify(["setmap", { pass: "1946", map }]));
+admin.send(JSON.stringify(["setmap", { pass: PASS, map }])); // первый setmap-кадр сокета — троттлинг не мешает
 await new Promise((r) => setTimeout(r, 300));
 const err = admin.inbox.find((m) => m[0] === "info");
 if (err) throw new Error(`setmap отклонён: ${err[1]}`);
