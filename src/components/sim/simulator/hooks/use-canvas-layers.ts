@@ -10,6 +10,11 @@
  *    silhouette canvases, remembering broken ones; runs once (`[]`);
  *  - `useAtmosphereLayer`: mounts the dynamic Pixi atmosphere over the field
  *    canvas when `stage === 'field'` and tears it down on exit (`[stage]`).
+ *    The layer canvas is created imperatively and lives exactly one mount:
+ *    the old React-rendered slot canvas survived `destroy()` while pixi
+ *    loseContext killed its WebGL context, so a remount (dev StrictMode,
+ *    room change) got `getContext()` on the dead context — the layer silently
+ *    died until a full page reload.
  */
 import { useEffect, type RefObject } from 'react';
 import type { CoopAtmo, createCoopClient } from '@/lib/net/coop';
@@ -120,7 +125,7 @@ export function useSpriteCache(deps: SpriteCacheDeps) {
 export interface AtmosphereLayerDeps {
   stage: 'entry' | 'field';
   canvasRef: RefObject<HTMLCanvasElement | null>;
-  pixiRef: RefObject<HTMLCanvasElement | null>;
+  pixiRef: RefObject<HTMLDivElement | null>;
   atmoRef: RefObject<AtmosphereLike | null>;
   atmoStateRef: RefObject<CoopAtmo>;
   atmoOnRef: RefObject<boolean>;
@@ -130,13 +135,25 @@ export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
   const { stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef } = deps;
   useEffect(() => {
     if (stage !== 'field') return;
-    const el = pixiRef.current;
+    const slot = pixiRef.current;
     const worldCv = canvasRef.current;
-    if (!el || !worldCv) return;
+    if (!slot || !worldCv) return;
     let dead = false;
+    // Канвас слоя создаётся императивно и живёт ровно один монтаж. Раньше его
+    // рендерил React как слот: pixi destroy убивал WebGL-контекст вместе с
+    // канвасом, а повторный монтаж (React StrictMode в dev, смена комнаты)
+    // получал через getContext тот же уже убитый контекст — слой молча умирал
+    // до F5. Свежий канвас каждый раз — свежий (живой) контекст.
+    const cnv = document.createElement('canvas');
+    // Геометрия — как у бывшего canvas-слота в field-stage: заполнить слот
+    // контейнера (block, 100×100%) со скруглением; события мыши режутся самим
+    // слотом (pointer-events-none).
+    cnv.className = 'block h-full w-full rounded-lg pointer-events-none';
+    slot.appendChild(cnv);
     import('@/lib/sim/atmosphere')
-      .then(({ Atmosphere }) => Atmosphere.create(el, worldCv))
+      .then(({ Atmosphere }) => (dead ? undefined : Atmosphere.create(cnv, worldCv)))
       .then((a) => {
+        if (!a) return;
         if (dead) {
           a.destroy();
           return;
@@ -148,12 +165,16 @@ export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
         a.setVisible(atmoOnRef.current);
       })
       .catch(() => {
-        /* без WebGL — работает прежний 2D-рендер */
+        // без WebGL слой не встал — пустой канвас убираем из слота;
+        // работает прежний 2D-рендер
+        cnv.remove();
       });
     return () => {
       dead = true;
       atmoRef.current?.destroy();
       atmoRef.current = null;
+      // канвас слоя умирает вместе со слоем — повторно контекст не используем
+      cnv.remove();
     };
   }, [stage]);
 

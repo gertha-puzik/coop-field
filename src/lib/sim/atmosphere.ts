@@ -492,6 +492,14 @@ export class Atmosphere {
   }
 
   destroy(): void {
+    // Отладочная глобаль не должна переживать слой: иначе после unmount
+    // (смена комнаты/этапа, второй проход dev-StrictMode) window.__atmo
+    // смотрит на мёртвый объект и сбивает отладку. Снимаем только свою
+    // глобаль — если успел подняться более поздний живой слой, не трогаем.
+    if (typeof window !== 'undefined') {
+      const w = window as unknown as { __atmo?: Atmosphere };
+      if (w.__atmo === this) delete w.__atmo;
+    }
     try {
       this.app?.destroy(false, { children: true, texture: false });
     } catch {
