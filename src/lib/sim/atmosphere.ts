@@ -215,6 +215,9 @@ export class Atmosphere {
   static async create(view: HTMLCanvasElement, world: HTMLCanvasElement): Promise<Atmosphere> {
     const a = new Atmosphere(view, world);
     await a.init();
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __atmo?: Atmosphere }).__atmo = a; // отладка: живое состояние слоя
+    }
     return a;
   }
 
@@ -223,8 +226,10 @@ export class Atmosphere {
     const app = new Application();
     await app.init({
       canvas: this.view,
-      width: Math.max(1, this.view.clientWidth || 800),
-      height: Math.max(1, this.view.clientHeight || 600),
+      // Размер — с мирового холста: у Pixi-канваса autoDensity сразу пишет
+      // инлайн-стиль width/height, и его clientWidth после этого врёт.
+      width: Math.max(1, this.world.clientWidth || 800),
+      height: Math.max(1, this.world.clientHeight || 600),
       backgroundAlpha: 0,
       antialias: false,
       resolution: this.dpr,
@@ -318,16 +323,17 @@ export class Atmosphere {
     const app = this.app;
     if (!app || !this.worldTex || !this.worldSpr || !this.filter || !this.cloudC || !this.rainC) return;
 
-    // Размер: канвас мог растянуться/сжаться — проверяем каждый кадр, это дёшево.
-    const cw = this.view.clientWidth;
-    const ch = this.view.clientHeight;
+    // Размер вьюпорта — с мирового холста, НЕ с Pixi-канваса: autoDensity ставит
+    // на него инлайн-стиль width/height, после чего его clientWidth застревает на
+    // старом размере (вьюпорт перестаёт отслеживать ресайз — минует и resize
+    // рендерера, и масштаб мира; при сжатии поля картинка уезжает). Мировой холст
+    // лежит в той же обёртке без инлайн-стилей и всегда честный.
+    const cw = this.world.clientWidth;
+    const ch = this.world.clientHeight;
     if (cw > 0 && ch > 0 && (cw !== this.w || ch !== this.h)) {
       this.w = cw;
       this.h = ch;
       app.renderer.resize(cw, ch);
-      const texW = this.worldTex.width || 1;
-      const texH = this.worldTex.height || 1;
-      this.worldSpr.scale.set(cw / texW, ch / texH);
     }
     if (this.w <= 0 || this.h <= 0) return;
 
@@ -353,8 +359,16 @@ export class Atmosphere {
     c.cloudTint[2] = lerp(c.cloudTint[2], t.cloudTint[2], kw);
     c.rain = lerp(c.rain, t.rain, kw);
 
-    // Мир: свежая текстура 2D-холста + текущая цветокоррекция.
+    // Мир: свежая текстура 2D-холста + текущая цветокоррекция. update() сам
+    // подхватывает изменение размера холста (ресайз окна, перетаскивание колонок
+    // чата/лога), поэтому масштаб спрайта считаем ПОСЛЕ него и каждый кадр:
+    // если посчитать один раз в момент ресайза вьюпорта, текстура там ещё старая,
+    // и навсегда останется меньше вьюпорта — из-под тонировки будет выглядывать
+    // сырой холст (полоса без вечернего/ночного цвета у правого/нижнего края).
     this.worldTex.source.update();
+    const texW = this.worldTex.width || 1;
+    const texH = this.worldTex.height || 1;
+    this.worldSpr.scale.set(cw / texW, ch / texH);
     this.filter.matrix = gradeToMatrix(c);
 
     // Облака: плывут по ветру, чуть сдвигаются против камеры (глубина).
