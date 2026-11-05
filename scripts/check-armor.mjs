@@ -3,13 +3,23 @@ import { WebSocket } from "ws";
 /**
  * Живая проверка брони против указанного сервера.
  * Использование: node scripts/check-armor.mjs [wsUrl]
- *   по умолчанию — прод (wss://coop.89-232-184-77.sslip.io); для локали:
- *   node scripts/check-armor.mjs ws://127.0.0.1:3780
+ *   по умолчанию — локальный сервер ws://127.0.0.1:3780;
+ *   прод — ТОЛЬКО явным флагом: node scripts/check-armor.mjs --prod
+ *   (endpoint wss://coop.89-232-184-77.sslip.io, перед стартом печатается
+ *   предупреждение «–– ПРАВКА ПРОДА»; env-override прод-адреса не предусмотрен).
  * Правило: броня цели (пресет 0,0–0,9) режет получаемый урон по кривой замеров
  * владельца — множитель = урон(броня) / урон(0,0): 0,9 ≈ 0,38275, 0,5 ≈ 0,72917.
  * Режет любой входящий удар, включая хвост (блок хвост не ловит, а броня режет).
  * Контрактные тесты тех же правил — в scripts/test-ws.mjs (секция «Броня»). */
-const url = process.argv[2] || "wss://coop.89-232-184-77.sslip.io";
+const LOCAL_URL = "ws://127.0.0.1:3780";
+const PROD_URL = "wss://coop.89-232-184-77.sslip.io";
+const wantProd = process.argv.includes("--prod");
+if (wantProd) console.log("–– ПРАВКА ПРОДА:", PROD_URL);
+if (!wantProd && process.argv[2] === PROD_URL) {
+  console.error("прод-эндпоинт доступен только с явным флагом --prod");
+  process.exit(1);
+}
+const url = wantProd ? PROD_URL : (process.argv[2] || LOCAL_URL);
 const room = `armchk-${Date.now().toString(36)}`;
 
 function client(name) {

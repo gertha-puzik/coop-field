@@ -10,12 +10,17 @@
  *     прошлой версии лежит в data/backups/;
  *  4. данные позиции и карты живут в отдельных файлах, каталог data не в git.
  *
- * Запуск: node scripts/test-position-persist.mjs
+ * Запуск: node scripts/test-position-persist.mjs (сам спавнит свои server.js).
+ * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+ * переопределение — env MAP_PASS — передаётся спавненному серверу как ADMIN_PASS.
  */
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
 import fs from "node:fs";
 import path from "node:path";
+
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || "1946";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = path.join(ROOT, "data");
@@ -28,7 +33,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function startServer() {
   const srv = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1" },
+    // ADMIN_PASS передаётся в spawn-окружение тем же значением, что уходит
+    // в кадре setmap (тест «читает env КАК сервер»), карта живёт в ROOT/data.
+    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1", ADMIN_PASS: PASS },
     stdio: ["ignore", "pipe", "pipe"],
   });
   srv.stdout.on("data", () => {});
@@ -67,6 +74,33 @@ const check = (cond, label) => {
 
 // Отдельный data-каталог не трогаем: тест работает на тех же файлах, но свои
 // логины/карту не смешивает с боевыми данными (карта после теста восстанавливается).
+
+// Чистый клон стартует с пустым data/: подсеваем базовую раскладку, чтобы шаг 3
+// (перезапись карты setmap-ом) имел что бэкапить — бэкапы ведутся только при
+// замене существующего файла (backupTestMap молчит, если файла ещё не было).
+if (!fs.existsSync(path.join(DATA, "test-map.json"))) {
+  fs.writeFileSync(
+    path.join(DATA, "test-map.json"),
+    JSON.stringify(
+      {
+        v: 2,
+        cols: 19,
+        rows: 7,
+        margin: 0.5,
+        seed: "test",
+        zones: [
+          { id: "z1", name: "Лужайка", kind: "green", c0: 0, r0: 0, c1: 9, r1: 6 },
+          { id: "z2", name: "Полигон", kind: "cells", c0: 10, r0: 1, c1: 15, r1: 5 },
+          { id: "z3", name: "Заросли", kind: "green", c0: 16, r0: 0, c1: 18, r1: 6 },
+        ],
+        objects: [],
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 const mapBackup = fs.existsSync(path.join(DATA, "test-map.json"))
   ? fs.readFileSync(path.join(DATA, "test-map.json"), "utf8")
   : null;
@@ -118,7 +152,7 @@ try {
     ],
     objects: [],
   };
-  ws3.send(JSON.stringify(["setmap", { pass: "1946", map: smallMap }]));
+  ws3.send(JSON.stringify(["setmap", { pass: PASS, map: smallMap }]));
   const mapAck = await waitFor(ws3, ([ev, p]) => ev === "map" && p?.seed === "persist-test");
   check(!!mapAck, "setmap принят и разослан");
   const saved = JSON.parse(fs.readFileSync(path.join(DATA, "test-map.json"), "utf8"));

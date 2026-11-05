@@ -6,15 +6,56 @@
  *  4. setmap с верным паролем и валидным конфигом → map всем + field; файл сохранён.
  *  5. cellsync в зелёную зону отвергается.
  *  6. Возврат к раскладке по умолчанию (восстановление после теста).
+ *
+ * Запуск: node scripts/test-editor-map.mjs — из чистого клона, сам поднимает
+ * свой server.js на случайном порту с временным DATA_DIR (репозиторный data/
+ * не трогается). Внешний сервер: WS_URL=ws://… node scripts/test-editor-map.mjs.
+ *
+ * Каждая setmap-правка уходит со своего НОВОГО сокета: сервер троттлит любые
+ * setmap-кадры раз в 10 с НА СОКЕТ — свежее соединение получает свежий счётчик.
+ *
+ * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
+ * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
+ * с тем же значением — клиент и сервер теста всегда сходимся).
  */
+import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import WebSocket from 'ws';
 
-const URL = process.env.WS_URL || 'ws://127.0.0.1:3780';
-const PASS = '1946';
+// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
+const PASS = process.env.MAP_PASS || '1946';
+
+const PORT = 3953 + Math.floor(Math.random() * 40);
+const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
+
+// Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+const srv = process.env.WS_URL
+  ? null
+  : spawn(process.execPath, ['server.js'], {
+      cwd: path.resolve(new URL('..', import.meta.url).pathname),
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        HOST: '127.0.0.1',
+        DATA_DIR: mkdtempSync(path.join(tmpdir(), 'coop-editor-map-')),
+        ADMIN_PASS: PASS,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+if (srv) {
+  srv.stdout.on('data', () => {});
+  srv.stderr.on('data', (d) => process.stderr.write(d));
+  process.on('exit', () => srv.kill('SIGTERM'));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const connect = () =>
   new Promise((resolve, reject) => {
-    const ws = new WebSocket(URL);
+    const ws = new WebSocket(url);
     const state = { inbox: [], waiters: [], readIdx: 0 };
     ws.on('message', (raw) => {
       const msg = JSON.parse(String(raw));
@@ -61,7 +102,38 @@ const wait = (state, pred, label, ms = 4000) => {
 
 const send = (ws, event, payload) => ws.send(JSON.stringify([event, payload]));
 
+// Готовность: свой server.js поднимается доли секунды, чужой может слушать сразу.
+async function waitServer() {
+  for (let i = 0; i < 100; i++) {
+    const ready = await new Promise((resolve) => {
+      const probe = new WebSocket(url);
+      probe.once('open', () => {
+        probe.terminate();
+        resolve(true);
+      });
+      probe.once('error', () => resolve(false));
+    });
+    if (ready) return;
+    await sleep(100);
+  }
+  throw new Error('сервер не поднялся');
+}
+
+/** setmap-кадр с нового сокета (троттлинг 10 с — на сокет, см. шапку).
+ *  Ответ ждём на сокете самого отправителя: отказ приходит только ему,
+ *  а рассылка map/field — всей комнате, включая его. */
+const setmapOnce = async (map, pass, pred, label) => {
+  const sock = await connect();
+  send(sock.ws, 'join', { room: 'test', login: `MapAdmin-${Date.now().toString(36)}` });
+  await wait(sock.state, (m) => m[0] === 'field', 'field админа');
+  send(sock.ws, 'setmap', { pass, map });
+  const reply = await wait(sock.state, pred, label);
+  sock.ws.close();
+  return reply;
+};
+
 const main = async () => {
+  await waitServer();
   const { ws, state } = await connect();
   send(ws, 'join', { room: 'test', login: 'MapTester' });
   const field = await wait(state, (m) => m[0] === 'field', 'field');
@@ -71,8 +143,7 @@ const main = async () => {
   console.log('   зоны:', f.map.zones.map((z) => `${z.name}[${z.kind}] ${z.c0},${z.r0}-${z.c1},${z.r1}`).join(' | '));
 
   // неверный пароль
-  send(ws, 'setmap', { pass: '0000', map: f.map });
-  const badPass = await wait(state, (m) => m[0] === 'info', 'info (bad pass)');
+  const badPass = await setmapOnce(f.map, '0000', (m) => m[0] === 'info', 'info (bad pass)');
   console.log('2. неверный пароль →', badPass[1]);
 
   // несоединённый конфиг
@@ -80,8 +151,7 @@ const main = async () => {
   broken.zones.push({ id: 'zx', name: 'Оторванная', kind: 'green', c0: 0, r0: 0, c1: 0, r1: 0 });
   // разрываем соединение: убираем боевой полигон между двумя зелёными зонами
   broken.zones = broken.zones.filter((z) => z.name !== 'Полигон');
-  send(ws, 'setmap', { pass: PASS, map: broken });
-  const badMap = await wait(state, (m) => m[0] === 'info', 'info (broken map)');
+  const badMap = await setmapOnce(broken, PASS, (m) => m[0] === 'info', 'info (broken map)');
   console.log('3. несоединённые зоны →', badMap[1]);
 
   // валидный конфиг: мир выше, зелёная зона сверху
@@ -94,8 +164,7 @@ const main = async () => {
     { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 2, c1: 18, r1: 7 },
     { id: 'z4', name: 'Зелёная зона 1', kind: 'green', c0: 2, r0: 0, c1: 8, r1: 2 },
   ];
-  send(ws, 'setmap', { pass: PASS, map: good });
-  const mapMsg = await wait(state, (m) => m[0] === 'map', 'map event');
+  const mapMsg = await setmapOnce(good, PASS, (m) => m[0] === 'map', 'map event');
   console.log('4. map event: %sx%s, зоны=%d', mapMsg[1].cols, mapMsg[1].rows, mapMsg[1].zones.length);
   const field2 = await wait(state, (m) => m[0] === 'field' && m[1].map?.rows === 9, 'field (resync)');
   const me = field2[1].cats.find((c) => c.login === 'MapTester');
@@ -109,9 +178,8 @@ const main = async () => {
 
   // восстановление раскладки по умолчанию: тест не зависит от того, с какой
   // картой сервер стартовал (f.map мог быть любым валидным)
-  send(ws, 'setmap', {
-    pass: PASS,
-    map: {
+  await setmapOnce(
+    {
       v: 2,
       cols: 19,
       rows: 7,
@@ -124,8 +192,10 @@ const main = async () => {
       ],
       objects: [],
     },
-  });
-  await wait(state, (m) => m[0] === 'map' && m[1].rows === 7, 'map (restore)');
+    PASS,
+    (m) => m[0] === 'map' && m[1].rows === 7,
+    'map (restore)',
+  );
   console.log('6. локация восстановлена к исходной');
   ws.close();
   process.exit(0);

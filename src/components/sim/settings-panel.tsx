@@ -215,8 +215,10 @@ function ColorInput({
 /** Идентификатор раздела настроек (квадратик-иконка в переключателе). */
 type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config';
 
-/** Пароль админа: открывает все разделы, кроме «Общего». */
-const ADMIN_PASSWORD = '1946';
+/** Вкладки расширенных настроек — клиентский UX-фильтр, а не защита:
+ *  открываются любым непустым вводом. Настоящий арбитр — сервер: тот же
+ *  пароль уходит с событием setmap, и без совпадения с серверным ADMIN_PASS
+ *  правка локации не применяется. Значения пароля в коде клиента НЕТ. */
 
 /** sessionStorage помнит, что пароль уже введён: доступ переживает сворачивание панели
  *  и перезагрузку страницы, пропадает только при закрытии вкладки/браузера. */
@@ -515,7 +517,9 @@ export function SettingsPanel(props: Props) {
 
   const tryUnlock = (ev: React.FormEvent) => {
     ev.preventDefault();
-    if (pw.trim() === ADMIN_PASSWORD) {
+    // Локальный гейт вкладок — не защита: достаточно непустого ввода.
+    // Настоящий арбитр — сервер (setmap с этим же паролём).
+    if (pw.trim() !== '') {
       setAdmin(true);
       writeAdminUnlocked(true);
       setPw('');
@@ -576,7 +580,6 @@ export function SettingsPanel(props: Props) {
               <div className="flex items-center gap-1.5">
                 <Input
                   type="password"
-                  inputMode="numeric"
                   autoFocus
                   value={pw}
                   placeholder="Пароль администратора"
@@ -1280,11 +1283,6 @@ export function SettingsPanel(props: Props) {
           )}
         </div>
       </section>
-
-      {/* Временная подсказка пароля — потом уберём */}
-      <div className="rounded-lg border border-dashed border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] p-3 text-[11px] leading-relaxed text-[var(--sim-text-muted)]">
-        Пароль расширенных настроек: <b className="text-[var(--sim-text)]">1946</b>. Подсказка временная — потом уберём.
-      </div>
     </div>
   );
 }
