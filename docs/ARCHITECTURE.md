@@ -274,7 +274,20 @@ dogfood-сценариями (мир, бой с entry-клетки, редакт
 particles/paint/editor-model вырезаны из пояса simulator.tsx и возвращены импортом
 (behavior-preserving; карту — §2/§4). Остались выносы этапа 1: angles.ts, persist.ts, leap.ts,
 peace-walk.ts, camera.ts, weather-clock.ts (задевают rAF-замыкание или дедупликацию —
-следующие пул-реквесты). Этап 2 (components/sim/simulator/*) не начат.
+следующие пул-реквесты; актуально и после W5b).
+
+Этап 2 DONE волной W5b (2026-11-05, branch `refactor/sim-carve-stage2`, PR #16):
+hooks (use-keyboard 230, use-network 621, use-canvas-layers 157, use-strike 277),
+hookless factories (editor-ops 785, pointer-tools 605 — per-render builders, no hooks),
+HUD dial (hud-canvas 241), sim-model (types, fmtSec, remote-draw helpers — lives in
+components because it consumes lib/net), JSX chrome (chrome.tsx 367, editor-overlay 621,
+field-stage 138) — 11 modules, byte-identical bodies against pre-carve git snapshots.
+simulator.tsx: 7523 → 4388 lines. Kept ON PURPOSE (behavior > counters): the main rAF
+closure (~2700 lines, single `useEffect` with deps `[stage]`, `const loop` at :3873) —
+extracting it whole would recreate a >800-line file, splitting it would re-wire engine
+variables; state/refs belt of `Simulator()`; small callback/patch belts (мелкая крошка —
+запрет пере-дробления). Stage-1 leftovers (angles/persist/leap/peace-walk/camera/
+weather-clock) remain — they interlock with the same rAF closure and are follow-ups.
 
 После W5 allowlist становится пустым — гейт 800 строк держит всю кодовую базу «чистой»
 без исключений.
