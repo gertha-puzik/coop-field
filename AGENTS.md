@@ -1,0 +1,144 @@
+# AGENTS.md — agent map of the coop-field repo
+
+Coop-field: cat battles on a shared canvas field. Two independent loops live in this repo:
+
+- **Front** — Next.js static export (`output: "export"`): canvas engine, HUD, panels, screens. Lives in `src/`.
+- **Room server** — plain Node process (`server.js`, `ws`): rooms, cells, combat, chat, atmosphere.
+  Vercel cannot host WebSocket, so the room is deployed on a VPS (systemd unit `coop-field`).
+
+The two loops are connected ONLY by the wire protocol `[event, payload]` — there is no shared code;
+matching constants are hand-copied mirrors (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §4 —
+required reading before touching either side).
+
+This file is the map: the minimum needed to start a task without reading the god-files.
+Human overview — [README.md](README.md) (Russian, on purpose); depth — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Gates: run before submitting ANY task
+
+```bash
+npm run typecheck   # tsc --noEmit — always run: fast explicit type check (build catches the same, but slower)
+npm run build       # next build, static export
+npm run test:queue  # server step-queue contract (spawns its own server)
+npm run test:unit   # engine unit tests (node>=22.6, otherwise SKIP; CI runs on node 22)
+npm run arch:check  # architecture gate: files <=800 lines + layer boundary rules
+```
+
+All five must be green. If `arch:check` fails on a new file — do not grow the allowlist
+(it holds only legacy god-files; they are removed in waves W4/W5).
+
+## Code map
+
+| Task leads to | File | What is inside |
+| --- | --- | --- |
+| Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
+| Room server | `server.js` (2701) | domains by line: config 1–169, geometry 300–747, sanitize 749–1137, setmap 1139–1199, persistence 1201–1311, rooms/join 1313–1616, movement 1618–1730, skin/aim 1732–1813, combat 1810–2022, chat 2024–2105, dummy/rab/block/space 2107–2261, atmosphere 2263–2369, dispatch 2540–2701 |
+| Canvas engine | `src/components/sim/simulator.tsx` (8221) | 4 belts: helpers 1–1361 → state+net 1362–3510 → main rAF 3510–6214 → input/strike/JSX 6232–8221 |
+| Combat model, sprites, armor | `src/lib/sim/settings.ts` (1122) | ARMOR_CURVE, strike zones, damage levels; 54 exports |
+| «Elision» location | `src/lib/sim/test-field.ts` (1822) | walkability, route graph, edge render, paint; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
+| Location config | `src/lib/sim/test-map.ts` (634) | v1/v2 + editor limits (mirror of server-side sanitize) |
+| Transport, inbound dispatch | `src/lib/net/coop.ts` (579) | socket choice, reconnect backoff, dispatcher 367+ |
+| Step prediction | `src/lib/net/move-book.ts` (89) | **the reference module** — copy its style for new files |
+| Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; the real password arbiter is the server (setmap) |
+
+Where to start common tasks:
+- **"Add/change an event"** → table below → `server.js` dispatcher (2540+) and the domain handler →
+  `src/lib/net/coop.ts` (validator+dispatch) → a case in `scripts/test-ws.mjs` (room contract) →
+  update the tables in this file and ARCHITECTURE §3 in the same PR.
+- **"Combat/damage/armor"** → `settings.ts` + its MIRROR in `server.js` (ARCHITECTURE §4) — change both together.
+- **"Settings/HUD"** → ARCHITECTURE §2 (simulator.tsx belts), SettingsPanel pattern (25 props).
+- **"Map/editor"** → `test-map.ts` (client) + sanitize in `server.js` (749+) — limits are mirrored.
+
+## Room contract
+
+Frame format: JSON `[event, payload]`. The server is the cell authority: two cats never share a cell,
+client-side step prediction is rolled back on `refuse`. Two rooms exist by default: the demo field and
+the drawn `test` location («Elision», 19×7, peace mode).
+
+Invariants (violating one = a bug):
+- Every step gets exactly one response: an `update cat` echo or `refuse {code}`; silence desyncs the predictor.
+- Network coordinates are 1-based (`x=1..W, y=1..H`), canvas is 0-based (`col=x-1, row=y-1`); peace mode uses cell fractions `fx/fy`.
+- At most 1 unconfirmed predicted step (move-book.ts).
+- `move` FROM THE SERVER is overloaded: `publicCat` of a joiner OR `{id, x:0, y:0}` = leave marker (legacy until W3).
+- Clients advance on LOCAL clocks from the `atmo.t` anchor; the server ticker (5 s) resends the anchor only on phase change.
+- Damage is client-authoritative (an accepted debt of this sandbox): the server cuts it by target armor and ships it in `fight`.
+
+### Client → server (22)
+
+| Event | Payload | Limits / response |
+| --- | --- | --- |
+| `join` | `room?, login?, sprite?, size?` | 1/s; login ≤24 codepoints, unique; size 60–100; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` (alias `first` is legacy) |
+| `move` | `{x, y}` — step −1..1 | cooldown 80 ms, queue ≤3; response: echo or `refuse {code}` |
+| `aim` | `{deg}` | coalesced ≥20 ms; the angle is broadcast via `update cat` |
+| `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); damage 0–100; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
+| `chat` | `{text}` | ≤200 chars after sanitize, 450 ms; success → `chat` to all |
+| `sprite` | `{sprite}` | whitelist of 31; broadcast `update cat` |
+| `dummy` | `{on, sprite?}` | non-test rooms only; → `dummyState` to all |
+| `dummyMove` | `{x, y}` — fractions | clamp 0..9/0..5; → `dummyMove` to others |
+| `dummyGrab` / `dummyDrop` | `{}` | one holder at a time; released on socket close |
+| `rab` | `{on}` | non-test rooms only; → `rabState` to all |
+| `rabHit` | `{zone, part, damage}` | → `rabHit` to others |
+| `block` | `{on}` | → `block` to others; block counts at the moment of impact |
+| `space` | `{on, hold?, cancel?}` | hold 0–4000; crouch-"jelly"; → `space` to others |
+| `atmo` | `{dp, w}` | phases morning/day/evening/night; weather sun/cloud/rain; ANY player; → `atmo` to ALL (echo = ack) |
+| `atmoset` | `{pl, wl}` minutes | pl 1–120, wl 2–240; → `atmo` anchor |
+| `armor` | `{armor}` 0–0.9 | NOT broadcast: neighbors see the cut damage in `fight` |
+| `freemove` | `{x, y, sp?, jp?, stop?}` | `test` room only; cell fractions; ≤1/50 ms; point-in-polygon check |
+| `cellsync` | `{x, y}` 1-based | `test` only; enter battle mode: cell must be walkable/entry, occupied → ring search ≤6; → `update cat` to ALL |
+| `jump` | `{x, y, deg?}` 1-based | cooldown 450 ms; 8 directions, 1–3 cells, elevation drop ≤3; cliffs are passable only by jump |
+| `setmap` | `{pass, map}` | admin location editor: sanitize (v1\|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000), ≥8 backups; the password is verified by the server (ADMIN_PASS, env); throttle 1/10 s per socket (any frame); → `map`+`field` to the `test` room; errors → `info` |
+| `rooms` | `{ids: [...]}` ≤32 | 1/250 ms; → `roomsinfo` (does not materialize rooms) |
+
+### Server → client (22)
+
+| Event | Payload | To whom / when |
+| --- | --- | --- |
+| `you` | own publicCat | join, first response |
+| `field` | grid, `cats[]`, `location`, `dummy?`, `rab?`, `atmo`, `map?` | on join and after setmap; `huntMode:false` is dead weight |
+| `chatlog` | ≤40 `{seq,id,login,color,text,ts}` | only the joiner, after `field` |
+| `move` | publicCat of the joiner \| `{id,x:0,y:0}` | to all; the latter is the leave marker (legacy until W3) |
+| `update cat` | publicCat (id, login, color, sprite, x, y, deg, size, blocking, sq) | step/jump/cellsync/skin/aim — to all, including the author |
+| `refuse` | `{code, text}` | codes: `edge`/`cell_busy`/`cliff`/`cooldown` — machine-readable predictor rollback |
+| `info` | string | all human-facing errors/hints (parse by `refuse` code, not by text) |
+| `noplace` | `{room, reason}` | join refusal: 30-cats cap or no free cell |
+| `fight` | `{attacker, targetId, part, zone, damage, flightMs…}` | after flightMs; the striker gets `isAttacking=true`; damage is already armor-cut |
+| `chat` | `{seq, id, login, color, text, ts}` | whole room, including the sender |
+| `map` | TestMap config | every socket of the `test` room after setmap |
+| `dummyState` | `{on, x, y, sprite, grab}` | whole room |
+| `dummyMove` / `dummyGrab` / `dummyDrop` | `{x,y}` / `{login}` / `{}` | to others (`dummyGrab` — show the grabber cursor) |
+| `rabState` / `rabHit` | `{on}` / `{zone, part, damage}` | to all / others without echo |
+| `block` / `space` | `{id, on}` / `{id, on, hold?}` | except the sender |
+| `atmo` | anchor `{t, cs, pl, wl, w, ws, dp}` | to ALL on atmo/atmoset + 5 s ticker on dp/w change; on rejoin it rides inside `field` |
+| `freemove` | `{id, x, y, cx, cy, sp, jp}` | to others, ≤1/50 ms |
+| `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s |
+
+## Server env
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `PORT` / `HOST` | listen socket | 3780 (prod: 8787 behind nginx) / 0.0.0.0 |
+| `REQUIRE_ORIGIN` | enforce the browser Origin check | prod = 1; `ALLOWED_ORIGINS` holds the whitelist |
+| `ADMIN_PASS` | setmap editor password | legacy default in server.js; on prod override via the systemd unit (template in `deploy/vps/coop-field.service`) |
+| `DATA_DIR` | data (cat positions, map, backups) | `data/` |
+
+Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod endpoint
+(`wss://coop.89-232-184-77.sslip.io`) requires the explicit `--prod` flag — scripts refuse without it.
+
+## Working rules (violation = PR rework)
+
+1. **When you change the protocol, boundaries or data flows — update the tables above and ARCHITECTURE in the same PR.** The check is a rule, not discipline: `check-protocol-sync` lands in W3.
+2. **Mirrors (ARCHITECTURE §4) change in sync**, client + server in one PR; the sync mechanism until W3 is the mirror table + review.
+3. **Secrets come only from env**; never write values into code or docs (the legacy password default is an accepted transitional exception; changing it is done via env).
+4. **No new files above 800 lines** — the `arch:check` gate; a new module is 300–800 self-contained lines (do not fragment below that).
+5. **Prod endpoints only via an explicit flag**; scripts target localhost by default.
+6. **Coordinates**: any protocol change must respect 1-based/0-based/fx-fy (ARCHITECTURE §5).
+7. **Do not "fix style" in passing**: keep wave PRs free of cosmetics; do not grow the god-files.
+
+## Doc index
+
+- `AGENTS.md` — this map + wire-contract tables (updated by the wave that changes the protocol).
+- `docs/ARCHITECTURE.md` — as-is map, data flows, mirrors, coordinates, target structure (W3–W5).
+- `README.md` — human overview in Russian: what the game is, quick start, prod, feature eras.
+- `scripts/` — npm runners: test:ws (against a running server or `WS_URL`), test:queue (self-spawn),
+  test:unit, arch:check; manual probes with self-spawn carry a "how to run" header line.
+- Local per-module `AGENTS.md` files appear in W5 (simulator.tsx/panel split) — until then use the belt
+  line ranges in ARCHITECTURE §2.
