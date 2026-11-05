@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "server.js"
+      - "server/**"
       - "scripts/**"
       - "deploy/vps/**"
       - ".github/workflows/deploy-backend.yml"
@@ -45,8 +46,12 @@ jobs:
             deploy/vps/package-lock.json \
             deploy/vps/apply.sh \
             "$SSH_USER@$SSH_HOST:incoming/"
-          # --delete только у scripts/ в incoming. /opt/coop-field/www — статика фронта, её не трогать.
+          # --delete только у scripts/ и server/ в incoming. /opt/coop-field/www — статика фронта, её не трогаем.
           rsync -az --delete -e "$SSH" \
             scripts/ \
             "$SSH_USER@$SSH_HOST:incoming/scripts/"
+          # Каталог серверного канона протокола (W3): server.js импортирует из него.
+          rsync -az --delete -e "$SSH" \
+            server/ \
+            "$SSH_USER@$SSH_HOST:incoming/server/"
           $SSH "$SSH_USER@$SSH_HOST" "bash incoming/apply.sh"
