@@ -6,7 +6,7 @@ import { EntryScreen } from './entry-screen';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
+import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
   applyOwnMoveAck,
@@ -82,12 +82,14 @@ import {
 } from '@/lib/sim/test-map';
 import {
   DEFAULT_SETTINGS,
+  DAYPARTS,
   DIRECTIONS,
   DUMMY_DEFAULT_SPRITE,
   DUMMY_NAME,
   FIELD_SPRITES,
   RAB_SPRITE,
   SPRITES,
+  WEATHERS,
   bfsPath,
   damageLevelLabel,
   dirByDeg,
@@ -103,9 +105,20 @@ import {
   tierColor,
   wrap180,
   wrap360,
+  type DayPart,
+  type WeatherKind,
 } from '@/lib/sim/settings';
 
 const STORAGE_KEY = 'catwar-battle-sim-v4';
+
+/** Минимальный облик слоя атмосферы. Модуль с PixiJS грузится динамически (чтобы
+ *  не попадать в основной бандл и не падать при SSR), поэтому здесь только интерфейс. */
+interface AtmosphereLike {
+  setDaypart(dp: DayPart): void;
+  setWeather(w: WeatherKind): void;
+  frame(now: number, dtMs: number, camDx: number, camDy: number): void;
+  destroy(): void;
+}
 
 /** «4,8 сек» — подпись скорости стрелы для панели СП в шапке. */
 const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
@@ -960,6 +973,14 @@ export default function Simulator() {
   /** Белые силуэты спрайтов: тонкая обводка своего кота. */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
+  /** Атмосфера комнаты: время суток + погода. Общая для всех (состояние на сервере). */
+  const [atmoState, setAtmoState] = useState<CoopAtmo>({ dp: 'day', w: 'sun' });
+  const atmoStateRef = useRef<CoopAtmo>(atmoState);
+  /** Pixi-канвас поверх поля и его слой атмосферы (null — WebGL недоступен). */
+  const pixiRef = useRef<HTMLCanvasElement | null>(null);
+  const atmoRef = useRef<AtmosphereLike | null>(null);
+  /** Прошлая позиция камеры — для сдвига теней облаков (лёгкий параллакс). */
+  const camPrevRef = useRef<{ x: number; y: number } | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
    * Своя клетка на сервере и шаги, которые уже нарисовали, но ещё не подтвердили.
@@ -1891,6 +1912,23 @@ export default function Simulator() {
     setEditorMsg('Сохраняем…');
   };
 
+  /** Применить атмосферу комнаты локально (снапшот, эхо или оптимистичное нажатие). */
+  const applyAtmo = useCallback((next: CoopAtmo) => {
+    atmoStateRef.current = next;
+    setAtmoState(next);
+    atmoRef.current?.setDaypart(next.dp);
+    atmoRef.current?.setWeather(next.w);
+  }, []);
+
+  /** Сменить атмосферу комнаты: применяем сразу и шлём на сервер — эхо подтвердит всем. */
+  const changeAtmo = useCallback(
+    (dp: DayPart, w: WeatherKind) => {
+      applyAtmo({ dp, w });
+      netRef.current?.emit('atmo', { dp, w });
+    },
+    [applyAtmo],
+  );
+
   useEffect(() => {
     if (!loaded || !netStarted) return;
     const pending = pendingJoinRef.current;
@@ -1959,6 +1997,10 @@ export default function Simulator() {
             showMapLoading();
           }
         }
+        // Атмосфера комнаты — общая: время суток и погода приходят в снапшоте
+        // (вход, переподключение, сохранение локации).
+        const fa = field.atmo;
+        if (fa && DAYPARTS.includes(fa.dp) && WEATHERS.includes(fa.w)) applyAtmo(fa);
         camRef.current.init = false;
         remoteFreeRef.current.clear();
         remoteFmRef.current.clear();
@@ -2284,6 +2326,10 @@ export default function Simulator() {
         // Авторитет сервера: подтверждает optimistic-тумблер мишени РАБ.
         applyRab(state.on);
       },
+      onAtmo: (info) => {
+        // Смена времени суток/погоды (уходит и тому, кто сменил — эхо-подтверждение).
+        applyAtmo(info);
+      },
       onRabHit: (info) => {
         // Чужой удар по РАБу — та же анимация, что видит бьющий: качание «желе»
         // и всплывающий урон над мишенью. Свой удар анимируется локально в момент
@@ -2604,6 +2650,39 @@ export default function Simulator() {
   useEffect(() => {
     battleToggleRef.current = toggleBattleMode;
   }, [toggleBattleMode]);
+
+  /* ---------- слой атмосферы (PixiJS) ---------- */
+
+  // Слой создаётся один раз на экране поля: Pixi-канвас поверх игрового холста
+  // (цветокоррекция времени суток, тени облаков, дождь). Модуль грузим динамически:
+  // pixi.js не попадает в основной бандл, а без WebGL игра просто остаётся
+  // на чистом 2D-канвасе — без атмосферы, но без ошибок.
+  useEffect(() => {
+    if (stage !== 'field') return;
+    const el = pixiRef.current;
+    const worldCv = canvasRef.current;
+    if (!el || !worldCv) return;
+    let dead = false;
+    import('@/lib/sim/atmosphere')
+      .then(({ Atmosphere }) => Atmosphere.create(el, worldCv))
+      .then((a) => {
+        if (dead) {
+          a.destroy();
+          return;
+        }
+        atmoRef.current = a;
+        a.setDaypart(atmoStateRef.current.dp);
+        a.setWeather(atmoStateRef.current.w);
+      })
+      .catch(() => {
+        /* без WebGL — работает прежний 2D-рендер */
+      });
+    return () => {
+      dead = true;
+      atmoRef.current?.destroy();
+      atmoRef.current = null;
+    };
+  }, [stage]);
 
   /* ---------- игровой цикл ---------- */
 
@@ -4602,6 +4681,12 @@ export default function Simulator() {
       prev = now;
       update(now, dt);
       draw(now);
+      // Атмосфера: Pixi-слой забирает готовый кадр 2D-холста как текстуру и
+      // выводит его с цветокоррекцией, тенями облаков и дождём.
+      const cam = camRef.current;
+      const cp = camPrevRef.current;
+      atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
+      camPrevRef.current = { x: cam.x, y: cam.y };
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -5854,24 +5939,42 @@ export default function Simulator() {
               aria-label="Игровое поле"
               className="relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
             >
-              <canvas
-                ref={canvasRef}
-                className={testField ? 'block h-full w-full cursor-crosshair rounded-lg' : 'mx-auto block max-w-full cursor-crosshair rounded-lg'}
+              <div
+                className={
+                  testField
+                    ? 'relative h-full w-full'
+                    : fieldFit
+                      ? 'relative mx-auto'
+                      : 'relative mx-auto w-full max-w-full'
+                }
                 style={
                   testField
                     ? undefined
                     : fieldFit
                       ? { width: fieldFit.w, height: fieldFit.h }
-                      : { width: '100%', maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
+                      : { maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
                 }
-                onPointerMove={onMove}
-                onPointerDown={onPointerDown}
-                onPointerUp={onUp}
-                onPointerCancel={onUp}
-                onPointerLeave={onLeave}
-                onContextMenu={onContextMenu}
-                onClick={onClick}
-              />
+              >
+                <canvas
+                  ref={canvasRef}
+                  className="block h-full w-full cursor-crosshair rounded-lg"
+                  onPointerMove={onMove}
+                  onPointerDown={onPointerDown}
+                  onPointerUp={onUp}
+                  onPointerCancel={onUp}
+                  onPointerLeave={onLeave}
+                  onContextMenu={onContextMenu}
+                  onClick={onClick}
+                />
+                {/* Слой атмосферы: PixiJS выводит мир (как текстуру 2D-холста) вместе
+                    с цветокоррекцией, тенями облаков и дождём. События мыши проходят
+                    сквозь него на игровой холст. Без WebGL слой прозрачен. */}
+                <canvas
+                  ref={pixiRef}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 z-10 block h-full w-full rounded-lg"
+                />
+              </div>
               {battleHint ? (
                 <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
                   {battleHint}
@@ -6345,6 +6448,8 @@ export default function Simulator() {
               <SettingsPanel
                 settings={settings}
                 testField={testField}
+                atmo={atmoState}
+                onAtmo={changeAtmo}
                 dummyOn={dummyOn}
                 onToggleDummy={toggleDummy}
                 dummySprite={dummySprite}

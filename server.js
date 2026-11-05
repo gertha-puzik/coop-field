@@ -1002,6 +1002,8 @@ function roomOf(code) {
       dummyLast: null,
       dummyGrab: null,
       rab: null,
+      // Атмосфера комнаты — общая для всех: время суток + погода (событие «atmo»).
+      atmo: { dp: 'day', w: 'sun' },
     });
   }
   return rooms.get(key);
@@ -1135,6 +1137,8 @@ function fieldPayload(room) {
       ? { on: true, x: room.dummy.x, y: room.dummy.y, sprite: room.dummy.sprite, grab: room.dummyGrab || null }
       : null,
     rab: room.rab ? { on: true } : null,
+    // Атмосфера комнаты: время суток и погода — новичок видит то же, что и все.
+    atmo: room.atmo || { dp: 'day', w: 'sun' },
   };
 }
 
@@ -1874,6 +1878,25 @@ function space(ws, payload = {}) {
   broadcast(room, "space", msg, ws);
 }
 
+const ATMO_DAYPARTS = new Set(["morning", "day", "evening", "night"]);
+const ATMO_WEATHERS = new Set(["sun", "cloud", "rain"]);
+
+/**
+ * Атмосфера комнаты — общая для всех: время суток (dp) и погода (w).
+ * Клиент → ["atmo", { dp, w }]; сервер проверяет значения, запоминает в комнате
+ * и рассылает ВСЕМ, включая отправителя (эхо служит подтверждением). Новички
+ * получают атмосферу в снапшоте field. Менять может любой игрок в комнате.
+ */
+function atmo(ws, payload = {}) {
+  const room = ws.room;
+  if (!room || !room.sockets.get(ws)) return;
+  const dp = String(payload.dp || "");
+  const w = String(payload.w || "");
+  if (!ATMO_DAYPARTS.has(dp) || !ATMO_WEATHERS.has(w)) return;
+  room.atmo = { dp, w };
+  broadcast(room, "atmo", { dp, w }, null);
+}
+
 /** Темп рассылки свободных позиций: чаще — спам, реже — рваное движение у соседей. */
 const FREE_MOVE_GAP_MS = 50;
 
@@ -2003,6 +2026,7 @@ function onMessage(ws, raw) {
   else if (event === "rabHit") rabHit(ws, payload || {});
   else if (event === "block") block(ws, payload || {});
   else if (event === "space") space(ws, payload || {});
+  else if (event === "atmo") atmo(ws, payload || {});
   else if (event === "armor") armor(ws, payload || {});
   else if (event === "freemove") freeMove(ws, payload || {});
   else if (event === "cellsync") cellsync(ws, payload || {});

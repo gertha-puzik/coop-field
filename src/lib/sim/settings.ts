@@ -197,6 +197,37 @@ export const DUMMY_NAME = 'ПОЧУХАТЬ';
 /** Спрайт манекена по умолчанию (до выбора в настройках). */
 export const DUMMY_DEFAULT_SPRITE: SpriteId = 'puhlyashik';
 
+/* ---------- атмосфера комнаты ---------- */
+
+/** Время суток комнаты. Общее для всех игроков (состояние комнаты, событие «atmo»),
+ *  меняет цветовую атмосферу поля: утро — тёплый свет, день — нейтральный,
+ *  вечер — оранжево-розовый закат, ночь — тёмно-синие сумерки. */
+export type DayPart = 'morning' | 'day' | 'evening' | 'night';
+
+export const DAYPARTS: readonly DayPart[] = ['morning', 'day', 'evening', 'night'];
+
+/** Название времени суток для интерфейса. */
+export const DAYPART_LABEL: Record<DayPart, string> = {
+  morning: 'Утро',
+  day: 'День',
+  evening: 'Вечер',
+  night: 'Ночь',
+};
+
+/** Погода комнаты. Общая для всех игроков (состояние комнаты, событие «atmo»):
+ *  солнечно — ясно и чуть ярче, пасмурно — серее и тени облаков, дождь — косые
+ *  капли, густые тени и притушенные цвета. */
+export type WeatherKind = 'sun' | 'cloud' | 'rain';
+
+export const WEATHERS: readonly WeatherKind[] = ['sun', 'cloud', 'rain'];
+
+/** Название погоды для интерфейса. */
+export const WEATHER_LABEL: Record<WeatherKind, string> = {
+  sun: 'Солнечно',
+  cloud: 'Пасмурно',
+  rain: 'Дождь',
+};
+
 /** Все спрайты, которые нужно предзагрузить для поля: персонажи (в том числе как
  *  скины манекена) + мишень РАБ. */
 export const FIELD_SPRITES: SpriteMeta[] = [...SPRITES, RAB_SPRITE];

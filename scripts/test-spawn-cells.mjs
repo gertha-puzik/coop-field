@@ -3,9 +3,12 @@
 import { WebSocket } from "ws";
 
 const url = process.env.WS_URL || "ws://127.0.0.1:3782";
-// тестовая локация живёт только в TEST_ROOM («demo»)
 // тестовая локация живёт только в TEST_ROOM («test»)
 const room = "test";
+// Уникальный суффикс прогона: логины «Админ»/«Позже» без суффикса восстанавливали
+// сохранённую позицию из data/test-cats.json и занимали клетку спавна — прогон
+// на «грязном» состоянии падал. Уникальные логины делают тест повторяемым.
+const rnd = Date.now().toString(36);
 
 function client(name) {
   return new Promise((resolve, reject) => {
@@ -49,7 +52,7 @@ const map = {
   ],
 };
 
-const admin = await client("Админ");
+const admin = await client(`Админ-${rnd}`);
 await waitFor(admin, "field");
 admin.send(JSON.stringify(["setmap", { pass: "1946", map }]));
 await new Promise((r) => setTimeout(r, 300));
@@ -62,7 +65,6 @@ console.log("map echo spawns:", JSON.stringify(mapEcho && mapEcho[1] && mapEcho[
 // 4 новичка (по числу клеток спавна): каждый должен попасть на клетку спавна
 // (x-1,y-1) ∈ spawns, не занятую предыдущими. Сокеты держим открытыми до конца —
 // иначе ушедший кот освобождает клетку и doubles не проверить.
-const rnd = Date.now().toString(36);
 const opened = [];
 const spots = new Set();
 for (let i = 0; i < 4; i++) {
@@ -93,7 +95,7 @@ const info2 = admin.inbox.filter((m) => m[0] === "info").pop();
 console.log("off-grass spawn rejected:", !!(info2 && String(info2[1]).includes("спавна ставится на траве")));
 
 // field для новичка несёт spawны в конфиге (клиентский санитайзер их переживёт).
-const late = await client("Позже");
+const late = await client(`Позже-${rnd}`);
 const field = await waitFor(late, "field");
 const cfg = field[1].map;
 console.log("field.map spawns kept:", Array.isArray(cfg?.spawns) && cfg.spawns.length === 4);

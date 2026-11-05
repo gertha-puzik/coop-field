@@ -1,4 +1,4 @@
-import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
+import type { DummyConfig, SpriteId, DayPart, WeatherKind } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
 import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
 
@@ -26,6 +26,10 @@ export function roomTitle(code: string): string {
 
 /** Состав одной комнаты для выбора: сколько игроков и кто именно. */
 export type CoopRoomInfo = { id: string; count: number; logins: string[] };
+
+/** Атмосфера комнаты: время суток + погода. Общая для всех игроков; хранится на
+ *  сервере, меняется событием «atmo», новичкам уходит в снапшоте field. */
+export type CoopAtmo = { dp: DayPart; w: WeatherKind };
 
 export type CoopCat = {
   id: number;
@@ -112,6 +116,8 @@ export type CoopHandlers = {
     cats?: CoopCat[];
     /** Конфиг локации «теста»: зоны с клетками и зелёные зоны (рисование поля, редактор). */
     map?: TestMap;
+    /** Атмосфера комнаты: время суток и погода (общие для всех). */
+    atmo?: CoopAtmo;
     /** Манекен «ПОЧУХАТЬ» комнаты: null — выключен. */
     dummy?: CoopDummyState | null;
     /** Боевая мишень «РАБ» комнаты: null — выключена. */
@@ -138,6 +144,8 @@ export type CoopHandlers = {
   onRabState?: (state: CoopRabState) => void;
   /** Кто-то другой ударил мишень РАБ — показать качание и урон (бьющему эхо не приходит). */
   onRabHit?: (info: CoopRabHit) => void;
+  /** Атмосфера комнаты сменилась (или пришла при входе): время суток и погода. */
+  onAtmo?: (info: CoopAtmo) => void;
   /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
   onBlock?: (info: { id: number; on: boolean }) => void;
   /** Чужой кот присел на пробел / отпустил его (отправителю эхо не приходит).
@@ -349,7 +357,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmo; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
       else if (event === "map") {
         // Конфиг локации проходит ту же проверку, что и на сервере:
         // битый или чужой пакет просто игнорируется.
@@ -419,6 +427,18 @@ export function createCoopClient(handlers: CoopHandlers) {
             hold: Number.isFinite(Number(row.hold)) ? Number(row.hold) : undefined,
             cancel: !!row.cancel,
           });
+        }
+      } else if (event === "atmo") {
+        const row = payload as { dp?: unknown; w?: unknown } | null;
+        if (row && typeof row === "object") {
+          const dp = row.dp;
+          const w = row.w;
+          if (
+            (dp === 'morning' || dp === 'day' || dp === 'evening' || dp === 'night') &&
+            (w === 'sun' || w === 'cloud' || w === 'rain')
+          ) {
+            handlers.onAtmo?.({ dp, w });
+          }
         }
       } else if (event === "roomsinfo") {
         if (!Array.isArray(payload)) return;

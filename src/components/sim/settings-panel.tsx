@@ -5,22 +5,30 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, SpriteMeta, StrikeZone, WindowKey, ZoneSide } from '@/lib/sim/settings';
+import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, SpriteMeta, StrikeZone, WindowKey, ZoneSide, DayPart, WeatherKind } from '@/lib/sim/settings';
 import {
   DAMAGE_LEVELS,
+  DAYPARTS,
+  DAYPART_LABEL,
   DIRECTIONS,
   SPRITES,
   SPRITE_GROUPS,
+  WEATHERS,
+  WEATHER_LABEL,
   armorLevelMultiplier,
   damageLevelLabel,
   throatDamageFor,
   wrap360,
 } from '@/lib/sim/settings';
+import type { CoopAtmo } from '@/lib/net/coop';
 
 interface Props {
   settings: SimSettings;
   /** Комната «тест»: чистый полигон — манекен и мишень РАБ недоступны. */
   testField?: boolean;
+  /** Атмосфера комнаты (общая): время суток и погода. */
+  atmo: CoopAtmo;
+  onAtmo: (dp: DayPart, w: WeatherKind) => void;
   /** Манекен «ПОЧУХАТЬ» включён в комнате (состояние комнаты, не локальная настройка). */
   dummyOn: boolean;
   onToggleDummy: (on: boolean) => void;
@@ -653,6 +661,60 @@ export function SettingsPanel(props: Props) {
         />
           </>
         )}
+        {/* Атмосфера комнаты: время суток и погода — общие для всех игроков.
+            Кнопка шлёт «atmo» на сервер, тот рассылает всем, включая отправителя. */}
+        <div className="py-1.5">
+          <div className="text-xs text-[var(--sim-text-soft)]">Время суток</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {DAYPARTS.map((dp) => {
+              const active = props.atmo.dp === dp;
+              return (
+                <Button
+                  key={dp}
+                  size="sm"
+                  variant={active ? 'default' : 'outline'}
+                  className={
+                    active
+                      ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
+                      : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
+                  }
+                  onClick={() => props.onAtmo(dp, props.atmo.w)}
+                >
+                  {DAYPART_LABEL[dp]}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="mt-0.5 text-[10px] leading-tight text-[var(--sim-text-faint)]">
+            Общая для всей комнаты — смену видят все игроки.
+          </div>
+        </div>
+        <div className="py-1.5">
+          <div className="text-xs text-[var(--sim-text-soft)]">Погода</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {WEATHERS.map((w) => {
+              const active = props.atmo.w === w;
+              return (
+                <Button
+                  key={w}
+                  size="sm"
+                  variant={active ? 'default' : 'outline'}
+                  className={
+                    active
+                      ? 'h-6 bg-[var(--sim-accent)] px-2 text-[10px] font-semibold text-black hover:bg-[var(--sim-accent-hover)]'
+                      : 'h-6 bg-white px-2 text-[10px] font-semibold text-black hover:bg-zinc-200'
+                  }
+                  onClick={() => props.onAtmo(props.atmo.dp, w)}
+                >
+                  {WEATHER_LABEL[w]}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="mt-0.5 text-[10px] leading-tight text-[var(--sim-text-faint)]">
+            Тоже общая: дождь, облака и свет меняются у всех одновременно.
+          </div>
+        </div>
         <Toggle label="Сетка клеток" checked={s.field.showGrid} onChange={(v) => props.patchField({ showGrid: v })} />
         <Toggle
           label="Шахматная подсветка"
