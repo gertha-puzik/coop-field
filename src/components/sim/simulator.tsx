@@ -794,15 +794,43 @@ export default function Simulator() {
         return;
       }
     }
-    if (d && !d.dirty) {
-      d.zones = map.zones.map((z) => ({ ...z }));
-      d.objects = (map.objects ?? []).map((o) => ({ ...o }));
-      d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
-      d.elev = { ...(map.elev ?? {}) };
-      d.cols = map.cols;
-      d.rows = map.rows;
-      setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
+    if (!d) return;
+    if (d.dirty) {
+      // Внешняя карта при открытом черновике с правками: несводимую правку не
+      // слить с чужим конфигом — черновик сбрасывается на новую карту целиком
+      // (как при открытии редактора), игрок видит предупреждение в панели.
+      d.undo = [];
+      d.sel = [];
+      d.drag = null;
+      d.dirty = false;
+      setEditorMsg('Локацию сохранил другой игрок — несохранённая правка черновика сброшена на новую карту.');
     }
+    d.zones = map.zones.map((z) => ({ ...z }));
+    d.objects = (map.objects ?? []).map((o) => ({ ...o }));
+    d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
+    d.elev = { ...(map.elev ?? {}) };
+    d.cols = map.cols;
+    d.rows = map.rows;
+    // Холст кисти переснимается из рисунка новой карты — те же вызовы, что
+    // начальный снапшот при открытии редактора. Без этого pcv остаётся в
+    // размерах старой карты: кисть красит в старых координатах (WYSIWYG
+    // сломан), а сохранение молча переносит старый холст 1:1 (encodeDraftPaint).
+    d.pundo = [];
+    d.pdirty = false;
+    d.ppaint = null;
+    d.pcv = copyPaintCanvas();
+    if (!d.pcv && mapHasPaint(map)) {
+      // Рисунок новой карты ещё декодируется: снимок снимется по готовности
+      // (как при открытии редактора); кисть до того ленивая и создаст холст
+      // уже в размерах новой карты (ensureDraftPaint).
+      void ensurePaintDecoded().then((ok2) => {
+        const e = editorRef.current;
+        if (!ok2 || !e || e.pcv || e.pdirty) return;
+        e.pcv = copyPaintCanvas();
+        if (e.pcv) setPaintOverride(e.pcv, true);
+      });
+    }
+    setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
   }, []);
 
   const {
