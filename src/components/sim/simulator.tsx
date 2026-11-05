@@ -76,6 +76,7 @@ import {
   type TestMap,
   type TestMapEntryDir,
   type TestMapObject,
+  type TestMapSpawn,
   type TestMapZone,
   type TestMapZoneKind,
 } from '@/lib/sim/test-map';
@@ -221,7 +222,7 @@ const EDITOR_PASS_KEY = 'catwar-editor-pass';
  *  объект (камень/дерево — препятствия со свободной позицией, размером и
  *  поворотом; земля — проталина-декор; покрытие — плитка/цветы/пол на клетку,
  *  красятся протяжкой) или клетка захода (вход в боевую зону с направлением шага). */
-type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'ground' | 'entry';
+type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'ground' | 'entry' | 'spawn';
 
 /** Ставящийся объект редактора: «призрак» следует за курсором (свободная позиция,
  *  без привязки к клетке), клик фиксирует точку; размер — колесом и кнопками ±,
@@ -246,12 +247,14 @@ type EditorDraft = {
   zones: TestMapZone[];
   /** Препятствия черновика (камни/деревья) — едут в конфиг вместе с зонами. */
   objects: TestMapObject[];
+  /** Клетки спавна (точки появления игроков) — отдельный список конфига. */
+  spawns: TestMapSpawn[];
   cols: number;
   rows: number;
   tool: EditorTool;
   /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
   drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
-  undo: { zones: TestMapZone[]; objects: TestMapObject[]; cols: number; rows: number }[];
+  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; cols: number; rows: number }[];
   /** Отмеченные зоны для объединения (инструмент «Объединить»). */
   sel: string[];
   dirty: boolean;
@@ -1327,11 +1330,14 @@ export default function Simulator() {
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
           JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
         JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null]));
+          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) &&
+        JSON.stringify(d.spawns.map((s) => [s.c, s.r])) ===
+          JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r]));
       if (same) {
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
         d.objects = (map.objects ?? []).map((o) => ({ ...o }));
+        d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
         setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
         return;
       }
@@ -1339,6 +1345,7 @@ export default function Simulator() {
     if (d && !d.dirty) {
       d.zones = map.zones.map((z) => ({ ...z }));
       d.objects = (map.objects ?? []).map((o) => ({ ...o }));
+      d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
       d.cols = map.cols;
       d.rows = map.rows;
       setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
@@ -1361,6 +1368,7 @@ export default function Simulator() {
     seed: savedMapRef.current.seed,
     zones: d.zones.map((z) => ({ ...z })),
     objects: d.objects.map((o) => ({ ...o })),
+    spawns: d.spawns.map((s) => ({ ...s })),
   });
 
   /** Черновик сразу рисуется на поле (WYSIWYG): setTestMap пересобирает кэши. */
@@ -1372,7 +1380,7 @@ export default function Simulator() {
   const pushEditorUndo = () => {
     const d = editorRef.current;
     if (!d) return;
-    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), cols: d.cols, rows: d.rows });
+    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), cols: d.cols, rows: d.rows });
     if (d.undo.length > 40) d.undo.shift();
   };
 
@@ -1381,6 +1389,7 @@ export default function Simulator() {
     const draft: EditorDraft = {
       zones: m.zones.map((z) => ({ ...z })),
       objects: (m.objects ?? []).map((o) => ({ ...o })),
+      spawns: (m.spawns ?? []).map((s) => ({ ...s })),
       cols: m.cols,
       rows: m.rows,
       tool: 'cells',
@@ -1622,8 +1631,8 @@ export default function Simulator() {
     pushEditorUndo();
     if (drag.erase || d.tool === 'erase') {
       d.zones = d.zones.flatMap((z) => subtractFromZone(z, { c0, r0, c1, r1 }));
-      // ластик снимает препятствия (по точке опоры) и клеточные объекты
-      // (землю/покрытие/заход) внутри стёртого прямоугольника
+      // ластик снимает препятствия (по точке опоры), клеточные объекты
+      // (землю/покрытие/заход) и клетки спавна внутри стёртого прямоугольника
       d.objects = d.objects.filter((o) => {
         if (o.kind === 'stone' || o.kind === 'tree') {
           const b = objectBase(o);
@@ -1633,6 +1642,7 @@ export default function Simulator() {
         }
         return !(o.c >= c0 && o.c <= c1 && o.r >= r0 && o.r <= r1);
       });
+      d.spawns = d.spawns.filter((s) => !(s.c >= c0 && s.c <= c1 && s.r >= r0 && s.r <= r1));
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -1721,6 +1731,46 @@ export default function Simulator() {
     return true;
   };
 
+  /** Клетка спавна разрешена только на траве (зелёной зоне) и не на боевых
+   *  клетках: новичок появляется в мирном режиме (это же проверяет сервер). */
+  const editorSpawnAllowed = (d: EditorDraft, c: number, r: number): boolean =>
+    d.zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) &&
+    !d.zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+
+  /** Добавить клетку спавна (клик/протяжка инструмента «Спавн»): одна точка
+   *  на клетку, лимит TEST_MAP_LIMITS.spawnsMax. */
+  const addEditorSpawn = (c: number, r: number): boolean => {
+    const d = editorRef.current;
+    if (!d) return false;
+    if (d.spawns.some((s) => s.c === c && s.r === r)) return true;
+    if (!editorSpawnAllowed(d, c, r)) {
+      setEditorMsg('Клетка спавна ставится на траве (зелёной зоне), не на боевых клетках.');
+      return false;
+    }
+    if (d.spawns.length >= TEST_MAP_LIMITS.spawnsMax) {
+      setEditorMsg(`Клеток спавна не больше ${TEST_MAP_LIMITS.spawnsMax}.`);
+      return false;
+    }
+    d.spawns.push({ c, r });
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+    return true;
+  };
+
+  /** Клик инструментом «Спавн»: клетка со спавном — снимает, без — ставит. */
+  const toggleEditorSpawn = (c: number, r: number): boolean => {
+    const d = editorRef.current;
+    if (!d) return false;
+    const idx = d.spawns.findIndex((s) => s.c === c && s.r === r);
+    if (idx < 0) return addEditorSpawn(c, r);
+    d.spawns.splice(idx, 1);
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+    return true;
+  };
+
   /** Постановка клетки захода (инструмент «Заход»): клик ставит заход с выбранным
    *  направлением, клик по тому же заходу с тем же направлением — убирает, с другим —
    *  меняет направление. На боевой клетке заход не ставится; по направлению шага
@@ -1785,6 +1835,7 @@ export default function Simulator() {
     const back = d.undo.pop()!;
     d.zones = back.zones.map((z) => ({ ...z }));
     d.objects = back.objects.map((o) => ({ ...o }));
+    d.spawns = back.spawns.map((s) => ({ ...s }));
     d.cols = back.cols;
     d.rows = back.rows;
     d.sel = d.sel.filter((id) => d.zones.some((z) => z.id === id));
@@ -1799,6 +1850,7 @@ export default function Simulator() {
     const m = savedMapRef.current;
     d.zones = m.zones.map((z) => ({ ...z }));
     d.objects = (m.objects ?? []).map((o) => ({ ...o }));
+    d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
     d.cols = m.cols;
     d.rows = m.rows;
     d.sel = [];
@@ -3755,6 +3807,31 @@ export default function Simulator() {
             ctx.stroke();
             ctx.setLineDash([]);
           }
+          // клетки спавна: пунктирный контур + флажок. Только в редакторе —
+          // на поле клетка спавна ничем не отличается от соседних.
+          for (const spw of ed.spawns) {
+            const x0 = spw.c * s.field.cellW;
+            const y0 = spw.r * s.field.cellH;
+            ctx.setLineDash([5, 4]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1.2;
+            ctx.strokeRect(x0 + 5.5, y0 + 5.5, s.field.cellW - 11, s.field.cellH - 11);
+            ctx.setLineDash([]);
+            // флажок точки появления: шест + треугольный вымпел
+            const fx0 = x0 + s.field.cellW / 2;
+            const fy0 = y0 + s.field.cellH / 2;
+            ctx.beginPath();
+            ctx.moveTo(fx0 - 6, fy0 + 9);
+            ctx.lineTo(fx0 - 6, fy0 - 9);
+            ctx.lineTo(fx0 + 9, fy0 - 4);
+            ctx.lineTo(fx0 - 6, fy0 + 1);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
           // тянущийся прямоугольник
           const dr = ed.drag;
           if (dr) {
@@ -4799,6 +4876,10 @@ export default function Simulator() {
         if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground') && ev.buttons & 1) {
           paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
         }
+        // протяжка «Спавна» — только добавляет точки (снимает кликом)
+        if (dirtPaintingRef.current && ed.tool === 'spawn' && ev.buttons & 1) {
+          addEditorSpawn(c, r);
+        }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {
           // пишем прямо в ref: кадр читает его каждый тик, панель позиции не показывает
@@ -4889,6 +4970,17 @@ export default function Simulator() {
       // ПКМ по-прежнему рисует ластик, чтобы стирать зоны и объекты протяжкой.
       if (ev.button === 0 && ed.tool === 'entry') {
         placeEditorEntry(c, r);
+        ev.preventDefault();
+        return;
+      }
+      if (ev.button === 0 && ed.tool === 'spawn') {
+        // Клик — поставить/снять точку появления; протяжка — только ставит
+        // (без снятия), как у «Земли»/«Покрытия».
+        pushEditorUndo();
+        toggleEditorSpawn(c, r);
+        dirtPaintingRef.current = true;
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+        ev.currentTarget.style.cursor = 'crosshair';
         ev.preventDefault();
         return;
       }
@@ -5855,6 +5947,7 @@ export default function Simulator() {
                           [
                             { id: 'ground', label: '🌸 Покрытие' },
                             { id: 'entry', label: '🚪 Заход' },
+                            { id: 'spawn', label: '🛏 Спавн' },
                           ] as { id: EditorTool; label: string }[]
                         ).map((t) => (
                           <button
@@ -6063,6 +6156,14 @@ export default function Simulator() {
                             сплошной пол, просто трава. Соседние клетки сходятся швами в сплошной настил.
                           </p>
                         </>
+                      ) : null}
+                      {editorView.tool === 'spawn' ? (
+                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                          Точки появления игроков: клик по траве ставит клетку спавна, повторный клик
+                          по той же клетке — снимает, протяжка красит несколько. Игроки появляются на
+                          случайной свободной из них. На поле клетка ничем не отличается от соседних —
+                          флажки видны только здесь, в редакторе.
+                        </p>
                       ) : null}
                       <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
                         Тяните по полю — зона. Камень и дерево ставятся свободно: призрак едет за

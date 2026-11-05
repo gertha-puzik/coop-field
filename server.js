@@ -683,6 +683,34 @@ function sanitizeTestMap(raw) {
   if (seen.size !== cells.size) {
     return { error: 'зоны должны соединяться в одну локацию (касаться сторонами, не углами)' };
   }
+  // Клетки спавна: необязательный список (старые конфиги без него — «пусто»).
+  // Ставятся только на траве (зелёной зоне) и не на боевых клетках: новичок
+  // появляется в мирном режиме. Дубликаты схлопываются, порядок сохраняется
+  // (порт sanitizeTestMap из src/lib/sim/test-map.ts).
+  const spawns = [];
+  if (raw.spawns != null) {
+    if (!Array.isArray(raw.spawns)) return { error: 'список клеток спавна не распознан' };
+    if (raw.spawns.length > 64) return { error: 'клеток спавна не больше 64' };
+    const seenSp = new Set();
+    for (let i = 0; i < raw.spawns.length; i++) {
+      const s = raw.spawns[i];
+      const c = asInt(s && s.c);
+      const r = asInt(s && s.r);
+      if (c === null || r === null) return { error: `спавн №${i + 1}: координаты не распознаны` };
+      if (c < 0 || r < 0 || c >= cols || r >= rows) {
+        return { error: `спавн №${i + 1}: вне границ мира` };
+      }
+      const onGreen = zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+      const onBattle = zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+      if (!onGreen || onBattle) {
+        return { error: `спавн №${i + 1}: клетка спавна ставится на траве (зелёной зоне), не на боевых клетках` };
+      }
+      const key = `${c},${r}`;
+      if (seenSp.has(key)) continue;
+      seenSp.add(key);
+      spawns.push({ c, r });
+    }
+  }
   return {
     map: {
       v: raw.v,
@@ -692,6 +720,7 @@ function sanitizeTestMap(raw) {
       seed: typeof raw.seed === 'string' && raw.seed.trim() ? raw.seed.trim().slice(0, 24) : 'test',
       zones,
       objects,
+      spawns,
     },
   };
 }
@@ -824,7 +853,7 @@ function setMap(ws, payload = {}) {
     for (const w of room.sockets.keys()) send(w, 'map', testMap);
     broadcast(room, 'field', fieldPayload(room));
   }
-  console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}`);
+  console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}, spawns=${(testMap.spawns || []).length}`);
 }
 
 /* ---------- позиции котов между запусками сервера.
@@ -1007,6 +1036,22 @@ function spawnCell(room) {
   const H = test ? TEST_HEIGHT : HEIGHT;
   const ok = (x, y) => (test ? testWalkable(x, y) : true);
   if (test) {
+    // Клетки спавна из конфига локации: новичок появляется на случайной свободной
+    // из них. Занятые котами и заблокированные препятствиями клетки пропускаются;
+    // свободных нет (или спавны не заданы) — прежняя логика ниже.
+    const sp = testMap.spawns || [];
+    if (sp.length > 0) {
+      const free = [];
+      for (const s of sp) {
+        if (!Number.isInteger(s.c) || !Number.isInteger(s.r)) continue;
+        if (s.c < 0 || s.r < 0 || s.c >= TEST_WIDTH || s.r >= TEST_HEIGHT) continue;
+        if (TEST_OBST_CELLS.has(`${s.c},${s.r}`)) continue;
+        if (occupied(room, s.c + 1, s.r + 1)) continue;
+        free.push([s.c + 1, s.r + 1]);
+      }
+      if (free.length > 0) return free[Math.floor(Math.random() * free.length)];
+      console.log(`spawn cells all blocked/occupied: raw=${JSON.stringify(sp)}`);
+    }
     // Новичок в «тесте» появляется в мирном режиме — на траве (зелёная зона):
     // бой сам включится, когда игрок дойдёт до боевых клеток.
     const green = testMap.zones.filter((z) => z.kind === 'green');

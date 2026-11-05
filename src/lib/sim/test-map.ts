@@ -215,6 +215,12 @@ export type TestMapZone = {
   r1: number;
 };
 
+/** Клетка спавна — точка появления игроков. Живёт отдельным списком (не в
+ *  objects), чтобы не спорить с декором за клетку: спавн можно ставить поверх
+ *  проталин/покрытий. На поле клетка ничем не отличается от соседних — маркер
+ *  виден только в редакторе. */
+export type TestMapSpawn = { c: number; r: number };
+
 export type TestMap = {
   /** Версия конфига: 1 — клетки везде, 2 — деление поля на траву и боевые клетки.
    *  Старый файл с v1 сервер поднимает до дефолта v2 при загрузке (миграция). */
@@ -229,6 +235,11 @@ export type TestMap = {
   /** Физические препятствия: камни и деревья (появились позже зон — поэтому
    *  необязательное поле; старые конфиги без него читаются как «пусто»). */
   objects?: TestMapObject[];
+  /** Клетки спавна (точки появления игроков): новый игрок появляется на
+   *  случайной свободной из них. Необязательное поле — старые конфиги без
+   *  него читаются как «пусто», спавн тогда работает по-старому (первая
+   *  свободная клетка травы). */
+  spawns?: TestMapSpawn[];
 };
 
 /** Пределы редактора: мир, число зон и число объектов. Лимит объектов крупный:
@@ -240,6 +251,7 @@ export const TEST_MAP_LIMITS = {
   rowsMax: 40,
   zonesMax: 48,
   objectsMax: 2000,
+  spawnsMax: 64,
   nameMax: 24,
 } as const;
 
@@ -473,6 +485,35 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   }
   const conn = testMapConnectivityError(zones);
   if (conn) return { error: conn };
+  // Клетки спавна: необязательный список (старые конфиги без него — «пусто»).
+  // Ставятся только на траве (зелёной зоне) и не на боевых клетках: новичок
+  // появляется в мирном режиме. Дубликаты схлопываются, порядок сохраняется.
+  let spawns: TestMapSpawn[] = [];
+  if (src.spawns != null) {
+    if (!Array.isArray(src.spawns)) return { error: 'список клеток спавна не распознан' };
+    if (src.spawns.length > TEST_MAP_LIMITS.spawnsMax) {
+      return { error: `клеток спавна не больше ${TEST_MAP_LIMITS.spawnsMax}` };
+    }
+    const seenSp = new Set<string>();
+    for (let i = 0; i < src.spawns.length; i++) {
+      const s = src.spawns[i] as Partial<TestMapSpawn>;
+      const c = asInt(s.c);
+      const r = asInt(s.r);
+      if (c === null || r === null) return { error: `спавн №${i + 1}: координаты не распознаны` };
+      if (c < 0 || r < 0 || c >= cols || r >= rows) {
+        return { error: `спавн №${i + 1}: вне границ мира` };
+      }
+      const onGreen = zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+      const onBattle = zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+      if (!onGreen || onBattle) {
+        return { error: `спавн №${i + 1}: клетка спавна ставится на траве (зелёной зоне), не на боевых клетках` };
+      }
+      const key = `${c},${r}`;
+      if (seenSp.has(key)) continue;
+      seenSp.add(key);
+      spawns.push({ c, r });
+    }
+  }
   return {
     map: {
       v: src.v,
@@ -482,6 +523,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       seed: typeof src.seed === 'string' && src.seed.trim() ? src.seed.trim().slice(0, 24) : 'test',
       zones,
       objects,
+      spawns,
     },
   };
 }
