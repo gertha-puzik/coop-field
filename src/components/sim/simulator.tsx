@@ -1,4 +1,15 @@
 'use client';
+/**
+ * Simulator — единственный компонент движка: канвас-сцена, сетевой контекст,
+ * панели и JSX. Пояс чистых функций (строки 1–1361 прежней нумерации) выехал
+ * волной W5a (этап 1) в src/lib/sim/{engine-consts, particles, editor-model,
+ * paint, combat-log, geometry, targeting} и вернулся импортом — behavior-
+ * preserving; карта поясов — docs/ARCHITECTURE.md §2.
+ * Осталось здесь: HUD-циферблат суток/погоды, интерфейсы AtmosphereLike/AtmoClock,
+ * ColResize, типы FloatLabel/Step/Engine (стейт главного rAF-замыкания),
+ * remote-draw-хелперы (потребляют lib/net/move-book — lib/sim не знает сетевого
+ * слоя, см. ARCHITECTURE §1) и весь стейт + rAF + ввод + JSX.
+ */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '@/components/ui/button';
@@ -6,6 +17,93 @@ import { EntryScreen } from './entry-screen';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
+import {
+  ARROW_ANCHOR_F,
+  ARROW_TIP_SHADE,
+  CAM_USER_ZOOM_MAX,
+  CAM_USER_ZOOM_MIN,
+  CAM_USER_ZOOM_STEP,
+  CAMERA_TAU_MS,
+  CAMZOOM_TAU_MS,
+  DUMMY_DEFAULT,
+  DUMMY_EMIT_MS,
+  DUMMY_ID,
+  DUMMY_SCALE,
+  FIELD_MAX_UPSCALE,
+  FREE_EMIT_MS,
+  NET_ROLLBACK_LOCK_MS,
+  OCCLUDE_ALPHA,
+  OCCLUDE_COVER,
+  PEACE_BATTLE_LEAN_Y,
+  PEACE_SPEED_DEFAULT,
+  PEACE_STUCK_MS,
+  PEACE_TILT,
+  PEACE_ZOOM,
+  RAB_ID,
+  RAB_POS,
+  RAB_SCALE,
+  round2,
+  shadeHex,
+  SPRINT_MULT,
+  SPENT_COLOR,
+  STORAGE_KEY,
+} from '@/lib/sim/engine-consts';
+import {
+  anchorAtPx,
+  anchorOf,
+  coveredRatio,
+  entrySide,
+  nearestEntryCell,
+  peaceBodyRadius,
+  peaceHalfBox,
+  type PxRect,
+  rr,
+  spriteBoxOf,
+} from '@/lib/sim/geometry';
+import {
+  CHAT_W,
+  clampLayout,
+  COMBAT_KEY,
+  type CombatLogEntry,
+  type CombatState,
+  type Layout,
+  defaultCombat,
+  formatLogLine,
+  loadCombat,
+  loadLayout,
+  LOG_W,
+  logActor,
+  mergeLog,
+  saveLayout,
+} from '@/lib/sim/combat-log';
+import { SPRINT_GRAVITY, SPRINT_SPAWN_MS, spawnSprintPart, type SprintPart } from '@/lib/sim/particles';
+import {
+  copyPaintCanvas,
+  encodeDraftPaint,
+  ensureDraftPaint,
+  PAINT_MATS,
+  pushPaintUndo,
+  stampPaintBrush,
+  undoPaintStroke,
+} from '@/lib/sim/paint';
+import {
+  EDITOR_PASS_KEY,
+  type EditorDraft,
+  type EditorPlace,
+  type EditorTool,
+  type PaintBrushShape,
+} from '@/lib/sim/editor-model';
+import {
+  dummiesOf,
+  dummyIsDrawn,
+  isBlockedCell,
+  othersOf,
+  pickStrikeTarget,
+  pruneRemoteEnergy,
+  strikeResponseMs,
+  strikeTargetDrawn,
+  type CharRef,
+} from '@/lib/sim/targeting';
 import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
@@ -51,7 +149,6 @@ import {
   terrainWallBottomY,
   testBattleRouteBlocked,
   testClippedCells,
-  testEntries,
   testEntryAt,
   testEntryStrict,
   testFieldGeometry,
@@ -133,8 +230,6 @@ import {
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
-
-const STORAGE_KEY = 'catwar-battle-sim-v4';
 
 /** Минимальный облик слоя атмосферы. Модуль с PixiJS грузится динамически (чтобы
  *  не попадать в основной бандл и не падать при SSR), поэтому здесь только интерфейс. */
@@ -389,487 +484,12 @@ function drawFieldHud(
 
 /** «4,8 сек» — подпись скорости стрелы для панели СП в шапке. */
 const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
-/** Отдельное хранилище боевого состояния (энергия + лог ударов). */
-const COMBAT_KEY = 'catwar-battle-sim-combat-v1';
-/** Ширины боковых колонок (чат слева, лог ударов справа) — их тянет сам игрок. */
-const LAYOUT_KEY = 'catwar-battle-sim-layout-v1';
-/** Пределы растяжения колонок, px: узкие неудобны, широкие съедают поле. */
-const CHAT_W = { min: 210, max: 560, def: 300 };
-const LOG_W = { min: 170, max: 460, def: 230 };
-/** Поле может растягиваться сверх клеточного размера, чтобы занять весь кадр.
- *  Дальше 2× картинка начинает заметно мылить даже с dpr-рендером. */
-const FIELD_MAX_UPSCALE = 2;
-/** Пауза на новые шаги после отката предикта (чуть выше серверного кулдауна 80мс):
- *  мгновенный перешаг после отката уходил в серверный кулдаун и терялся. */
-const NET_ROLLBACK_LOCK_MS = 90;
+
 /** Темп достройки чужого шага: не быстрее одной клетки в это время.
  *  Пачка кадров после лага не превращается в спринт через всё поле. */
 const REMOTE_STEP_MS = 60;
 /** Дальше этого отставания чужого кота не анимируем — сразу ставим в клетку сервера. */
 const REMOTE_BACKLOG_MAX = 4;
-/** Темп рассылки свободной позиции в «тесте» (~12 кадров/с). */
-const FREE_EMIT_MS = 80;
-/** Плавность камеры: за ~420 мс камера догоняет игрока на 63% дистанции —
- *  в несколько раз плавнее прежнего (130 мс), кот больше не «дёргает» камеру. */
-const CAMERA_TAU_MS = 420;
-/** Скорость свободной ходьбы мирного режима по умолчанию, px мира в секунду:
- *  игрок движется по пикселям ровно пока зажаты клавиши (или до цели клика),
- *  без привязки к клеткам. Точное значение — настройка «Скорость ходьбы (мир)»
- *  (character.peaceSpeed). */
-const PEACE_SPEED_DEFAULT = 320;
-/** Кликом пущенная ходьба отменяется, если столько мс нет прогресса к цели. */
-const PEACE_STUCK_MS = 600;
-/** Зум камеры мирного режима «теста»: поле приближается — «по-домашнему» вид сверху,
- *  как в Don't Starve Together. В бою возвращается 1. Отключается кнопкой
- *  «Перспектива» в шапке (character.peaceView); поверх базового зума работает
- *  зум колесом мыши (CAM_USER_ZOOM_MIN…MAX). */
-const PEACE_ZOOM = 1.5;
-/** Наклон земли мирного режима: вертикаль грунта сжата до этой доли, спрайты остаются
- *  вертикальными билбордами — та самая псевдо-глубина Don't Starve / Transformice Adventures. */
-const PEACE_TILT = 0.8;
-/** Насколько центр мирного кота может углубиться в боевую зону по вертикали
- *  (доли клетки). Перпектива сжимает землю до PEACE_TILT, из-за чего при той же
- *  стенке видимый заход в зону сверху/снизу выходит заметно мельче бокового —
- *  по вертикали стенку отодвигаем вглубь, чтобы визуально кот везде заходил
- *  «до половины», как сбоку. */
-const PEACE_BATTLE_LEAN_Y = 0.12;
-/** Плавность перехода зума и наклона между мирным и боевым видом, мс. */
-const CAMZOOM_TAU_MS = 350;
-/** Границы зума колесом мыши: множитель поверх базового зума вида (1 — как задано
- *  режимом). Колесо вверх — ближе, вниз — дальше; работает и в мирном виде, и в бою. */
-const CAM_USER_ZOOM_MIN = 0.55;
-const CAM_USER_ZOOM_MAX = 2;
-/** Шаг зума на один щелчок колеса (множитель, вверх/вниз). */
-const CAM_USER_ZOOM_STEP = 1.12;
-/** Множитель спринта в мирном режиме: зажатый Shift ускоряет кота вдвое. */
-const SPRINT_MULT = 2;
-/** Порог «объект закрывает игрока»: если препятствие перекрывает прямоугольник
- *  модельки своего кота хотя бы на эту долю, объект рисуется полупрозрачным —
- *  игрок видит себя за кроной/камнем. Эффект только на своем экране: чужие
- *  клиенты рисуют кот целиком спрятанным, как и положено. */
-const OCCLUDE_COVER = 0.7;
-/** Альфа объекта, под которым спрятался свой кот (см. OCCLUDE_COVER). */
-const OCCLUDE_ALPHA = 0.6;
-/** Темп появления частиц спринта: один комочек каждые столько мс бега. */
-const SPRINT_SPAWN_MS = 26;
-/** Гравитация частиц спринта, px мира / с²: взлетев — падают обратно в траву. */
-const SPRINT_GRAVITY = 520;
-/** Палитры частиц спринта: комочки земли и клочки травы. */
-const SPRINT_DIRT = ['#5b4632', '#6d5740', '#7e684b', '#4e3d2b'];
-const SPRINT_GRASS = ['#3f6d2a', '#4d7f33', '#5b913d', '#356023'];
-
-/** Частица спринта: комочек земли/травы, вылетающий из-под лап. x/y — точка
- *  на грунте (px мира), z — высота над землёй; vz тянется вниз гравитацией,
- *  приземлившаяся или отжившая частица убирается. */
-type SprintPart = {
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  life: number;
-  ttl: number;
-  size: number;
-  col: string;
-};
-
-/** Новый комочек из-под лап: летит против направления бега веером вверх. */
-function spawnSprintPart(arr: SprintPart[], fxPx: number, fyPx: number, bx: number, by: number) {
-  const dirt = Math.random() < 0.55;
-  const pal = dirt ? SPRINT_DIRT : SPRINT_GRASS;
-  const back = 36 + Math.random() * 84;
-  const side = (Math.random() - 0.5) * 64;
-  arr.push({
-    x: fxPx + (Math.random() - 0.5) * 10,
-    y: fyPx + (Math.random() - 0.5) * 6,
-    z: 2 + Math.random() * 4,
-    vx: -bx * back + side * -by,
-    vy: -by * back + side * bx,
-    vz: 95 + Math.random() * 150,
-    life: 0,
-    ttl: 300 + Math.random() * 320,
-    size: 2 + Math.random() * 2.5,
-    col: pal[(Math.random() * pal.length) | 0],
-  });
-  if (arr.length > 90) arr.splice(0, arr.length - 90); // страховка от переполнения
-}
-
-/** Ключ localStorage: пароль редактора локации (вводится один раз). */
-const EDITOR_PASS_KEY = 'catwar-editor-pass';
-
-/** Инструмент редактора локации: зона с клетками, зелёная зона, ластик,
- *  объект (камень/дерево — препятствия со свободной позицией, размером и
- *  поворотом; земля — проталина-декор; покрытие — плитка/цветы/пол на клетку,
- *  красятся протяжкой) или клетка захода (вход в боевую зону с направлением шага). */
-type EditorTool =
-  | 'cells'
-  | 'green'
-  | 'erase'
-  | 'stone'
-  | 'tree'
-  | 'dirt'
-  | 'ground'
-  | 'entry'
-  | 'spawn'
-  | 'raise'
-  | 'lower'
-  | 'flat'
-  | 'paint'
-  | 'battle';
-
-/** Форма кисти локации: круглый мазок или готовые области — клетка (150×100 px)
- *  и полклетки (75×50), с привязкой к сетке. */
-type PaintBrushShape = 'round' | 'cell' | 'half';
-
-/** Ставящийся объект редактора: «призрак» следует за курсором (свободная позиция,
- *  без привязки к клетке), клик фиксирует точку; размер — колесом и кнопками ±,
- *  поворот — кнопками; ✓ ставит объект, ✕ отменяет. pickId — объект, поднятый
- *  с поля для правки (оригинал на время правки скрыт, ✓ переносит его). */
-type EditorPlace = {
-  kind: 'tree' | 'stone';
-  spr: string;
-  s: number;
-  rot: number;
-  /** отзеркален ли спрайт по горизонтали */
-  mir: 0 | 1;
-  /** точка опоры в клеточных долях мира */
-  x: number;
-  y: number;
-  anchored: boolean;
-  pickId: string | null;
-};
-
-/** Черновик локации в редакторе: рисуется на поле сразу (WYSIWYG), живёт до закрытия. */
-type EditorDraft = {
-  zones: TestMapZone[];
-  /** Препятствия черновика (камни/деревья) — едут в конфиг вместе с зонами. */
-  objects: TestMapObject[];
-  /** Клетки спавна (точки появления игроков) — отдельный список конфига. */
-  spawns: TestMapSpawn[];
-  /** Карта высот черновика: «c,r» → уровень 1..TERRAIN_MAX_LEVEL (разреженно). */
-  elev: Record<string, number>;
-  /** Кисть локации: холст рисунка (канонические px мира 100×150 на клетку),
-   *  материал, размер/форма кисти, снимки для отмены мазков и закодированный
-   *  рисунок последнего черновика. pcv null — рисунок ещё не начат: карта без
-   *  кисти остаётся без него, если инструмент «Кисть» не трогали. */
-  pcv: HTMLCanvasElement | null;
-  pmat: string;
-  psize: number;
-  pshape: PaintBrushShape;
-  pundo: ImageData[];
-  pdirty: boolean;
-  ppaint: string | null;
-  cols: number;
-  rows: number;
-  tool: EditorTool;
-  /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
-  drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
-  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; elev: Record<string, number>; cols: number; rows: number }[];
-  /** Отмеченные зоны для объединения (инструмент «Объединить»). */
-  sel: string[];
-  dirty: boolean;
-};
-
-/* ---------- кисть локации: материалы, штампы, отмена мазков ---------- */
-
-/** Множество id покрытий пака — проверка материала кисти. */
-const GROUND_COVER_IDS = new Set<string>(GROUND_COVER_OPTS.map((c) => c.id));
-
-/** Материалы кисти: покрытия пака (тайлы 16 px), земля (процедурная плитка) и
- *  ластик (стирает до пустоты за кромкой). */
-const PAINT_MATS: { id: string; label: string }[] = [
-  ...GROUND_COVER_OPTS.map((c) => ({ id: c.id as string, label: c.label })),
-  { id: 'dirt', label: 'Земля' },
-  { id: 'erase', label: 'Ластик' },
-];
-
-/** Процедурная плитка «Земля» (16 px): коричневый шум — кисти нужен узор, а
- *  спрайта проталины-тайла в паке нет. */
-let paintDirtTile: HTMLCanvasElement | null = null;
-function paintDirtPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
-  if (!paintDirtTile) {
-    const cv = document.createElement('canvas');
-    cv.width = 16;
-    cv.height = 16;
-    const g = cv.getContext('2d');
-    if (!g) return null;
-    g.fillStyle = '#58422c';
-    g.fillRect(0, 0, 16, 16);
-    let v = 7;
-    const rnd = () => {
-      v = (v * 1103515245 + 12345) & 0x7fffffff;
-      return v / 0x7fffffff;
-    };
-    for (let i = 0; i < 26; i++) {
-      g.fillStyle = rnd() > 0.5 ? 'rgba(38, 27, 16, 0.5)' : 'rgba(122, 98, 66, 0.45)';
-      g.fillRect(Math.floor(rnd() * 16), Math.floor(rnd() * 16), 1 + Math.floor(rnd() * 2), 1);
-    }
-    paintDirtTile = cv;
-  }
-  return ctx.createPattern(paintDirtTile, 'repeat');
-}
-
-/** Паттерн материала кисти (null — ластик); строка — запасной цвет. */
-function paintPatternFor(ctx: CanvasRenderingContext2D, mat: string): CanvasPattern | string | null {
-  if (mat === 'erase') return null;
-  if (mat === 'dirt') return paintDirtPattern(ctx) ?? '#58422c';
-  if (GROUND_COVER_IDS.has(mat)) return coverPattern(ctx, mat as GroundCover) ?? '#42582c';
-  return '#42582c';
-}
-
-/** Штамп кисти по черновому холсту (канонические px мира). Круг — по курсору;
- *  пресеты «клетка»/«полклетки» — готовая область, привязанная к сетке клеток:
- *  штампуется ровно та клетка (или полклетка), под которой курсор. */
-function stampPaintBrush(
-  d: EditorDraft,
-  mat: string,
-  mx: number,
-  my: number,
-  cellW: number,
-  cellH: number,
-): void {
-  const cv = d.pcv;
-  if (!cv) return;
-  const g = cv.getContext('2d');
-  if (!g) return;
-  const cx = (mx / cellW) * PAINT_CELL_W;
-  const cy = (my / cellH) * PAINT_CELL_H;
-  g.save();
-  if (mat === 'erase') {
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = 'rgba(0,0,0,1)';
-  } else {
-    g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
-  }
-  g.imageSmoothingEnabled = false;
-  if (d.pshape === 'round') {
-    const r = Math.max(0.5, d.psize / 2);
-    g.beginPath();
-    g.arc(cx, cy, r, 0, Math.PI * 2);
-    g.fill();
-  } else {
-    const w = d.pshape === 'cell' ? PAINT_CELL_W : PAINT_CELL_W / 2;
-    const h = d.pshape === 'cell' ? PAINT_CELL_H : PAINT_CELL_H / 2;
-    g.fillRect(Math.floor(cx / w) * w, Math.floor(cy / h) * h, w, h);
-  }
-  g.restore();
-  d.pdirty = true;
-}
-
-/** Снимок холста под мазок (отмена): бюджет памяти 96 МБ — крупные миры хранят
- *  меньше шагов, самые большие не отменяются вовсе (кисть и так дешёвая). */
-function pushPaintUndo(d: EditorDraft): void {
-  if (!d.pcv) return;
-  const g = d.pcv.getContext('2d');
-  if (!g) return;
-  let bytes = d.pundo.reduce((acc, im) => acc + im.data.byteLength, 0);
-  const snapBytes = d.pcv.width * d.pcv.height * 4;
-  if (snapBytes > 96 * 1024 * 1024) return;
-  try {
-    d.pundo.push(g.getImageData(0, 0, d.pcv.width, d.pcv.height));
-    bytes += snapBytes;
-    while (d.pundo.length > 1 && bytes > 96 * 1024 * 1024) {
-      const dropped = d.pundo.shift();
-      bytes -= dropped ? dropped.data.byteLength : 0;
-    }
-  } catch {
-    /* холст мог быть испорчен — отмена просто недоступна */
-  }
-}
-
-/** Отменить последний мазок (true — был что отменять). */
-function undoPaintStroke(d: EditorDraft): boolean {
-  const snap = d.pundo.pop();
-  if (!snap || !d.pcv) return false;
-  d.pcv.getContext('2d')?.putImageData(snap, 0, 0);
-  d.pdirty = true;
-  setPaintOverride(d.pcv, true);
-  return true;
-}
-
-/** Закодировать рисунок черновика в PNG base64 (кэш до следующего мазка).
- *  Холст обязан совпадать с миром в канонических пикселях: если размер разъехался
- *  (правка мира при открытом холсте), содержимое переносится в холст нужного
- *  размера 1:1, чтобы сохранение не блокировалось. */
-function encodeDraftPaint(d: EditorDraft): string {
-  if (!d.pdirty && d.ppaint) return d.ppaint;
-  if (!d.pcv) {
-    d.ppaint = null;
-    return '';
-  }
-  const wNeed = d.cols * PAINT_CELL_W;
-  const hNeed = d.rows * PAINT_CELL_H;
-  if (d.pcv.width !== wNeed || d.pcv.height !== hNeed) {
-    const cv = document.createElement('canvas');
-    cv.width = wNeed;
-    cv.height = hNeed;
-    const g = cv.getContext('2d');
-    if (g) {
-      g.imageSmoothingEnabled = false;
-      g.drawImage(d.pcv, 0, 0);
-    }
-    d.pcv = cv;
-    d.pundo = [];
-    setPaintOverride(cv, true);
-  }
-  const url = d.pcv.toDataURL('image/png');
-  const b64 = url.slice(url.indexOf(',') + 1);
-  d.ppaint = b64;
-  d.pdirty = false;
-  return b64;
-}
-
-/** Копия активного рисунка в черновик (правка не портит сохранённую локацию). */
-function copyPaintCanvas(): HTMLCanvasElement | null {
-  const src = paintCanvas();
-  if (!src || !paintReady()) return null;
-  const cv = document.createElement('canvas');
-  cv.width = src.width;
-  cv.height = src.height;
-  const g = cv.getContext('2d');
-  if (!g) return null;
-  g.imageSmoothingEnabled = false;
-  g.drawImage(src, 0, 0);
-  return cv;
-}
-
-/**
- * Черновой холст кисти: копия сохранённого рисунка или первичная миграция карты
- * без кисти — заливка нарисованного островка травой и запекание проталин и
- * покрытий в пиксели (дальше рисунок — единственный источник вида локации).
- * Вызывается лениво, при первом мазке: карта без кисти, сохранённая без правок
- * кисти, остаётся без рисунка.
- */
-function ensureDraftPaint(d: EditorDraft): HTMLCanvasElement {
-  if (d.pcv) return d.pcv;
-  const cv = document.createElement('canvas');
-  cv.width = d.cols * PAINT_CELL_W;
-  cv.height = d.rows * PAINT_CELL_H;
-  const g = cv.getContext('2d');
-  if (!g) {
-    d.pcv = cv;
-    return cv;
-  }
-  g.imageSmoothingEnabled = false;
-  const src = paintCanvas();
-  if (src && paintReady()) {
-    g.drawImage(src, 0, 0, src.width, src.height, 0, 0, cv.width, cv.height);
-  } else {
-    // миграция: островок из зон травой (полигон — в канонических px), затем
-    // проталины и покрытия поверх
-    const geo = testFieldGeometry(PAINT_CELL_W, PAINT_CELL_H);
-    const pat = coverPattern(g, 'grass-1');
-    if (pat) {
-      g.fillStyle = pat;
-      g.fill(geo.path);
-    } else {
-      g.fillStyle = '#42582c';
-      g.fill(geo.path);
-    }
-    for (const o of currentTestMap().objects ?? []) {
-      if (o.kind === 'dirt') {
-        const po = objectPosOffset(o);
-        drawDirtPatch(
-          g,
-          PAINT_CELL_W,
-          PAINT_CELL_H,
-          (o.c + 0.5 + po.dx) * PAINT_CELL_W,
-          (o.r + 0.5 + po.dy) * PAINT_CELL_H,
-          hashStr(o.id) & 7,
-        );
-      } else if (o.kind === 'ground') {
-        const pat2 = GROUND_COVER_IDS.has(o.cv ?? '') ? coverPattern(g, (o.cv ?? 'flower-1') as GroundCover) : null;
-        g.save();
-        if (pat2) g.fillStyle = pat2;
-        else g.fillStyle = '#4a6b33';
-        g.fillRect(o.c * PAINT_CELL_W, o.r * PAINT_CELL_H, PAINT_CELL_W, PAINT_CELL_H);
-        g.restore();
-      }
-    }
-  }
-  d.pcv = cv;
-  d.pdirty = true;
-  setPaintOverride(cv, true);
-  return cv;
-}
-
-/**
- * Доля ширины/высоты спрайта, к которой закреплена стрела.
- * Откалибровано по референсу: центр клетки (со смещением −1px) при клетке 100×150
- * и размере модельки 94%: 50 / 87.73 = 75 / 131.6 ≈ 0.5699.
- * Благодаря привязке к спрайту точка закрепления «растёт» вместе с персонажем.
- */
-const ARROW_ANCHOR_F = 0.5699;
-
-/** Цвет «потраченной» части стрелы (заполняется по мере расхода энергии). */
-const SPENT_COLOR = '#e5484d';
-
-/** Насколько темнее хвоста наконечник стрелы (множитель яркости цвета). */
-const ARROW_TIP_SHADE = 0.55;
-
-/** Идентификатор манекена «ПОЧУХАТЬ» — предмета комнаты, не персонажа. */
-const DUMMY_ID = 'pochuhat';
-/** Рост манекена, % от высоты клетки (как у котов по умолчанию). */
-const DUMMY_SCALE = 100;
-/** Темп рассылки позиции манекена при перетаскивании, мс (~25 кадров/с). */
-const DUMMY_EMIT_MS = 40;
-/** Дефолтная клетка манекена (левый верх спрайта, клеточные доли) — совпадает с серверной. */
-const DUMMY_DEFAULT = { x: 7, y: 2 };
-/** Идентификатор боевой мишени «РАБ» — предмета комнаты в боевом режиме. */
-const RAB_ID = 'rab';
-/** Рост мишени РАБ, % от высоты клетки. */
-const RAB_SCALE = 100;
-/** Клетка мишени РАБ (0-based): фиксирована, совпадает с серверной RAB_CELL. */
-const RAB_POS = { col: 4, row: 2 };
-/** Округление клеточных долей до сотых — точность перетаскивания хватает, пакет короче. */
-const round2 = (v: number) => Math.round(v * 100) / 100;
-
-/** Затемнение hex-цвета (#rgb / #rrggbb) множителем f — для наконечника стрелы. */
-function shadeHex(hex: string, f: number): string {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return hex;
-  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
-  const n = parseInt(h, 16);
-  const r = Math.round(((n >> 16) & 255) * f);
-  const g = Math.round(((n >> 8) & 255) * f);
-  const b = Math.round((n & 255) * f);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-/** Отклик удара по умолчанию, мс: удар применяется через 170 мс после нажатия
- *  (удар «летит»); тот же интервал действует при удержании и прожатиях клавиши
- *  удара — быстрее одного удара в 170 мс не будет ни при каком спаме.
- *  Точное значение — настройка «Отклик удара» (combat.strikeResponseMs). */
-const STRIKE_RESPONSE_MS = 170;
-
-type Layout = { chatW: number; logW: number };
-
-const clampLayout = (l: Layout): Layout => ({
-  chatW: Math.max(CHAT_W.min, Math.min(CHAT_W.max, Math.round(l.chatW))),
-  logW: Math.max(LOG_W.min, Math.min(LOG_W.max, Math.round(l.logW))),
-});
-
-const loadLayout = (): Layout => {
-  if (typeof window === 'undefined') return { chatW: CHAT_W.def, logW: LOG_W.def };
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    if (!raw) return { chatW: CHAT_W.def, logW: LOG_W.def };
-    const p = JSON.parse(raw) as Partial<Layout>;
-    return clampLayout({
-      chatW: Number(p.chatW) || CHAT_W.def,
-      logW: Number(p.logW) || LOG_W.def,
-    });
-  } catch {
-    return { chatW: CHAT_W.def, logW: LOG_W.def };
-  }
-};
-
-const saveLayout = (l: Layout) => {
-  try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(clampLayout(l)));
-  } catch {}
-};
 
 /**
  * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
@@ -910,113 +530,6 @@ function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () 
       className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-[var(--sim-divider)] transition-colors hover:bg-[var(--sim-accent-soft)] active:bg-[var(--sim-accent-soft)] lg:block"
     />
   );
-}
-
-/** Максимум строк в боевом логе (лог теперь последовательный, старые строки вытесняются). */
-const LOG_LIMIT = 100;
-
-/** Строка лога ударов: «Кто => Кого (зона) xN [урон%]» — пишется последовательно, свежая сверху.
- *  Свой кот подписывается «Я». Для промахов имя мишени не пишется (target = ''). */
-interface CombatLogEntry {
-  target: string;
-  zoneId: string;
-  zoneLabel: string;
-  count: number;
-  /** Полученный целью урон за 1 удар, % энергии. Сервер присылает его уже
-   *  после блока и брони — это ровно то, что цель потеряла этим ударом.
-   *  Нет числа — промах или строка из старого сохранения. */
-  dmg?: number;
-  /** Кто бил. Пустое значение в старых сохранениях — свой кот. */
-  actor?: string;
-  /** Оружие, если сервер его прислал. Пусто — удара лапой без когтей. */
-  weapon?: string;
-}
-
-function logActor(entry: CombatLogEntry): string {
-  return entry.actor || 'Я';
-}
-
-function mergeLog(prev: CombatLogEntry[], entry: CombatLogEntry): CombatLogEntry[] {
-  // Промахи в лог не пишем: строк «мимо» больше нет (вместе с надписью над котом).
-  if (entry.zoneId === 'miss') return prev;
-  const [top, ...rest] = prev;
-  const same =
-    !!top &&
-    top.target === entry.target &&
-    top.zoneId === entry.zoneId &&
-    logActor(top) === logActor(entry) &&
-    (top.weapon || '') === (entry.weapon || '');
-  // Урон за удар в серии обновляем до последнего значения: броня или пресет
-  // бьющего могли измениться между ударами, свежее число точнее.
-  if (same && top)
-    return [{ ...top, count: top.count + 1, dmg: entry.dmg ?? top.dmg }, ...rest].slice(0, LOG_LIMIT);
-  return [entry, ...prev].slice(0, LOG_LIMIT);
-}
-
-/** Урон в строке лога: целые — без хвоста, дробные — до 2 знаков (67, 19, 18,55). */
-function formatDmg(dmg: number | undefined): string {
-  if (dmg === undefined || !Number.isFinite(dmg)) return '';
-  return String(Math.round(dmg * 100) / 100);
-}
-
-function formatLogLine(entry: CombatLogEntry): string {
-  const actor = logActor(entry);
-  const weapon = entry.weapon ? `, ${entry.weapon}` : '';
-  const dmg = formatDmg(entry.dmg);
-  const dmgTxt = dmg === '' ? '' : ` [${dmg}%]`;
-  return `${actor} => ${entry.target} (${entry.zoneLabel}${weapon}) x${entry.count}${dmgTxt}`;
-}
-
-/** Боевое состояние: энергии персонажей и лог ударов (живёт отдельно от настроек). */
-interface CombatState {
-  /** Энергия своего кота (персонаж «main»). */
-  playerEnergy: number;
-  /** Энергия манекенов по их id (d1…d5); отсутствующий ключ = полная энергия. */
-  dummyEnergy: Record<string, number>;
-  log: CombatLogEntry[];
-}
-
-function defaultCombat(energyStart: number): CombatState {
-  return { playerEnergy: energyStart, dummyEnergy: {}, log: [] };
-}
-
-function loadCombat(energyStart: number): CombatState {
-  try {
-    const raw = localStorage.getItem(COMBAT_KEY);
-    if (!raw) return defaultCombat(energyStart);
-    const p = JSON.parse(raw) as Partial<CombatState> & { targetEnergy?: unknown; target2Energy?: unknown };
-    const clamp = (v: unknown) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? Math.min(energyStart, Math.max(0, n)) : energyStart;
-    };
-    const dummyEnergy: Record<string, number> = {};
-    for (const d of DEFAULT_SETTINGS.dummies) {
-      // старые сохранения: энергия мишени 1 — targetEnergy, мишени 2 — target2Energy
-      const legacy = d.id === 'd1' ? p.targetEnergy : d.id === 'd2' ? p.target2Energy : undefined;
-      dummyEnergy[d.id] = clamp(p.dummyEnergy?.[d.id] ?? legacy);
-    }
-    return {
-      playerEnergy: clamp(p.playerEnergy),
-      dummyEnergy,
-      log: Array.isArray(p.log)
-        ? p.log
-            .filter((l) => !!l && typeof l.target === 'string' && typeof l.zoneId === 'string')
-            .slice(0, LOG_LIMIT)
-            .map((l) => ({
-              target: l.target,
-              zoneId: l.zoneId,
-              zoneLabel: typeof l.zoneLabel === 'string' ? l.zoneLabel : l.zoneId,
-              count: Number(l.count) > 0 ? Math.floor(Number(l.count)) : 1,
-              dmg:
-                l.dmg == null || !Number.isFinite(Number(l.dmg)) ? undefined : Number(l.dmg),
-              actor: typeof l.actor === 'string' && l.actor ? l.actor : 'Я',
-              weapon: typeof l.weapon === 'string' ? l.weapon : '',
-            }))
-        : [],
-    };
-  } catch {
-    return defaultCombat(energyStart);
-  }
 }
 
 interface FloatLabel {
@@ -1106,112 +619,13 @@ interface Engine {
   liftV: number;
 }
 
-function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const rad = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rad, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rad);
-  ctx.arcTo(x + w, y + h, x, y + h, rad);
-  ctx.arcTo(x, y + h, x, y, rad);
-  ctx.arcTo(x, y, x + w, y, rad);
-  ctx.closePath();
-}
-
-/** Габариты спрайта персонажа/мишени в клетке (col,row): привязан к левому верхнему углу клетки.
- *  scalePct — рост модельки в % от высоты клетки (свой кот — s.character.spriteScale,
- *  манекен — свой DummyConfig.scale). */
-function spriteBoxOf(s: SimSettings, aspect: number, col: number, row: number, scalePct: number) {
-  const k = scalePct / 100;
-  const h = (s.field.cellH - 10) * k;
-  const w = h * aspect;
-  return { x: col * s.field.cellW, y: row * s.field.cellH, w, h, k };
-}
-
-/** Полгабарита своей модельки в клеточных долях: перевод якорной точки мира
- *  (центр и середины сторон клетки) в свободную позицию (левый верх спрайта)
- *  и обратно, чтобы центр модельки вставал точно на якорь. */
-function peaceHalfBox(s: SimSettings, img: HTMLImageElement | undefined) {
-  const aspect = img && img.height > 0 ? img.width / img.height : 2 / 3;
-  const b = spriteBoxOf(s, aspect, 0, 0, s.character.spriteScale);
-  return { dx: b.w / 2 / s.field.cellW, dy: b.h / 2 / s.field.cellH };
-}
-
-/** Прямоугольник в px мира (габарит модельки/объекта для проверки перекрытия). */
-type PxRect = { x0: number; y0: number; x1: number; y1: number };
-
-/** Какая доля прямоугольника b накрыта прямоугольником a (0..1, по площади). */
-function coveredRatio(a: PxRect, b: PxRect): number {
-  const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
-  const iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
-  const area = (b.x1 - b.x0) * (b.y1 - b.y0);
-  return area > 0 ? (ix * iy) / area : 0;
-}
-
-/** Радиус физического тела мирного кота у земли (px мира): доля ширины модельки —
- *  крупный кот занимает больше места, мелкий пролезает там, где крупному тесно. */
-function peaceBodyRadius(spriteW: number): number {
-  return Math.max(12, spriteW * 0.3);
-}
-
-/** Ближайшая клетка захода к клетке (манхэттен) — куда телепортировать при выходе
- *  из боя, когда заход, через который вошли, уже не существует (правка локации). */
-function nearestEntryCell(col: number, row: number): { c: number; r: number } | null {
-  let best: { c: number; r: number } | null = null;
-  let bd = Infinity;
-  for (const o of testEntries()) {
-    const d = Math.abs(o.c - col) + Math.abs(o.r - row);
-    if (d < bd) {
-      bd = d;
-      best = { c: o.c, r: o.r };
-    }
-  }
-  return best;
-}
-
-/** Точка закрепления стрелы: сидит на одной и той же доле (ARROW_ANCHOR_F) ширины/высоты модельки. */
-function anchorOf(s: SimSettings, aspect: number, col: number, row: number, scalePct: number) {
-  const b = spriteBoxOf(s, aspect, col, row, scalePct);
-  return {
-    ax: b.x + b.w * ARROW_ANCHOR_F,
-    ay: b.y + b.h * ARROW_ANCHOR_F + s.arrow.anchorOffsetY,
-    k: b.k,
-  };
-}
-
-/** Точка закрепления по координатам спрайта в px — для перетаскиваемого манекена,
- *  который на время drag'а оторван от своей клетки. */
-function anchorAtPx(s: SimSettings, aspect: number, x: number, y: number, scalePct: number) {
-  const b = spriteBoxOf(s, aspect, 0, 0, scalePct);
-  return {
-    ax: x + b.w * ARROW_ANCHOR_F,
-    ay: y + b.h * ARROW_ANCHOR_F + s.arrow.anchorOffsetY,
-    k: b.k,
-  };
-}
-
-/** Какая половина тела поражена при входе луча через данный край прямоугольника. */
-function entrySide(hit: { edge: 'left' | 'right' | 'top' | 'bottom'; nx: number }): 'left' | 'right' {
-  if (hit.edge === 'left') return 'left';
-  if (hit.edge === 'right') return 'right';
-  return hit.nx < 50 ? 'left' : 'right';
-}
-
-/** Ссылка на персонажа на поле: манекен (мишень) или свой кот (id «main»). */
-interface CharRef {
-  id: string;
-  name: string;
-  col: number;
-  row: number;
-  sprite: SpriteId;
-  /** Рост модельки, % от высоты клетки. */
-  scale: number;
-}
-
 /**
  * Живые соседи с сервера и их отрисовка. Состояние живёт в refs внутри компонента
  * (liveRemotesRef, remoteAimRef, remoteDrawRef), а не в модульных переменных:
  * два экземпляра Simulator не должны делить состояние, а cleanup одного
  * не должен обнулять поле другого.
+ * (Не уехали в lib/sim/targeting волной W5a: функции потребуют lib/net/move-book,
+ * а lib/sim не знает сетевого слоя — ARCHITECTURE §1.)
  */
 
 function rememberRemoteCell(map: Map<string, RemoteDraw>, id: string, col: number, row: number) {
@@ -1245,118 +659,6 @@ function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>, n
       vis.lastStepAt = now;
     }
   }
-}
-
-/** Другие игроки комнаты. Локальные манекены убраны с поля: на нём только коты. */
-function dummiesOf(s: SimSettings, remotes: DummyConfig[]): DummyConfig[] {
-  return remotes;
-}
-
-/** Энергии чужих котов копятся только по текущим обитателям комнаты:
- *  ключи ушедших игроков не оседают в localStorage навсегда. keepIds — ключи общих
- *  предметов комнаты (энергия мишени РАБ), которые не вычищаются. */
-function pruneRemoteEnergy(
-  de: Record<string, number>,
-  s: SimSettings,
-  remotes: DummyConfig[],
-  keepIds: string[] = [],
-): Record<string, number> {
-  const keep = new Set([...remotes.map((d) => d.id), ...keepIds]);
-  const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(de)) if (keep.has(k)) out[k] = v;
-  return out;
-}
-
-/** Рисуется ли манекен. Скрытая мишень остаётся препятствием и целью удара.
- *  Тот, кем управляем, виден всегда. Чужие коты (id «p…») не прячутся:
- *  флаг видимости локальный и по сети не уходит. */
-function dummyIsDrawn(d: DummyConfig, controlled: string): boolean {
-  if (d.id === controlled || d.id.startsWith('p')) return true;
-  return d.visible;
-}
-
-/** То же для цели удара (свой кот, манекен или чужой id). */
-function strikeTargetDrawn(s: SimSettings, id: string, controlled: string): boolean {
-  if (id === 'main' || id === controlled || id.startsWith('p')) return true;
-  const d = s.dummies.find((x) => x.id === id);
-  return d ? d.visible : true;
-}
-
-/** Все персонажи, кроме самого (selfId): манекены на поле + свой кот, когда управление
- *  передано манекену (mainPos — где кот стоит) + extras — общие предметы комнаты
- *  (мишень РАБ — боевая цель). Клетки этих персонажей непроходимы,
- *  в них же летят удары. */
-function othersOf(
-  s: SimSettings,
-  selfId: string,
-  mainPos: { col: number; row: number } | null,
-  remotes: DummyConfig[],
-  extras: CharRef[] = [],
-): CharRef[] {
-  const list: CharRef[] = dummiesOf(s, remotes)
-    .filter((d) => d.id !== selfId)
-    .map((d) => ({ id: d.id, name: d.name, col: d.col, row: d.row, sprite: d.sprite, scale: d.scale }));
-  for (const ex of extras) list.push(ex);
-  if (selfId !== 'main' && mainPos) {
-    list.push({
-      id: 'main',
-      name: 'Я',
-      col: mainPos.col,
-      row: mainPos.row,
-      sprite: s.character.sprite,
-      scale: s.character.spriteScale,
-    });
-  }
-  return list;
-}
-
-/** Непроходимая ли клетка: клетки остальных персонажей и общих предметов —
- *  физические препятствия. */
-function isBlockedCell(
-  s: SimSettings,
-  selfId: string,
-  mainPos: { col: number; row: number } | null,
-  c: number,
-  r: number,
-  remotes: DummyConfig[],
-  extras: CharRef[] = [],
-): boolean {
-  return othersOf(s, selfId, mainPos, remotes, extras).some((t) => t.col === c && t.row === r);
-}
-
-/** Кого заденет удар из клетки (col,row) под углом angle: единственный соседний персонаж,
- *  а если соседних несколько — тот, на который точнее указывает стрела. null — рядом никого.
- *  extras — боевые общие предметы (мишень РАБ). */
-function pickStrikeTarget(
-  s: SimSettings,
-  col: number,
-  row: number,
-  angle: number,
-  selfId: string,
-  mainPos: { col: number; row: number } | null,
-  remotes: DummyConfig[],
-  extras: CharRef[] = [],
-): CharRef | null {
-  let best: CharRef | null = null;
-  let bestDiff = Infinity;
-  for (const t of othersOf(s, selfId, mainPos, remotes, extras)) {
-    const dx = t.col - col;
-    const dy = t.row - row;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) !== 1) continue;
-    const phi = wrap360((Math.atan2(dy, dx) * 180) / Math.PI);
-    const diff = Math.abs(wrap180(phi - wrap360(angle)));
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = t;
-    }
-  }
-  return best;
-}
-
-/** Отклик удара, мс: настройка «Отклик удара» (170 мс по умолчанию). */
-function strikeResponseMs(s: SimSettings): number {
-  const v = Number(s.combat.strikeResponseMs);
-  return Math.max(30, Number.isFinite(v) && v > 0 ? v : STRIKE_RESPONSE_MS);
 }
 
 export default function Simulator() {
