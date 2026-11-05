@@ -1,6 +1,44 @@
-import type { DummyConfig, SpriteId, DayPart, WeatherKind } from "@/lib/sim/settings";
+import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
 import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
+// Протокол-реестр W3: имена событий (EV), guard-валидаторы и типы payload
+// живут в ./protocol — вместе с каноном значений, который паритетит CI
+// против server/protocol.js (см. scripts/test-protocol-parity.mjs).
+import {
+  EV,
+  isCoopCat,
+  isCoopFight,
+  isCoopNoplace,
+  type CoopAtmo,
+  type CoopAtmoAnchor,
+  type CoopCat,
+  type CoopChatMessage,
+  type CoopDummyPos,
+  type CoopDummyState,
+  type CoopFight,
+  type CoopNoplace,
+  type CoopRabHit,
+  type CoopRabState,
+  type CoopRefuse,
+  type CoopRoomInfo,
+} from "./protocol";
+
+// Типы протокола переехали в ./protocol (W3); прежние потребители
+// (simulator.tsx, entry-screen, room-picker, settings-panel) тянут их отсюда же.
+export type {
+  CoopAtmo,
+  CoopAtmoAnchor,
+  CoopCat,
+  CoopChatMessage,
+  CoopDummyPos,
+  CoopDummyState,
+  CoopFight,
+  CoopNoplace,
+  CoopRabHit,
+  CoopRabState,
+  CoopRefuse,
+  CoopRoomInfo,
+} from "./protocol";
 
 export const PRODUCTION_WS = "wss://coop.89-232-184-77.sslip.io";
 export const LOCAL_WS = "ws://localhost:3780";
@@ -23,95 +61,6 @@ export const ROOMS = [
 export function roomTitle(code: string): string {
   return ROOMS.find((r) => r.id === code)?.title ?? code;
 }
-
-/** Состав одной комнаты для выбора: сколько игроков и кто именно. */
-export type CoopRoomInfo = { id: string; count: number; logins: string[] };
-
-/** Атмосфера комнаты: время суток + погода. Общая для всех игроков; хранится на
- *  сервере, меняется событиями «atmo» (перемотка) и «atmoset» (длительности),
- *  новичкам уходит в снапшоте field. */
-export type CoopAtmo = { dp: DayPart; w: WeatherKind };
-
-/** Якорь атмосферы — серверные часы непрерывного цикла суток и погоды. Клиент
- *  считает позицию суток сам по своим часам (dayProgressAt), погода живёт
- *  дискретно: w — текущая, ws — момент её начала, wl — интервал смены.
- *  t — момент снимка (серверные Date.now()); cs — начало текущего цикла суток;
- *  pl — длительность одной части суток; dp — часть суток на момент t (для
- *  логов и старых клиентов). */
-export type CoopAtmoAnchor = CoopAtmo & {
-  t: number;
-  cs: number;
-  pl: number;
-  wl: number;
-  ws: number;
-};
-
-export type CoopCat = {
-  id: number;
-  login?: string;
-  color?: string;
-  sprite?: string;
-  x: number;
-  y: number;
-  deg?: number;
-  size?: number;
-  /** Кот держит блок (удержание К): любые удары по нему проводятся в «Лапы». */
-  blocking?: boolean;
-  /** Кот держит пробел (присед-желе): 1 — рисуем приплющивание/выстрел. */
-  sq?: number;
-  /** Комната «тест»: 1 — кот в свободной ходьбе (fx/fy — позиция в клеточных долях),
-   *  0/нет — кот ходит по клеткам. */
-  fm?: number;
-  fx?: number;
-  fy?: number;
-};
-
-/** Боевой лог комнаты. name / part / weapon / isAttacking — как в журнале удара. */
-export type CoopFight = {
-  attackerId: number;
-  attacker: string;
-  targetId: number;
-  name: string;
-  part: string;
-  zone: string;
-  weapon?: string;
-  damage?: number;
-  /** true только на сокете бьющего. Зритель смотрит на attacker и name. */
-  isAttacking?: boolean;
-};
-
-export type CoopNoplace = {
-  room?: string;
-  reason?: string;
-};
-
-/** Позиция общего предмета комнаты (манекен «ПОЧУХАТЬ») в клеточных долях (0 — левый верх спрайта). */
-export type CoopDummyPos = { x: number; y: number };
-
-/** Состояние манекена комнаты: включён/выключен, координаты, спрайт и кто его тащит. */
-export type CoopDummyState = CoopDummyPos & { on: boolean; sprite: string; grab?: string | null };
-
-/** Состояние боевой мишени «РАБ»: включена/выключена (позиция фиксирована). */
-export type CoopRabState = { on: boolean };
-
-/** Чужой удар по мишени РАБ: зона/название полосы и урон для всплывающей подписи и качания «желе». */
-export type CoopRabHit = { zone: string; part: string; damage: number };
-
-/** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
-export type CoopChatMessage = {
-  seq: number;
-  id: number;
-  login: string;
-  color?: string;
-  text: string;
-  ts: number;
-};
-
-/** Структурированный отказ сервера: код вместо разбора русского текста info. */
-export type CoopRefuse = {
-  code?: string;
-  text?: string;
-};
 
 /** Информация о закрытии сокета: retrying = клиент сам переподключается. */
 export type CoopCloseInfo = {
@@ -356,7 +305,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       // сервер вернёт you/field и клиент догонит состояние комнаты.
       // room пуст (экран выбора комнаты) — только слушаем: join не шлём.
       if (joinParams?.room) {
-        emit("join", {
+        emit(EV.JOIN, {
           room: joinParams.room,
           login: joinParams.login || "",
           sprite: joinParams.sprite,
@@ -373,16 +322,22 @@ export function createCoopClient(handlers: CoopHandlers) {
       }
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
-      if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmoAnchor; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
-      else if (event === "map") {
+      if (event === EV.YOU) {
+        // Канон-валидация вместо слепого каста: битый publicCat не попадает в стейт.
+        if (isCoopCat(payload)) handlers.onYou?.(payload);
+      } else if (event === EV.FIELD) handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmoAnchor; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === EV.MAP) {
         // Конфиг локации проходит ту же проверку, что и на сервере:
         // битый или чужой пакет просто игнорируется.
         const checked = sanitizeTestMap(payload);
         if (checked.map) handlers.onMap?.(checked.map);
       }
-      else if (event === "update cat" || event === "move") handlers.onCat?.(payload as CoopCat);
-      else if (event === "freemove") {
+      else if (event === EV.UPDATE_CAT || event === EV.MOVE) {
+        // «move» с сервера — двойной смысл (publicCat вошедшего | маркер выхода
+        // x0/y0): оба проходят одну и ту же валидацию, различает потребитель.
+        if (isCoopCat(payload)) handlers.onCat?.(payload);
+      }
+      else if (event === EV.FREEMOVE) {
         const row = payload as { id?: unknown; x?: unknown; y?: unknown; cx?: unknown; cy?: unknown; sp?: unknown; jp?: unknown } | null;
         if (row && typeof row === "object" && Number.isFinite(Number(row.id)) && Number.isFinite(Number(row.x)) && Number.isFinite(Number(row.y))) {
           handlers.onFreeMove?.({
@@ -396,33 +351,36 @@ export function createCoopClient(handlers: CoopHandlers) {
           });
         }
       }
-      else if (event === "fight") handlers.onFight?.(payload as CoopFight);
-      else if (event === "chat") {
+      else if (event === EV.FIGHT) {
+        // fight проверяется каноном (isCoopFight): адресаты и подписи лога обязательны.
+        if (isCoopFight(payload)) handlers.onFight?.(payload);
+      } else if (event === EV.CHAT) {
         const row = asChat(payload);
         if (row) handlers.onChat?.(row);
-      } else if (event === "chatlog") {
+      } else if (event === EV.CHATLOG) {
         if (!Array.isArray(payload)) return;
         handlers.onChatLog?.(payload.map(asChat).filter((row): row is CoopChatMessage => row != null));
-      } else if (event === "info") handlers.onInfo?.(String(payload));
-      else if (event === "refuse") {
+      } else if (event === EV.INFO) handlers.onInfo?.(String(payload));
+      else if (event === EV.REFUSE) {
         const row = asRefuse(payload);
         if (row) handlers.onRefuse?.(row);
-      } else if (event === "noplace") handlers.onNoplace?.(payload as CoopNoplace);
-      else if (event === "dummyState") {
+      } else if (event === EV.NOPLACE) {
+        if (isCoopNoplace(payload)) handlers.onNoplace?.(payload);
+      } else if (event === EV.DUMMY_STATE) {
         const row = asDummyState(payload);
         if (row) handlers.onDummyState?.(row);
-      } else if (event === "dummyMove") {
+      } else if (event === EV.DUMMY_MOVE) {
         const row = asDummyPos(payload);
         if (row) handlers.onDummyMove?.(row);
-      } else if (event === "dummyGrab") {
+      } else if (event === EV.DUMMY_GRAB) {
         const login = (payload as { login?: unknown } | null)?.login;
         if (typeof login === "string") handlers.onDummyGrab?.({ login });
-      } else if (event === "dummyDrop") {
+      } else if (event === EV.DUMMY_DROP) {
         handlers.onDummyDrop?.();
-      } else if (event === "rabState") {
+      } else if (event === EV.RAB_STATE) {
         const row = payload as { on?: unknown } | null;
         if (row && typeof row === "object") handlers.onRabState?.({ on: !!row.on });
-      } else if (event === "rabHit") {
+      } else if (event === EV.RAB_HIT) {
         const row = payload as { zone?: unknown; part?: unknown; damage?: unknown } | null;
         if (row && typeof row === "object") {
           handlers.onRabHit?.({
@@ -431,12 +389,12 @@ export function createCoopClient(handlers: CoopHandlers) {
             damage: Number.isFinite(Number(row.damage)) ? Number(row.damage) : 0,
           });
         }
-      } else if (event === "block") {
+      } else if (event === EV.BLOCK) {
         const row = payload as { id?: unknown; on?: unknown } | null;
         if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
           handlers.onBlock?.({ id: Number(row.id), on: !!row.on });
         }
-      } else if (event === "space") {
+      } else if (event === EV.SPACE) {
         const row = payload as { id?: unknown; on?: unknown; hold?: unknown; cancel?: unknown } | null;
         if (row && typeof row === "object" && Number.isInteger(Number(row.id))) {
           handlers.onSpace?.({
@@ -446,7 +404,7 @@ export function createCoopClient(handlers: CoopHandlers) {
             cancel: !!row.cancel,
           });
         }
-      } else if (event === "atmo") {
+      } else if (event === EV.ATMO) {
         const row = payload as { dp?: unknown; w?: unknown; t?: unknown; cs?: unknown; pl?: unknown; wl?: unknown; ws?: unknown } | null;
         if (row && typeof row === "object") {
           const dp = row.dp;
@@ -478,7 +436,7 @@ export function createCoopClient(handlers: CoopHandlers) {
             });
           }
         }
-      } else if (event === "roomsinfo") {
+      } else if (event === EV.ROOMSINFO) {
         if (!Array.isArray(payload)) return;
         const list: CoopRoomInfo[] = [];
         for (const raw of payload) {
@@ -534,7 +492,7 @@ export function createCoopClient(handlers: CoopHandlers) {
     if (ws) {
       if (ws.readyState === WebSocket.OPEN) {
         attempt = 0;
-        emit("join", { room: join.room || "demo", login: join.login || "", sprite: join.sprite, size: join.size });
+        emit(EV.JOIN, { room: join.room || "demo", login: join.login || "", sprite: join.sprite, size: join.size });
         return;
       }
       if (ws.readyState === WebSocket.CONNECTING) return; // open пошлёт join уже с новыми параметрами
@@ -551,7 +509,7 @@ export function createCoopClient(handlers: CoopHandlers) {
 
   /** Состав комнат для экрана выбора: сервер ответит roomsinfo по этим id. */
   const requestRooms = (ids: string[]) => {
-    emit("rooms", { ids });
+    emit(EV.ROOMS, { ids });
   };
 
   return {

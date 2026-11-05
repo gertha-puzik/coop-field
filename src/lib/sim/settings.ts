@@ -545,6 +545,22 @@ export function damageLevelLabel(level: number): string {
   return (level / 10).toFixed(1).replace('.', ',');
 }
 
+// ---------------- Границы настроек, сверенные с протоколом комнаты ----------------
+
+/** Границы «Отклика удара», мс: сервер зажимает flightMs в 0..600
+ *  (STRIKE_CATCH_MAX_MS в src/lib/net/protocol.ts); нижняя граница 30 — чуть выше
+ *  серверного кулдауна удара 25 мс, чтобы легитимный удар не отбрасывался. */
+export const STRIKE_RESPONSE_MIN_MS = 30;
+export const STRIKE_RESPONSE_MAX_MS = 600;
+
+/** Границы настройки «длительность части суток», мин: сервер зажимает atmoset.pl в 1–120. */
+export const ATMO_PHASE_MINUTES_MIN = 1;
+export const ATMO_PHASE_MINUTES_MAX = 120;
+
+/** Границы настройки «интервал смены погоды», мин: сервер зажимает atmoset.wl в 2–240. */
+export const ATMO_WEATHER_MINUTES_MIN = 2;
+export const ATMO_WEATHER_MINUTES_MAX = 240;
+
 // ---------------- Броня игрока ----------------
 
 /**
@@ -952,7 +968,7 @@ function mergeCombat(rawC: any, d: SimSettings['combat']): SimSettings['combat']
   return {
     energyStart: num(rawC?.energyStart, d.energyStart, 0, 100),
     strikeCost: num(rawC?.strikeCost, d.strikeCost, 0, 50),
-    strikeResponseMs: num(rawC?.strikeResponseMs, d.strikeResponseMs, 30, 600),
+    strikeResponseMs: num(rawC?.strikeResponseMs, d.strikeResponseMs, STRIKE_RESPONSE_MIN_MS, STRIKE_RESPONSE_MAX_MS),
     regenEnabled: typeof rawC?.regenEnabled === 'boolean' ? rawC.regenEnabled : d.regenEnabled,
     regenAmount: num(rawC?.regenAmount, d.regenAmount, 0, 100),
     regenIntervalSec: num(rawC?.regenIntervalSec, d.regenIntervalSec, 0.5, 600),
@@ -1007,8 +1023,8 @@ export function mergeSettings(raw: any): SimSettings {
     hud: { ...d.hud, ...(raw?.hud ?? {}) },
     // Темп цикла атмосферы: часть суток 1–120 минут, погода 2–240 минут.
     atmo: {
-      phaseMin: Math.min(120, Math.max(1, Math.round(num(raw?.atmo?.phaseMin, d.atmo.phaseMin)))),
-      weatherMin: Math.min(240, Math.max(2, Math.round(num(raw?.atmo?.weatherMin, d.atmo.weatherMin)))),
+      phaseMin: Math.min(ATMO_PHASE_MINUTES_MAX, Math.max(ATMO_PHASE_MINUTES_MIN, Math.round(num(raw?.atmo?.phaseMin, d.atmo.phaseMin)))),
+      weatherMin: Math.min(ATMO_WEATHER_MINUTES_MAX, Math.max(ATMO_WEATHER_MINUTES_MIN, Math.round(num(raw?.atmo?.weatherMin, d.atmo.weatherMin)))),
     },
     // манекены убраны с поля: старые сохранения не восстанавливаем, массив всегда пуст
     dummies: [],
