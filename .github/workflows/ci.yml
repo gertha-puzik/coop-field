@@ -7,10 +7,13 @@ on:
     paths:
       - "src/**"
       - "scripts/**"
+      - "server/**"
       - "server.js"
       - "package.json"
       - "package-lock.json"
       - "deploy/vps/**"
+      - "AGENTS.md"
+      - "docs/**"
       - "tsconfig.json"
       - ".github/workflows/ci.yml"
 
@@ -41,9 +44,17 @@ jobs:
       # Гейт архитектуры: лимит 800 строк + запрет lib -> components (W1).
       - name: Архитектурные границы
         run: npm run arch:check
+      # Гейт протокола (W3): док-таблицы AGENTS.md == реестры server/protocol.js,
+      # и в server.js нет строковых дублей имён событий (только импорт EV.*).
+      - name: Синхронизация протокола и доков
+        run: npm run check:protocol
       # Юнит-тесты движка через strip-types; на node 22 гоняются по-настоящему.
       - name: Юнит-тесты движка
         run: npm run test:unit
+      # Golden-паритет протокола (W3): server/protocol.js == src/lib/net/protocol.ts
+      # == золотые значения; под node 22 strip-types исполним, под старше — SKIP.
+      - name: Паритет протокола
+        run: npm run test:protocol-parity
       - name: Версия ws в двух lockfile
         run: node scripts/check-ws-versions.mjs
       # Интеграционный тест: сервер поднимается сам, проверяет очередь шагов

@@ -41,12 +41,12 @@ All five must be green. If `arch:check` fails on a new file — do not grow the 
 | Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; the real password arbiter is the server (setmap) |
 
 Where to start common tasks:
-- **"Add/change an event"** → table below → `server.js` dispatcher (2540+) and the domain handler →
-  `src/lib/net/coop.ts` (validator+dispatch) → a case in `scripts/test-ws.mjs` (room contract) →
-  update the tables in this file and ARCHITECTURE §3 in the same PR.
-- **"Combat/damage/armor"** → `settings.ts` + its MIRROR in `server.js` (ARCHITECTURE §4) — change both together.
+- **"Add/change an event"** → both registries first (`server/protocol.js` + `src/lib/net/protocol.ts`; they must stay mirrored) → `server.js` dispatcher (2540+) and the domain handler →
+  `src/lib/net/coop.ts` (validator+dispatch) → a case in `scripts/test-ws.mjs` (room contract) → update the tables in this file and ARCHITECTURE §3 in the same PR
+  (CI gates `check:protocol` + `test:protocol-parity` verify all of it).
+- **"Combat/damage/armor"** → `settings.ts` + the server side — both read the same registry set since W3: ARMOR_CURVE lives in `settings.ts` (re-exported by `protocol.ts`), server mirrors it in `server/protocol.js`, `test:protocol-parity` pins the mirror.
 - **"Settings/HUD"** → ARCHITECTURE §2 (simulator.tsx belts), SettingsPanel pattern (25 props).
-- **"Map/editor"** → `test-map.ts` (client) + sanitize in `server.js` (749+) — limits are mirrored.
+- **"Map/editor"** → `test-map.ts` (client) + sanitize in `server.js` (749+) — limits are single-source now: TEST_MAP_LIMITS is re-exported by `protocol.ts` and mirrored in `server/protocol.js` (parity in CI).
 
 ## Room contract
 
@@ -58,7 +58,7 @@ Invariants (violating one = a bug):
 - Every step gets exactly one response: an `update cat` echo or `refuse {code}`; silence desyncs the predictor.
 - Network coordinates are 1-based (`x=1..W, y=1..H`), canvas is 0-based (`col=x-1, row=y-1`); peace mode uses cell fractions `fx/fy`.
 - At most 1 unconfirmed predicted step (move-book.ts).
-- `move` FROM THE SERVER is overloaded: `publicCat` of a joiner OR `{id, x:0, y:0}` = leave marker (legacy until W3).
+- `move` FROM THE SERVER is overloaded (canon since W3: the dual MEANING stays, the NAME lives in `server/protocol.js` `EV.MOVE` + client `src/lib/net/protocol.ts`): `publicCat` of a joiner OR `{id, x:0, y:0}` = leave marker — the client dispatches both through one `isCoopCat` guard, and the consumer (`simulator.tsx`) treats `x===0` as the leave marker.
 - Clients advance on LOCAL clocks from the `atmo.t` anchor; the server ticker (5 s) resends the anchor only on phase change.
 - Damage is client-authoritative (an accepted debt of this sandbox): the server cuts it by target armor and ships it in `fight`.
 
@@ -66,7 +66,7 @@ Invariants (violating one = a bug):
 
 | Event | Payload | Limits / response |
 | --- | --- | --- |
-| `join` | `room?, login?, sprite?, size?` | 1/s; login ≤24 codepoints, unique; size 60–100; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` (alias `first` is legacy) |
+| `join` | `room?, login?, sprite?, size?` | 1/s; login ≤24 codepoints, unique; size 60–100; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` |
 | `move` | `{x, y}` — step −1..1 | cooldown 80 ms, queue ≤3; response: echo or `refuse {code}` |
 | `aim` | `{deg}` | coalesced ≥20 ms; the angle is broadcast via `update cat` |
 | `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); damage 0–100; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
@@ -93,9 +93,9 @@ Invariants (violating one = a bug):
 | Event | Payload | To whom / when |
 | --- | --- | --- |
 | `you` | own publicCat | join, first response |
-| `field` | grid, `cats[]`, `location`, `dummy?`, `rab?`, `atmo`, `map?` | on join and after setmap; `huntMode:false` is dead weight |
+| `field` | grid, `cats[]`, `location`, `dummy?`, `rab?`, `atmo`, `map?` | on join and after setmap (`huntMode` was removed in W3 — it was always false) |
 | `chatlog` | ≤40 `{seq,id,login,color,text,ts}` | only the joiner, after `field` |
-| `move` | publicCat of the joiner \| `{id,x:0,y:0}` | to all; the latter is the leave marker (legacy until W3) |
+| `move` | publicCat of the joiner \| `{id,x:0,y:0}` | to all; the latter is the leave marker (see the invariant above) |
 | `update cat` | publicCat (id, login, color, sprite, x, y, deg, size, blocking, sq) | step/jump/cellsync/skin/aim — to all, including the author |
 | `refuse` | `{code, text}` | codes: `edge`/`cell_busy`/`cliff`/`cooldown` — machine-readable predictor rollback |
 | `info` | string | all human-facing errors/hints (parse by `refuse` code, not by text) |
@@ -125,8 +125,8 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 
 ## Working rules (violation = PR rework)
 
-1. **When you change the protocol, boundaries or data flows — update the tables above and ARCHITECTURE in the same PR.** The check is a rule, not discipline: `check-protocol-sync` lands in W3.
-2. **Mirrors (ARCHITECTURE §4) change in sync**, client + server in one PR; the sync mechanism until W3 is the mirror table + review.
+1. **When you change the protocol, boundaries or data flows — update the tables above and ARCHITECTURE in the same PR.** The check is a gate, not discipline: CI runs `npm run check:protocol` (doc tables vs `server/protocol.js` registries) and `npm run test:protocol-parity` (client/server golden parity) since W3.
+2. **Mirrors (ARCHITECTURE §4) change in sync**, client + server in one PR; the sync mechanism since W3 is `test:protocol-parity` in CI (golden values inside the test catch two-sided drift).
 3. **Secrets come only from env**; never write values into code or docs (the legacy password default is an accepted transitional exception; changing it is done via env).
 4. **No new files above 800 lines** — the `arch:check` gate; a new module is 300–800 self-contained lines (do not fragment below that).
 5. **Prod endpoints only via an explicit flag**; scripts target localhost by default.

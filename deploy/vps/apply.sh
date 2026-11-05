@@ -27,9 +27,19 @@ need() {
 need server.js
 need package.json
 need package-lock.json
+need server/protocol.js
 
 sha() {
   sha256sum "$1" | awk '{print $1}'
+}
+
+# Каталог серверного канона протокола (W3): server.js импортирует его при старте.
+# Хэшируем всё содержимое — правка любого файла в server/ требует перезапуска.
+server_dir_sha() {
+  (
+    cd "$IN/server"
+    find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+  ) | sha256sum | awk '{print $1}'
 }
 
 # Порт комнаты берём из юнита systemd (Environment=PORT=...), а не зашиваем:
@@ -49,6 +59,7 @@ state_sha() {
     sha "$IN/server.js"
     sha "$IN/package.json"
     sha "$IN/package-lock.json"
+    server_dir_sha
     if [ -f "$IN/apply.sh" ]; then sha "$IN/apply.sh"; else echo no-apply; fi
   } | sha256sum | awk '{print $1}'
 }
@@ -76,6 +87,14 @@ install -m 0644 "$IN/server.js" "$APP/server.js"
 install -m 0644 "$IN/package.json" "$APP/package.json"
 install -m 0644 "$IN/package-lock.json" "$APP/package-lock.json"
 
+# Каталог канона протокола ставится целиком: incoming/server/ — полный слепок,
+# старый $APP/server сносим, чтобы удалённые файлы не оставались на VPS.
+if [ -d "$IN/server" ]; then
+  rm -rf "$APP/server"
+  mkdir -p "$APP/server"
+  cp -a "$IN/server/." "$APP/server/"
+fi
+
 if [ -d "$IN/scripts" ]; then
   mkdir -p "$APP/scripts"
   cp -a "$IN/scripts/." "$APP/scripts/"
@@ -89,6 +108,9 @@ if [ -n "$node_modules_new" ]; then
 fi
 
 chown deploy:deploy "$APP/server.js" "$APP/package.json" "$APP/package-lock.json"
+if [ -d "$APP/server" ]; then
+  chown -R deploy:deploy "$APP/server"
+fi
 if [ -d "$APP/scripts" ]; then
   chown -R deploy:deploy "$APP/scripts"
 fi

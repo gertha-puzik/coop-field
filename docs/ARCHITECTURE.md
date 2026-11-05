@@ -38,15 +38,18 @@ server.js             комната: комнаты, клетки, бой, ча
 | `src/lib/sim/test-map.ts` | 634 | Модель конфига локации v1/v2 + клиентский sanitize; TEST_MAP_LIMITS (:304) — зеркало серверных лимитов |
 | `src/lib/sim/atmosphere.ts` | 453 | Pixi-оверлей погоды/времени суток |
 | `src/lib/sim/` прочее | ~330 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 136, theme.ts 54 |
-| `src/lib/net/coop.ts` | 579 | Транспорт: выбор сокета (prod по домену, `?ws=` на localhost), reconnect backoff, диспетчер входящих 367–497, guard-валидаторы payload |
+| `src/lib/net/coop.ts` | 537 | Транспорт: выбор сокета (prod по домену, `?ws=` на localhost), reconnect backoff, диспетчер входящих 325+; имена событий и guard-валидаторы — из `./protocol` (W3) |
+| `src/lib/net/protocol.ts` | 329 | Client-side protocol canon (W3): mirrored `EV.*` registries, payload types, guards; re-exports sim-owned constants from `settings.ts`/`test-map.ts` |
 | `src/lib/net/move-book.ts` | 89 | Предикт своих шагов (≤1 неподтверждённый), откат по refuse, достройка чужих котов. Эталон чистоты для новых модулей |
 | `src/components/sim/` прочее | ~2600 | settings-panel.tsx 1290 (панель настроек, 25 пропсов/10 колбэков — разрез в W5), entry-screen.tsx 586, room-picker 129, room-chat 126, fight-log 71, beer/theme-бэкдропы |
 
-### Сервер (server.js, 2701 строк, один ESM)
+### Сервер (server.js, 2666 строк, один ESM; протокол-константы — импорт из `server/protocol.js`, W3)
+
+Line ranges below the config block shifted ~25–30 lines down after the W3/W2 header edits; treat them as orientation, not exact borders.
 
 | Домен | Строки | Что |
 | --- | --- | --- |
-| Конфиг и константы | 1–169 | env, лимиты (MAX_PLAYERS 30, MOVE_COOLDOWN_MS 80, MOVE_QUEUE_MAX 3, MAX_PAYLOAD 4 МиБ), GROUND_COVER_IDS (:141), DUMMY_DEFAULT (:117), RAB_CELL (:153), ADMIN_PASS (:163), DATA_DIR (:168) |
+| Конфиг и константы | 1–169 | env, ADMIN_PASS (:163), DATA_DIR (:168), payload/frame limits; протокольные константы и имена событий — `import` from `server/protocol.js` (W3 single source) |
 | Карта-пиксели | 171–298 | загрузка PNG-кисти, декод zlib, маска земли |
 | Геометрия test-поля | 300–747 | проходимость, клетки, препятствия, высоты, обрывы (`cliffBetween` :718) — бит-в-бит зеркало клиентской |
 | Sanitize/загрузка карты | 749–1137 | TEST_MAP sanitize (cols 6–60, rows 3–40, zones ≤48, objects ≤2000), атомарная запись, карантин битых конфигов |
@@ -110,7 +113,7 @@ Reconnect после обрыва: backoff 1–2–4…30 c, повторный 
 
 Урон присылает бьющий (clamp 0..100), сервер режет его бронёй цели и НЕ рассылает значение
 `armor` соседям — они видят уже порезанный урон в `fight`. Клиент-авторитетность урона —
-осознанный долг песочницы (закрывается в W3).
+осознанный долг песочницы (W3 его не закрывает: канонизируются константы и имена, ответственность не меняется).
 
 ### Atmo (сутки/погода)
 
@@ -120,8 +123,10 @@ Reconnect после обрыва: backoff 1–2–4…30 c, повторный 
 ```
 
 Клиент едет по ЛОКАЛЬНЫМ часам от якоря `t`; тикер сервера раз в 5 с resendит якорь только
-при смене dp/w; на rejoin якорь приезжает внутри `field`. Три копии фаз суток/погоды
-(server.js, coop.ts, test-atmo-sync.mjs) — синхронизируются руками до W3.
+при смене dp/w; на rejoin якорь приезжает внутри `field`. Копии фаз суток/погоды: server.js
+и coop.ts теперь читают их из зеркальных реестров (`server/protocol.js` ↔ `src/lib/net/protocol.ts`,
+parity в CI, W3); тестовая копия `scripts/test-atmo-sync.mjs` синхронизируется руками —
+канонизировать тестовые скрипты не входило в W3.
 
 ### Setmap (редактор локации)
 
@@ -142,24 +147,28 @@ Reconnect после обрыва: backoff 1–2–4…30 c, повторный 
 
 ## 4. Зеркала-инварианты клиент ↔ сервер
 
-Парный код НЕТ общего модуля — совпадения держатся руками. **Менять только синхронно,
-в одном PR; паритет-тесты появятся в волне W3** (golden parity). До них — таблица ниже
-обязательна к прочтению перед правкой любой из сторон.
+Парный код НЕТ общего модуля. Since W3 the mirrors are pinned by CI: event names and
+constants live in two mirrored registries — `server/protocol.js` (server side) and
+`src/lib/net/protocol.ts` (client side; sim-owned values are re-exported from
+`settings.ts`/`test-map.ts`, not copied). Gates: `npm run check:protocol`
+(AGENTS.md doc tables == registries) and `npm run test:protocol-parity`
+(client == server == golden values). **Менять только синхронно, в одном PR;**
+таблица ниже обязательна к прочтению перед правкой любой из сторон.
 
 | Инвариант | Клиент | Сервер | Комментарий |
 | --- | --- | --- | --- |
-| Кривая брони ARMOR_CURVE | `src/lib/sim/settings.ts:556` | `server.js:1865` | интерполяция урона по пресету 0–0,9 |
+| Кривая брони ARMOR_CURVE | `src/lib/sim/settings.ts` (re-exported by `protocol.ts`) | `server/protocol.js` | single source per side (W3); интерполяция урона по пресету 0–0,9 |
 | Правило «в кого попадает удар» | `simulator.tsx:1330` pickStrikeTarget | `server.js:1816` aimedNeighbor | комментарий сервера: «то же правило, что pickStrikeTarget в симе» |
-| Зоны удара и урон уровней | `settings.ts` (DAMAGE_LEVELS :527) | `server.js:89` STRIKE_ZONES | урон/части/диагонали |
-| Отклик удара 170 мс (деф.) | `settings.ts:490` strikeResponseMs; `simulator.tsx:844` | `server.js:79` STRIKE_CATCH_MS | плюс clamp 0–600 flightMs |
-| Пропускные клетки земли GROUND_COVER_IDS | `simulator.tsx:577`, `test-map.ts:106` | `server.js:141` | **три независимые копии** |
-| Лимиты локации TEST_MAP_LIMITS | `test-map.ts:304` (6–60/3–40/48/2000) | server.js sanitize (749+) | редактор не предложит конфиг, который сервер отвергнет |
-| Максимальный уровень высоты TERRAIN_MAX_LEVEL=3 | `test-map.ts:229` (+ подъём редактора) | `server.js` JUMP_MAX_DROP :2460 | перепад прыжка ≤3 |
-| Дальность/дуга прыжка | `simulator.tsx:3579` (заряд: `1 + min(TERRAIN_MAX_LEVEL−1, floor(charge·2.99))`, 8 направлений, 1–3 клетки) | `server.js:2478–2512` | кулдаун 450 мс с обеих сторон |
+| Зоны удара и урон уровней | `settings.ts` DAMAGE_LEVELS (zones re-exported by `protocol.ts`) | `server/protocol.js` STRIKE_ZONES | single source per side (W3); урон/части/диагонали |
+| Отклик удара 170 мс (деф.) | `settings.ts` strikeResponseMs (re-exported as STRIKE_CATCH_MS) | `server/protocol.js` STRIKE_CATCH_MS | single source per side (W3); плюс clamp 0–600 flightMs |
+| Пропускные клетки земли GROUND_COVER_IDS | `test-map.ts` GROUND_COVER_OPTS → `protocol.ts` (one derived list) | `server/protocol.js` | single source per side (W3); было три независимые копии |
+| Лимиты локации TEST_MAP_LIMITS | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` (sanitize uses it) | single source per side (W3); редактор не предложит конфиг, который сервер отвергнет |
+| Максимальный уровень высоты TERRAIN_MAX_LEVEL=3 | `test-map.ts` (re-exported by `protocol.ts`) | `server/protocol.js` | single source per side (W3); перепад прыжка ≤3 |
+| Дальность/дуга прыжка | `simulator.tsx:3579` (заряд: `1 + min(TERRAIN_MAX_LEVEL−1, floor(charge·2.99))`, 8 направлений, 1–3 клетки) | `server.js jump handler` | кулдаун 450 мс с обеих сторон (`JUMP_COOLDOWN_MS` in both registries, W3) |
 | Заряд приседа по hold | `simulator.tsx:3031` (`0.15 + 0.85·hold/4000`) | `server.js:2257` (clamp hold 0–4000) | формула анимации — клиентская, сервер хранит только флаг sq |
-| Клетка мишени РАБ | `simulator.tsx:823` (комментарий: «совпадает с серверной»), 0-based | `server.js:153` RAB_CELL (1-based) | сервер не рассылает позицию |
-| Дефолт манекена DUMMY_DEFAULT | рендер по `dummyState` (сервер присылает всё) | `server.js:117` | сервер — источник; клиентские дефолты не дублируются |
-| Формат кадров `[event, payload]` | `coop.ts:367+` (диспетчер) | `server.js:1316`, `2540–2571` | «move» с x:0/y:0 — маркер выхода, различается по нулям (двойной смысл до W3) |
+| Клетка мишени РАБ | `simulator.tsx:823` (0-based), `protocol.ts` RAB_CELL mirror | `server/protocol.js` RAB_CELL (1-based) | single source per side (W3); сервер не рассылает позицию |
+| Дефолт манекена DUMMY_DEFAULT | рендер по `dummyState` (сервер присылает всё) | `server/protocol.js` | сервер — источник; клиентские дефолты не дублируются |
+| Формат кадров `[event, payload]` | `coop.ts:325+` (диспетчер, имена через `protocol.ts` EV.*/guards) | `server.js` dispatch 2496–2666 (имена через `server/protocol.js` EV.*) | «move» с x:0/y:0 — маркер выхода: двойной смысл сохраняется (canon: `isCoopCat` guard пропускает оба, потребитель различает по нулям) |
 
 ## 5. Координатные системы
 
@@ -192,12 +201,27 @@ Reconnect после обрыва: backoff 1–2–4…30 c, повторный 
 
 ## 7. Целевая структура (реализуется волнами W3–W5)
 
-### W3: протокол-канон
+### W3: протокол-канон — DONE
 
-- `server/protocol.js` — реестр событий + таблица диспетчера; `src/lib/net/protocol.ts` —
-  типы + guard-валидаторы; kill легаси (`first`, `huntMode`), `onInfo` матчит коды, не русские строки.
-- `scripts/check-protocol-sync.mjs` в CI: имена событий док-таблиц AGENTS.md == реестрам.
-- Golden parity-тест зеркал раздела 4 (ARMOR_CURVE, зоны, GROUND_COVER_IDS, TERRAIN_MAX, 170 мс).
+Landed in this wave (branch `refactor/protocol-canon`):
+- `server/protocol.js` — canonical registries: 22 client→server + 22 server→client event
+  names (`EV.*`, incl. `update cat`) and all mirrored constants (cooldowns, limits,
+  ARMOR_CURVE, strike zones, atmo lists, jump/dummy/rab geometry). `server.js` imports
+  everything from it — no inline duplicates left (checked by `check:protocol`).
+- `src/lib/net/protocol.ts` — mirrored client registry: same `EV.*`, payload types,
+  guard validators; sim-owned values (ARMOR_CURVE, TEST_MAP_LIMITS, TERRAIN_MAX_LEVEL,
+  zones, 170 ms response) are RE-EXPORTED from `settings.ts`/`test-map.ts`, not copied.
+  `coop.ts` dispatches on `EV.*` + guards instead of string literals and blind casts.
+- Legacy removed after grep proof of zero consumers: `first` join alias, `huntMode`
+  field (was always false). No other wire changes.
+- CI gates: `check:protocol` (doc tables == registries + no literal duplicates in
+  server.js) right after `arch:check`; `test:protocol-parity` (client == server ==
+  golden) in the unit-test block, node 22 in CI, honest SKIP under node < 22.6.
+- Deploy learned the new `server/` directory: rsync in deploy-backend.yml, install +
+  hash into the restart marker in `deploy/vps/apply.sh`.
+- Not done here (left for later waves, on purpose): `onInfo` still parses russian
+  text in some consumers — MVP guards cover only mechanically safe casts; W4 server.js
+  module split untouched; simulator.tsx emit literals untouched (W5).
 
 ### W4: разрез server.js → тонкий вход + модули
 
@@ -236,6 +260,8 @@ dogfood-сценариями (мир, бой с entry-клетки, редакт
 - Изменение модуля (±100 строк, новые секции) — обнови строку в таблице раздела 2.
 - Меняешь потоки данных или зеркала — разделы 3/4 в том же PR (директива заказчицы №4:
   актуализация документации правилом, а не только дисциплиной).
-- W3 добавит `check-protocol-sync` в CI — до него зеркала раздела 4 держатся ревью.
+- W3 догму сделала гейтом: `check:protocol` (док-таблицы == реестры, без строк-дублей в
+  server.js) и `test:protocol-parity` (клиент == сервер == golden) уже в CI — зеркала
+  раздела 4 больше не держатся одним ревью.
 - Размерные числа в картах сверяны с `wc -l` на 2026-11-05; при расхождении доверяй
   `wc -l`, а не этой таблице, и обнови её.
