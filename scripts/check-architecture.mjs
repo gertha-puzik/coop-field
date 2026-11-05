@@ -34,7 +34,6 @@ const RULES = {
   },
   // Формат: { file: "<путь от корня>", why: "<какой волной разрезается>" }.
   SIZE_ALLOWLIST: [
-    { file: "server.js", why: "разрез на server/ — волна W4" },
     { file: "src/components/sim/simulator.tsx", why: "разрез на модули и хуки — волна W5" },
     { file: "src/components/sim/settings-panel.tsx", why: "разрез по табам — волна W5" },
     { file: "src/lib/sim/settings.ts", why: "выносы lib/sim/* — волна W5" },
