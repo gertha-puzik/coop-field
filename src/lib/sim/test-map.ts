@@ -221,6 +221,19 @@ export type TestMapZone = {
  *  виден только в редакторе. */
 export type TestMapSpawn = { c: number; r: number };
 
+/** Предел высоты рельефа (уровней над базовой землёй). 0 — обычная земля,
+ *  3 — самый высокий уступ. Шаг между соседними уровнями ≤ 1 проходится шагом,
+ *  перепад 2 и больше — только прыжком (заряд пробела определяет максимальный
+ *  перепад). Значения хранятся разреженно: ключ «c,r» (0-based) → уровень 1..3;
+ *  отсутствие клетки и явный 0 — одно и то же (обычная земля). */
+export const TERRAIN_MAX_LEVEL = 3;
+
+/** Уровень клетки из карты высот (0-based координаты; нет клетки — 0). */
+export function mapElevOf(map: Pick<TestMap, 'elev'>, c: number, r: number): number {
+  const v = map.elev?.[`${c},${r}`];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, Math.round(v))) : 0;
+}
+
 export type TestMap = {
   /** Версия конфига: 1 — клетки везде, 2 — деление поля на траву и боевые клетки.
    *  Старый файл с v1 сервер поднимает до дефолта v2 при загрузке (миграция). */
@@ -240,6 +253,11 @@ export type TestMap = {
    *  него читаются как «пусто», спавн тогда работает по-старому (первая
    *  свободная клетка травы). */
   spawns?: TestMapSpawn[];
+  /** Карта высот рельефа (необязательное поле — старые конфиги без него
+   *  читаются как «везде 0»): ключ «c,r» (0-based) → уровень 1..TERRAIN_MAX_LEVEL.
+   *  Разреженная: клетки без записи — базовая земля. Редактор меняет кистями
+   *  «Насыпать/Срыть/Ровно», сервер хранит и раздаёт вместе с конфигом. */
+  elev?: Record<string, number>;
 };
 
 /** Пределы редактора: мир, число зон и число объектов. Лимит объектов крупный:
@@ -514,6 +532,25 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       spawns.push({ c, r });
     }
   }
+  // Карта высот рельефа: необязательный разреженный словарь «c,r» → уровень 1..3.
+  // Нули, мусор и клетки вне мира выбрасываются; целые уровни зажимаются в предел.
+  let elev: Record<string, number> | undefined;
+  if (src.elev != null) {
+    if (typeof src.elev !== 'object' || Array.isArray(src.elev)) return { error: 'карта высот не распознана' };
+    const raw = src.elev as Record<string, unknown>;
+    const clean: Record<string, number> = {};
+    for (const [key, val] of Object.entries(raw)) {
+      const m = /^(\d+),(\d+)$/.exec(key);
+      if (!m) continue;
+      const c = Number(m[1]);
+      const r = Number(m[2]);
+      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
+      const lv = Math.round(Number(val));
+      if (!Number.isFinite(lv) || lv <= 0) continue;
+      clean[key] = Math.min(TERRAIN_MAX_LEVEL, lv);
+    }
+    if (Object.keys(clean).length > 0) elev = clean;
+  }
   return {
     map: {
       v: src.v,
@@ -524,6 +561,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       zones,
       objects,
       spawns,
+      ...(elev ? { elev } : {}),
     },
   };
 }

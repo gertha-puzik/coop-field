@@ -27,12 +27,17 @@ import {
   drawEntryCheck,
   drawEntryMark,
   drawGroundCover,
+  drawTerrainCell,
   drawTestDecorItem,
   drawTestObject,
+  elevAny,
+  elevLevelAt,
+  elevLiftAtPoint,
   hashStr,
   nearestWalkableCell,
   peaceDepthScale,
   setTestMap,
+  TERRAIN_LIFT_PX,
   testBattleRouteBlocked,
   testClippedCells,
   testEntries,
@@ -67,6 +72,7 @@ import {
   OBJECT_SCALE_MAX,
   OBJECT_SCALE_MIN,
   ROCK_SPRITE_OPTS,
+  TERRAIN_MAX_LEVEL,
   TREE_SPRITE_OPTS,
   sanitizeTestMap,
   TEST_MAP_DEFAULT,
@@ -481,7 +487,7 @@ const EDITOR_PASS_KEY = 'catwar-editor-pass';
  *  объект (камень/дерево — препятствия со свободной позицией, размером и
  *  поворотом; земля — проталина-декор; покрытие — плитка/цветы/пол на клетку,
  *  красятся протяжкой) или клетка захода (вход в боевую зону с направлением шага). */
-type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'ground' | 'entry' | 'spawn';
+type EditorTool = 'cells' | 'green' | 'erase' | 'stone' | 'tree' | 'dirt' | 'ground' | 'entry' | 'spawn' | 'raise' | 'lower' | 'flat';
 
 /** Ставящийся объект редактора: «призрак» следует за курсором (свободная позиция,
  *  без привязки к клетке), клик фиксирует точку; размер — колесом и кнопками ±,
@@ -508,12 +514,14 @@ type EditorDraft = {
   objects: TestMapObject[];
   /** Клетки спавна (точки появления игроков) — отдельный список конфига. */
   spawns: TestMapSpawn[];
+  /** Карта высот черновика: «c,r» → уровень 1..TERRAIN_MAX_LEVEL (разреженно). */
+  elev: Record<string, number>;
   cols: number;
   rows: number;
   tool: EditorTool;
   /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
   drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
-  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; cols: number; rows: number }[];
+  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; elev: Record<string, number>; cols: number; rows: number }[];
   /** Отмеченные зоны для объединения (инструмент «Объединить»). */
   sel: string[];
   dirty: boolean;
@@ -809,6 +817,26 @@ interface Engine {
   face: 1 | -1;
   /** performance.now() последнего кадра спринта — после него выбегание дольше. */
   lastSprint: number;
+  /** Прыжок через обрыв (по отпусканию Пробела с зарядом): мирный — лерп fx/fy
+   *  с дугой, боевой — клетка уже сменилась, лерп рисуется по px. l0/l1 — подъём
+   *  земли (px) в точках отрыва и посадки. null — кот на земле. */
+  leap: {
+    battle: boolean;
+    t0: number;
+    dur: number;
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    l0: number;
+    l1: number;
+    zH: number;
+  } | null;
+  /** Текущая высота дуги прыжка, px (рисование; в update пересчитывается). */
+  leapZ: number;
+  /** Сглаженный подъём земли под своим котом, px: цель — уровень его клетки,
+   *  догоняет экспоненциально — шаг на уступ не телепортирует модельку. */
+  liftV: number;
 }
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -1204,8 +1232,11 @@ export default function Simulator() {
   const [battleHint, setBattleHint] = useState<string | null>(null);
   const battleHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Чужие коты в свободной ходьбе (комната «тест»): экранная позиция и цель доведения,
-   *  face — куда смотрит моделька (флип по горизонтали их бега). */
-  const remoteFreeRef = useRef(new Map<string, { x: number; y: number; tx: number; ty: number; sp?: boolean; face?: 1 | -1 }>());
+   *  face — куда смотрит моделька (флип по горизонтали их бега), jpUntil — докуда
+   *  рисовать дугу прыжка (jp во freemove). */
+  const remoteFreeRef = useRef(
+    new Map<string, { x: number; y: number; tx: number; ty: number; sp?: boolean; face?: 1 | -1; jpUntil?: number }>(),
+  );
   /** Режим чужих котов «теста» по сети (поле fm из publicCat): 1 — мирный (стрела
    *  и проценты не рисуются), 0 — боевой. Раньше чужие стрелы рисовались всегда —
    *  отсюда «багованные» стрелы над мирными котами у соседей. */
@@ -1381,6 +1412,11 @@ export default function Simulator() {
   const skipClickRef = useRef(false);
   /** Идёт росчерк «Земли» протяжкой (редактор): клетки насыпаются на pointermove. */
   const dirtPaintingRef = useRef(false);
+  /** Запрос прыжка из обработчика клавиш: отпускание Пробела с зарядом.
+   *  Игровой цикл забирает его раз в кадр (charge 0.15..1 — как у «выстрела»). */
+  const leapRequestRef = useRef<number | null>(null);
+  /** Росчерк кистей рельефа (редактор): тронутые клетки и уровень «Ровно». */
+  const elevStrokeRef = useRef<{ touched: Set<string>; flat: number } | null>(null);
   const engineRef = useRef<Engine>({
     angle: 0,
     col: 4,
@@ -1415,6 +1451,9 @@ export default function Simulator() {
     // без зеркала, бег вправо — зеркалит (flip=-1).
     face: 1,
     lastSprint: 0,
+    leap: null,
+    leapZ: 0,
+    liftV: 0,
   });
 
   /** Применить состояние манекена из комнаты: зеркала для кадра + React-состояние. */
@@ -1620,12 +1659,14 @@ export default function Simulator() {
         JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) ===
           JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) &&
         JSON.stringify(d.spawns.map((s) => [s.c, s.r])) ===
-          JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r]));
+          JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r])) &&
+        JSON.stringify(d.elev) === JSON.stringify(map.elev ?? {});
       if (same) {
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
         d.objects = (map.objects ?? []).map((o) => ({ ...o }));
         d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
+        d.elev = { ...(map.elev ?? {}) };
         setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
         return;
       }
@@ -1634,6 +1675,7 @@ export default function Simulator() {
       d.zones = map.zones.map((z) => ({ ...z }));
       d.objects = (map.objects ?? []).map((o) => ({ ...o }));
       d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
+      d.elev = { ...(map.elev ?? {}) };
       d.cols = map.cols;
       d.rows = map.rows;
       setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
@@ -1657,6 +1699,7 @@ export default function Simulator() {
     zones: d.zones.map((z) => ({ ...z })),
     objects: d.objects.map((o) => ({ ...o })),
     spawns: d.spawns.map((s) => ({ ...s })),
+    ...(Object.keys(d.elev).length > 0 ? { elev: { ...d.elev } } : {}),
   });
 
   /** Черновик сразу рисуется на поле (WYSIWYG): setTestMap пересобирает кэши. */
@@ -1668,7 +1711,7 @@ export default function Simulator() {
   const pushEditorUndo = () => {
     const d = editorRef.current;
     if (!d) return;
-    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), cols: d.cols, rows: d.rows });
+    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), elev: { ...d.elev }, cols: d.cols, rows: d.rows });
     if (d.undo.length > 40) d.undo.shift();
   };
 
@@ -1678,6 +1721,7 @@ export default function Simulator() {
       zones: m.zones.map((z) => ({ ...z })),
       objects: (m.objects ?? []).map((o) => ({ ...o })),
       spawns: (m.spawns ?? []).map((s) => ({ ...s })),
+      elev: { ...(m.elev ?? {}) },
       cols: m.cols,
       rows: m.rows,
       tool: 'cells',
@@ -1879,6 +1923,13 @@ export default function Simulator() {
       }
       return o.c < nc && o.r < nr;
     });
+    // Клетки высот за новым краем мира исчезают вместе с краем.
+    const keptElev: Record<string, number> = {};
+    for (const [key, lv] of Object.entries(d.elev)) {
+      const [c, r] = key.split(',').map(Number);
+      if (c < nc && r < nr) keptElev[key] = lv;
+    }
+    d.elev = keptElev;
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -1931,6 +1982,17 @@ export default function Simulator() {
         return !(o.c >= c0 && o.c <= c1 && o.r >= r0 && o.r <= r1);
       });
       d.spawns = d.spawns.filter((s) => !(s.c >= c0 && s.c <= c1 && s.r >= r0 && s.r <= r1));
+      // и срезает рельеф: стёртый участок возвращается к базовой земле
+      let elevChanged = false;
+      for (let r = r0; r <= r1; r++) {
+        for (let c = c0; c <= c1; c++) {
+          if (`${c},${r}` in d.elev) {
+            delete d.elev[`${c},${r}`];
+            elevChanged = true;
+          }
+        }
+      }
+      if (elevChanged) applyDraftPreview();
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -2024,6 +2086,48 @@ export default function Simulator() {
   const editorSpawnAllowed = (d: EditorDraft, c: number, r: number): boolean =>
     d.zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) &&
     !d.zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+
+  /**
+   * Кисть рельефа: «насыпать» (+1 уровень, предел 3), «срыть» (−1, до базовой
+   * земли) и «ровно» (срезает все клетки росчерка на уровень первой клетки).
+   * Росчерк пишет отмену один раз и не обрабатывает клетку дважды — протяжка
+   * с зажатой кнопкой насыпает уступ целиком (см. pointerdown/pointermove).
+   */
+  const applyElevBrush = (mode: 'raise' | 'lower' | 'flat', c: number, r: number): boolean => {
+    const d = editorRef.current;
+    if (!d) return false;
+    if (c < 0 || r < 0 || c >= d.cols || r >= d.rows) return false;
+    const stroke = elevStrokeRef.current;
+    if (!stroke) return false;
+    const key = `${c},${r}`;
+    if (stroke.touched.has(key)) return false;
+    stroke.touched.add(key);
+    const cur = d.elev[key] ?? 0;
+    let next: number;
+    if (mode === 'raise') next = Math.min(TERRAIN_MAX_LEVEL, cur + 1);
+    else if (mode === 'lower') next = Math.max(0, cur - 1);
+    else next = Math.min(TERRAIN_MAX_LEVEL, Math.max(0, stroke.flat));
+    if (next === cur) return false;
+    if (next <= 0) delete d.elev[key];
+    else d.elev[key] = next;
+    d.dirty = true;
+    applyDraftPreview();
+    syncEditorView();
+    return true;
+  };
+
+  /** Начало росчерка кисти рельефа: копилка тронутых клеток + уровень «Ровно»
+   *  (уровень первой клетки под кистью — весь росчерк срезается в неё). */
+  const beginElevStroke = (mode: 'raise' | 'lower' | 'flat', c: number, r: number) => {
+    const d = editorRef.current;
+    const first = d ? d.elev[`${c},${r}`] ?? 0 : 0;
+    elevStrokeRef.current = { touched: new Set(), flat: mode === 'flat' ? first : 0 };
+    applyElevBrush(mode, c, r);
+  };
+
+  const endElevStroke = () => {
+    elevStrokeRef.current = null;
+  };
 
   /** Добавить клетку спавна (клик/протяжка инструмента «Спавн»): одна точка
    *  на клетку, лимит TEST_MAP_LIMITS.spawnsMax. */
@@ -2124,6 +2228,7 @@ export default function Simulator() {
     d.zones = back.zones.map((z) => ({ ...z }));
     d.objects = back.objects.map((o) => ({ ...o }));
     d.spawns = back.spawns.map((s) => ({ ...s }));
+    d.elev = { ...back.elev };
     d.cols = back.cols;
     d.rows = back.rows;
     d.sel = d.sel.filter((id) => d.zones.some((z) => z.id === id));
@@ -2139,6 +2244,7 @@ export default function Simulator() {
     d.zones = m.zones.map((z) => ({ ...z }));
     d.objects = (m.objects ?? []).map((o) => ({ ...o }));
     d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
+    d.elev = { ...(m.elev ?? {}) };
     d.cols = m.cols;
     d.rows = m.rows;
     d.sel = [];
@@ -2552,8 +2658,14 @@ export default function Simulator() {
           fr.tx = m.x;
           fr.ty = m.y;
           fr.sp = m.sp;
+          // jp — чужой кот в прыжке: одна дуга на прыжок (пакеты внутри прыжка
+          // продлевают текущую дугу только когда она уже закончилась)
+          if (m.jp) {
+            const nowJp = performance.now();
+            if (!fr.jpUntil || nowJp >= fr.jpUntil) fr.jpUntil = nowJp + 430;
+          }
         } else {
-          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y, sp: m.sp });
+          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y, sp: m.sp, jpUntil: m.jp ? performance.now() + 430 : undefined });
         }
         if (m.cx != null && m.cy != null) {
           const prev = liveRemotesRef.current.find((d) => d.id === key);
@@ -2580,7 +2692,13 @@ export default function Simulator() {
       onInfo: (text) => {
         setNetStatus(text);
         // Совместимость со старым сервером без refuse-кодов: откат предикта по тексту.
-        if (!text.includes('Клетка занята') && !text.includes('Край поля') && !text.includes('Слишком быстро')) return;
+        if (
+          !text.includes('Клетка занята') &&
+          !text.includes('Край поля') &&
+          !text.includes('Слишком быстро') &&
+          !text.includes('Обрыв')
+        )
+          return;
         const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
@@ -2593,8 +2711,15 @@ export default function Simulator() {
       onRefuse: (refuse) => {
         if (refuse?.text) setNetStatus(refuse.text);
         // Основной путь — код отказа: редактура русских текстов на сервере
-        // больше не ломает откат предикта.
-        if (refuse?.code !== 'cell_busy' && refuse?.code !== 'edge' && refuse?.code !== 'cooldown') return;
+        // больше не ломает откат предикта. cliff — обрыв: шаг на клетку с
+        // перепадом больше 1 отвергнут (нужен прыжок), предикт откатывается.
+        if (
+          refuse?.code !== 'cell_busy' &&
+          refuse?.code !== 'edge' &&
+          refuse?.code !== 'cooldown' &&
+          refuse?.code !== 'cliff'
+        )
+          return;
         const cell = rejectOwnMove(netMovesRef.current);
         if (cell) {
           engineRef.current.col = cell.col;
@@ -3052,6 +3177,164 @@ export default function Simulator() {
         e.strikeHeld = false;
         e.step = null;
       }
+
+      /* ---------- прыжок через обрыв ---------- */
+
+      /** Забрать запрос прыжка (заряд 0.15..1 из отпускания Пробела) и запустить
+       *  рывок: мирный — по точкам посадки вдоль направления бега, боевой — по
+       *  клеткам вдоль стрелы. Перепад, который перепрыгиваем, определяет заряд. */
+      const consumeLeapRequest = () => {
+        const charge = leapRequestRef.current;
+        leapRequestRef.current = null;
+        if (charge == null || e.leap || e.blocking) return;
+        if (performance.now() < e.moveLockUntil) return;
+        if (!testMode || editorOn) return; // вне «теста» и в редакторе — только желейный присед
+        if (s.controlled !== 'main') return; // прыгает только свой кот под управлением
+        const self = s.controlled;
+        const mp = self === 'main' ? null : mainSavedRef.current;
+        const maxDrop = Math.min(TERRAIN_MAX_LEVEL, Math.floor(charge * 4)); // 0..3
+        if (peaceWalk) {
+          const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+          const ax = e.fx + hb.dx;
+          const ay = e.fy + hb.dy * 2; // точка опоры (низ-центр модельки)
+          const curLevel = elevLevelAt(Math.floor(ax), Math.floor(ay));
+          // направление: последнее направление бега, без него — куда смотрит моделька
+          const deg = e.lastDir ?? (e.face === -1 ? 0 : 180);
+          const rad = (deg * Math.PI) / 180;
+          const wl = Math.hypot(Math.cos(rad) * s.field.cellW, Math.sin(rad) * s.field.cellH) || 1;
+          const ux = (Math.cos(rad) * s.field.cellW) / wl;
+          const uy = (Math.sin(rad) * s.field.cellH) / wl;
+          const maxCells = 1.25 + charge * 1.75; // тап ≈ полторы клетки, полный заряд — три
+          const strict = testEntryStrict();
+          let bestD = 0;
+          let bestLvl = curLevel;
+          for (let d = maxCells; d >= 0.3; d -= 0.05) {
+            const px = ax + ux * d;
+            const py = ay + uy * d;
+            if (!testPeacePointFree(px, py)) continue;
+            if (!testPeaceObjectsFree(px, py, s.field.cellW, s.field.cellH)) continue;
+            // со строгими заходами посадка на боевых клетках заперта (как и ходьба)
+            if (strict && testPeaceBattleBlocked(px, py)) continue;
+            const lvl = elevLevelAt(Math.floor(px), Math.floor(py));
+            if (Math.abs(lvl - curLevel) > maxDrop) continue;
+            bestD = d;
+            bestLvl = lvl;
+            break;
+          }
+          if (bestD < 0.3) return; // садиться некуда — остаётся присед-желе на месте
+          e.leap = {
+            battle: false,
+            t0: now,
+            dur: 340 + bestD * 130,
+            x0: e.fx,
+            y0: e.fy,
+            x1: ax + ux * bestD - hb.dx,
+            y1: ay + uy * bestD - hb.dy * 2,
+            l0: e.liftV,
+            l1: bestLvl * TERRAIN_LIFT_PX,
+            zH: 22 + bestD * 18 + Math.abs(bestLvl - curLevel) * 10,
+          };
+          e.lastDir = deg;
+          e.ptarget = null;
+          e.path = [];
+          e.pvx = 0;
+          e.pvy = 0;
+          return;
+        }
+        // Боевой режим «теста»: прыжок по прямой вдоль стрелы (8 направлений),
+        // через непроходимые/высокие промежуточные клетки. Сеть обязательна:
+        // клетку подтверждает сервер (событие jump — зеркальные проверки).
+        if (!s.arrow.battleMode) return;
+        const net = netRef.current;
+        if (!net?.ready) return;
+        const book = netMovesRef.current;
+        if (book.pending.length > 0 || !book.server) return;
+        const deg8 = (Math.round(wrap360(e.angle) / 45) * 45) % 360;
+        const d8 = dirByDeg(deg8);
+        const maxR = 1 + Math.round(charge * 2); // 1..3 клетки
+        const fromEntry = !!testEntryAt(e.col, e.row);
+        const curL = elevLevelAt(e.col, e.row);
+        for (let r = maxR; r >= 1; r--) {
+          const tc = e.col + d8.dx * r;
+          const tr = e.row + d8.dy * r;
+          if (tc < 0 || tc >= s.field.cols || tr < 0 || tr >= s.field.rows) continue;
+          if (!testWalkableCell(tc, tr) && !testEntryAt(tc, tr)) continue;
+          if (isBlockedCell(s, self, mp, tc, tr, liveRemotesRef.current, objectExtras())) continue;
+          const toEntry = !!testEntryAt(tc, tr);
+          if (!fromEntry && !toEntry && Math.abs(elevLevelAt(tc, tr) - curL) > maxDrop) continue;
+          net.emit('jump', { x: tc + 1, y: tr + 1, deg: Math.round(wrap360(e.angle) * 10) / 10 });
+          book.pending.push({ col: tc, row: tr });
+          e.leap = {
+            battle: true,
+            t0: now,
+            dur: 300 + r * 90,
+            x0: e.col * s.field.cellW,
+            y0: e.row * s.field.cellH,
+            x1: tc * s.field.cellW,
+            y1: tr * s.field.cellH,
+            l0: elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX,
+            l1: elevLevelAt(tc, tr) * TERRAIN_LIFT_PX,
+            zH: 26 + r * 14 + Math.abs(elevLevelAt(tc, tr) - curL) * 10,
+          };
+          e.col = tc;
+          e.row = tr;
+          e.step = { dir: deg8, sd: 0, start: now, dur: 430 }; // длинный кулдаун прыжка
+          e.lastDir = deg8;
+          e.path = [];
+          break;
+        }
+      };
+      consumeLeapRequest();
+
+      /** Дуга прыжка: позиция/высота на кадр; мирный режим ещё и шлёт freemove (jp=1). */
+      const stepLeap = () => {
+        const lp = e.leap;
+        if (!lp) {
+          e.leapZ = 0;
+          return;
+        }
+        const t = (now - lp.t0) / lp.dur;
+        if (t >= 1) {
+          if (!lp.battle) {
+            e.fx = lp.x1;
+            e.fy = lp.y1;
+            const net = netRef.current;
+            if (net?.ready) net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+            freeSyncRef.current.moving = false;
+          }
+          e.leap = null;
+          e.leapZ = 0;
+          return;
+        }
+        if (!lp.battle) {
+          e.fx = lp.x0 + (lp.x1 - lp.x0) * t;
+          e.fy = lp.y0 + (lp.y1 - lp.y0) * t;
+          e.liftV = lp.l0 + (lp.l1 - lp.l0) * t;
+          const net = netRef.current;
+          if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
+            freeSyncRef.current.at = now;
+            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), jp: 1 });
+          }
+          freeSyncRef.current.moving = true;
+        }
+        e.leapZ = Math.sin(Math.PI * t) * lp.zH;
+      };
+      stepLeap();
+
+      /** Сглаженный подъём земли под своим котом: цель — уровень его клетки
+       *  (в бою) или точки опоры (в миру). Шаг на уступ поднимает модельку
+       *  плавно, а не скачком; в прыжке высоту ведёт сама дуга. */
+      if (!e.leap) {
+        const hbL = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        const targetLift = testMode
+          ? (s.arrow.battleMode
+              ? elevLevelAt(e.col, e.row)
+              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
+          : 0;
+        e.liftV += (targetLift - e.liftV) * (1 - Math.exp(-dt / 110));
+        if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
+      }
+
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
       const cy = (r: number) => r * s.field.cellH + s.field.cellH / 2;
 
@@ -3158,6 +3441,17 @@ export default function Simulator() {
             return null;
           }
         }
+        // обрыв: перепад высот больше 1 шагом не проходится (переходы через
+        // клетку захода перепадом не считаются — сервер проверяет так же).
+        // Большой перепад перепрыгивается зарядом Пробела.
+        if (
+          testMode &&
+          !entry?.dir &&
+          !testEntryAt(tc, tr) &&
+          Math.abs(elevLevelAt(tc, tr) - elevLevelAt(e.col, e.row)) > 1
+        ) {
+          return null;
+        }
         return { tc, tr, deg };
       };
 
@@ -3215,17 +3509,23 @@ export default function Simulator() {
         } else if (e.path.length > 0) {
           const nx = e.path[0];
           const d = DIRECTIONS.find((q) => q.dx === Math.sign(nx.c - e.col) && q.dy === Math.sign(nx.r - e.row));
+          const cliffAhead =
+            testMode &&
+            !testEntryAt(e.col, e.row) &&
+            !testEntryAt(nx.c, nx.r) &&
+            Math.abs(elevLevelAt(nx.c, nx.r) - elevLevelAt(e.col, e.row)) > 1;
           if (
             d &&
             nx.c === e.col + d.dx &&
             nx.r === e.row + d.dy &&
             !isBlockedCell(s, self, mp, nx.c, nx.r, liveRemotesRef.current, objectExtras()) &&
+            !cliffAhead &&
             (!testMode || testWalkableCell(nx.c, nx.r) || !!testEntryAt(nx.c, nx.r))
           ) {
             const mode = requestStep(d.deg, nx.c, nx.r);
             if (mode === 'local' || mode === 'net') e.path.shift();
           } else {
-            e.path = [];
+            e.path = []; // маршрут упёрся в обрыв/занятую клетку — переложить заново
           }
         }
       }
@@ -3234,9 +3534,10 @@ export default function Simulator() {
       // якорным точкам нет: зажатые клавиши двигают кота по всем направлениям ровно
       // столько, сколько держат; клик пускает ходьбу до точки (прямой линией,
       // стены обкатываются скольжением по осям). Препятствия: кромка локации,
-      // камни/деревья и клетки остальных котов. Вход в боевую зону переключает
-      // режим — см. автопереключение ниже.
-      if (peaceWalk) {
+      // камни/деревья, клетки остальных котов и обрывы рельефа (перепад больше
+      // 1 — только прыжком). В прыжке обычная ходьба выключена: позицией ведёт
+      // дуга (stepLeap). Вход в боевую зону переключает режим — см. ниже.
+      if (peaceWalk && !e.leap) {
         const net = netRef.current;
         const cellW = s.field.cellW;
         const cellH = s.field.cellH;
@@ -3334,6 +3635,15 @@ export default function Simulator() {
             }
           }
           const myR = peaceBodyRadius(hb.dx * 2 * cellW);
+          // Обрывы рельефа: перепад между клеткой точки опоры и целевой больше 1 —
+          // стенка (шаг на уступ в 1 уровень — обычный шаг). В прыжке правило
+          // отключено: дуга несёт кота через обрыв. Выталкивание ходит через тот
+          // же blocked, поэтому мягкое выталкивание не закинет кота на скалу.
+          const elevWalkBlocked = (fxT: number, fyT: number): boolean =>
+            Math.abs(
+              elevLevelAt(Math.floor(fxT + hb.dx), Math.floor(fyT + hb.dy * 2)) -
+                elevLevelAt(Math.floor(e.fx + hb.dx), Math.floor(e.fy + hb.dy * 2)),
+            ) > 1;
           // Стенка боевых зон для мирной ходьбы — по глубине внутри зоны вдоль оси
           // движения. По горизонтали стенка на кромке (depth > 0 нельзя), по вертикали
           // центр может углубиться на PEACE_BATTLE_LEAN_Y: перспектива сжимает землю,
@@ -3345,6 +3655,7 @@ export default function Simulator() {
             const py = fyT + hb.dy;
             if (!testPeacePointFree(px, py)) return true;
             if (battleWall(px, py, axis)) return true;
+            if (elevWalkBlocked(fxT, fyT)) return true;
             if (!testPeaceObjectsFree(fxT + hb.dx, fyT + hb.dy * 2, cellW, cellH)) return true;
             const feetX = (fxT + hb.dx) * cellW;
             const feetY = (fyT + hb.dy * 2) * cellH;
@@ -3448,7 +3759,8 @@ export default function Simulator() {
       // правка локации под котом): мирный кот на боевой клетке — бой включается,
       // боевой кот вне зоны и вне захода — выключается. Стоя на заходе, кот
       // волен быть в любом режиме — это законная точка обоих миров.
-      if (testMode && !editorOn && s.controlled === 'main') {
+      // В прыжке проверка выключена: дуга летит над зоной/обрывом, не по земле.
+      if (testMode && !editorOn && s.controlled === 'main' && !e.leap) {
         const hbR = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
         const ccR = s.arrow.battleMode ? e.col : Math.floor(e.fx + hbR.dx);
         const crR = s.arrow.battleMode ? e.row : Math.floor(e.fy + hbR.dy);
@@ -3750,9 +4062,23 @@ export default function Simulator() {
       const scalePct = cfg ? cfg.scale : s.character.spriteScale;
       const sprA = spritesRef.current[spriteId] ?? Object.values(spritesRef.current)[0] ?? null;
       const dg = dragRef.current;
-      // при перетаскивании управляемого манекена стрела следует за курсором
-      const px = dg && dg.key === selfId ? dg.x : e.col * s.field.cellW;
-      const py = dg && dg.key === selfId ? dg.y : e.row * s.field.cellH;
+      // при перетаскивании управляемого манекена стрела следует за курсором;
+      // в «тесте» стрела стоит на поднятой земле и летит вместе с боевым прыжком
+      let px = dg && dg.key === selfId ? dg.x : e.col * s.field.cellW;
+      let py = dg && dg.key === selfId ? dg.y : e.row * s.field.cellH;
+      const testModeA = fieldFormatRef.current === 'test';
+      if (testModeA && selfId === 'main') {
+        const lpA = e.leap;
+        if (lpA && lpA.battle) {
+          const tA = Math.min(1, Math.max(0, (performance.now() - lpA.t0) / lpA.dur));
+          px = lpA.x0 + (lpA.x1 - lpA.x0) * tA;
+          py = lpA.y0 + (lpA.y1 - lpA.y0) * tA - (lpA.l0 + (lpA.l1 - lpA.l0) * tA) - e.leapZ;
+        } else {
+          py -= e.liftV + e.leapZ;
+        }
+      } else if (testModeA) {
+        py -= elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX;
+      }
       const { ax, ay, k } = anchorAtPx(s, sprA ? sprA.width / sprA.height : 2 / 3, px, py, scalePct);
       const r2 = s.arrow.radius * k + s.arrow.length * k;
 
@@ -3891,6 +4217,11 @@ export default function Simulator() {
       const H = s.field.rows * s.field.cellH;
       const testMode = fieldFormatRef.current === 'test';
       const { on: editorOn, draft: ed } = editorState();
+      /** Глубинная очередь «теста»: персонажи, препятствия, плато рельефа и декор
+       *  на них рисуются по дальности (кто ниже по полю — тот ближе и рисуется
+       *  поверх). Объявлена до ветки «теста»: декор на плато кладёт себя в неё
+       *  прямо из грунтового прохода. */
+      const bills: { y: number; fn: () => void }[] = [];
       let vw = 0;
       let vh = 0;
       if (testMode) {
@@ -3941,13 +4272,15 @@ export default function Simulator() {
           ctx.fill(geo.path);
         }
         // проталины «земли» — наземный декор на самой почве: под сеткой, декором
-        // и котами; на ходьбу не влияет, режется клипом по кромке локации
+        // и котами; на ходьбу не влияет, режется клипом по кромке локации.
+        // Клетки плато (рельеф) рисуются из глубинной очереди — на поднятой земле.
         const mapObjects = currentTestMap().objects ?? [];
-        if (mapObjects.some((o) => o.kind === 'dirt')) {
+        const hasElev = elevAny();
+        if (mapObjects.some((o) => o.kind === 'dirt' && (!hasElev || elevLevelAt(o.c, o.r) === 0))) {
           ctx.save();
           ctx.clip(geo.path);
           for (const o of mapObjects) {
-            if (o.kind !== 'dirt') continue;
+            if (o.kind !== 'dirt' || (hasElev && elevLevelAt(o.c, o.r) > 0)) continue;
             const poD = objectPosOffset(o);
             drawDirtPatch(
               ctx,
@@ -3962,18 +4295,18 @@ export default function Simulator() {
         }
         // покрытия земли (цветы/плитка/пол) — тот же слой грунта, что и проталины:
         // рисуются паттерном по клетке, ходьбе не мешают, режутся клипом по кромке
-        if (mapObjects.some((o) => o.kind === 'ground')) {
+        if (mapObjects.some((o) => o.kind === 'ground' && (!hasElev || elevLevelAt(o.c, o.r) === 0))) {
           ctx.save();
           ctx.clip(geo.path);
           for (const o of mapObjects) {
-            if (o.kind !== 'ground') continue;
+            if (o.kind !== 'ground' || (hasElev && elevLevelAt(o.c, o.r) > 0)) continue;
             drawGroundCover(ctx, o, s.field.cellW, s.field.cellH);
           }
           ctx.restore();
         }
         // клетки захода — тоже наземная разметка: градиент от боевой клетки и
         // две галочки по центру (вход в бой); режется клипом по кромке локации
-        const entryObjs = mapObjects.filter((o) => o.kind === 'entry' && o.dir);
+        const entryObjs = mapObjects.filter((o) => o.kind === 'entry' && o.dir && (!hasElev || elevLevelAt(o.c, o.r) === 0));
         if (entryObjs.length > 0) {
           ctx.save();
           ctx.clip(geo.path);
@@ -4015,9 +4348,16 @@ export default function Simulator() {
           const chh = s.field.cellH;
           // боевая область — только тонировка: никакой светлой подложки, трава
           // просвечивает сквозь 10% тёплой вуали (по просьбе: «прозрачность 10%»);
-          // читаемость зоны держат сетка, рамка и клетки захода
+          // читаемость зоны держат сетка, рамка и клетки захода.
+          // Клетки плато (рельеф) красятся в глубинной очереди на поднятой земле.
+          const baseBattle = (key: string): boolean => {
+            if (!hasElev) return true;
+            const [bc, br] = key.split(',').map(Number);
+            return elevLevelAt(bc, br) === 0;
+          };
           const bpath = new Path2D();
           for (const key of battleCells) {
+            if (!baseBattle(key)) continue;
             const [c, r] = key.split(',').map(Number);
             bpath.rect(c * cw, r * chh, cw, chh);
           }
@@ -4029,6 +4369,7 @@ export default function Simulator() {
           ctx.lineWidth = 0.75;
           ctx.beginPath();
           for (const key of battleCells) {
+            if (!baseBattle(key)) continue;
             const [c, r] = key.split(',').map(Number);
             const x = c * cw;
             const y = r * chh;
@@ -4036,11 +4377,11 @@ export default function Simulator() {
             ctx.lineTo(x + cw + 0.5, y + 0.5);
             ctx.moveTo(x + 0.5, y + 0.5);
             ctx.lineTo(x + 0.5, y + chh + 0.5);
-            if (!battleCells.has(`${c},${r + 1}`)) {
+            if (!battleCells.has(`${c},${r + 1}`) || !baseBattle(`${c},${r + 1}`)) {
               ctx.moveTo(x + 0.5, y + chh + 0.5);
               ctx.lineTo(x + cw + 0.5, y + chh + 0.5);
             }
-            if (!battleCells.has(`${c + 1},${r}`)) {
+            if (!battleCells.has(`${c + 1},${r}`) || !baseBattle(`${c + 1},${r}`)) {
               ctx.moveTo(x + cw + 0.5, y + 0.5);
               ctx.lineTo(x + cw + 0.5, y + chh + 0.5);
             }
@@ -4051,22 +4392,23 @@ export default function Simulator() {
           ctx.lineWidth = 1.25;
           ctx.beginPath();
           for (const key of battleCells) {
+            if (!baseBattle(key)) continue;
             const [c, r] = key.split(',').map(Number);
             const x = c * cw;
             const y = r * chh;
-            if (!battleCells.has(`${c},${r - 1}`)) {
+            if (!battleCells.has(`${c},${r - 1}`) || !baseBattle(`${c},${r - 1}`)) {
               ctx.moveTo(x + 1, y + 1);
               ctx.lineTo(x + cw - 1, y + 1);
             }
-            if (!battleCells.has(`${c - 1},${r}`)) {
+            if (!battleCells.has(`${c - 1},${r}`) || !baseBattle(`${c - 1},${r}`)) {
               ctx.moveTo(x + 1, y + 1);
               ctx.lineTo(x + 1, y + chh - 1);
             }
-            if (!battleCells.has(`${c},${r + 1}`)) {
+            if (!battleCells.has(`${c},${r + 1}`) || !baseBattle(`${c},${r + 1}`)) {
               ctx.moveTo(x + 1, y + chh - 1);
               ctx.lineTo(x + cw - 1, y + chh - 1);
             }
-            if (!battleCells.has(`${c + 1},${r}`)) {
+            if (!battleCells.has(`${c + 1},${r}`) || !baseBattle(`${c + 1},${r}`)) {
               ctx.moveTo(x + cw - 1, y + 1);
               ctx.lineTo(x + cw - 1, y + chh - 1);
             }
@@ -4078,7 +4420,8 @@ export default function Simulator() {
         if (s.arrow.battleMode && !editorOn) {
           ctx.fillStyle = 'rgba(214, 69, 65, 0.16)';
           for (const k of testClippedCells()) {
-            ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH, s.field.cellW, s.field.cellH);
+            const liftK = hasElev ? elevLevelAt(k.c, k.r) * TERRAIN_LIFT_PX : 0;
+            ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH - liftK, s.field.cellW, s.field.cellH);
           }
         }
         // частицы спринта: комочки земли/травы над землёй. Высота z уходит вверх
@@ -4247,13 +4590,24 @@ export default function Simulator() {
         }
         ctx.restore();
         // трава и цветы — билборды: стоят вертикально, основание следует за сжатой
-        // землёй (как объекты в Don't Starve); масштаб растёт с глубиной
+        // землёй (как объекты в Don't Starve); масштаб растёт с глубиной.
+        // Все уходит в глубинную очередь с ключом «верх клетки +4» (линия, на
+        // которой стоят спрайты): декор на плато рисуется поверх поднятой земли
+        // своей клетки, а декор у стены обрыва — поверх стены.
         for (const d of geo.decor) {
           const mD = 1 + (peaceDepthScale(d.y) - 1) * fxc.dp;
-          ctx.save();
-          ctx.translate(0, d.y * s.field.cellH * (fxc.sq - 1));
-          drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH, mD);
-          ctx.restore();
+          const liftD = hasElev ? elevLiftAtPoint(d.x, d.y) : 0;
+          const cellRowD = Math.min(s.field.rows - 1, Math.max(0, Math.floor(d.y)));
+          const yKeyD = cellRowD * s.field.cellH + 4;
+          bills.push({
+            y: yKeyD,
+            fn: () => {
+              ctx.save();
+              ctx.translate(0, (d.y * s.field.cellH - liftD) * (fxc.sq - 1));
+              drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH, mD);
+              ctx.restore();
+            },
+          });
         }
       } else {
         // Канвас может показываться крупнее клеточного размера (поле на весь кадр).
@@ -4331,19 +4685,51 @@ export default function Simulator() {
       // управляемый — по клетке движка, остальные — по настройкам; при тряске мышью
       // манекен качается «желе» вокруг своего нижнего центра
       const drag = dragRef.current;
+      /** Подъём земли (px) под клеткой: плато приподнимает всех, кто на нём стоит. */
+      const liftOfCell = (col: number, row: number): number =>
+        testMode ? elevLevelAt(Math.floor(col), Math.floor(row)) * TERRAIN_LIFT_PX : 0;
+      /** Дуга прыжка чужого кота (jp во freemove): плавный подскок на месте посадки. */
+      const remoteHopZ = (key: string): number => {
+        const fr = remoteFreeRef.current.get(key);
+        if (!fr || !fr.jpUntil || fr.jpUntil <= now) return 0;
+        const t = 1 - (fr.jpUntil - now) / 430;
+        return Math.sin(Math.PI * Math.min(1, Math.max(0, t))) * 26;
+      };
       const posOfChar = (id: string, col: number, row: number): { x: number; y: number } => {
-        if (drag && drag.key === id) return { x: drag.x, y: drag.y };
+        if (drag && drag.key === id) {
+          const liftDrag = testMode ? elevLiftAtPoint(drag.x / s.field.cellW, (drag.y + drag.h * 0.75) / s.field.cellH) : 0;
+          return { x: drag.x, y: drag.y - liftDrag };
+        }
         if (id === s.controlled) {
           // «Тест», мирный режим: свой кот стоит в свободной позиции
-          if (testMode && !s.arrow.battleMode) return { x: e.fx * s.field.cellW, y: e.fy * s.field.cellH };
-          return { x: e.col * s.field.cellW, y: e.row * s.field.cellH };
+          if (testMode && !s.arrow.battleMode) {
+            return { x: e.fx * s.field.cellW, y: e.fy * s.field.cellH - e.liftV - e.leapZ };
+          }
+          // боевой прыжок: моделька летит от старой клетки к новой по дуге
+          const lp = e.leap;
+          if (lp && lp.battle) {
+            const t = Math.min(1, Math.max(0, (now - lp.t0) / lp.dur));
+            return {
+              x: lp.x0 + (lp.x1 - lp.x0) * t,
+              y: lp.y0 + (lp.y1 - lp.y0) * t - (lp.l0 + (lp.l1 - lp.l0) * t) - e.leapZ,
+            };
+          }
+          return { x: e.col * s.field.cellW, y: e.row * s.field.cellH - e.liftV };
         }
-        // чужой кот в свободной ходьбе («тест») — плавная доведённая позиция
+        // чужой кот в свободной ходьбе («тест») — плавная доведённая позиция;
+        // высота — по его логической клетке (серверной), прыжок — дугой
         const free = id.startsWith('p') ? remoteFreeRef.current.get(id) : undefined;
-        if (free) return { x: free.x * s.field.cellW, y: free.y * s.field.cellH };
+        if (free) {
+          return {
+            x: free.x * s.field.cellW,
+            y: free.y * s.field.cellH - liftOfCell(col, row) - remoteHopZ(id),
+          };
+        }
         const vis = id.startsWith('p') ? remoteDrawRef.current.get(id) : undefined;
-        if (vis) return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH };
-        return { x: col * s.field.cellW, y: row * s.field.cellH };
+        if (vis) {
+          return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH - liftOfCell(vis.col, vis.row) };
+        }
+        return { x: col * s.field.cellW, y: row * s.field.cellH - liftOfCell(col, row) };
       };
       const dummies = dummiesOf(s, liveRemotesRef.current).filter(
         (d) => d.col >= 0 && d.col < s.field.cols && d.row >= 0 && d.row < s.field.rows,
@@ -4355,13 +4741,102 @@ export default function Simulator() {
         if (!testMode || fx.dp <= 0.002) return 1;
         return 1 + (peaceDepthScale(groundYpx / s.field.cellH) - 1) * fx.dp;
       };
-      /** Глубинная очередь «теста»: персонажи и препятствия рисуются по дальности
-       *  (кто ниже по полю — тот ближе и рисуется поверх); вне «теста» — сразу. */
-      const bills: { y: number; fn: () => void }[] = [];
+      /** Глубинная очередь «теста»: добавление — по дальности; вне «теста» — сразу. */
       const runOrQueue = (fn: () => void, y: number) => {
         if (testMode) bills.push({ y, fn });
         else fn();
       };
+
+      // плато рельефа: стены обрывов и поднятая земля — в общую глубинную очередь,
+      // чтобы кот позади обрыва честно прятался за ним, а кот перед обрывом и на
+      // самом плато рисовался поверх. Ключ сортировки — низ стены (нижняя точка
+      // клетки на экране); разметку клетки (бой/покрытия/заход) рисуем следом
+      // за верхом плато, внутри того же билборда.
+      if (testMode && elevAny()) {
+        const fxcT = camFxRef.current;
+        const geoT = testFieldGeometry(s.field.cellW, s.field.cellH);
+        const gpatT = grassPattern(ctx);
+        const cwT = s.field.cellW;
+        const chT = s.field.cellH;
+        const isBattleCellT = (c: number, r: number): boolean =>
+          currentTestMap().zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+        const flatsByCellT = new Map<string, TestMapObject[]>();
+        for (const oT of currentTestMap().objects ?? []) {
+          if (oT.kind !== 'dirt' && oT.kind !== 'ground' && oT.kind !== 'entry') continue;
+          const kT = `${oT.c},${oT.r}`;
+          const arrT = flatsByCellT.get(kT);
+          if (arrT) arrT.push(oT);
+          else flatsByCellT.set(kT, [oT]);
+        }
+        const mapElev = currentTestMap().elev ?? {};
+        for (const key of Object.keys(mapElev)) {
+          const lvT = mapElev[key];
+          if (!lvT || lvT <= 0) continue;
+          const [cT, rT] = key.split(',').map(Number);
+          if (!Number.isFinite(cT) || !Number.isFinite(rT)) continue;
+          if (cT < 0 || rT < 0 || cT >= s.field.cols || rT >= s.field.rows) continue;
+          const liftT = lvT * TERRAIN_LIFT_PX;
+          // Ключ сортировки — верх клетки (+3): всё, что стоит НА плато (лапы
+          // минимум на cellTop+58 из-за 10px запаса спрайта), рисуется поверх
+          // своей земли; коты позади плато (лапы выше cellTop) прячутся под ним.
+          const billYT = rT * chT + 3;
+          const battleT = isBattleCellT(cT, rT);
+          const flatsT = flatsByCellT.get(key);
+          const sameLvlBattleT = (cc: number, rr: number): boolean =>
+            isBattleCellT(cc, rr) && elevLevelAt(cc, rr) === lvT;
+          bills.push({
+            y: billYT,
+            fn: () => {
+              ctx.save();
+              ctx.scale(1, fxcT.sq);
+              ctx.clip(geoT.path);
+              // стена обрыва + поднятая трава этой клетки
+              drawTerrainCell(ctx, cwT, chT, cT, rT, gpatT);
+              // разметка клетки поверх поднятой земли
+              if (flatsT) {
+                for (const oT of flatsT) {
+                  if (oT.kind === 'dirt') {
+                    const poT = objectPosOffset(oT);
+                    drawDirtPatch(ctx, cwT, chT, (oT.c + 0.5 + poT.dx) * cwT, (oT.r + 0.5 + poT.dy) * chT - liftT, hashStr(oT.id) & 7);
+                  } else if (oT.kind === 'ground') {
+                    drawGroundCover(ctx, oT, cwT, chT, -liftT);
+                  } else if (oT.kind === 'entry' && oT.dir) {
+                    drawEntryMark(ctx, cwT, chT, (oT.c + 0.5) * cwT, (oT.r + 0.5) * chT - liftT, oT.dir, false);
+                  }
+                }
+              }
+              if (battleT) {
+                const xT = cT * cwT;
+                const yT = rT * chT - liftT;
+                ctx.fillStyle = 'rgba(250, 214, 80, 0.1)';
+                ctx.fillRect(xT, yT, cwT, chT);
+                ctx.strokeStyle = 'rgba(233, 196, 61, 0.8)';
+                ctx.lineWidth = 0.75;
+                ctx.beginPath();
+                if (!sameLvlBattleT(cT, rT - 1)) {
+                  ctx.moveTo(xT + 0.5, yT + 0.5);
+                  ctx.lineTo(xT + cwT + 0.5, yT + 0.5);
+                }
+                if (!sameLvlBattleT(cT - 1, rT)) {
+                  ctx.moveTo(xT + 0.5, yT + 0.5);
+                  ctx.lineTo(xT + 0.5, yT + chT + 0.5);
+                }
+                if (!sameLvlBattleT(cT, rT + 1)) {
+                  ctx.moveTo(xT + 0.5, yT + chT + 0.5);
+                  ctx.lineTo(xT + cwT + 0.5, yT + chT + 0.5);
+                }
+                if (!sameLvlBattleT(cT + 1, rT)) {
+                  ctx.moveTo(xT + cwT + 0.5, yT + 0.5);
+                  ctx.lineTo(xT + cwT + 0.5, yT + chT + 0.5);
+                }
+                ctx.stroke();
+              }
+              ctx.restore();
+            },
+          });
+        }
+      }
+
       const drawChar = (
         sprC: HTMLImageElement,
         pos: { x: number; y: number },
@@ -4452,7 +4927,9 @@ export default function Simulator() {
         if (!rabOnRef.current) return;
         const sprR = spritesRef.current[RAB_SPRITE.id] ?? null;
         if (sprR) {
-          const tr = { x: RAB_POS.col * s.field.cellW, y: RAB_POS.row * s.field.cellH };
+          // мишень на плато стоит на поднятой земле
+          const liftR = testMode ? elevLevelAt(RAB_POS.col, RAB_POS.row) * TERRAIN_LIFT_PX : 0;
+          const tr = { x: RAB_POS.col * s.field.cellW, y: RAB_POS.row * s.field.cellH - liftR };
           drawChar(sprR, tr, RAB_SCALE, RAB_ID, false, whiteSpritesRef.current[RAB_SPRITE.id] ?? null, false);
           const thR = (s.field.cellH - 10) * (RAB_SCALE / 100);
           const nameX = tr.x + (sprR.width / sprR.height) * thR * 0.5;
@@ -4465,7 +4942,7 @@ export default function Simulator() {
           ctx.fillText(RAB_SPRITE.name, nameX, tr.y - 17);
         }
       };
-      runOrQueue(drawRab, (RAB_POS.row + 1) * s.field.cellH);
+      runOrQueue(drawRab, RAB_POS.row * s.field.cellH + 3);
 
       // Манекен «ПОЧУХАТЬ»: виден всем, тащится любым игроком, позиция живёт
       // на сервере. Вне боя (удары по нему не проходят), но клетка непроходима.
@@ -4474,10 +4951,12 @@ export default function Simulator() {
         if (!dummyOnRef.current || !dummyPosRef.current) return;
         const sprP = spritesRef.current[dummySpriteRef.current] ?? null;
         if (sprP) {
+          // манекен на плато тоже стоит на поднятой земле (клетка его позиции)
+          const liftP = testMode ? elevLiftAtPoint(dummyPosRef.current.x, dummyPosRef.current.y) : 0;
           const tp =
             drag && drag.key === DUMMY_ID
-              ? { x: drag.x, y: drag.y }
-              : { x: dummyPosRef.current.x * s.field.cellW, y: dummyPosRef.current.y * s.field.cellH };
+              ? { x: drag.x, y: drag.y - liftP }
+              : { x: dummyPosRef.current.x * s.field.cellW, y: dummyPosRef.current.y * s.field.cellH - liftP };
           drawChar(sprP, tp, DUMMY_SCALE, DUMMY_ID, false, whiteSpritesRef.current[dummySpriteRef.current] ?? null, false);
           const thP = (s.field.cellH - 10) * (DUMMY_SCALE / 100);
           const nameX = tp.x + (sprP.width / sprP.height) * thP * 0.5;
@@ -4523,7 +5002,7 @@ export default function Simulator() {
       runOrQueue(
         drawPoch,
         dummyPosRef.current
-          ? dummyPosRef.current.y * s.field.cellH + (s.field.cellH - 10) * (DUMMY_SCALE / 100)
+          ? Math.round(dummyPosRef.current.y) * s.field.cellH + 3
           : -1,
       );
 
@@ -4575,13 +5054,24 @@ export default function Simulator() {
       }
 
       // свой кот: под управлением — по клетке движка (в мирном «тесте» — по свободной позиции),
-      // иначе стоит там, где его оставили
+      // иначе стоит там, где его оставили. Рельеф: кот на плато стоит на поднятой
+      // земле (liftV); в боевом прыжке моделька летит от старой клетки к новой.
       const spr = spritesRef.current[s.character.sprite] ?? Object.values(spritesRef.current)[0] ?? null;
       const selfId = s.controlled;
       const mainPos = selfId === 'main' ? { col: e.col, row: e.row } : mainSavedRef.current;
       const selfFree = testMode && !s.arrow.battleMode;
-      const cellX = (selfFree ? e.fx : mainPos ? mainPos.col : e.col) * s.field.cellW;
-      const cellY = (selfFree ? e.fy : mainPos ? mainPos.row : e.row) * s.field.cellH;
+      let cellX = (selfFree ? e.fx : mainPos ? mainPos.col : e.col) * s.field.cellW;
+      let cellY = (selfFree ? e.fy : mainPos ? mainPos.row : e.row) * s.field.cellH;
+      if (testMode) {
+        const lpS = e.leap;
+        if (lpS && lpS.battle) {
+          const tS = Math.min(1, Math.max(0, (now - lpS.t0) / lpS.dur));
+          cellX = lpS.x0 + (lpS.x1 - lpS.x0) * tS;
+          cellY = lpS.y0 + (lpS.y1 - lpS.y0) * tS - (lpS.l0 + (lpS.l1 - lpS.l0) * tS) - e.leapZ;
+        } else {
+          cellY -= e.liftV + e.leapZ;
+        }
+      }
       const cxp = cellX + s.field.cellW / 2;
       const cyp = cellY + s.field.cellH / 2;
       const drawSelf = () => {
@@ -4675,14 +5165,20 @@ export default function Simulator() {
           if (o.id === editorPlaceRef.current?.pickId) continue; // поднят в призрак редактора
           // Свободная точка опоры (доли клетки): сдвигает и точку опоры — глубинная
           // сортировка считает по ней же, деревья у края перекрывают корректно.
+          // Рельеф: объект на плато стоит на поднятой земле своей клетки.
           const bO = objectBase(o);
           const objX = bO.x * s.field.cellW;
-          const by = bO.y * s.field.cellH - 2;
+          const liftO = elevLiftAtPoint(bO.x, bO.y);
+          const by = bO.y * s.field.cellH - liftO - 2;
           // Билборд стоит на наклонной земле: основание сжато тем же множителем,
           // что и точка опоры котов (groundY * sq в drawChar), сам спрайт вертикальный.
           // Без этого дерево в мирной перспективе уезжало на клетку ниже своего
           // места из редактора и не могло укрыть кота, вставшего за ним.
           const byDrawn = by * fxcO.sq;
+          // Ключ глубины — линия земли своей клетки (+3.5, как у плато): дерево
+          // на плато рисуется поверх своей земли, коты на клетке дерева — поверх
+          // дерева только если стоят ближе (лапы ниже линии земли дерева).
+          const byKey = Math.max(by, Math.floor(bO.y) * s.field.cellH + 3.5);
           const mO = depthM(by);
           const vO = hashStr(o.id) & 7;
           // Свой кот зашёл за объект и объект закрывает его хотя бы на OCCLUDE_COVER —
@@ -4691,7 +5187,7 @@ export default function Simulator() {
             !!selfRectO &&
             coveredRatio(testObjectDrawRect(o, s.field.cellH, objX, byDrawn, mO, vO), selfRectO) >= OCCLUDE_COVER;
           bills.push({
-            y: by,
+            y: byKey,
             fn: () => {
               if (covered) {
                 ctx.save();
@@ -4722,11 +5218,11 @@ export default function Simulator() {
             pos: 'center',
           };
           const gX = pend.x * s.field.cellW;
-          const gYraw = pend.y * s.field.cellH - 2;
+          const gYraw = pend.y * s.field.cellH - elevLiftAtPoint(pend.x, pend.y) - 2;
           const gY = gYraw * fxcO.sq;
           const gM = depthM(gYraw);
           bills.push({
-            y: gYraw,
+            y: Math.max(gYraw, Math.floor(pend.y) * s.field.cellH + 3.5),
             fn: () => {
               ctx.save();
               ctx.globalAlpha = 0.62;
@@ -4754,6 +5250,33 @@ export default function Simulator() {
         }
         bills.sort((a, b) => a.y - b.y);
         for (const b of bills) b.fn();
+        // метки уровней рельефа в редакторе: рисуются ПОСЛЕ глубинной очереди —
+        // плато своей же клеткой накрыло бы их, а уровень должен читаться всегда
+        if (editorOn && ed && Object.keys(ed.elev).length > 0) {
+          ctx.save();
+          ctx.scale(1, camFxRef.current.sq);
+          ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          for (const [keyB, lvB] of Object.entries(ed.elev)) {
+            if (!lvB) continue;
+            const [cB, rB] = keyB.split(',').map(Number);
+            if (!Number.isFinite(cB) || !Number.isFinite(rB)) continue;
+            if (cB < 0 || rB < 0 || cB >= ed.cols || rB >= ed.rows) continue;
+            const xB = (cB + 0.5) * s.field.cellW;
+            const yB = (rB + 0.5) * s.field.cellH - lvB * TERRAIN_LIFT_PX;
+            ctx.fillStyle = 'rgba(10, 14, 8, 0.72)';
+            ctx.beginPath();
+            ctx.roundRect(xB - 23, yB - 10, 46, 20, 10);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = '#eafbe7';
+            ctx.fillText(`▲ ${lvB}`, xB, yB + 0.5);
+          }
+          ctx.restore();
+        }
       }
 
       // галочки клеток захода — поверх любых спрайтов на земле: коты и препятствия
@@ -5175,7 +5698,9 @@ export default function Simulator() {
     };
     const up = (ev: KeyboardEvent) => {
       if (ev.key === 'Shift') sprintRef.current = false;
-      // Отпускание пробела — желейный «выстрел» вверх из приплющенного состояния.
+      // Отпускание пробела — желейный «выстрел» вверх из приплющенного состояния
+      // и прыжок через обрыв: заряд (длительность удержания) определяет максимальный
+      // перепад. Сам прыжок запускает игровой цикл — забирает запрос из leapRequestRef.
       if (ev.code === 'Space' || ev.key === ' ') {
         const sp = spaceHoldRef.current;
         if (sp.holding) {
@@ -5185,6 +5710,7 @@ export default function Simulator() {
           // не был нулевым, а верхняя ровно 1 — дальше заряд не растёт).
           sp.charge = 0.15 + 0.85 * Math.min(1, (performance.now() - sp.since) / 4000);
           sp.releaseAt = performance.now();
+          leapRequestRef.current = sp.charge;
           // hold — длительность удержания: чужие клиенты посчитают по ней заряд,
           // не сверяя часы (у каждого свои performance.now()).
           netRef.current?.emit('space', { on: false, hold: Math.round(sp.releaseAt - sp.since) });
@@ -5318,6 +5844,10 @@ export default function Simulator() {
         if (dirtPaintingRef.current && ed.tool === 'spawn' && ev.buttons & 1) {
           addEditorSpawn(c, r);
         }
+        // протяжка кистей рельефа: каждая клетка росчерка — один раз
+        if (dirtPaintingRef.current && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat') && ev.buttons & 1) {
+          applyElevBrush(ed.tool, c, r);
+        }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {
           // пишем прямо в ref: кадр читает его каждый тик, панель позиции не показывает
@@ -5431,6 +5961,15 @@ export default function Simulator() {
         pushEditorUndo();
         dirtPaintingRef.current = true;
         paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+        ev.currentTarget.style.cursor = 'crosshair';
+        ev.preventDefault();
+        return;
+      }
+      if (ev.button === 0 && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat')) {
+        pushEditorUndo();
+        dirtPaintingRef.current = true;
+        beginElevStroke(ed.tool, c, r);
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'crosshair';
         ev.preventDefault();
@@ -5558,6 +6097,7 @@ export default function Simulator() {
     // зоной; росчерк «Земли» просто заканчивается (отмена уже записана).
     const ed = editorRef.current;
     dirtPaintingRef.current = false;
+    endElevStroke();
     if (editorOpenRef.current && ed) {
       try {
         ev.currentTarget.releasePointerCapture(ev.pointerId);
@@ -6428,6 +6968,36 @@ export default function Simulator() {
                           </button>
                         ))}
                       </div>
+                      <div className="mt-1.5 flex gap-1.5">
+                        {(
+                          [
+                            { id: 'raise', label: '⬆ Насыпать' },
+                            { id: 'lower', label: '⬇ Срыть' },
+                            { id: 'flat', label: '▬ Ровно' },
+                          ] as { id: EditorTool; label: string }[]
+                        ).map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className={
+                              editorView.tool === t.id
+                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                            }
+                            onClick={() => setEditorTool(t.id)}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                      {editorView.tool === 'raise' || editorView.tool === 'lower' || editorView.tool === 'flat' ? (
+                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                          Клик или протяжка по клеткам: «Насыпать» поднимает землю на уровень (до трёх),
+                          «Срыть» опускает, «Ровно» срезает весь росчерк в уровень первой клетки. Перепад
+                          в один уровень проходится шагом, в два и больше — только прыжком с зарядом
+                          (удержать Пробел и отпустить). Ластик и «Срыть» до нуля убирают насыпь совсем.
+                        </p>
+                      ) : null}
                       {editorView.tool === 'entry' ? (
                         <>
                           <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Направление шага</div>
@@ -6632,7 +7202,8 @@ export default function Simulator() {
                       <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
                         Тяните по полю — зона. Камень и дерево ставятся свободно: призрак едет за
                         курсором, размер и поворот подгоняются до ✓ «Поставить» (через них нельзя пройти).
-                        Земля и покрытие — клик или протяжка, ходьбе не мешают.
+                        Земля и покрытие — клик или протяжка, ходьбе не мешают. Кисти рельефа насыпают
+                        и срывают уступы: перепад в уровень проходится шагом, выше — прыжком.
                         Заход — вход в боевую зону: травяная клетка с галочками,
                         в бою шаг с неё переносит по направлению захода.
                       </p>
@@ -6760,6 +7331,7 @@ export default function Simulator() {
             <span>Enter — чат</span>
             <span>I — удар</span>
             <span>K (удерживать) — блок</span>
+            <span>Пробел (удержать и отпустить) — прыжок через обрыв: чем дольше держите, тем выше перепад перепрыгнете</span>
             <span>J — стрела против часовой</span>
             <span>L — по часовой</span>
             <span className="ml-auto">

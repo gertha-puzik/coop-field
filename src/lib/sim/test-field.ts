@@ -23,6 +23,7 @@ import {
   TEST_MAP_DEFAULT,
   OBJECT_DIMS,
   isObstacleKind,
+  mapElevOf,
   objectBase,
   objectMir,
   objectRotDeg,
@@ -372,6 +373,111 @@ export function testPointInIsland(x: number, y: number): boolean {
  *  у них физические тела по настоящим размерам спрайтов, а не вся клетка. */
 export function testPeacePointFree(x: number, y: number): boolean {
   return pointInPolygon(islandPolygon(), x, y);
+}
+
+/* ---------- рельеф: уровни высоты, плато и обрывы ---------- */
+
+/** Подъём экранной земли на один уровень рельефа, px мира. Клетка 150 px высотой,
+ *  26 px — заметный уступ, не ломающий чтение поля. */
+export const TERRAIN_LIFT_PX = 26;
+
+/** Уровень рельефа клетки (0-based) текущей локации: 0 — базовая земля.
+ *  Правила общие с сервером (testElev): шаг проходится при перепаде ≤ 1,
+ *  перепад 2+ — только прыжком с зарядом. */
+export function elevLevelAt(c: number, r: number): number {
+  return mapElevOf(currentMap, c, r);
+}
+
+/** Есть ли рельеф на локации — быстрый пропуск целых проходов отрисовки. */
+export function elevAny(): boolean {
+  const e = currentMap.elev;
+  return !!e && Object.keys(e).length > 0;
+}
+
+/** Подъём земли (px) в точке (клеточные доли мира) — уровень её клетки. */
+export function elevLiftAtPoint(x: number, y: number): number {
+  return elevLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
+}
+
+/** Уровень клетки-соседа для стены обрыва: вне мира или за нарисованной кромкой
+ *  базы нет — считаем 0 (стена уходит до самой земли). */
+function elevNeighborForWall(c: number, r: number): number {
+  if (c < 0 || r < 0 || c >= currentMap.cols || r >= currentMap.rows) return 0;
+  if (!pointInPolygon(islandPolygon(), c + 0.5, r + 0.5)) return 0;
+  return elevLevelAt(c, r);
+}
+
+/**
+ * Одна клетка плато: южная стена обрыва (если сосед ниже), боковые складки на
+ * востоке/западе и верх — трава, сдвинутая вверх на уровень рельефа. Вызывается
+ * из глубинной очереди симулятора: плато честно перекрывает котов позади себя
+ * и скрывается за котами перед собой. pat — паттерн травы (null — заливка).
+ */
+export function drawTerrainCell(
+  ctx: CanvasRenderingContext2D,
+  cellW: number,
+  cellH: number,
+  c: number,
+  r: number,
+  pat: CanvasPattern | null,
+): void {
+  const e = elevLevelAt(c, r);
+  if (e <= 0) return;
+  const lift = e * TERRAIN_LIFT_PX;
+  const x = c * cellW;
+  const y = r * cellH;
+  // южная стена: перепад вниз по экрану — срез дёрна с градиентом почвы
+  const sNb = elevNeighborForWall(c, r + 1);
+  if (sNb < e) {
+    const yTop = y + cellH - lift;
+    const yBot = y + cellH - sNb * TERRAIN_LIFT_PX;
+    const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+    g.addColorStop(0, '#6d5438');
+    g.addColorStop(0.3, '#58412b');
+    g.addColorStop(1, '#382a1a');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, yTop, cellW, yBot - yTop);
+    // нависшая трава: тонкая тёмная линия под верхом среза + светлый срез дёрна
+    ctx.fillStyle = 'rgba(18, 13, 5, 0.5)';
+    ctx.fillRect(x, yTop, cellW, 2);
+    ctx.fillStyle = 'rgba(214, 196, 140, 0.14)';
+    ctx.fillRect(x, yTop + 2, cellW, Math.min(3, yBot - yTop - 2));
+    // детерминированные камешки на срезе (по клетке — у всех игроков одинаковые)
+    const v = (c * 7 + r * 13 + e * 5) % 4;
+    ctx.fillStyle = 'rgba(24, 18, 10, 0.35)';
+    for (let i = 0; i <= v; i++) {
+      const px = x + cellW * (0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60);
+      const py = yTop + (yBot - yTop) * (0.35 + ((r * 23 + i * 29) % 10) / 22);
+      const rr2 = 1.6 + ((c + r + i) % 3);
+      ctx.beginPath();
+      ctx.arc(px, py, rr2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // верх плато: травяной тайл, поднятый на уровень; чем выше — тем светлее
+  if (pat) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = pat;
+    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#2c4a1d';
+    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+  }
+  if (e >= 2) {
+    ctx.fillStyle = `rgba(255, 238, 176, ${(0.055 * (e - 1)).toFixed(3)})`;
+    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+  }
+  // боковые складки: сосед сбоку ниже — тёмная кромка вдоль края плато
+  if (elevNeighborForWall(c - 1, r) < e) {
+    ctx.fillStyle = 'rgba(14, 10, 4, 0.55)';
+    ctx.fillRect(x, y - lift, 2.5, cellH);
+  }
+  if (elevNeighborForWall(c + 1, r) < e) {
+    ctx.fillStyle = 'rgba(14, 10, 4, 0.55)';
+    ctx.fillRect(x + cellW - 2.5, y - lift, 2.5, cellH);
+  }
 }
 
 /* ---------- перспектива мирного режима ---------- */
@@ -1069,10 +1175,12 @@ export function drawGroundCover(
   o: TestMapObject,
   cellW: number,
   cellH: number,
+  /** Сдвиг по вертикали: у клеток плато настил лежит на поднятой земле. */
+  dy = 0,
 ): void {
   const cv = groundCoverOf(o);
   const x0 = o.c * cellW;
-  const y0 = o.r * cellH;
+  const y0 = o.r * cellH + dy;
   const pat = coverPattern(ctx, cv);
   if (pat) {
     ctx.save();

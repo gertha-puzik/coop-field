@@ -160,8 +160,9 @@ const TEST_ROOM = 'test';
 const ADMIN_PASS = String(process.env.ADMIN_PASS || "1946");
 /** Конфиг локации «теста» живёт в data/test-map.json рядом с server.js: правится
  *  редактором локации и переживает перезапуски (apply.sh копирует только server.js
- *  и package*.json — каталог data не трогает). */
-const DATA_DIR = path.join(__dirname, "data");
+ *  и package*.json — каталог data не трогает). Переопределяется переменной
+ *  DATA_DIR — для тестов, чтобы песочница не трогала живую карту. */
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const MAP_FILE = path.join(DATA_DIR, "test-map.json");
 
 let testMap = loadTestMap();
@@ -469,6 +470,22 @@ function testWalkable(x, y) {
   return testCellWalkable(x - 1, y - 1);
 }
 
+/** Уровень рельефа клетки (1-based координаты сервера; вне карты — 0).
+ *  Зеркало elevLevelAt клиента: обе стороны считают перепады по одному конфигу. */
+function testElev(x, y) {
+  const v = testMap.elev?.[`${x - 1},${y - 1}`];
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(3, Math.max(0, n)) : 0;
+}
+
+/** Перепад высот между соседними клетками больше шага (1)? В клетку с таким
+ *  перепадом нельзя шагнуть — только допрыгнуть (событие jump). Переходы через
+ *  клетку захода перепадом не считаются: заход — переход между мирами. */
+function cliffBetween(x0, y0, x1, y1) {
+  if (testEntryCell(x0 - 1, y0 - 1) || testEntryCell(x1 - 1, y1 - 1)) return false;
+  return Math.abs(testElev(x1, y1) - testElev(x0, y0)) > 1;
+}
+
 /** Ближайшая проходимая клетка (1-based) к точке в клеточных долях мира. */
 function nearestTestCell(fx, fy) {
   const c0 = Math.min(TEST_WIDTH - 1, Math.max(0, Math.round(fx)));
@@ -711,6 +728,24 @@ function sanitizeTestMap(raw) {
       spawns.push({ c, r });
     }
   }
+  // Карта высот рельефа (зеркало sanitizeTestMap клиента): разреженный словарь
+  // «c,r» → уровень 1..3; нули, мусор и клетки вне мира выбрасываются.
+  let elev;
+  if (raw.elev != null) {
+    if (typeof raw.elev !== 'object' || Array.isArray(raw.elev)) return { error: 'карта высот не распознана' };
+    elev = {};
+    for (const [key, val] of Object.entries(raw.elev)) {
+      const m = /^(\d+),(\d+)$/.exec(key);
+      if (!m) continue;
+      const c = Number(m[1]);
+      const r = Number(m[2]);
+      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
+      const lv = Math.round(Number(val));
+      if (!Number.isFinite(lv) || lv <= 0) continue;
+      elev[key] = Math.min(3, lv);
+    }
+    if (Object.keys(elev).length === 0) elev = undefined;
+  }
   return {
     map: {
       v: raw.v,
@@ -721,6 +756,7 @@ function sanitizeTestMap(raw) {
       zones,
       objects,
       spawns,
+      ...(elev ? { elev } : {}),
     },
   };
 }
@@ -1294,6 +1330,12 @@ function applyMove(ws, cat, payload) {
   if (occupied(room, nx, ny, cat.id)) {
     send(ws, "info", "Клетка занята.");
     send(ws, "refuse", { code: "cell_busy", text: "Клетка занята." });
+    return;
+  }
+  // Обрыв: в «тесте» перепад высот больше 1 шагом не проходится — нужен прыжок.
+  if (room.fmt === 'test' && cliffBetween(cat.x, cat.y, nx, ny)) {
+    send(ws, "info", "Обрыв — удержите Пробел и допрыгните.");
+    send(ws, "refuse", { code: "cliff", text: "Обрыв — удержите Пробел и допрыгните." });
     return;
   }
 
@@ -2016,6 +2058,7 @@ function freeMove(ws, payload = {}) {
   cat.fx = Math.round(nx * 100) / 100;
   cat.fy = Math.round(ny * 100) / 100;
   cat.fsp = payload.stop ? 0 : payload.sp === 1 || payload.sp === true ? 1 : 0;
+  cat.jp = payload.jp === 1 || payload.jp === true ? 1 : 0;
   const cell = nearestTestCell(cat.fx, cat.fy);
   if (cell) {
     cat.x = cell.x;
@@ -2025,7 +2068,7 @@ function freeMove(ws, payload = {}) {
   rememberCat(cat); // позиция в книге (на диск — общим сливом, не чаще 3 с)
   if (!payload.stop && now - (cat.lastFree || 0) < FREE_MOVE_GAP_MS) return;
   cat.lastFree = now;
-  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0 }, ws);
+  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0, jp: cat.jp ? 1 : 0 }, ws);
 }
 
 /**
@@ -2065,6 +2108,68 @@ function cellsync(ws, payload = {}) {
   cat.fm = 0;
   rememberCat(cat);
   broadcast(room, "update cat", publicCat(cat, room));
+}
+
+/** Кулдаун прыжка: рывок через обрыв заметно дороже шага, спамить им нельзя. */
+const JUMP_COOLDOWN_MS = 450;
+/** Дальность прыжка в клетках по прямой (8 направлений): заряд на клиенте
+ *  выбирает дальность 1..3, сервер перепроверяет. */
+const JUMP_MAX_CELLS = 3;
+/** Максимальный перепад, который агент может допрыгнуть: уровень рельефа 0..3,
+ *  значит теоретический максимум перепада — 3. Заряд (доля 0..1) масштабирует
+ *  доступный перепад на клиенте; сервер ограничивает сверху. */
+const JUMP_MAX_DROP = 3;
+
+/**
+ * Прыжок через обрыв (боевой режим «теста»). Клиент → ["jump", { x, y }]
+ * (1-based клетка назначения — по прямой вдоль 8 направлений на 1..3 клетки).
+ * Сервер проверяет: дальность и прямизну, проходимость, занятость, перепад
+ * (≤ JUMP_MAX_DROP) и кулдаун. Промежуточные клетки могут быть непроходимы
+ * или выше — в этом смысл прыжка. Успех: cat.lastJump/lastMove обновляются,
+ * publicCat уходит ВСЕМ (и самому прыгнувшему — его onCat подтвердит предикт).
+ */
+function jump(ws, payload = {}) {
+  const room = ws.room;
+  const cat = room && room.sockets.get(ws);
+  if (!room || !cat || room.fmt !== 'test') return;
+  const x = Math.round(Number(payload.x));
+  const y = Math.round(Number(payload.y));
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return;
+  const now = Date.now();
+  if (now - (cat.lastJump || 0) < JUMP_COOLDOWN_MS) return;
+  const dx = x - cat.x;
+  const dy = y - cat.y;
+  // Прямая вдоль одного из 8 направлений: одна из осей 0, длины равны либо одна 0.
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  const dist = Math.max(ax, ay);
+  const straight = (dx === 0 || dy === 0 || ax === ay) && (ax === 0 || ay === 0 || ax === ay);
+  if (!straight || dist < 1 || dist > JUMP_MAX_CELLS) return;
+  const sx = Math.sign(dx);
+  const sy = Math.sign(dy);
+  // Все клетки прямой обязаны быть в границах мира (промежуточные могут быть
+  // заняты/непроходимы — через них перелетаем, но за мир не выходим).
+  for (let i = 1; i <= dist; i++) {
+    const cx = cat.x + sx * i;
+    const cy = cat.y + sy * i;
+    if (cx < 1 || cy < 1 || cx > TEST_WIDTH || cy > TEST_HEIGHT) return;
+  }
+  if (!testWalkable(x, y) && !testEntryCell(x - 1, y - 1)) return;
+  if (occupied(room, x, y, cat.id)) return;
+  if (Math.abs(testElev(x, y) - testElev(cat.x, cat.y)) > JUMP_MAX_DROP) return;
+  cat.lastJump = now;
+  cat.lastMove = now; // шаг сразу после приземления не должен уходить в очередь
+  cat.x = x;
+  cat.y = y;
+  const sentDeg = normalizeDeg(payload.deg ?? payload.angle);
+  if (sentDeg != null) cat.deg = sentDeg;
+  clearAimTimer(cat);
+  cat.aimDirty = false;
+  cat.lastAim = now;
+  rememberCat(cat);
+  const patch = publicCat(cat, room);
+  send(ws, "update cat", patch);
+  broadcast(room, "update cat", patch, ws);
 }
 
 /**
@@ -2121,6 +2226,7 @@ function onMessage(ws, raw) {
   else if (event === "armor") armor(ws, payload || {});
   else if (event === "freemove") freeMove(ws, payload || {});
   else if (event === "cellsync") cellsync(ws, payload || {});
+  else if (event === "jump") jump(ws, payload || {});
   else if (event === "setmap") setMap(ws, payload || {});
   else if (event === "rooms") roomsInfo(ws, payload || {});
 }
