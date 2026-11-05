@@ -21,13 +21,42 @@ export const LAYOUT_KEY = 'catwar-battle-sim-layout-v1';
 /** Пределы растяжения колонок, px: узкие неудобны, широкие съедают поле. */
 export const CHAT_W = { min: 210, max: 560, def: 300 };
 export const LOG_W = { min: 170, max: 460, def: 230 };
+/** Минимальная ширина игрового поля, px: колонки чата и лога не имеют права
+ *  отжимать её у поля при узком окне — суммы ширин клампятся к окну. */
+export const FIELD_MIN = 360;
 
 export type Layout = { chatW: number; logW: number };
 
-export const clampLayout = (l: Layout): Layout => ({
-  chatW: Math.max(CHAT_W.min, Math.min(CHAT_W.max, Math.round(l.chatW))),
-  logW: Math.max(LOG_W.min, Math.min(LOG_W.max, Math.round(l.logW))),
-});
+/** Кламп ширин колонок. Шаг 1 — абсолютные пределы каждой. Шаг 2 — бюджет
+ *  окна: колонки вместе не должны отбирать у поля FIELD_MIN, поэтому их
+ *  сумма клампится к window.innerWidth − FIELD_MIN. windowWidth по
+ *  умолчанию — текущая ширина окна (вне браузера бюджет бесконечен,
+ *  поэтому шаг 2 выключен; в тестах можно задать ширину явно). */
+export const clampLayout = (l: Layout, windowWidth?: number): Layout => {
+  const vw = windowWidth ?? (typeof window === 'undefined' ? Infinity : window.innerWidth);
+  let chatW = Math.max(CHAT_W.min, Math.min(CHAT_W.max, Math.round(l.chatW)));
+  const logW0 = Math.max(LOG_W.min, Math.min(LOG_W.max, Math.round(l.logW)));
+  const budget = vw - FIELD_MIN; // сколько окна остаётся обеим колонкам вместе
+  const over = chatW + logW0 - budget;
+  if (over <= 0) return { chatW, logW: logW0 };
+  const minSum = CHAT_W.min + LOG_W.min;
+  if (budget < minSum) {
+    // Глубоко узкое окно: даже минимумы вдвоём не влезают — приоритет поля,
+    // обе колонки падают до минимумов (ниже минимумов не идём никогда).
+    return { chatW: CHAT_W.min, logW: LOG_W.min };
+  }
+  // Лишнее срезаем пропорционально «головам» колонок над их минимумами:
+  // у кого больше запас над минимумом, тот больше и жмётся. chatW забирает
+  // свою долю, logW — остаток бюджета, чтобы сумма была ровно budget
+  // (поле получает свои FIELD_MIN ровно, без округлительных потерь).
+  const headChat = chatW - CHAT_W.min; // голова чата над минимумом
+  const headLog = logW0 - LOG_W.min; // голова лога над минимумом
+  const headSum = headChat + headLog; // ≤ количества лишнего: budget ≥ minSum
+  const shrink = headSum - over; // сколько от голов останется после среза
+  chatW = CHAT_W.min + (headSum > 0 ? Math.round((shrink * headChat) / headSum) : 0);
+  const logW = Math.max(LOG_W.min, budget - chatW);
+  return { chatW, logW };
+};
 
 export const loadLayout = (): Layout => {
   if (typeof window === 'undefined') return { chatW: CHAT_W.def, logW: LOG_W.def };
