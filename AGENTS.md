@@ -32,7 +32,7 @@ All five must be green. If `arch:check` fails on a new file — do not grow the 
 | --- | --- | --- |
 | Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
 | Room server | `server.js` (2701) | domains by line: config 1–169, geometry 300–747, sanitize 749–1137, setmap 1139–1199, persistence 1201–1311, rooms/join 1313–1616, movement 1618–1730, skin/aim 1732–1813, combat 1810–2022, chat 2024–2105, dummy/rab/block/space 2107–2261, atmosphere 2263–2369, dispatch 2540–2701 |
-| Canvas engine | `src/components/sim/simulator.tsx` (8221) | 4 belts: helpers 1–1361 → state+net 1362–3510 → main rAF 3510–6214 → input/strike/JSX 6232–8221 |
+| Canvas engine | `src/components/sim/simulator.tsx` (7523) | W5a stage 1 carved the pure helper belt out to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model — ARCHITECTURE §2; targeting.pickStrikeTarget mirrors `server.js` aimedNeighbor, ARCHITECTURE §4). Kept here: HUD dial, ColResize, FloatLabel/Step/Engine types, remote-draw helpers (consume lib/net/move-book). Belts: module 1–663 → state+net 664–2809 → main rAF 2810–5516 → input/strike/JSX 5532–7523 |
 | Combat model, sprites, armor | `src/lib/sim/settings.ts` (1122) | ARMOR_CURVE, strike zones, damage levels; 54 exports |
 | «Elision» location | `src/lib/sim/test-field.ts` (1822) | walkability, route graph, edge render, paint; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
 | Location config | `src/lib/sim/test-map.ts` (634) | v1/v2 + editor limits (mirror of server-side sanitize) |
