@@ -272,6 +272,22 @@ export default function Simulator() {
     setLayout(saved);
     layoutRef.current = saved;
   }, []);
+  // Ресайз окна: сохранённые (или растянутые) ширины колонок могут не влезать
+  // в новое окно — пере-клампим их к нему, чтобы поле не выжималось в ноль.
+  // Стейт трогаем только когда кламп реально меняет числа, иначе каждый
+  // resize-тик дёргал бы рендер зря.
+  useEffect(() => {
+    const onResize = () => {
+      const cur = layoutRef.current;
+      const next = clampLayout(cur);
+      if (next.chatW !== cur.chatW || next.logW !== cur.logW) {
+        layoutRef.current = next;
+        setLayout(next);
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   /** Панель настроек теперь выдвижная: не отдаёт поле постоянной колонке. */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Формат поля комнаты: «test» — лужайка/переход/закуток с камерой и свободной ходьбой. */
