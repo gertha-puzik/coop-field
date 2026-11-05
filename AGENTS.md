@@ -31,7 +31,7 @@ All five must be green. If `arch:check` fails on a new file — do not grow the 
 | Task leads to | File | What is inside |
 | --- | --- | --- |
 | Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
-| Room server | `server.js` (2701) | domains by line: config 1–169, geometry 300–747, sanitize 749–1137, setmap 1139–1199, persistence 1201–1311, rooms/join 1313–1616, movement 1618–1730, skin/aim 1732–1813, combat 1810–2022, chat 2024–2105, dummy/rab/block/space 2107–2261, atmosphere 2263–2369, dispatch 2540–2701 |
+| Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 272 (W3 canon), testmap 493, world 598, sanitize 95, room 412, movement 268, combat 271, dummy-rab 133, atmo 114, persist 131, net 199 — domain map with details in ARCHITECTURE.md §2 |
 | Canvas engine | `src/components/sim/simulator.tsx` (7523) | W5a stage 1 carved the pure helper belt out to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model — ARCHITECTURE §2; targeting.pickStrikeTarget mirrors `server.js` aimedNeighbor, ARCHITECTURE §4). Kept here: HUD dial, ColResize, FloatLabel/Step/Engine types, remote-draw helpers (consume lib/net/move-book). Belts: module 1–663 → state+net 664–2809 → main rAF 2810–5516 → input/strike/JSX 5532–7523 |
 | Combat model, sprites, armor | `src/lib/sim/settings.ts` (1122) | ARMOR_CURVE, strike zones, damage levels; 54 exports |
 | «Elision» location | `src/lib/sim/test-field.ts` (1822) | walkability, route graph, edge render, paint; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
@@ -41,12 +41,12 @@ All five must be green. If `arch:check` fails on a new file — do not grow the 
 | Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; the real password arbiter is the server (setmap) |
 
 Where to start common tasks:
-- **"Add/change an event"** → both registries first (`server/protocol.js` + `src/lib/net/protocol.ts`; they must stay mirrored) → `server.js` dispatcher (2540+) and the domain handler →
+- **"Add/change an event"** → both registries first (`server/protocol.js` + `src/lib/net/protocol.ts`; they must stay mirrored) → `server/net.js` onMessage dispatcher and the domain handler in `server/*.js` →
   `src/lib/net/coop.ts` (validator+dispatch) → a case in `scripts/test-ws.mjs` (room contract) → update the tables in this file and ARCHITECTURE §3 in the same PR
   (CI gates `check:protocol` + `test:protocol-parity` verify all of it).
 - **"Combat/damage/armor"** → `settings.ts` + the server side — both read the same registry set since W3: ARMOR_CURVE lives in `settings.ts` (re-exported by `protocol.ts`), server mirrors it in `server/protocol.js`, `test:protocol-parity` pins the mirror.
 - **"Settings/HUD"** → ARCHITECTURE §2 (simulator.tsx belts), SettingsPanel pattern (25 props).
-- **"Map/editor"** → `test-map.ts` (client) + sanitize in `server.js` (749+) — limits are single-source now: TEST_MAP_LIMITS is re-exported by `protocol.ts` and mirrored in `server/protocol.js` (parity in CI).
+- **"Map/editor"** → `test-map.ts` (client) + sanitize in `server/testmap.js` (sanitizeTestMap) — limits are single-source now: TEST_MAP_LIMITS is re-exported by `protocol.ts` and mirrored in `server/protocol.js` (parity in CI).
 
 ## Room contract
 
@@ -117,7 +117,7 @@ Invariants (violating one = a bug):
 | --- | --- | --- |
 | `PORT` / `HOST` | listen socket | 3780 (prod: 8787 behind nginx) / 0.0.0.0 |
 | `REQUIRE_ORIGIN` | enforce the browser Origin check | prod = 1; `ALLOWED_ORIGINS` holds the whitelist |
-| `ADMIN_PASS` | setmap editor password | legacy default in server.js; on prod override via the systemd unit (template in `deploy/vps/coop-field.service`) |
+| `ADMIN_PASS` | setmap editor password | legacy default in server/config.js; on prod override via the systemd unit (template in `deploy/vps/coop-field.service`) |
 | `DATA_DIR` | data (cat positions, map, backups) | `data/` |
 
 Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod endpoint

@@ -55,6 +55,10 @@ jobs:
       # == золотые значения; под node 22 strip-types исполним, под старше — SKIP.
       - name: Паритет протокола
         run: npm run test:protocol-parity
+      # Смоук модулей сервера (W4): каждый server/*.js импортируется без сети,
+      # чистые функции дают золотые значения старого монолитного server.js.
+      - name: Смоук модулей сервера
+        run: npm run test:server-modules
       - name: Версия ws в двух lockfile
         run: node scripts/check-ws-versions.mjs
       # Интеграционный тест: сервер поднимается сам, проверяет очередь шагов

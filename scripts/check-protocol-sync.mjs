@@ -7,14 +7,15 @@
  *     «### Client → server (22)» и «### Server → client (22)» (первый столбец,
  *     в бэктиках) совпадают с реестрами server/protocol.js — как множества
  *     (порядок держит test-protocol-parity с клиентской стороной).
- *  2. БЕЗ ДУБЛЕЙ: server.js не содержит строковых литералов имён событий в КОДЕ
+ *  2. БЕЗ ДУБЛЕЙ: серверный код (server.js — тонкий вход W4 + модули
+ *     server/*.js) не содержит строковых литералов имён событий в КОДЕ
  *     (комментарии не в счёт) — имена ходят только импортом EV.* из
  *     server/protocol.js. Иначе правка канона расходится со скопированной
  *     строкой тихо.
  *
  * Запуск: node scripts/check-protocol-sync.mjs (npm-раннер: npm run check-protocol-sync).
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import * as protocol from "../server/protocol.js";
@@ -73,13 +74,19 @@ function diffLabel(kind, doc, registry) {
 diffLabel("client→server", docClient, regClient);
 diffLabel("server→client", docServer, regServer);
 
-/* ---------- 2. server.js: имена только через импорт EV.* ---------- */
+/* ---------- 2. серверный код: имена только через импорт EV.* ---------- */
+// С волны W4 серверный код живёт не только в server.js (тонкий вход), но и в
+// модулях server/*.js — гейт обязан сканировать их все, иначе строка-дубликат
+// могла бы тихо уехать в модуль мимо проверки.
 
-const serverJs = readFileSync(path.join(ROOT, "server.js"), "utf8");
-
-if (!/from\s+"\.\/server\/protocol\.js"/.test(serverJs)) {
-  problems.push("server.js не импортирует \"./server/protocol.js\": имена событий обязаны ходить импортом (W3-канон).");
-}
+const serverFiles = [
+  "server.js",
+  // protocol.js — сам канон: литералы имён живут в нём, сканировать его не нужно.
+  ...readdirSync(path.join(ROOT, "server"))
+    .filter((f) => f.endsWith(".js") && f !== "protocol.js")
+    .sort()
+    .map((f) => `server/${f}`),
+];
 
 /** Срезаем комментарии (построчные и блочные), не трогая содержимое строк:
  *  трекаем кавычки, чтобы `http://` внутри строки не выглядел как комментарий. */
@@ -133,24 +140,31 @@ function stripComments(text) {
   return out;
 }
 
-const codeOnly = stripComments(serverJs);
-const codeLines = codeOnly.split("\n");
 const allNames = new Set([...regClient, ...regServer]);
 const seen = new Map();
-for (let ln = 0; ln < codeLines.length; ln++) {
-  const re = /(["'`])([^"'`]+)\1/g;
-  let m;
-  while ((m = re.exec(codeLines[ln])) !== null) {
-    if (allNames.has(m[2])) {
-      const key = m[2];
-      if (!seen.has(key)) seen.set(key, []);
-      seen.get(key).push(ln + 1);
+let protocolImported = false;
+for (const rel of serverFiles) {
+  const text = readFileSync(path.join(ROOT, rel), "utf8");
+  if (/from\s+"(\.|\.\.)\/(server\/)?protocol\.js"/.test(text)) protocolImported = true;
+  const codeLines = stripComments(text).split("\n");
+  for (let ln = 0; ln < codeLines.length; ln++) {
+    const re = /(["'`])([^"'`]+)\1/g;
+    let m;
+    while ((m = re.exec(codeLines[ln])) !== null) {
+      if (allNames.has(m[2])) {
+        const key = m[2];
+        if (!seen.has(key)) seen.set(key, []);
+        seen.get(key).push(`${rel}:${ln + 1}`);
+      }
     }
   }
 }
-for (const [name, lines] of seen) {
+if (!protocolImported) {
+  problems.push("Серверный код не импортирует \"server/protocol.js\": имена событий обязаны ходить импортом (W3-канон), вход server.js или модули server/*.js).");
+}
+for (const [name, places] of seen) {
   problems.push(
-    `server.js:${lines.join(",")}: имя события "${name}" продублировано строкой в коде — импортируй его из server/protocol.js (EV.*), литерал в коде расходится с каноном тихо.`
+    `${places.join(",")}: имя события "${name}" продублировано строкой в коде — импортируй его из server/protocol.js (EV.*), литерал в коде расходится с каноном тихо.`
   );
 }
 
@@ -166,5 +180,5 @@ if (problems.length) {
 
 console.log(
   `protocol sync — зелёный: док-таблицы AGENTS.md (${regClient.length}+${regServer.length} событий) совпадают с server/protocol.js;` +
-    ` дублей литералов в server.js нет (${Object.keys(protocol.EV).length} имён в одном источнике).`
+    ` дублей литералов в серверном коде нет (${serverFiles.length} файлов, ${Object.keys(protocol.EV).length} имён в одном источнике).`
 );
