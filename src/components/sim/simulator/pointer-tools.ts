@@ -24,6 +24,7 @@ export interface PointerToolsDeps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   camRef: RefObject<{ x: number; y: number; init: boolean }>;
   camFxRef: RefObject<{ z: number; sq: number; dp: number }>;
+  cursorScreenRef: RefObject<{ x: number; y: number } | null>;
   cursorWorldRef: RefObject<{ x: number; y: number } | null>;
   dirtPaintingRef: RefObject<boolean>;
   dragRef: RefObject<{
@@ -79,6 +80,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     canvasRef,
     camRef,
     camFxRef,
+    cursorScreenRef,
     cursorWorldRef,
     dirtPaintingRef,
     dragRef,
@@ -119,8 +121,15 @@ export function buildPointerTools(deps: PointerToolsDeps) {
   const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const cv = canvasRef.current!;
     const rect = cv.getBoundingClientRect();
-    const mx = ((ev.clientX - rect.left) * cv.width) / rect.width;
-    const my = ((ev.clientY - rect.top) * cv.height) / rect.height;
+    // Хит проецируется в МИР поля (cols×cellW), а не в буфер канваса: в grid-формате
+    // буфер = мир×k (k — devicePixelRatio с капом 2, см. цикл отрисовки), а рисунок
+    // идёт в мировых координатах через ctx.setTransform(k). Проекция по размеру буфера
+    // умножала точку ещё на k — на ретине подсветка и клики уходили ровно на k клеток
+    // правее-ниже курсора. В «тест»-формате результат ниже всё равно перезаписывается
+    // обратной проекцией камеры, так что правка его не затрагивает.
+    const fw = settingsRef.current.field;
+    const mx = ((ev.clientX - rect.left) * fw.cols * fw.cellW) / rect.width;
+    const my = ((ev.clientY - rect.top) * fw.rows * fw.cellH) / rect.height;
     return { mx, my };
   };
 
@@ -167,6 +176,11 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const cvp = canvasRef.current;
       if (cvp) {
         const rect = cvp.getBoundingClientRect();
+        // Последняя экранная позиция курсора (css px от угла канваса): кадр
+        // пересчитывает по ней мировую точку прицела ПОСЛЕ движения камеры —
+        // иначе в прыжке/приседе камера уезжает под неподвижным курсором,
+        // а прицел, посчитанный только по событию, отлипает от видимой точки.
+        cursorScreenRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
         // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
         const fxc = camFxRef.current;
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;

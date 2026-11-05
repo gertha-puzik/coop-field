@@ -427,6 +427,11 @@ export default function Simulator() {
    *  прицел прыжка — конечная точка привязана к мышке, игрок сам выбирает
    *  дистанцию в пределах максимальной. */
   const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
+  /** Последняя экранная позиция курсора над канвасом (css px от угла): камера
+   *  в «тесте» уезжает под курсором каждый кадр (сглаживание за котом), поэтому
+   *  мировая точка прицела пересчитывается из неё по свежей камере в цикле —
+   *  иначе прицел отлипает от неподвижного курсора в прыжке/приседе. */
+  const cursorScreenRef = useRef<{ x: number; y: number } | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
    * Своя клетка на сервере и шаги, которые уже нарисовали, но ещё не подтвердили.
@@ -2087,6 +2092,19 @@ export default function Simulator() {
             camRef.current.x += (cxT - camRef.current.x) * kc;
             camRef.current.y += (cyT - camRef.current.y) * kc;
           }
+        }
+        // Прицел прыжка должен совпадать с картинкой кадра, а не с камерой на
+        // момент последнего события мыши: в прыжке/приседе камера догоняет кота
+        // каждый кадр, и точка мира под неподвижным курсором уплывает без
+        // движения мыши. Пересчитываем мировую точку курсора по свежей камере
+        // (та же формула, что и в onMove) — кольцо посадки и сам прыжок
+        // целятся ровно туда, куда игрок видит под курсором на этом кадре.
+        const csL = cursorScreenRef.current;
+        if (csL) {
+          const fxcL = camFxRef.current;
+          const wxL = (csL.x - vw / 2) / fxcL.z + camRef.current.x;
+          const wyL = (csL.y - vh / 2) / (fxcL.z * fxcL.sq) + camRef.current.y;
+          cursorWorldRef.current = groundPointAtWorld(wxL, wyL, cellW, cellH);
         }
       }
 
@@ -3997,6 +4015,7 @@ export default function Simulator() {
     canvasRef,
     camRef,
     camFxRef,
+    cursorScreenRef,
     cursorWorldRef,
     dirtPaintingRef,
     dragRef,
