@@ -378,10 +378,20 @@ export class Atmosphere {
     // лежит в той же обёртке без инлайн-стилей и всегда честный.
     const cw = this.world.clientWidth;
     const ch = this.world.clientHeight;
-    if (cw > 0 && ch > 0 && (cw !== this.w || ch !== this.h)) {
+    // dpr живёт в зуме браузера: перечитываем независимо от мира — Ctrl+/- и
+    // перетаскивание окна на монитор с другой плотностью меняют devicePixelRatio
+    // на лету. Мир и HUD перечитывают его каждый кадр, а Pixi-слой получал
+    // resolution один раз в init(): при живой смене зума буфер мира обновляется,
+    // а backing-разрешение Пикси остаётся старым — тонировка расфокусируется
+    // (зум 1→2 — мыло, 2→1 — перерасход буфера). Сверяем каждый кадр и при
+    // смене отдаём новое разрешение третьим аргументом resize: в pixi 8.22 он
+    // поддержан (AbstractRenderer.resize пересоздаёт буфер и пересчитывает screen).
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (cw > 0 && ch > 0 && (cw !== this.w || ch !== this.h || dpr !== this.dpr)) {
       this.w = cw;
       this.h = ch;
-      app.renderer.resize(cw, ch);
+      this.dpr = dpr;
+      app.renderer.resize(cw, ch, dpr);
     }
     if (this.w <= 0 || this.h <= 0) return;
 
