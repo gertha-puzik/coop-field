@@ -101,13 +101,17 @@ fi
 
 sudo /usr/bin/systemctl restart coop-field
 
+# Холодный старт под swap-давлением занимает >30 с (замер 2026-11-05: баннер
+# слушания появился через 32 с после рестарта, прод жив и здоров). Окно
+# health — до 2 минут, тик 2 с; прежних 20×0.3 с не хватало, и деплой
+# краснел на вполне рабочем сервере.
 ok=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$HEALTH_PORT/health" >/tmp/coop-health.json; then
     ok=1
     break
   fi
-  sleep 0.3
+  sleep 2
 done
 
 if [ "$ok" -ne 1 ]; then
