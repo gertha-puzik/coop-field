@@ -5,6 +5,17 @@
 # Путь к node и HOME сверните с фактическими (здесь — локальная копия node
 # в /opt/coop-field/.node, как в PATH скрипта apply.sh).
 # Журнал: journalctl -u coop-field -f
+#
+# Пароль редактора карты (событие setmap). Значение по умолчанию (1946) пока
+# оставлено в коде — решение заказчицы 2026-11-05. СМЕНА позже: раскомментировать
+# строку ниже и вписать новое значение (в репо секрет не вносится, только здесь
+# на сервере). Пока строка закомментирована — сервер работает на дефолте из кода:
+# Environment=ADMIN_PASS=ВОТ-ТУТ-НОВЫЙ-ПАРОЛЬ-ВЛАДЕЛЬЦА
+#
+# REQUIRE_ORIGIN=1 — не пускать WebSocket-клиентов без Origin-заголовка (боты):
+# Environment=REQUIRE_ORIGIN=1
+#
+# После изменения юнита: sudo systemctl daemon-reload && sudo systemctl restart coop-field
 
 [Unit]
 Description=coop-field — комната WebSocket

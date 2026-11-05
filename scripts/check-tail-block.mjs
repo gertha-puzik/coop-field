@@ -3,12 +3,22 @@ import { WebSocket } from "ws";
 /**
  * Живая проверка «хвост против блока» против указанного сервера.
  * Использование: node scripts/check-tail-block.mjs [wsUrl]
- *   по умолчанию — прод (wss://coop.89-232-184-77.sslip.io); для локали:
- *   node scripts/check-tail-block.mjs ws://127.0.0.1:3780
+ *   по умолчанию — локальный сервер ws://127.0.0.1:3780;
+ *   прод — ТОЛЬКО явным флагом: node scripts/check-tail-block.mjs --prod
+ *   (endpoint wss://coop.89-232-184-77.sslip.io, перед стартом печатается
+ *   предупреждение «–– ПРАВКА ПРОДА»; env-override прод-адреса не предусмотрен).
  * Правило: блок проводит любой удар в «Лапы», КРОМЕ хвоста — удар в хвост
  * проходит хвостом и по стоящему блоку, и когда блок встал в полёте.
  * Регресс-тесты тех же правил — в scripts/test-ws.mjs (блок «Хвост и блок»). */
-const url = process.argv[2] || "wss://coop.89-232-184-77.sslip.io";
+const LOCAL_URL = "ws://127.0.0.1:3780";
+const PROD_URL = "wss://coop.89-232-184-77.sslip.io";
+const wantProd = process.argv.includes("--prod");
+if (wantProd) console.log("–– ПРАВКА ПРОДА:", PROD_URL);
+if (!wantProd && process.argv[2] === PROD_URL) {
+  console.error("прод-эндпоинт доступен только с явным флагом --prod");
+  process.exit(1);
+}
+const url = wantProd ? PROD_URL : (process.argv[2] || LOCAL_URL);
 const room = `tailchk-${Date.now().toString(36)}`;
 
 function client(name) {
