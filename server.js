@@ -1002,8 +1002,9 @@ function roomOf(code) {
       dummyLast: null,
       dummyGrab: null,
       rab: null,
-      // Атмосфера комнаты — общая для всех: время суток + погода (событие «atmo»).
-      atmo: { dp: 'day', w: 'sun' },
+      // Атмосфера комнаты — общая для всех: непрерывный цикл суток + погода.
+      // Инициализируется лениво (atmoState): якорь уходит в снапшоте и событиями.
+      atmo: null,
     });
   }
   return rooms.get(key);
@@ -1137,8 +1138,8 @@ function fieldPayload(room) {
       ? { on: true, x: room.dummy.x, y: room.dummy.y, sprite: room.dummy.sprite, grab: room.dummyGrab || null }
       : null,
     rab: room.rab ? { on: true } : null,
-    // Атмосфера комнаты: время суток и погода — новичок видит то же, что и все.
-    atmo: room.atmo || { dp: 'day', w: 'sun' },
+    // Атмосфера комнаты: якорь цикла суток и погоды — новичок видит то же, что и все.
+    atmo: atmoAnchor(room),
   };
 }
 
@@ -1880,12 +1881,64 @@ function space(ws, payload = {}) {
 
 const ATMO_DAYPARTS = new Set(["morning", "day", "evening", "night"]);
 const ATMO_WEATHERS = new Set(["sun", "cloud", "rain"]);
+const ATMO_PHASE_LIST = ["morning", "day", "evening", "night"];
+/** Темпы по умолчанию: часть суток — 7 минут (полный цикл — 28), погода — 12 минут. */
+const ATMO_PHASE_MS_DEF = 7 * 60_000;
+const ATMO_WEATHER_MS_DEF = 12 * 60_000;
+/** Границы темпов: часть суток 1–120 минут, погода 2–240 минут. */
+const ATMO_PHASE_MS_MIN = 60_000;
+const ATMO_PHASE_MS_MAX = 120 * 60_000;
+const ATMO_WEATHER_MS_MIN = 2 * 60_000;
+const ATMO_WEATHER_MS_MAX = 240 * 60_000;
 
 /**
- * Атмосфера комнаты — общая для всех: время суток (dp) и погода (w).
- * Клиент → ["atmo", { dp, w }]; сервер проверяет значения, запоминает в комнате
- * и рассылает ВСЕМ, включая отправителя (эхо служит подтверждением). Новички
- * получают атмосферу в снапшоте field. Менять может любой игрок в комнате.
+ * Стартовое состояние атмосферы новой комнаты: цикл открывается серединой «дня»,
+ * погода — солнечная, её отсчёт пошёл сейчас.
+ */
+function atmoDefaults(now) {
+  return {
+    cs: now - Math.round(1.5 * ATMO_PHASE_MS_DEF), // floor(1.5)=1 → «день»
+    pl: ATMO_PHASE_MS_DEF,
+    wl: ATMO_WEATHER_MS_DEF,
+    w: "sun",
+    ws: now,
+  };
+}
+
+const atmoPhaseIdx = (a, now) => Math.floor((((now - a.cs) / a.pl) % 4) + 4) % 4;
+
+/**
+ * Текущее состояние атмосферы комнаты. Погода доезжает лениво: если её интервал
+ * истёк — выбирается другая (из двух оставшихся), отсчёт начинается заново.
+ * Рассылку смен делает тикер (atmoTimer) и обработчики atmo/atmoset.
+ */
+function atmoState(room, now = Date.now()) {
+  const a = room.atmo || (room.atmo = atmoDefaults(now));
+  if (now - a.ws >= a.wl) {
+    const others = [...ATMO_WEATHERS].filter((x) => x !== a.w);
+    a.w = others[Math.floor(Math.random() * others.length)];
+    a.ws = now;
+  }
+  return a;
+}
+
+/** Якорь атмосферы для рассылки: часы цикла + погода + часть суток на момент now. */
+function atmoAnchor(room, now = Date.now()) {
+  const a = atmoState(room, now);
+  return { t: now, cs: a.cs, pl: a.pl, wl: a.wl, w: a.w, ws: a.ws, dp: ATMO_PHASE_LIST[atmoPhaseIdx(a, now)] };
+}
+
+function atmoBroadcast(room, now = Date.now()) {
+  broadcast(room, "atmo", atmoAnchor(room, now), null);
+}
+
+/**
+ * Атмосфера комнаты — общая для всех и живёт сама: сутки едут непрерывно
+ * (утро → день → вечер → ночь → утро), погода меняется по своему интервалу.
+ * Клиент → ["atmo", { dp, w }] — перемотать цикл к середине части суток dp и
+ * поставить погоду w (кнопки в панели). Сервер переприменяет значения и шлёт
+ * ВСЕМ якорь (включая отправителя — эхо служит подтверждением). Новички получают
+ * якорь в снапшоте field. Менять может любой игрок в комнате.
  */
 function atmo(ws, payload = {}) {
   const room = ws.room;
@@ -1893,8 +1946,45 @@ function atmo(ws, payload = {}) {
   const dp = String(payload.dp || "");
   const w = String(payload.w || "");
   if (!ATMO_DAYPARTS.has(dp) || !ATMO_WEATHERS.has(w)) return;
-  room.atmo = { dp, w };
-  broadcast(room, "atmo", { dp, w }, null);
+  const now = Date.now();
+  const a = atmoState(room, now);
+  a.cs = now - (ATMO_PHASE_LIST.indexOf(dp) + 0.5) * a.pl;
+  a.w = w;
+  a.ws = now;
+  atmoBroadcast(room, now);
+}
+
+/**
+ * Клиент → ["atmoset", { pl, wl }] — длительности части суток (pl) и интервала
+ * погоды (wl) в минутах. Общие для комнаты: применяет тот, кто повернул ползунок,
+ * остальные получают новый якорь рассылкой. Позиция суток при смене темпа
+ * сохраняется (день не прыгает в ночь), отсчёт погоды начинается заново.
+ */
+function atmoset(ws, payload = {}) {
+  const room = ws.room;
+  if (!room || !room.sockets.get(ws)) return;
+  const plMin = Number(payload.pl);
+  const wlMin = Number(payload.wl);
+  // Отсутствующее/мусорное значение (NaN, 0, null) просто не применяется.
+  const hasPl = Number.isFinite(plMin) && plMin > 0;
+  const hasWl = Number.isFinite(wlMin) && wlMin > 0;
+  if (!hasPl && !hasWl) return;
+  const now = Date.now();
+  const a = atmoState(room, now);
+  if (hasPl) {
+    const pl = Math.round(Math.min(ATMO_PHASE_MS_MAX, Math.max(ATMO_PHASE_MS_MIN, plMin * 60_000)));
+    if (pl !== a.pl) {
+      // Сохраняем позицию в цикле (0..1 долю полных суток), чтобы картинка не прыгала.
+      const frac = ((((now - a.cs) / (a.pl * 4)) % 1) + 1) % 1;
+      a.pl = pl;
+      a.cs = now - frac * pl * 4;
+    }
+  }
+  if (hasWl) {
+    a.wl = Math.round(Math.min(ATMO_WEATHER_MS_MAX, Math.max(ATMO_WEATHER_MS_MIN, wlMin * 60_000)));
+    a.ws = now;
+  }
+  atmoBroadcast(room, now);
 }
 
 /** Темп рассылки свободных позиций: чаще — спам, реже — рваное движение у соседей. */
@@ -2027,6 +2117,7 @@ function onMessage(ws, raw) {
   else if (event === "block") block(ws, payload || {});
   else if (event === "space") space(ws, payload || {});
   else if (event === "atmo") atmo(ws, payload || {});
+  else if (event === "atmoset") atmoset(ws, payload || {});
   else if (event === "armor") armor(ws, payload || {});
   else if (event === "freemove") freeMove(ws, payload || {});
   else if (event === "cellsync") cellsync(ws, payload || {});
@@ -2124,6 +2215,28 @@ server.listen(PORT, HOST, () => {
 /** Периодический слив книги позиций: рестарт по kill не теряет последние шаги. */
 const catFlushTimer = setInterval(() => flushCatBook(), 2000);
 catFlushTimer.unref();
+
+/**
+ * Тикер атмосферы: доезжающая по интервалу смена погоды (лениво посчитанная в
+ * atmoState) уходит всем рассылкой якоря; заодно — смена части суток (клиенты
+ * едут сами, но якорь держит их синхронно с серверными часами). Раз в 5 секунд —
+ * с запасом к точности 7-минутных частей, нагрузка нулевая.
+ */
+const atmoTimer = setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (room.sockets.size === 0) continue;
+    // Снимаем «до» по значению: atmoState двигает погоду на месте, в том же объекте.
+    const a = room.atmo;
+    const dpBefore = a ? ATMO_PHASE_LIST[atmoPhaseIdx(a, now)] : null;
+    const wBefore = a ? a.w : null;
+    const st = atmoState(room, now); // лениво двигает погоду, если срок истёк
+    if (dpBefore !== ATMO_PHASE_LIST[atmoPhaseIdx(st, now)] || wBefore !== st.w) {
+      atmoBroadcast(room, now);
+    }
+  }
+}, 5000);
+atmoTimer.unref();
 
 /** Остановка: дожимаем книгу позиций и карту (если расходится с диском) в файлы. */
 function flushOnShutdown() {

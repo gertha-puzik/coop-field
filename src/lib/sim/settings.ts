@@ -228,6 +228,34 @@ export const WEATHER_LABEL: Record<WeatherKind, string> = {
   rain: 'Дождь',
 };
 
+/* ---------- часы цикла суток ---------- */
+
+/**
+ * Непрерывный прогресс суток (0..4: 0 — утро, 1 — день, 2 — вечер, 3 — ночь)
+ * по якорю комнаты: cs — момент начала цикла (Date.now сервера), phaseMs —
+ * длительность одной части суток. Чистая функция: часы цикла живут на сервере,
+ * клиент считает позицию по своим часам — расхождение в секунды даёт долю
+ * процента части суток, на картинке это незаметно.
+ */
+export function dayProgressAt(cs: number, phaseMs: number, now: number): number {
+  const cyc = ((((now - cs) / (phaseMs * 4)) % 1) + 1) % 1;
+  return cyc * 4;
+}
+
+/** Часть суток для непрерывного прогресса (0..4, корректно и для отрицательных). */
+export function dayPartOfProgress(p: number): DayPart {
+  return DAYPARTS[((Math.floor(p) % 4) + 4) % 4];
+}
+
+/**
+ * Начало цикла, при котором «сейчас» — середина заданной части суток: так работают
+ * кнопки «утро/день/вечер/ночь» (перемотка цикла) и стартовый якорь без сети.
+ */
+export function cycleStartFor(dayPart: DayPart, phaseMs: number, now: number): number {
+  const idx = Math.max(0, DAYPARTS.indexOf(dayPart));
+  return now - (idx + 0.5) * phaseMs;
+}
+
 /** Все спрайты, которые нужно предзагрузить для поля: персонажи (в том числе как
  *  скины манекена) + мишень РАБ. */
 export const FIELD_SPRITES: SpriteMeta[] = [...SPRITES, RAB_SPRITE];
@@ -313,6 +341,15 @@ export interface SimSettings {
   };
   hud: {
     show: boolean;
+  };
+  /** Атмосфера: темп автоматического цикла суток и погоды. В комнате значения
+   *  общие (их держит сервер и рассылает всем), локальные — только стартовые и
+   *  для поля без сети. */
+  atmo: {
+    /** Длительность одной части суток (утро/день/вечер/ночь), минут. */
+    phaseMin: number;
+    /** Интервал смены погоды, минут. */
+    weatherMin: number;
   };
   /** Манекены на поле убраны: массив всегда пуст, оставлен ради совместимости типа и старых сохранений. */
   dummies: DummyConfig[];
@@ -438,6 +475,12 @@ export const DEFAULT_SETTINGS: SimSettings = {
   },
   hud: {
     show: false,
+  },
+  atmo: {
+    // По умолчанию часть суток длится 7 минут (полный цикл — 28 минут),
+    // погода меняется раз в 12 минут.
+    phaseMin: 7,
+    weatherMin: 12,
   },
   dummies: [],
   controlled: 'main',
@@ -962,6 +1005,11 @@ export function mergeSettings(raw: any): SimSettings {
         slowLegacy === 'full' ? d.slowdown.maxSlowdown : num(rawSlow.maxSlowdown, d.slowdown.maxSlowdown),
     },
     hud: { ...d.hud, ...(raw?.hud ?? {}) },
+    // Темп цикла атмосферы: часть суток 1–120 минут, погода 2–240 минут.
+    atmo: {
+      phaseMin: Math.min(120, Math.max(1, Math.round(num(raw?.atmo?.phaseMin, d.atmo.phaseMin)))),
+      weatherMin: Math.min(240, Math.max(2, Math.round(num(raw?.atmo?.weatherMin, d.atmo.weatherMin)))),
+    },
     // манекены убраны с поля: старые сохранения не восстанавливаем, массив всегда пуст
     dummies: [],
     // управление не сохраняется между сессиями: после загрузки всегда играем своим котом

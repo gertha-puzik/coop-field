@@ -28,8 +28,23 @@ export function roomTitle(code: string): string {
 export type CoopRoomInfo = { id: string; count: number; logins: string[] };
 
 /** Атмосфера комнаты: время суток + погода. Общая для всех игроков; хранится на
- *  сервере, меняется событием «atmo», новичкам уходит в снапшоте field. */
+ *  сервере, меняется событиями «atmo» (перемотка) и «atmoset» (длительности),
+ *  новичкам уходит в снапшоте field. */
 export type CoopAtmo = { dp: DayPart; w: WeatherKind };
+
+/** Якорь атмосферы — серверные часы непрерывного цикла суток и погоды. Клиент
+ *  считает позицию суток сам по своим часам (dayProgressAt), погода живёт
+ *  дискретно: w — текущая, ws — момент её начала, wl — интервал смены.
+ *  t — момент снимка (серверные Date.now()); cs — начало текущего цикла суток;
+ *  pl — длительность одной части суток; dp — часть суток на момент t (для
+ *  логов и старых клиентов). */
+export type CoopAtmoAnchor = CoopAtmo & {
+  t: number;
+  cs: number;
+  pl: number;
+  wl: number;
+  ws: number;
+};
 
 export type CoopCat = {
   id: number;
@@ -117,7 +132,7 @@ export type CoopHandlers = {
     /** Конфиг локации «теста»: зоны с клетками и зелёные зоны (рисование поля, редактор). */
     map?: TestMap;
     /** Атмосфера комнаты: время суток и погода (общие для всех). */
-    atmo?: CoopAtmo;
+    atmo?: CoopAtmoAnchor;
     /** Манекен «ПОЧУХАТЬ» комнаты: null — выключен. */
     dummy?: CoopDummyState | null;
     /** Боевая мишень «РАБ» комнаты: null — выключена. */
@@ -144,8 +159,9 @@ export type CoopHandlers = {
   onRabState?: (state: CoopRabState) => void;
   /** Кто-то другой ударил мишень РАБ — показать качание и урон (бьющему эхо не приходит). */
   onRabHit?: (info: CoopRabHit) => void;
-  /** Атмосфера комнаты сменилась (или пришла при входе): время суток и погода. */
-  onAtmo?: (info: CoopAtmo) => void;
+  /** Атмосфера комнаты: якорь непрерывного цикла суток + погода (при входе —
+   *  снапшот, при смене — рассылка всем, включая отправителя). */
+  onAtmo?: (info: CoopAtmoAnchor) => void;
   /** Кто-то встал в блок / вышел из него (отправителю эхо не приходит). */
   onBlock?: (info: { id: number; on: boolean }) => void;
   /** Чужой кот присел на пробел / отпустил его (отправителю эхо не приходит).
@@ -357,7 +373,7 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (!Array.isArray(msg)) return;
       const [event, payload] = msg as [string, unknown];
       if (event === "you") handlers.onYou?.(payload as CoopCat);
-      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmo; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      else if (event === "field") handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmoAnchor; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
       else if (event === "map") {
         // Конфиг локации проходит ту же проверку, что и на сервере:
         // битый или чужой пакет просто игнорируется.
@@ -429,7 +445,7 @@ export function createCoopClient(handlers: CoopHandlers) {
           });
         }
       } else if (event === "atmo") {
-        const row = payload as { dp?: unknown; w?: unknown } | null;
+        const row = payload as { dp?: unknown; w?: unknown; t?: unknown; cs?: unknown; pl?: unknown; wl?: unknown; ws?: unknown } | null;
         if (row && typeof row === "object") {
           const dp = row.dp;
           const w = row.w;
@@ -437,7 +453,27 @@ export function createCoopClient(handlers: CoopHandlers) {
             (dp === 'morning' || dp === 'day' || dp === 'evening' || dp === 'night') &&
             (w === 'sun' || w === 'cloud' || w === 'rain')
           ) {
-            handlers.onAtmo?.({ dp, w });
+            // Числа якоря обязательны конечные; без них (старый сервер) — якорь
+            // собирается на месте: середина заявленной части суток, локальные темпы.
+            const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : NaN);
+            const now = Date.now();
+            const DAY_MS = 60_000;
+            const pl = num(row.pl);
+            const phaseMs = pl >= DAY_MS && pl <= 120 * DAY_MS ? pl : 7 * DAY_MS;
+            const idx = dp === 'morning' ? 0 : dp === 'day' ? 1 : dp === 'evening' ? 2 : 3;
+            const cs = num(row.cs);
+            const t = num(row.t);
+            const wl = num(row.wl);
+            const ws = num(row.ws);
+            handlers.onAtmo?.({
+              dp,
+              w,
+              t: Number.isFinite(t) ? t : now,
+              cs: Number.isFinite(cs) ? cs : now - (idx + 0.5) * phaseMs,
+              pl: phaseMs,
+              wl: Number.isFinite(wl) && wl >= DAY_MS && wl <= 240 * DAY_MS ? wl : 12 * DAY_MS,
+              ws: Number.isFinite(ws) ? ws : now,
+            });
           }
         }
       } else if (event === "roomsinfo") {

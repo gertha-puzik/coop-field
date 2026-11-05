@@ -6,7 +6,7 @@ import { EntryScreen } from './entry-screen';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { SettingsPanel } from './settings-panel';
 import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId, StrikeZone, WindowKey } from '@/lib/sim/settings';
-import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
+import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import {
   advanceRemoteDraw,
   applyOwnMoveAck,
@@ -83,6 +83,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   DAYPARTS,
+  DAYPART_LABEL,
   DIRECTIONS,
   DUMMY_DEFAULT_SPRITE,
   DUMMY_NAME,
@@ -91,6 +92,9 @@ import {
   SPRITES,
   WEATHERS,
   bfsPath,
+  cycleStartFor,
+  dayPartOfProgress,
+  dayProgressAt,
   damageLevelLabel,
   dirByDeg,
   GAME_CREDITS,
@@ -114,10 +118,252 @@ const STORAGE_KEY = 'catwar-battle-sim-v4';
 /** Минимальный облик слоя атмосферы. Модуль с PixiJS грузится динамически (чтобы
  *  не попадать в основной бандл и не падать при SSR), поэтому здесь только интерфейс. */
 interface AtmosphereLike {
+  setDayProgress(p: number): void;
   setDaypart(dp: DayPart): void;
   setWeather(w: WeatherKind): void;
   frame(now: number, dtMs: number, camDx: number, camDy: number): void;
   destroy(): void;
+}
+
+/** Часы атмосферы: якорь комнаты с сервера либо локальный (поле без сети).
+ *  srv — якорь пришёл с сервера: тогда погоду двигает только он. */
+interface AtmoClock {
+  cs: number;
+  pl: number;
+  wl: number;
+  w: WeatherKind;
+  ws: number;
+  srv: boolean;
+}
+
+/* ---------- HUD поля: циферблат «день/ночь» и значок погоды ---------- */
+
+/** Радиус циферблата и значка погоды (px экрана), отступ от угла поля и зазор. */
+const HUD_DIAL_R = 21;
+const HUD_WX_R = 13;
+const HUD_PAD = 12;
+const HUD_GAP = 10;
+const HUD_DEG = Math.PI / 180;
+const HUD_NIGHT_SKY = '#182a5c';
+
+/** Облако из кругов с подошвой — и на светлой половине циферблата, и в значке погоды. */
+function hudCloud(g: CanvasRenderingContext2D, x: number, y: number, s: number, fill: string): void {
+  g.fillStyle = fill;
+  g.beginPath();
+  g.arc(x - s * 0.45, y + s * 0.15, s * 0.42, 0, Math.PI * 2);
+  g.arc(x + s * 0.05, y - s * 0.2, s * 0.55, 0, Math.PI * 2);
+  g.arc(x + s * 0.5, y + s * 0.12, s * 0.4, 0, Math.PI * 2);
+  g.fill();
+  g.fillRect(x - s * 0.8, y, s * 1.65, s * 0.42);
+}
+
+/** Солнце-маркер циферблата: тёплый диск с короткими лучами. */
+function hudSun(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  g.strokeStyle = '#f0a92e';
+  g.lineWidth = 1.3;
+  g.lineCap = 'round';
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI * 0.25;
+    g.beginPath();
+    g.moveTo(x + Math.cos(a) * (r + 1.6), y + Math.sin(a) * (r + 1.6));
+    g.lineTo(x + Math.cos(a) * (r + 3.4), y + Math.sin(a) * (r + 3.4));
+    g.stroke();
+  }
+  g.fillStyle = '#ffd44d';
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.45)';
+  g.beginPath();
+  g.arc(x - r * 0.3, y - r * 0.3, r * 0.4, 0, Math.PI * 2);
+  g.fill();
+}
+
+/** Луна-маркер: светлый диск с «откусом» в цвет ночного неба. */
+function hudMoon(g: CanvasRenderingContext2D, x: number, y: number, r: number, sky: string): void {
+  g.fillStyle = '#f4efcf';
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = sky;
+  g.beginPath();
+  g.arc(x + r * 0.45, y - r * 0.3, r * 0.85, 0, Math.PI * 2);
+  g.fill();
+}
+
+/** Значок погоды: солнце / облачко / туча с косыми каплями. */
+function hudWeatherIcon(g: CanvasRenderingContext2D, x: number, y: number, kind: WeatherKind): void {
+  if (kind === 'sun') {
+    g.strokeStyle = '#f0a92e';
+    g.lineWidth = 1.2;
+    g.lineCap = 'round';
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI * 0.25;
+      g.beginPath();
+      g.moveTo(x + Math.cos(a) * 5, y + Math.sin(a) * 5);
+      g.lineTo(x + Math.cos(a) * 6.8, y + Math.sin(a) * 6.8);
+      g.stroke();
+    }
+    g.fillStyle = '#ffd44d';
+    g.beginPath();
+    g.arc(x, y, 3.6, 0, Math.PI * 2);
+    g.fill();
+    return;
+  }
+  if (kind === 'cloud') {
+    hudCloud(g, x, y + 0.5, 7.5, '#dbe4ec');
+    return;
+  }
+  g.strokeStyle = '#3f97e4';
+  g.lineWidth = 1.5;
+  g.lineCap = 'round';
+  for (let i = -1; i <= 1; i++) {
+    g.beginPath();
+    g.moveTo(x + i * 3.6 - 1, y + 3.2);
+    g.lineTo(x + i * 3.6 - 2.4, y + 6.8);
+    g.stroke();
+  }
+  hudCloud(g, x, y - 2, 7.5, '#c9d4de');
+}
+
+/**
+ * Кадр HUD поля: круг, разделённый на день (светлая половина с облаками) и ночь
+ * (тёмная со звёздами), с маркером, который движется по времени суток: солнце
+ * выкатывается по светлой половине от восхода к закату, луна — по тёмной.
+ * Рядом — значок текущей погоды с мягким кроссфейдом при смене. HUD рисуется
+ * поверх слоя атмосферы (Pixi), поэтому сам не темнеет ночью и не прячется под дождём.
+ */
+function drawFieldHud(
+  cv: HTMLCanvasElement,
+  vw: number,
+  vh: number,
+  p4: number,
+  weather: WeatherKind,
+  weatherPrev: WeatherKind,
+  weatherAt: number,
+): void {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const bw = Math.round(vw * dpr);
+  const bh = Math.round(vh * dpr);
+  if (cv.width !== bw || cv.height !== bh) {
+    cv.width = bw;
+    cv.height = bh;
+  }
+  const g = cv.getContext('2d');
+  if (!g) return;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, vw, vh);
+
+  const R = HUD_DIAL_R;
+  const cx = vw - HUD_PAD - R;
+  const cy = HUD_PAD + R;
+  const wxX = cx - R - HUD_GAP - HUD_WX_R;
+
+  // тени-подложки: читаемость на любом фоне
+  g.fillStyle = 'rgba(0,0,0,0.32)';
+  g.beginPath();
+  g.arc(cx, cy, R + 2.5, 0, Math.PI * 2);
+  g.arc(wxX, cy, HUD_WX_R + 2.5, 0, Math.PI * 2);
+  g.fill();
+
+  // половины циферблата: день — верхний-левый полукруг (от 135° до 315°), ночь — нижний-правый
+  g.save();
+  g.beginPath();
+  g.arc(cx, cy, R, 0, Math.PI * 2);
+  g.clip();
+  g.fillStyle = '#a9d7f2';
+  g.beginPath();
+  g.moveTo(cx, cy);
+  g.arc(cx, cy, R, 135 * HUD_DEG, 315 * HUD_DEG);
+  g.closePath();
+  g.fill();
+  hudCloud(g, cx - R * 0.42, cy - R * 0.3, R * 0.3, 'rgba(255,255,255,0.85)');
+  hudCloud(g, cx - R * 0.08, cy - R * 0.55, R * 0.22, 'rgba(255,255,255,0.7)');
+  g.fillStyle = HUD_NIGHT_SKY;
+  g.beginPath();
+  g.moveTo(cx, cy);
+  g.arc(cx, cy, R, 315 * HUD_DEG, 495 * HUD_DEG);
+  g.closePath();
+  g.fill();
+  g.fillStyle = 'rgba(255,233,168,0.95)';
+  const stars: ReadonlyArray<readonly [number, number, number]> = [
+    [0.34, 0.34, 1.1],
+    [0.55, 0.1, 0.9],
+    [0.14, 0.52, 0.8],
+    [0.46, 0.52, 1.2],
+  ];
+  for (const [sx, sy, sr] of stars) {
+    g.beginPath();
+    g.arc(cx + R * sx, cy + R * sy, sr, 0, Math.PI * 2);
+    g.fill();
+  }
+  const stx = cx + R * 0.5;
+  const sty = cy + R * 0.28;
+  g.strokeStyle = 'rgba(255,233,168,0.9)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(stx - 2.2, sty);
+  g.lineTo(stx + 2.2, sty);
+  g.moveTo(stx, sty - 2.2);
+  g.lineTo(stx, sty + 2.2);
+  g.stroke();
+  g.restore();
+
+  // обод
+  g.strokeStyle = 'rgba(255,255,255,0.92)';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.arc(cx, cy, R, 0, Math.PI * 2);
+  g.stroke();
+
+  // маркер времени: солнце едет по светлой половине (0,125→0,625 суток),
+  // луна — по тёмной (0,625→1,125); пока «не взошло» — маркера нет
+  const cyc = (((p4 / 4) % 1) + 1) % 1;
+  const mr = R - 7.5;
+  if (cyc > 0.125 && cyc < 0.625) {
+    const a = (135 + 180 * ((cyc - 0.125) / 0.5)) * HUD_DEG;
+    hudSun(g, cx + Math.cos(a) * mr, cy + Math.sin(a) * mr, 5);
+  } else {
+    const u = (cyc + 1 - 0.625) % 1;
+    if (u < 0.5) {
+      const a = (315 + 180 * (u / 0.5)) * HUD_DEG;
+      hudMoon(g, cx + Math.cos(a) * mr, cy + Math.sin(a) * mr, 4.6, HUD_NIGHT_SKY);
+    }
+  }
+
+  // подпись части суток
+  const label = DAYPART_LABEL[dayPartOfProgress(p4)];
+  g.font = '600 10px ui-sans-serif, system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'top';
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(0,0,0,0.55)';
+  g.strokeText(label, cx, cy + R + 5);
+  g.fillStyle = 'rgba(255,255,255,0.95)';
+  g.fillText(label, cx, cy + R + 5);
+
+  // значок погоды с мягким кроссфейдом при смене
+  g.beginPath();
+  g.arc(wxX, cy, HUD_WX_R, 0, Math.PI * 2);
+  g.fillStyle = 'rgba(252,252,255,0.88)';
+  g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.9)';
+  g.lineWidth = 1.5;
+  g.stroke();
+  const wt = Math.min(1, Math.max(0, (performance.now() - weatherAt) / 900));
+  g.save();
+  g.beginPath();
+  g.arc(wxX, cy, HUD_WX_R - 0.5, 0, Math.PI * 2);
+  g.clip();
+  if (wt < 1) {
+    g.globalAlpha = 1 - wt;
+    hudWeatherIcon(g, wxX, cy, weatherPrev);
+    g.globalAlpha = 1;
+  }
+  g.globalAlpha = wt;
+  hudWeatherIcon(g, wxX, cy, weather);
+  g.restore();
+  g.globalAlpha = 1;
 }
 
 /** «4,8 сек» — подпись скорости стрелы для панели СП в шапке. */
@@ -976,8 +1222,15 @@ export default function Simulator() {
   /** Атмосфера комнаты: время суток + погода. Общая для всех (состояние на сервере). */
   const [atmoState, setAtmoState] = useState<CoopAtmo>({ dp: 'day', w: 'sun' });
   const atmoStateRef = useRef<CoopAtmo>(atmoState);
+  /** Часы атмосферы: якорь комнаты (сервер) или локальный — до первого якоря и без сети. */
+  const atmoAnchorRef = useRef<AtmoClock>({ cs: 0, pl: 0, wl: 0, w: 'sun', ws: 0, srv: false });
+  const atmoInitRef = useRef(false);
+  /** Значок погоды на HUD: текущая, прежняя (для кроссфейда) и момент смены. */
+  const hudWxRef = useRef<{ w: WeatherKind; prev: WeatherKind; at: number }>({ w: 'sun', prev: 'sun', at: 0 });
   /** Pixi-канвас поверх поля и его слой атмосферы (null — WebGL недоступен). */
   const pixiRef = useRef<HTMLCanvasElement | null>(null);
+  /** HUD-канвас над слоем атмосферы: циферблат день/ночь + значок погоды. */
+  const hudRef = useRef<HTMLCanvasElement | null>(null);
   const atmoRef = useRef<AtmosphereLike | null>(null);
   /** Прошлая позиция камеры — для сдвига теней облаков (лёгкий параллакс). */
   const camPrevRef = useRef<{ x: number; y: number } | null>(null);
@@ -1259,6 +1512,20 @@ export default function Simulator() {
       /* хранилище может быть недоступно */
     }
   }, [settings, loaded]);
+
+  /* ---------- часы атмосферы ---------- */
+
+  // Локальные часы цикла суток — стартовые и для поля без сети. В комнате их
+  // перезадаст первый же якорь с сервера (снапшот field / событие atmo).
+  useEffect(() => {
+    if (!loaded || atmoInitRef.current) return;
+    atmoInitRef.current = true;
+    const now = Date.now();
+    const a = settingsRef.current.atmo;
+    const pl = Math.round(a.phaseMin * 60_000);
+    const wl = Math.round(a.weatherMin * 60_000);
+    atmoAnchorRef.current = { cs: cycleStartFor('day', pl, now), pl, wl, w: 'sun', ws: now, srv: false };
+  }, [loaded]);
 
   /* Вход на боевые клетки — мгновенный: вид сверху (зум 1, без наклона и перспективы)
    * ставится сразу, поэтому стрела, сетка и проценты энергии появляются сразу, без
@@ -1912,11 +2179,34 @@ export default function Simulator() {
     setEditorMsg('Сохраняем…');
   };
 
-  /** Применить атмосферу комнаты локально (снапшот, эхо или оптимистичное нажатие). */
+  /**
+   * Применить якорь атмосферы с сервера (снапшот, эхо нажатия или рассылка смены):
+   * часы цикла, погода, кнопки панели и — если темп комнаты расходится с локальными
+   * настройками — сами настройки (ползунки показывают общее значение комнаты).
+   */
+  const applyAtmoAnchor = useCallback((a: CoopAtmoAnchor) => {
+    atmoAnchorRef.current = { cs: a.cs, pl: a.pl, wl: a.wl, w: a.w, ws: a.ws, srv: true };
+    atmoStateRef.current = { dp: a.dp, w: a.w };
+    setAtmoState({ dp: a.dp, w: a.w });
+    atmoRef.current?.setWeather(a.w);
+    const plMin = Math.round(a.pl / 60_000);
+    const wlMin = Math.round(a.wl / 60_000);
+    const cur = settingsRef.current.atmo;
+    if (cur.phaseMin !== plMin || cur.weatherMin !== wlMin) {
+      setSettings((p) => ({ ...p, atmo: { phaseMin: plMin, weatherMin: wlMin } }));
+    }
+  }, []);
+
+  /** Оптимистичная перемотка (кнопки панели): якорь локально к середине части
+   *  суток и погода сразу — серверное эхо подтвердит тем же якорем. */
   const applyAtmo = useCallback((next: CoopAtmo) => {
+    const clk = atmoAnchorRef.current;
+    const now = Date.now();
+    const pl = clk.pl > 0 ? clk.pl : Math.round(settingsRef.current.atmo.phaseMin * 60_000);
+    const idx = next.dp === 'morning' ? 0 : next.dp === 'day' ? 1 : next.dp === 'evening' ? 2 : 3;
+    atmoAnchorRef.current = { ...clk, cs: now - (idx + 0.5) * pl, w: next.w, ws: now };
     atmoStateRef.current = next;
     setAtmoState(next);
-    atmoRef.current?.setDaypart(next.dp);
     atmoRef.current?.setWeather(next.w);
   }, []);
 
@@ -1928,6 +2218,27 @@ export default function Simulator() {
     },
     [applyAtmo],
   );
+
+  /** Темп цикла атмосферы (длительности части суток и интервала погоды).
+   *  Общий для комнаты: локально переклиниваем якорь с сохранением позиции суток
+   *  (день не прыгает в ночь) и шлём «atmoset» — сервер подтвердит якорем всем. */
+  const changeAtmoCfg = useCallback((phaseMin: number, weatherMin: number) => {
+    const plMin = Math.min(120, Math.max(1, Math.round(phaseMin)));
+    const wlMin = Math.min(240, Math.max(2, Math.round(weatherMin)));
+    setSettings((p) => ({ ...p, atmo: { phaseMin: plMin, weatherMin: wlMin } }));
+    const clk = atmoAnchorRef.current;
+    const now = Date.now();
+    const frac = clk.pl > 0 ? ((((now - clk.cs) / (clk.pl * 4)) % 1) + 1) % 1 : 1.5 / 4;
+    const pl = plMin * 60_000;
+    atmoAnchorRef.current = {
+      ...clk,
+      cs: now - frac * pl * 4,
+      pl,
+      wl: wlMin * 60_000,
+      ws: now,
+    };
+    netRef.current?.emit('atmoset', { pl: plMin, wl: wlMin });
+  }, []);
 
   useEffect(() => {
     if (!loaded || !netStarted) return;
@@ -1997,10 +2308,9 @@ export default function Simulator() {
             showMapLoading();
           }
         }
-        // Атмосфера комнаты — общая: время суток и погода приходят в снапшоте
+        // Атмосфера комнаты — общая: якорь часов цикла и погода приходят в снапшоте
         // (вход, переподключение, сохранение локации).
-        const fa = field.atmo;
-        if (fa && DAYPARTS.includes(fa.dp) && WEATHERS.includes(fa.w)) applyAtmo(fa);
+        if (field.atmo) applyAtmoAnchor(field.atmo);
         camRef.current.init = false;
         remoteFreeRef.current.clear();
         remoteFmRef.current.clear();
@@ -2327,8 +2637,9 @@ export default function Simulator() {
         applyRab(state.on);
       },
       onAtmo: (info) => {
-        // Смена времени суток/погоды (уходит и тому, кто сменил — эхо-подтверждение).
-        applyAtmo(info);
+        // Якорь атмосферы: смена времени суток/погоды/темпа (уходит и тому, кто
+        // сменил — эхо-подтверждение) и стартовые часы при входе.
+        applyAtmoAnchor(info);
       },
       onRabHit: (info) => {
         // Чужой удар по РАБу — та же анимация, что видит бьющий: качание «желе»
@@ -4676,6 +4987,47 @@ export default function Simulator() {
       };
     }
 
+    // Часы атмосферы + HUD: непрерывные сутки едут в Pixi-слой, погода без сети
+    // доезжает локально (в комнате её двигает сервер), HUD рисуется поверх.
+    const tickAtmo = () => {
+      const t = Date.now();
+      let clk = atmoAnchorRef.current;
+      if (!clk.srv && clk.pl > 0 && clk.wl > 0 && t - clk.ws >= clk.wl) {
+        const others = WEATHERS.filter((x) => x !== clk.w);
+        const nw = others[Math.floor(Math.random() * others.length)];
+        clk = { ...clk, w: nw, ws: t };
+        atmoAnchorRef.current = clk;
+        atmoRef.current?.setWeather(nw);
+      }
+      const p4 = clk.pl > 0 ? dayProgressAt(clk.cs, clk.pl, t) : 1.5;
+      atmoRef.current?.setDayProgress(p4);
+      // Погода: смена — кроссфейд значка на HUD и обновление кнопок панели.
+      const wx = hudWxRef.current;
+      if (wx.w !== clk.w) {
+        hudWxRef.current = { w: clk.w, prev: wx.w, at: performance.now() };
+        atmoStateRef.current = { ...atmoStateRef.current, w: clk.w };
+        // eslint-disable-next-line react-hooks/set-state-in-event
+        setAtmoState((p) => (p.w === clk.w ? p : { ...p, w: clk.w }));
+      }
+      // Часть суток сменилась — подсветить её в панели (редкий setState, раз в фазу).
+      const phase = dayPartOfProgress(p4);
+      if (atmoStateRef.current.dp !== phase) {
+        atmoStateRef.current = { ...atmoStateRef.current, dp: phase };
+        // eslint-disable-next-line react-hooks/set-state-in-event
+        setAtmoState((p) => (p.dp === phase ? p : { ...p, dp: phase }));
+      }
+      // HUD поверх слоя атмосферы: сам не темнеет и не прячется под дождём.
+      const hud = hudRef.current;
+      if (hud) {
+        const vw = cv.clientWidth || 0;
+        const vh = cv.clientHeight || 0;
+        if (vw > 0 && vh > 0) {
+          const w2 = hudWxRef.current;
+          drawFieldHud(hud, vw, vh, p4, w2.w, w2.prev, w2.at);
+        }
+      }
+    };
+
     const loop = (now: number) => {
       const dt = Math.min(50, now - prev);
       prev = now;
@@ -4687,6 +5039,7 @@ export default function Simulator() {
       const cp = camPrevRef.current;
       atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
       camPrevRef.current = { x: cam.x, y: cam.y };
+      tickAtmo();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -5974,6 +6327,14 @@ export default function Simulator() {
                   aria-hidden
                   className="pointer-events-none absolute inset-0 z-10 block h-full w-full rounded-lg"
                 />
+                {/* HUD поля поверх атмосферы: циферблат день/ночь с движущимся
+                    солнцем/луной и значок текущей погоды. Не темнеет ночью и
+                    не прячется под дождём. */}
+                <canvas
+                  ref={hudRef}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 z-20 block h-full w-full rounded-lg"
+                />
               </div>
               {battleHint ? (
                 <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
@@ -6450,6 +6811,8 @@ export default function Simulator() {
                 testField={testField}
                 atmo={atmoState}
                 onAtmo={changeAtmo}
+                atmoCfg={settings.atmo}
+                onAtmoCfg={changeAtmoCfg}
                 dummyOn={dummyOn}
                 onToggleDummy={toggleDummy}
                 dummySprite={dummySprite}

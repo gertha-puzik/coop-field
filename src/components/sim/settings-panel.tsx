@@ -29,6 +29,9 @@ interface Props {
   /** Атмосфера комнаты (общая): время суток и погода. */
   atmo: CoopAtmo;
   onAtmo: (dp: DayPart, w: WeatherKind) => void;
+  /** Темп цикла атмосферы (общий для комнаты): минуты части суток и интервала погоды. */
+  atmoCfg: { phaseMin: number; weatherMin: number };
+  onAtmoCfg: (phaseMin: number, weatherMin: number) => void;
   /** Манекен «ПОЧУХАТЬ» включён в комнате (состояние комнаты, не локальная настройка). */
   dummyOn: boolean;
   onToggleDummy: (on: boolean) => void;
@@ -662,7 +665,8 @@ export function SettingsPanel(props: Props) {
           </>
         )}
         {/* Атмосфера комнаты: время суток и погода — общие для всех игроков.
-            Кнопка шлёт «atmo» на сервер, тот рассылает всем, включая отправителя. */}
+            Кнопки перематывают цикл к выбранной части суток; сутки и погода едут
+            и сами, с темпом из ползунков ниже. */}
         <div className="py-1.5">
           <div className="text-xs text-[var(--sim-text-soft)]">Время суток</div>
           <div className="mt-1 flex flex-wrap gap-1">
@@ -686,7 +690,7 @@ export function SettingsPanel(props: Props) {
             })}
           </div>
           <div className="mt-0.5 text-[10px] leading-tight text-[var(--sim-text-faint)]">
-            Общая для всей комнаты — смену видят все игроки.
+            Кнопка перематывает цикл к середине части суток — общая для всей комнаты.
           </div>
         </div>
         <div className="py-1.5">
@@ -715,6 +719,27 @@ export function SettingsPanel(props: Props) {
             Тоже общая: дождь, облака и свет меняются у всех одновременно.
           </div>
         </div>
+        {/* Темп цикла — тоже общий: сервер держит часы комнаты и рассылает якорь. */}
+        <SlideNum
+          label="Длительность части суток"
+          value={props.atmoCfg.phaseMin}
+          min={1}
+          max={30}
+          step={1}
+          suffix="мин"
+          hint="Утро, день, вечер и ночь идут по очереди сами; полный цикл — 4 части"
+          onChange={(v) => props.onAtmoCfg(v, props.atmoCfg.weatherMin)}
+        />
+        <SlideNum
+          label="Смена погоды каждые"
+          value={props.atmoCfg.weatherMin}
+          min={2}
+          max={60}
+          step={1}
+          suffix="мин"
+          hint="Погода меняется сама и всегда на другую; кнопкой можно поставить любую сейчас"
+          onChange={(v) => props.onAtmoCfg(props.atmoCfg.phaseMin, v)}
+        />
         <Toggle label="Сетка клеток" checked={s.field.showGrid} onChange={(v) => props.patchField({ showGrid: v })} />
         <Toggle
           label="Шахматная подсветка"

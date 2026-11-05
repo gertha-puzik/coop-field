@@ -44,6 +44,9 @@ interface CloudProfile {
 
 type AtmoProfile = Grade & CloudProfile;
 
+/** Порядок частей суток в цикле: утро → день → вечер → ночь → утро… */
+const DAYPART_KEYS: DayPart[] = ['morning', 'day', 'evening', 'night'];
+
 /** Базовые пресеты времени суток (умножаются на пресет погоды). */
 const DAYPART_PROFILE: Record<DayPart, AtmoProfile> = {
   morning: { gain: [1.06, 1.0, 0.93], sat: 1.05, bright: 1.03, cloudCount: 4, cloudAlpha: 0.06, cloudSpeed: 10, cloudTint: [0.4, 0.46, 0.6], rain: 0 },
@@ -90,6 +93,26 @@ function combine(dp: AtmoProfile, w: AtmoProfile): AtmoProfile {
 }
 
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** Плавный переход 0→1: медленный старт, ровная середина, мягкая посадка. */
+const smoothstep = (t: number) => {
+  const x = clamp01(t);
+  return x * x * (3 - 2 * x);
+};
+
+/** Смесь двух профилей (k: 0 — a, 1 — b) — так сутки перетекают друг в друга. */
+function mixProfiles(a: AtmoProfile, b: AtmoProfile, k: number): AtmoProfile {
+  return {
+    gain: [lerp(a.gain[0], b.gain[0], k), lerp(a.gain[1], b.gain[1], k), lerp(a.gain[2], b.gain[2], k)],
+    sat: lerp(a.sat, b.sat, k),
+    bright: lerp(a.bright, b.bright, k),
+    cloudCount: lerp(a.cloudCount, b.cloudCount, k),
+    cloudAlpha: lerp(a.cloudAlpha, b.cloudAlpha, k),
+    cloudSpeed: lerp(a.cloudSpeed, b.cloudSpeed, k),
+    cloudTint: [lerp(a.cloudTint[0], b.cloudTint[0], k), lerp(a.cloudTint[1], b.cloudTint[1], k), lerp(a.cloudTint[2], b.cloudTint[2], k)],
+    rain: lerp(a.rain, b.rain, k),
+  };
+}
 
 /** Матрица ColorMatrix: насыщенность × усиления каналов × яркость. */
 function gradeToMatrix(g: AtmoState): ColorMatrix {
@@ -175,7 +198,11 @@ export class Atmosphere {
   private cur: AtmoState = stateOf(combine(DAYPART_PROFILE.day, WEATHER_PROFILE.sun));
   private target: AtmoState = stateOf(combine(DAYPART_PROFILE.day, WEATHER_PROFILE.sun));
 
-  private dpKind: DayPart = 'day';
+  /** Непрерывное время суток 0..4 (0 — утро, 1 — день, 2 — вечер, 3 — ночь).
+   *  Дробная часть — позиция внутри части суток: цикл едет сам, картинка
+   *  перетекает без щелчков. */
+  private dayP = 1.5;
+
   private wKind: WeatherKind = 'sun';
 
   private w = 0;
@@ -253,16 +280,34 @@ export class Atmosphere {
     this.h = 0;
   }
 
-  /** Сменить время суток (значение комнаты). */
-  setDaypart(dp: DayPart): void {
-    this.dpKind = dp;
-    this.target = stateOf(combine(DAYPART_PROFILE[dp] ?? DAYPART_PROFILE.day, WEATHER_PROFILE[this.wKind]));
+  /**
+   * Непрерывное время суток 0..4 (утро/день/вечер/ночь — целые части). Вызывается
+   * каждый кадр: профиль части суток держится ровным, а на последних 30% плавно
+   * подмешивает следующий — рассветы и закаты «наливаются», а не щёлкают.
+   */
+  setDayProgress(p: number): void {
+    this.dayP = ((p % 4) + 4) % 4;
   }
 
-  /** Сменить погоду (значение комнаты). */
+  /** Поставить конкретную часть суток (середина её диапазона) — кнопки перемотки. */
+  setDaypart(dp: DayPart): void {
+    const idx = DAYPART_KEYS.indexOf(dp);
+    this.dayP = (idx >= 0 ? idx : 1) + 0.5;
+  }
+
+  /** Сменить погоду (значение комнаты) — дальше она плавно наезжает за несколько секунд. */
   setWeather(w: WeatherKind): void {
     this.wKind = w;
-    this.target = stateOf(combine(DAYPART_PROFILE[this.dpKind], WEATHER_PROFILE[w] ?? WEATHER_PROFILE.sun));
+  }
+
+  /** Профиль текущей части суток с перетеканием к следующей. */
+  private blendDaypart(): AtmoProfile {
+    const i = Math.floor(this.dayP) % 4;
+    const f = this.dayP - Math.floor(this.dayP);
+    const k = smoothstep((f - 0.7) / 0.3);
+    const a = DAYPART_PROFILE[DAYPART_KEYS[i]];
+    if (k <= 0.001) return a;
+    return mixProfiles(a, DAYPART_PROFILE[DAYPART_KEYS[(i + 1) % 4]], k);
   }
 
   /**
@@ -287,22 +332,26 @@ export class Atmosphere {
     if (this.w <= 0 || this.h <= 0) return;
 
     const dt = Math.min(50, Math.max(1, dtMs)) / 1000;
-    // Сглаживание к целевому профилю: ~0,3 с на большую часть перехода.
-    const k = 1 - Math.exp(-dt / 0.3);
+    // Цель пересчитывается каждый кадр: сутки едут непрерывно, погода включается
+    // событием. К цели сглаживаем двумя темпами: цветокоррекция — быстро,
+    // облака и дождь — плавно (несколько секунд), чтобы смена погоды не щёлкала.
+    this.target = stateOf(combine(this.blendDaypart(), WEATHER_PROFILE[this.wKind] ?? WEATHER_PROFILE.sun));
+    const kc = 1 - Math.exp(-dt / 0.6);
+    const kw = 1 - Math.exp(-dt / 3.5);
     const c = this.cur;
     const t = this.target;
-    c.gain[0] = lerp(c.gain[0], t.gain[0], k);
-    c.gain[1] = lerp(c.gain[1], t.gain[1], k);
-    c.gain[2] = lerp(c.gain[2], t.gain[2], k);
-    c.sat = lerp(c.sat, t.sat, k);
-    c.bright = lerp(c.bright, t.bright, k);
-    c.cloudCount = lerp(c.cloudCount, t.cloudCount, k);
-    c.cloudAlpha = lerp(c.cloudAlpha, t.cloudAlpha, k);
-    c.cloudSpeed = lerp(c.cloudSpeed, t.cloudSpeed, k);
-    c.cloudTint[0] = lerp(c.cloudTint[0], t.cloudTint[0], k);
-    c.cloudTint[1] = lerp(c.cloudTint[1], t.cloudTint[1], k);
-    c.cloudTint[2] = lerp(c.cloudTint[2], t.cloudTint[2], k);
-    c.rain = lerp(c.rain, t.rain, k);
+    c.gain[0] = lerp(c.gain[0], t.gain[0], kc);
+    c.gain[1] = lerp(c.gain[1], t.gain[1], kc);
+    c.gain[2] = lerp(c.gain[2], t.gain[2], kc);
+    c.sat = lerp(c.sat, t.sat, kc);
+    c.bright = lerp(c.bright, t.bright, kc);
+    c.cloudCount = lerp(c.cloudCount, t.cloudCount, kw);
+    c.cloudAlpha = lerp(c.cloudAlpha, t.cloudAlpha, kw);
+    c.cloudSpeed = lerp(c.cloudSpeed, t.cloudSpeed, kw);
+    c.cloudTint[0] = lerp(c.cloudTint[0], t.cloudTint[0], kw);
+    c.cloudTint[1] = lerp(c.cloudTint[1], t.cloudTint[1], kw);
+    c.cloudTint[2] = lerp(c.cloudTint[2], t.cloudTint[2], kw);
+    c.rain = lerp(c.rain, t.rain, kw);
 
     // Мир: свежая текстура 2D-холста + текущая цветокоррекция.
     this.worldTex.source.update();
