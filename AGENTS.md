@@ -21,9 +21,12 @@ npm run build       # next build, static export
 npm run test:queue  # server step-queue contract (spawns its own server)
 npm run test:unit   # engine unit tests (node>=22.6, otherwise SKIP; CI runs on node 22)
 npm run arch:check  # architecture gate: files <=800 lines + layer boundary rules
+npm run check:protocol       # protocol doc tables == EV.* registries (W3)
+npm run test:protocol-parity # client/server golden parity (W3)
+npm run check:landmarks      # doc size numbers == wc -l (W7a)
 ```
 
-All five must be green. If `arch:check` fails on a new file — do not grow the allowlist
+All eight must be green. If `arch:check` fails on a new file — do not grow the allowlist
 (it holds only legacy god-files; they are removed in waves W4/W5).
 
 ## Code map
@@ -32,11 +35,11 @@ All five must be green. If `arch:check` fails on a new file — do not grow the 
 | --- | --- | --- |
 | Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
 | Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 272 (W3 canon), testmap 493, world 598, sanitize 95, room 412, movement 268, combat 271, dummy-rab 133, atmo 114, persist 131, net 199 — domain map with details in ARCHITECTURE.md §2 |
-| Canvas engine | `src/components/sim/simulator.tsx` (4388) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 230, use-network 621, use-canvas-layers 157, use-strike 277), hookless factories (editor-ops 785, pointer-tools 605), HUD dial (hud-canvas 241), sim-model 173 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 367, editor-overlay 621, field-stage 138). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3873 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–~790), effects 800–1187, pointer-tools call :3928, JSX assembly 4237–4388. targeting.pickStrikeTarget mirrors `server.js` aimedNeighbor → ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
-| Combat model, sprites, armor | `src/lib/sim/settings.ts` (1122) | ARMOR_CURVE, strike zones, damage levels; 54 exports |
+| Canvas engine | `src/components/sim/simulator.tsx` (4477) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 230, use-network 624, use-canvas-layers 181, use-strike 277), hookless factories (editor-ops 785, pointer-tools 619), HUD dial (hud-canvas 241), sim-model 174 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 373, editor-overlay 621, field-stage 146). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3947 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–868) + buildEditorOps call :869, effects ~1014–1248, pointer-tools call :4014, JSX assembly 4324–4477. targeting.pickStrikeTarget mirrors `server/combat.js` aimedNeighbor (:76) -> ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
+| Combat model, sprites, armor | `src/lib/sim/settings.ts` (1138) | ARMOR_CURVE (:572), strike zones, damage levels; 54 exports |
 | «Elision» location | `src/lib/sim/test-field.ts` (1822) | walkability, route graph, edge render, paint; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
 | Location config | `src/lib/sim/test-map.ts` (634) | v1/v2 + editor limits (mirror of server-side sanitize) |
-| Transport, inbound dispatch | `src/lib/net/coop.ts` (579) | socket choice, reconnect backoff, dispatcher 367+ |
+| Transport, inbound dispatch | `src/lib/net/coop.ts` (537) | socket choice, reconnect backoff, dispatcher 367+ |
 | Step prediction | `src/lib/net/move-book.ts` (89) | **the reference module** — copy its style for new files |
 | Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; the real password arbiter is the server (setmap) |
 
@@ -132,6 +135,15 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 5. **Prod endpoints only via an explicit flag**; scripts target localhost by default.
 6. **Coordinates**: any protocol change must respect 1-based/0-based/fx-fy (ARCHITECTURE §5).
 7. **Do not "fix style" in passing**: keep wave PRs free of cosmetics; do not grow the god-files.
+
+## Publishing policy & environments (owner directives, 2026-11-06)
+
+1. **PR-only:** never push to `main` — a merge to main IS the production deploy (frontend + room server). Branch + PR; CI green before merge.
+2. **Self-merge:** the agent may merge its own PR via `gh pr merge` once all checks are green; if merge rights fail — hand the PR link to the owner and keep going.
+3. **External chat AIs (no file-system access, z.ai-style):** point them to `docs/AI-CONTEXT.md` FIRST — it is the one-file EN project brief (stack, deploy, module map, hard rules, human-intermediary protocol). Paste files they ask for; take unified diffs back.
+4. **localStorage routes (client persistence):** `simulator.tsx:659` (read saved SP), `:674` (write SP), `:1089` (write combat log), `:4140–4141` (reset), `:4153` (log rotation); `editor-ops.ts:144`/`:769` (editor password). Storage keys are named constants in `src/lib/sim/engine-consts.ts`.
+5. **Sprite whitelist mirror (no CI coverage):** `server/config.js:86` (`SPRITES`, 31) <-> `src/lib/sim/settings.ts:96` (`SPRITES: SpriteMeta[]`) — always change both sides in one PR, keep the counts equal.
+6. **Production/VPS is owner-only.** Agents never run prod operations, even with SSH access: write the exact commands/steps for the owner (game nick «Сырь») and wait for her confirmation. VPS root is owner-only.
 
 ## Doc index
 
