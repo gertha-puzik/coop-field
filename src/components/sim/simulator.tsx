@@ -415,8 +415,9 @@ export default function Simulator() {
   const atmoInitRef = useRef(false);
   /** Значок погоды на HUD: текущая, прежняя (для кроссфейда) и момент смены. */
   const hudWxRef = useRef<{ w: WeatherKind; prev: WeatherKind; at: number }>({ w: 'sun', prev: 'sun', at: 0 });
-  /** Pixi-канвас поверх поля и его слой атмосферы (null — WebGL недоступен). */
-  const pixiRef = useRef<HTMLCanvasElement | null>(null);
+  /** Слот-контейнер слоя атмосферы поверх поля (canvas создаётся императивно
+   *  в use-canvas-layers; atmoRef null — WebGL недоступен). */
+  const pixiRef = useRef<HTMLDivElement | null>(null);
   /** HUD-канвас над слоем атмосферы: циферблат день/ночь + значок погоды. */
   const hudRef = useRef<HTMLCanvasElement | null>(null);
   const atmoRef = useRef<AtmosphereLike | null>(null);

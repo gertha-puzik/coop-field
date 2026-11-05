@@ -1,13 +1,15 @@
 /**
- * Field stage section, carved out of simulator.tsx verbatim (W5b stage 2,
- * behavior-preserving): the bordered frame that hosts the three stacked
- * canvases (2D world / Pixi atmosphere / HUD), the transient battle-hint and
- * map-loading chips, the editor overlay slot and the keys legend strip.
- * Contract: refs for all three canvases and the frame div arrive via props
- * (same ref objects as before), pointer handlers keep their original
- * identities, and `editorOverlay` is a ReactNode slot rendered exactly where
- * the inline `{editorOpen && editorView ? <EditorOverlay ... /> : null}`
- * used to be; the DOM structure is unchanged.
+ * Field stage section, carved out of simulator.tsx (W5b stage 2): the bordered
+ * frame that hosts the 2D world canvas, the HUD canvas and the atmosphere
+ * slot, plus the transient battle-hint and map-loading chips, the editor
+ * overlay slot and the keys legend strip. The atmosphere slot is a DIV
+ * container, not a canvas (atmo-lifecycle fix): its canvas is created
+ * imperatively by useAtmosphereLayer (fresh canvas + WebGL context on every
+ * mount, removed on unmount). Contract: refs for the world/HUD canvases, the
+ * atmosphere slot div and the frame div arrive via props (same ref objects as
+ * before), pointer handlers keep their original identities, and
+ * `editorOverlay` is a ReactNode slot rendered exactly where the inline
+ * `{editorOpen && editorView ? <EditorOverlay ... /> : null}` used to be.
  */
 import type { MouseEvent, PointerEvent, RefObject, ReactNode } from 'react';
 
@@ -24,7 +26,7 @@ export interface FieldStageProps {
   onLeave: () => void;
   onContextMenu: (ev: MouseEvent<HTMLCanvasElement>) => void;
   onClick: (ev: MouseEvent<HTMLCanvasElement>) => void;
-  pixiRef: RefObject<HTMLCanvasElement | null>;
+  pixiRef: RefObject<HTMLDivElement | null>;
   hudRef: RefObject<HTMLCanvasElement | null>;
   battleHint: string | null;
   mapLoading: boolean;
@@ -87,10 +89,16 @@ export function FieldStage(props: FieldStageProps) {
                 onContextMenu={onContextMenu}
                 onClick={onClick}
               />
-              {/* Слой атмосферы: PixiJS выводит мир (как текстуру 2D-холста) вместе
-                  с цветокоррекцией, тенями облаков и дождём. События мыши проходят
-                  сквозь него на игровой холст. Без WebGL слой прозрачен. */}
-              <canvas
+              {/* Слот-контейнер слоя атмосферы (div, а НЕ канвас): сам канвас
+                  создаётся императивно в useAtmosphereLayer и удаляется из DOM
+                  при размонтировании. Так каждый монтаж слоя получает свежий
+                  canvas и живой WebGL-контекст — повторный монтаж (React
+                  StrictMode в dev, смена комнаты) больше не встречает контекст,
+                  убитый прошлым destroy (pixi loseContext). PixiJS выводит мир
+                  (как текстуру 2D-холста) вместе с цветокоррекцией, тенями
+                  облаков и дождём; события мыши проходят сквозь слой на игровой
+                  холст. Без WebGL слой прозрачен. */}
+              <div
                 ref={pixiRef}
                 aria-hidden
                 className="pointer-events-none absolute inset-0 z-10 block h-full w-full rounded-lg"
