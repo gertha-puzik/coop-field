@@ -21,7 +21,7 @@ export type TestMapZoneKind = 'cells' | 'green';
  *  ходьбе не мешают. Заход — клетка входа в боевую зону: стоит на траве рядом
  *  с боевыми клетками, стрелка указывает, куда игрока перенесёт шаг в бою.
  *  Спрайты рисуются от точки опоры вверх (земля/покрытие/заход — по всей клетке). */
-export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry' | 'ground';
+export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry' | 'ground' | 'battle';
 
 /** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
  *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
@@ -228,6 +228,41 @@ export type TestMapSpawn = { c: number; r: number };
  *  отсутствие клетки и явный 0 — одно и то же (обычная земля). */
 export const TERRAIN_MAX_LEVEL = 3;
 
+/* ---------- пиксельная отрисовка локации (кисть редактора) ---------- */
+
+/** Закрашенная кистью локация: PNG (base64, без data:-префикса) размером с мир
+ *  в пикселях (cols*cellW x rows*cellH). Непрозрачные пиксели — земля: её видит
+ *  игрок и по ней ходит в мирном режиме; прозрачные — пустота за кромкой.
+ *  Когда paint задан, он — единственный источник формы локации и её внешнего
+ *  вида: зоны остаются только списком боевых областей, проталины и покрытия
+ *  «запекаются» в картинку при первом сохранении из редактора. */
+export type PaintedGround = string;
+
+/** Предел размера paint (base64-символов): мир максимум 60x40 клеток —
+ *  9000x4000 px, PNG пиксель-арта весит десятки килобайт, запас — на плотную
+ *  заливку мелкой кистью. */
+export const PAINT_MAX_BASE64 = 3_500_000;
+
+/** PNG-магия в base64 (первые байты 89 50 4E 47 0D 0A 1A 0A). */
+export const PAINT_PNG_PREFIX = 'iVBORw0KGgo';
+
+/** Быстрая проверка формата paint без декодирования: строка, размер, base64,
+ *  PNG-магия. Полная проверка размеров/декодирование — на сторонах с Image/zlib. */
+export function paintFormatError(paint: unknown): string | null {
+  if (typeof paint !== 'string' || paint.length === 0) return 'рисунок локации не распознан';
+  if (paint.length > PAINT_MAX_BASE64) return 'рисунок локации слишком велик';
+  if (!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(paint)) {
+    return 'рисунок локации не base64';
+  }
+  if (!paint.startsWith(PAINT_PNG_PREFIX)) return 'рисунок локации не PNG';
+  return null;
+}
+
+/** Есть ли у конфига пиксельная отрисовка (непустая строка). */
+export function mapHasPaint(map: Pick<TestMap, 'paint'>): boolean {
+  return typeof map.paint === 'string' && map.paint.length > 0;
+}
+
 /** Уровень клетки из карты высот (0-based координаты; нет клетки — 0). */
 export function mapElevOf(map: Pick<TestMap, 'elev'>, c: number, r: number): number {
   const v = map.elev?.[`${c},${r}`];
@@ -258,6 +293,10 @@ export type TestMap = {
    *  Разреженная: клетки без записи — базовая земля. Редактор меняет кистями
    *  «Насыпать/Срыть/Ровно», сервер хранит и раздаёт вместе с конфигом. */
   elev?: Record<string, number>;
+  /** Пиксельная отрисовка локации (необязательное поле — конфиги до кисти живут
+   *  по-старому): PNG base64 размером с мир в пикселях, непрозрачность — земля.
+   *  Задан — форма локации и её вид берутся из рисунка (см. PaintedGround). */
+  paint?: PaintedGround;
 };
 
 /** Пределы редактора: мир, число зон и число объектов. Лимит объектов крупный:
@@ -391,7 +430,9 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
                 ? 'entry'
                 : o.kind === 'ground'
                   ? 'ground'
-                  : null;
+                  : o.kind === 'battle'
+                    ? 'battle'
+                    : null;
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
       // считаем из клетки и положения в ней (миграция при первом же сохранении).
@@ -447,8 +488,8 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       if (kind === 'ground') {
         cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
       }
-      // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно
-      // и на клетку не «схлопываются».
+      // Земля/покрытие/заход/боевая клетка — по клетке на объект; камень и дерево
+      // стоят свободно и на клетку не «схлопываются».
       if (kind !== 'stone' && kind !== 'tree') {
         const key = `${c},${r}`;
         if (taken.has(key)) continue;
@@ -466,6 +507,17 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       });
     }
   }
+  // Пиксельная отрисовка: необязательное поле, строгий формат (PNG base64).
+  // Содержимое здесь не декодируется: у клиента Image, у сервера zlib — свои
+  // проверки размеров и альфы; формат отсекает мусор до записи в конфиг.
+  let paint: PaintedGround | undefined;
+  if (src.paint != null) {
+    const perr = paintFormatError(src.paint);
+    if (perr) return { error: perr };
+    paint = src.paint;
+  }
+  // С рисунком проталины и покрытия не нужны: они «запечены» в пиксели кистью.
+  if (paint != null) objects = objects.filter((o) => o.kind !== 'dirt' && o.kind !== 'ground');
   const zones: TestMapZone[] = [];
   for (let i = 0; i < src.zones.length; i++) {
     const z = src.zones[i] as Partial<TestMapZone>;
@@ -484,13 +536,18 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     const name = String(z.name ?? '').trim().slice(0, TEST_MAP_LIMITS.nameMax) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
     zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
   }
-  if (!zones.some((z) => z.kind === 'cells')) {
+  if (!zones.some((z) => z.kind === 'cells') && !(paint != null && objects.some((o) => o.kind === 'battle'))) {
     return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
   }
   // Клетки захода: только на траве, и по направлению шага обязана быть боевая
   // клетка — иначе заход не ведёт в бой (проверка тут, потому что зоны уже дочитаны).
   const battleAt = (c: number, r: number): boolean =>
-    c >= 0 && r >= 0 && c < cols && r < rows && zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+    (c >= 0 &&
+      r >= 0 &&
+      c < cols &&
+      r < rows &&
+      zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) ||
+    objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
   for (const o of objects) {
     if (o.kind !== 'entry' || !o.dir) continue;
     if (battleAt(o.c, o.r)) {
@@ -501,8 +558,12 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       return { error: `заход на клетке ${o.c}×${o.r}: по направлению шага должна быть боевая клетка` };
     }
   }
-  const conn = testMapConnectivityError(zones);
-  if (conn) return { error: conn };
+  // С рисунком зоны не обязаны срастаться: форма локации — из пикселей, зоны —
+  // просто списки боевых областей (могут стоять островами).
+  if (paint == null) {
+    const conn = testMapConnectivityError(zones);
+    if (conn) return { error: conn };
+  }
   // Клетки спавна: необязательный список (старые конфиги без него — «пусто»).
   // Ставятся только на траве (зелёной зоне) и не на боевых клетках: новичок
   // появляется в мирном режиме. Дубликаты схлопываются, порядок сохраняется.
@@ -522,8 +583,13 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         return { error: `спавн №${i + 1}: вне границ мира` };
       }
       const onGreen = zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-      const onBattle = zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-      if (!onGreen || onBattle) {
+      const onBattle =
+        zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) ||
+        objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
+      // С рисунком спавн ставится на любое место не на боевых клетках (проверку
+      // закраски ведёт редактор — у него есть декодированный рисунок); без
+      // рисунка — по-старому, только в зелёной зоне.
+      if ((paint != null && onBattle) || (paint == null && (!onGreen || onBattle))) {
         return { error: `спавн №${i + 1}: клетка спавна ставится на траве (зелёной зоне), не на боевых клетках` };
       }
       const key = `${c},${r}`;
@@ -562,6 +628,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       objects,
       spawns,
       ...(elev ? { elev } : {}),
+      ...(paint ? { paint } : {}),
     },
   };
 }

@@ -23,6 +23,7 @@ import {
   TEST_MAP_DEFAULT,
   OBJECT_DIMS,
   isObstacleKind,
+  mapHasPaint,
   mapElevOf,
   objectBase,
   objectMir,
@@ -49,13 +50,32 @@ export function currentTestMap(): TestMap {
   return currentMap;
 }
 
-/** Подмена конфига локации: все кэши геометрии, якорей и декора сбрасываются. */
+/** Подмена конфига локации: все кэши геометрии, якорей и декора сбрасываются.
+ *  Пиксельная отрисовка: если в конфиге рисунок и он уже декодирован — остаётся;
+ *  новый рисунок сбрасывает декод (до готовности форма локации считается по зонам,
+ *  как в конфигах до кисти). */
 export function setTestMap(map: TestMap): void {
   currentMap = map;
   islandPoly = null;
+  islandLoopsCache = undefined;
   peaceCache = null;
   geoCache = null;
   objCache = null;
+  if (mapHasPaint(map)) {
+    if (paintPng !== map.paint) {
+      paintPng = map.paint ?? null;
+      paintCv = null;
+      paintMask = null;
+      paintW = 0;
+      paintH = 0;
+    }
+  } else {
+    paintPng = null;
+    paintCv = null;
+    paintMask = null;
+    paintW = 0;
+    paintH = 0;
+  }
 }
 
 /** Зона — боевая (с клетками) или зелёная (только мирный режим). */
@@ -65,13 +85,309 @@ function isCellsZone(z: TestMapZone): boolean {
 
 export type Pt = { x: number; y: number };
 
+/* ---------- пиксельная отрисовка: декод рисунка, маска земли, контур ---------- */
+
+/** Канонический размер клетки для пиксельной отрисовки: рисунок локации всегда
+ *  хранится в пикселях мира cols*100 x rows*150 — одна и та же геометрия у всех
+ *  игроков и на сервере, независимо от локальных настроек клетки. При отрисовке
+ *  рисунок растягивается на фактический размер клетки. */
+export const PAINT_CELL_W = 100;
+export const PAINT_CELL_H = 150;
+
+/** Запрошенный (ещё не декодированный или декодированный) PNG локации. */
+let paintPng: string | null = null;
+/** Декодированный рисунок: канвас — для отрисовки, маска — для контура. */
+let paintCv: HTMLCanvasElement | null = null;
+let paintMask: Uint8Array | null = null; // 0/1 по пикселям (альфа > 127 — земля)
+let paintW = 0;
+let paintH = 0;
+
+/** Декодированный канвас отрисовки (null — нет рисунка или ещё не готов). */
+export function paintCanvas(): HTMLCanvasElement | null {
+  return paintCv;
+}
+
+/** Есть ли у текущей локации пиксельная отрисовка. */
+export function paintActive(): boolean {
+  return paintPng != null;
+}
+
+/** Готов ли рисунок (декодирован) — до готовности форма считается по зонам. */
+export function paintReady(): boolean {
+  return paintCv != null && paintMask != null;
+}
+
+/**
+ * Декодировать PNG локации (если он ещё не декодирован) и пересобрать кэши
+ * геометрии: контур локации теперь идёт по маске рисунка. Возвращает true,
+ * когда рисунок готов (или локация без рисунка); false — декодировать нечем.
+ * Decoding асинхронный (Image), вызывается после каждой смены конфига.
+ */
+export function ensurePaintDecoded(): Promise<boolean> {
+  if (!paintPng) return Promise.resolve(false);
+  if (paintCv && paintMask) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      if (!paintPng) return resolve(false);
+      const wExpected = currentMap.cols * PAINT_CELL_W;
+      const hExpected = currentMap.rows * PAINT_CELL_H;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w !== wExpected || h !== hExpected) {
+        // Чужой размер — рисунок не применяем (форма остаётся по зонам).
+        paintPng = null;
+        return resolve(false);
+      }
+      const cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      if (!g) return resolve(false);
+      g.imageSmoothingEnabled = false;
+      g.drawImage(img, 0, 0);
+      let data: Uint8ClampedArray;
+      try {
+        data = g.getImageData(0, 0, w, h).data;
+      } catch {
+        return resolve(false);
+      }
+      const mask = new Uint8Array(w * h);
+      for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
+      paintCv = cv;
+      paintMask = mask;
+      paintW = w;
+      paintH = h;
+      islandPoly = null;
+      geoCache = null;
+      resolve(true);
+    };
+    img.onerror = () => {
+      paintPng = null; // битый рисунок — локация живёт по зонам
+      resolve(false);
+    };
+    img.src = `data:image/png;base64,${paintPng}`;
+  });
+}
+
+/**
+ * Подмена активного рисунка готовым канвасом (редактор рисует мазки прямо в
+ * свой черновой холст — картинка на поле обновляется без декодирования PNG).
+ * rebuild=false — во время мазка: маска обновляется, контур пересчитается по
+ * окончании мазка (марширующие квадраты на весь мир каждый кадр — дорого).
+ */
+export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean): void {
+  paintCv = cv;
+  paintW = cv?.width ?? 0;
+  paintH = cv?.height ?? 0;
+  if (cv) {
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    if (g) {
+      try {
+        const data = g.getImageData(0, 0, cv.width, cv.height).data;
+        const mask = new Uint8Array(cv.width * cv.height);
+        for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
+        paintMask = mask;
+      } catch {
+        paintMask = null;
+      }
+    }
+  } else {
+    paintMask = null;
+  }
+  if (rebuild) {
+    islandPoly = null;
+    islandLoopsCache = undefined;
+    geoCache = null;
+  }
+}
+
+/** Пиксель маски (канонические px мира): закрашен ли. Вне рисунка — true,
+ *  чтобы проверки не «отрезали» локацию без рисунка. */
+function paintPx(x: number, y: number): boolean {
+  if (!paintMask) return true;
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  if (xi < 0 || yi < 0 || xi >= paintW || yi >= paintH) return false;
+  return paintMask[yi * paintW + xi] === 1;
+}
+
+/** Точка (клеточные доли) на закрашенной земле: пиксель маски под точкой. */
+export function paintPointOn(x: number, y: number): boolean {
+  return paintPx(x * PAINT_CELL_W, y * PAINT_CELL_H);
+}
+
+/** Доля закрашенных пикселей клетки (0-based) — годится ли место под боевую
+ *  клетку/заход: объект ставится только на место, покрашенное целиком. */
+export function paintCellCoverage(c: number, r: number): number {
+  if (!paintMask) return 1;
+  const x0 = c * PAINT_CELL_W;
+  const y0 = r * PAINT_CELL_H;
+  if (x0 < 0 || y0 < 0 || x0 + PAINT_CELL_W > paintW || y0 + PAINT_CELL_H > paintH) return 0;
+  let on = 0;
+  for (let y = y0; y < y0 + PAINT_CELL_H; y++) {
+    const row = y * paintW;
+    for (let x = x0; x < x0 + PAINT_CELL_W; x++) on += paintMask[row + x];
+  }
+  return on / (PAINT_CELL_W * PAINT_CELL_H);
+}
+
+/** Шаг сетки контура маски: 1/50 клетки (2x3 px канонического мира) — контур
+ *  повторяет кисть достаточно гладко, а циклов обхода немного. */
+const PAINT_GRID = 50;
+
+/**
+ * Контуры закрашенной области на сетке 1/50 клетки: граничные рёбра ячеек
+ * (у каждой вершины ровно два ребра контура) сцепляются в циклы — все острова
+ * и дыры. Возвращает список петель в клеточных долях; направление обхода у
+ * внешних границ и дыр противоположное — заливка nonzero рисует дыры дырками.
+ */
+function tracePaintLoops(): Pt[][] {
+  if (!paintMask) return [];
+  const G = PAINT_GRID;
+  const bw = currentMap.cols * G;
+  const bh = currentMap.rows * G;
+  // ячейка сетки закрашена, только если закрашены все её пиксели (строго):
+  // ходьба чуть меньше нарисованного — безопасно, наоборот не бывает
+  const inside = (gx: number, gy: number): boolean => {
+    if (gx < 0 || gy < 0 || gx >= bw || gy >= bh) return false;
+    const x0 = Math.round((gx * PAINT_CELL_W) / G);
+    const y0 = Math.round((gy * PAINT_CELL_H) / G);
+    const x1 = Math.round(((gx + 1) * PAINT_CELL_W) / G);
+    const y1 = Math.round(((gy + 1) * PAINT_CELL_H) / G);
+    for (let y = y0; y < y1; y++) {
+      const row = y * paintW!;
+      for (let x = x0; x < x1; x++) {
+        if (paintMask![row + x] !== 1) return false;
+      }
+    }
+    return true;
+  };
+  const edges: [number, number, number, number][] = [];
+  const byVertex = new Map<string, number[]>();
+  const addEdge = (x1: number, y1: number, x2: number, y2: number) => {
+    const id = edges.length;
+    edges.push([x1, y1, x2, y2]);
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      const k = `${x},${y}`;
+      const arr = byVertex.get(k);
+      if (arr) arr.push(id);
+      else byVertex.set(k, [id]);
+    }
+  };
+  for (let gy = 0; gy < bh; gy++) {
+    for (let gx = 0; gx < bw; gx++) {
+      if (!inside(gx, gy)) continue;
+      if (!inside(gx, gy - 1)) addEdge(gx, gy, gx + 1, gy);
+      if (!inside(gx, gy + 1)) addEdge(gx, gy + 1, gx + 1, gy + 1);
+      if (!inside(gx - 1, gy)) addEdge(gx, gy, gx, gy + 1);
+      if (!inside(gx + 1, gy)) addEdge(gx + 1, gy, gx + 1, gy + 1);
+    }
+  }
+  const used = new Array<boolean>(edges.length).fill(false);
+  const loops: Pt[][] = [];
+  for (let i = 0; i < edges.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    const loop: [number, number][] = [
+      [edges[i][0], edges[i][1]],
+      [edges[i][2], edges[i][3]],
+    ];
+    let guard = 0;
+    while (guard++ <= edges.length) {
+      const [tx, ty] = loop[loop.length - 1];
+      const cands = (byVertex.get(`${tx},${ty}`) ?? []).filter((si) => !used[si]);
+      if (cands.length === 0) break;
+      const si = cands[0];
+      used[si] = true;
+      const [ex1, ey1, ex2, ey2] = edges[si];
+      const next: [number, number] = ex1 === tx && ey1 === ty ? [ex2, ey2] : [ex1, ey1];
+      if (next[0] === loop[0][0] && next[1] === loop[0][1]) break;
+      loop.push(next);
+    }
+    if (loop.length >= 4) {
+      // в клеточные доли со схлопыванием коллинеарных вершин
+      const pts: Pt[] = [];
+      for (const [gx, gy] of loop) {
+        const p = { x: gx / G, y: gy / G };
+        const n = pts.length;
+        if (n >= 2) {
+          const a = pts[n - 2];
+          const b = pts[n - 1];
+          if ((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y)) {
+            pts[n - 1] = p;
+            continue;
+          }
+        }
+        pts.push(p);
+      }
+      // сглаживание кистевого угловатого края: Чайкин ×3, дрожь ±2% клетки, Чайкин ×1
+      let poly = chaikin(pts, 3);
+      poly = poly.map((p) => ({
+        x: p.x + (rndShared() * 2 - 1) * 0.02,
+        y: p.y + (rndShared() * 2 - 1) * 0.02,
+      }));
+      poly = chaikin(poly, 1);
+      loops.push(poly);
+    }
+  }
+  return loops;
+}
+
+/** Общий сеяный ГПСЧ контура (один на конфиг — последовательность вызовов фиксирована). */
+let rndShared: () => number = Math.random;
+
+/**
+ * Полигон локации из пиксельной отрисовки: все петли контура одна за другой.
+ * Лучевые проверки (pointInPolygon) считают нечётность пересечений — петли
+ * вместе работают как единая фигура с дырками.
+ */
+function buildPaintPolygon(): Pt[] {
+  rndShared = mulberry32(hashStr(currentMap.seed + ':paint'));
+  const loops = tracePaintLoops();
+  if (loops.length === 0) {
+    return [
+      { x: 0, y: 0 },
+      { x: currentMap.cols, y: 0 },
+      { x: currentMap.cols, y: currentMap.rows },
+      { x: 0, y: currentMap.rows },
+    ];
+  }
+  const out: Pt[] = [];
+  for (const l of loops) out.push(...l);
+  return out;
+}
+
 /* ---------- проходимость клетки с учётом кромки ---------- */
 
-/** Полигон локации в клеточных долях — считается один раз на конфиг. */
+/** Полигон локации в клеточных долях — считается один раз на конфиг.
+ *  С готовой пиксельной отрисовкой контур идёт по маске рисунка (кисть задаёт
+ *  форму локации), без него — по зонам, как в конфигах до кисти. */
 let islandPoly: Pt[] | null = null;
+let islandLoopsCache: Pt[][] | null | undefined;
 function islandPolygon(): Pt[] {
-  if (!islandPoly) islandPoly = buildTestPolygon(currentMap.seed);
+  if (!islandPoly) {
+    if (paintReady()) {
+      const loops = tracePaintLoops();
+      islandLoopsCache = loops;
+      const flat: Pt[] = [];
+      for (const l of loops) flat.push(...l);
+      islandPoly = flat.length > 0 ? flat : buildTestPolygon(currentMap.seed);
+    } else {
+      islandLoopsCache = null;
+      islandPoly = buildTestPolygon(currentMap.seed);
+    }
+  }
   return islandPoly;
+}
+
+/** Петли контура (для Path2D с отдельными подпутями); null — контур одиночный. */
+function islandLoops(): Pt[][] | null {
+  islandPolygon();
+  return islandLoopsCache ?? null;
 }
 
 /** Клетка целиком внутри нарисованной кромки: 4 угла, середины сторон и центр.
@@ -86,11 +402,18 @@ export function testCellInIsland(c: number, r: number): boolean {
   return true;
 }
 
-/** Проходимая ли клетка мира (0-based) в боевом режиме: в зоне с клетками, не задета
- *  кромкой и не занята препятствием (камень/дерево стоят на клетке намертво;
- *  земля — наземный декор, через неё ходят). */
+/** Боевая ли клетка (0-based): клетка зон вида «cells» или одиночная боевая
+ *  клетка (объект kind «battle», ставится на закрашенное кистью место). */
+export function isBattleCell(c: number, r: number): boolean {
+  if (currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return true;
+  return (currentMap.objects ?? []).some((o) => o.kind === 'battle' && o.c === c && o.r === r);
+}
+
+/** Проходимая ли клетка мира (0-based) в боевом режиме: боевая клетка (зона или
+ *  одиночная), не задета кромкой и не занята препятствием (камень/дерево стоят
+ *  на клетке намертво; земля — наземный декор, через неё ходят). */
 export function testWalkableCell(c: number, r: number): boolean {
-  if (!currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) return false;
+  if (!isBattleCell(c, r)) return false;
   if (testObstacleAt(c, r)) return false;
   return testCellInIsland(c, r);
 }
@@ -104,7 +427,7 @@ export function testClippedCells(): { c: number; r: number }[] {
     for (let c = 0; c < currentMap.cols; c++) {
       if (testWalkableCell(c, r)) continue;
       if (testObstacleAt(c, r)) continue;
-      if (currentMap.zones.some((z) => isCellsZone(z) && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) out.push({ c, r });
+      if (isBattleCell(c, r)) out.push({ c, r });
     }
   }
   return out;
@@ -358,6 +681,11 @@ export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH:
 /** Точка (клеточные доли) внутри боевой зоны (kind «cells»): там мирный режим
  *  сменяется боем — включается привязка к клеткам и вид сверху. */
 export function testPointInCellsZone(x: number, y: number): boolean {
+  const c = Math.floor(x);
+  const r = Math.floor(y);
+  if (c >= 0 && r >= 0 && (currentMap.objects ?? []).some((o) => o.kind === 'battle' && o.c === c && o.r === r)) {
+    return true;
+  }
   return currentMap.zones.some(
     (z) => isCellsZone(z) && x >= z.c0 && x <= z.c1 + 1 && y >= z.r0 && y <= z.r1 + 1,
   );
@@ -420,6 +748,8 @@ export function drawTerrainCell(
   c: number,
   r: number,
   pat: CanvasPattern | null,
+  /** Пиксельная отрисовка локации: верх плато поднимает кусок рисунка клетки. */
+  paintSrc?: HTMLCanvasElement | null,
 ): void {
   const e = elevLevelAt(c, r);
   if (e <= 0) return;
@@ -454,8 +784,24 @@ export function drawTerrainCell(
       ctx.fill();
     }
   }
-  // верх плато: травяной тайл, поднятый на уровень; чем выше — тем светлее
-  if (pat) {
+  // верх плато: кусок пиксельной отрисовки клетки, поднятый на уровень; чем
+  // выше — тем светлее. Без рисунка — травяной тайл пака, как раньше.
+  if (paintSrc) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      paintSrc,
+      c * PAINT_CELL_W,
+      r * PAINT_CELL_H,
+      PAINT_CELL_W,
+      PAINT_CELL_H,
+      x,
+      y - lift,
+      cellW + 0.5,
+      cellH + 0.5,
+    );
+    ctx.restore();
+  } else if (pat) {
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = pat;
@@ -1380,22 +1726,38 @@ let geoCache: GeoCache | null = null;
 export function testFieldGeometry(cellW = 100, cellH = 150): GeoCache {
   const key = `${cellW}x${cellH}`;
   if (geoCache && geoCache.key === key) return geoCache;
-  const polygon = buildTestPolygon(currentMap.seed);
+  const polygon = islandPolygon();
   const path = new Path2D();
-  polygon.forEach((p, i) => {
-    const px = p.x * cellW;
-    const py = p.y * cellH;
-    if (i === 0) path.moveTo(px, py);
-    else path.lineTo(px, py);
-  });
-  path.closePath();
+  const loops = islandLoops();
+  if (loops) {
+    // несколько петель (острова и дыры кисти): каждая — своя замкнутая подпуть,
+    // иначе между петлями протягиваются соединительные линии
+    for (const l of loops) {
+      l.forEach((p, i) => {
+        const px = p.x * cellW;
+        const py = p.y * cellH;
+        if (i === 0) path.moveTo(px, py);
+        else path.lineTo(px, py);
+      });
+      path.closePath();
+    }
+  } else {
+    polygon.forEach((p, i) => {
+      const px = p.x * cellW;
+      const py = p.y * cellH;
+      if (i === 0) path.moveTo(px, py);
+      else path.lineTo(px, py);
+    });
+    path.closePath();
+  }
   const bb = polygonBBox(polygon);
   geoCache = {
     key,
     polygon,
     path,
     bboxPx: { x0: bb.x0 * cellW, y0: bb.y0 * cellH, x1: bb.x1 * cellW, y1: bb.y1 * cellH },
-    decor: buildTestDecor(polygon, currentMap.seed),
+    // С рисунком процедурного декора нет: кисть сама рисует траву, цветы и кусты.
+    decor: paintReady() ? [] : buildTestDecor(polygon, currentMap.seed),
   };
   return geoCache;
 }

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
+import zlib from "node:zlib";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
@@ -55,8 +56,10 @@ const JOIN_COOLDOWN_MS = 1000;
 /** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
 const HEARTBEAT_MS = 30_000;
 /** Потолок входящего кадра: протокол состоит из коротких JSON-строк,
- *  дефолтные 100 МиБ библиотеки ws здесь только помогали расходу памяти. */
-const MAX_PAYLOAD = 4 * 1024;
+ *  дефолтные 100 МиБ библиотеки ws здесь только помогали расходу памяти.
+ *  Исключение — рисунок локации (кисть): PNG base64 до 3,5 МБ едет в setmap
+ *  одним кадром, поэтому потолок поднят до 4 МиБ. */
+const MAX_PAYLOAD = 4 * 1024 * 1024;
 /**
  * Короткий предохранитель от пачки aim подряд. Угол в cat.deg пишется сразу.
  * Если с прошлой рассылки прошло больше этого — пакет уходит сразу.
@@ -175,14 +178,221 @@ let TEST_OBST_CELLS = new Set();
 /** Тела препятствий (эллипсы с поворотом) — точечная проверка мирных точек. */
 let TEST_OBST_BODIES = [];
 
-/** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором. */
+/** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором.
+ *  Пиксельная отрисовка: рисунок декодируется ДО геометрии — контур локации
+ *  строится по маске кисти (не декодировался — форма считается по зонам). */
 function rebuildTestGeometry() {
   TEST_WIDTH = testMap.cols;
   TEST_HEIGHT = testMap.rows;
+  TEST_PAINT = testMap.paint ? decodePaintPng(testMap.paint) : null;
+  if (testMap.paint && !TEST_PAINT) console.warn("paint decode failed — форма локации по зонам");
   TEST_ISLAND = buildIsland(testMap);
   TEST_CELLS = buildCells(testMap, TEST_ISLAND);
   TEST_OBST_CELLS = obstacleBlockedCells(testMap);
   TEST_OBST_BODIES = obstacleBodiesOf(testMap);
+}
+
+/* ---------- пиксельная отрисовка: PNG-декод и маска земли ---------- */
+
+/** Канонический размер клетки пиксельной отрисовки (зеркало PAINT_CELL_W/H
+ *  из test-field.ts): рисунок хранится в px мира cols*100 x rows*150. */
+const PAINT_CELL_W = 100;
+const PAINT_CELL_H = 150;
+/** Декодированный рисунок текущей локации: { w, h, mask: Uint8Array 0/1 } или null. */
+let TEST_PAINT = null;
+
+/**
+ * Минимальный PNG-декодер (альфа-маска): браузерный canvas.toDataURL даёт
+ * 8-бит RGBA/RGB без interlace, фильтры строк 0–4 — этого достаточно. Возвращает
+ * { w, h, mask } (mask[i] = альфа > 127) или null — битый/чужой формат.
+ */
+function decodePaintPng(b64) {
+  try {
+    const buf = Buffer.from(String(b64), "base64");
+    if (buf.length < 8 + 12 + 12) return null;
+    if (buf.readUInt32BE(0) !== 0x89504e47 || buf.readUInt32BE(4) !== 0x0d0a1a0a) return null;
+    let off = 8;
+    let w = 0;
+    let h = 0;
+    let bitDepth = 0;
+    let colorType = 0;
+    let interlace = 0;
+    const idat = [];
+    while (off + 12 <= buf.length) {
+      const len = buf.readUInt32BE(off);
+      const type = buf.toString("ascii", off + 4, off + 8);
+      const data = buf.subarray(off + 8, off + 8 + len);
+      if (type === "IHDR") {
+        w = data.readUInt32BE(0);
+        h = data.readUInt32BE(4);
+        bitDepth = data[8];
+        colorType = data[9];
+        interlace = data[12];
+      } else if (type === "IDAT") {
+        idat.push(data);
+      } else if (type === "IEND") {
+        break;
+      }
+      off += 12 + len;
+    }
+    if (!w || !h || bitDepth !== 8 || interlace !== 0) return null;
+    if (colorType !== 6 && colorType !== 2) return null;
+    const raw = zlib.inflateSync(Buffer.concat(idat));
+    const bpp = colorType === 6 ? 4 : 3;
+    const stride = w * bpp;
+    if (raw.length < (stride + 1) * h) return null;
+    const out = Buffer.alloc(stride * h);
+    for (let y = 0; y < h; y++) {
+      const filter = raw[y * (stride + 1)];
+      const src = y * (stride + 1) + 1;
+      const dst = y * stride;
+      for (let x = 0; x < stride; x++) {
+        const a = x >= bpp ? out[dst + x - bpp] : 0;
+        const b = y > 0 ? out[dst + x - stride] : 0;
+        const c = x >= bpp && y > 0 ? out[dst + x - stride - bpp] : 0;
+        let v = raw[src + x];
+        if (filter === 1) v = (v + a) & 0xff;
+        else if (filter === 2) v = (v + b) & 0xff;
+        else if (filter === 3) v = (v + ((a + b) >> 1)) & 0xff;
+        else if (filter === 4) {
+          const p = a + b - c;
+          const pa = Math.abs(p - a);
+          const pb = Math.abs(p - b);
+          const pc = Math.abs(p - c);
+          v = (v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 0xff;
+        }
+        out[dst + x] = v;
+      }
+    }
+    const mask = new Uint8Array(w * h);
+    const n = w * h;
+    for (let i = 0; i < n; i++) mask[i] = out[i * bpp + (bpp - 1)] > 127 ? 1 : 0;
+    return { w, h, mask };
+  } catch {
+    return null;
+  }
+}
+
+/** Пиксель маски (канонические px мира): закрашен ли (вне рисунка — true). */
+function paintPxOn(x, y) {
+  if (!TEST_PAINT) return true;
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  if (xi < 0 || yi < 0 || xi >= TEST_PAINT.w || yi >= TEST_PAINT.h) return false;
+  return TEST_PAINT.mask[yi * TEST_PAINT.w + xi] === 1;
+}
+
+/** Доля закрашенных пикселей клетки (0-based): боевая клетка/заход ставятся
+ *  только на место, покрашенное целиком (зеркало paintCellCoverage клиента). */
+function paintCellCoverage(c, r) {
+  if (!TEST_PAINT) return 1;
+  const x0 = c * PAINT_CELL_W;
+  const y0 = r * PAINT_CELL_H;
+  if (x0 < 0 || y0 < 0 || x0 + PAINT_CELL_W > TEST_PAINT.w || y0 + PAINT_CELL_H > TEST_PAINT.h) return 0;
+  let on = 0;
+  for (let y = y0; y < y0 + PAINT_CELL_H; y++) {
+    const row = y * TEST_PAINT.w;
+    for (let x = x0; x < x0 + PAINT_CELL_W; x++) on += TEST_PAINT.mask[row + x];
+  }
+  return on / (PAINT_CELL_W * PAINT_CELL_H);
+}
+
+/**
+ * Контуры закрашенной области на сетке 1/50 клетки — точный порт tracePaintLoops
+ * из src/lib/sim/test-field.ts (шаг сетки, строгое «все пиксели ячейки»,
+ * схлопывание, Чайкин ×3, дрожь ±2%, Чайкин ×1 и ПОРЯДОК вызовов rnd — иначе
+ * сервер и клиент разъедутся картинкой).
+ */
+function tracePaintLoops() {
+  if (!TEST_PAINT) return [];
+  const G = 50;
+  const mask = TEST_PAINT.mask;
+  const w = TEST_PAINT.w;
+  const bw = testMap.cols * G;
+  const bh = testMap.rows * G;
+  const inside = (gx, gy) => {
+    if (gx < 0 || gy < 0 || gx >= bw || gy >= bh) return false;
+    const x0 = Math.round((gx * PAINT_CELL_W) / G);
+    const y0 = Math.round((gy * PAINT_CELL_H) / G);
+    const x1 = Math.round(((gx + 1) * PAINT_CELL_W) / G);
+    const y1 = Math.round(((gy + 1) * PAINT_CELL_H) / G);
+    for (let y = y0; y < y1; y++) {
+      const row = y * w;
+      for (let x = x0; x < x1; x++) if (mask[row + x] !== 1) return false;
+    }
+    return true;
+  };
+  const edges = [];
+  const byVertex = new Map();
+  const addEdge = (x1, y1, x2, y2) => {
+    const id = edges.length;
+    edges.push([x1, y1, x2, y2]);
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      const k = `${x},${y}`;
+      const arr = byVertex.get(k);
+      if (arr) arr.push(id);
+      else byVertex.set(k, [id]);
+    }
+  };
+  for (let gy = 0; gy < bh; gy++) {
+    for (let gx = 0; gx < bw; gx++) {
+      if (!inside(gx, gy)) continue;
+      if (!inside(gx, gy - 1)) addEdge(gx, gy, gx + 1, gy);
+      if (!inside(gx, gy + 1)) addEdge(gx, gy + 1, gx + 1, gy + 1);
+      if (!inside(gx - 1, gy)) addEdge(gx, gy, gx, gy + 1);
+      if (!inside(gx + 1, gy)) addEdge(gx + 1, gy, gx + 1, gy + 1);
+    }
+  }
+  const rnd = mulberry32(hashStr((testMap.seed || TEST_ROOM) + ":paint"));
+  const used = new Array(edges.length).fill(false);
+  const loops = [];
+  for (let i = 0; i < edges.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    const loop = [
+      [edges[i][0], edges[i][1]],
+      [edges[i][2], edges[i][3]],
+    ];
+    let guard = 0;
+    while (guard++ <= edges.length) {
+      const [tx, ty] = loop[loop.length - 1];
+      const cands = (byVertex.get(`${tx},${ty}`) || []).filter((si) => !used[si]);
+      if (cands.length === 0) break;
+      const si = cands[0];
+      used[si] = true;
+      const [ex1, ey1, ex2, ey2] = edges[si];
+      const next = ex1 === tx && ey1 === ty ? [ex2, ey2] : [ex1, ey1];
+      if (next[0] === loop[0][0] && next[1] === loop[0][1]) break;
+      loop.push(next);
+    }
+    if (loop.length >= 4) {
+      const pts = [];
+      for (const [gx, gy] of loop) {
+        const p = { x: gx / G, y: gy / G };
+        const n = pts.length;
+        if (n >= 2) {
+          const a = pts[n - 2];
+          const b = pts[n - 1];
+          if ((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y)) {
+            pts[n - 1] = p;
+            continue;
+          }
+        }
+        pts.push(p);
+      }
+      let poly = chaikin(pts, 3);
+      poly = poly.map((p) => ({
+        x: p.x + (rnd() * 2 - 1) * 0.02,
+        y: p.y + (rnd() * 2 - 1) * 0.02,
+      }));
+      poly = chaikin(poly, 1);
+      loops.push(poly);
+    }
+  }
+  return loops;
 }
 
 /* ---------- геометрия кромки локации — точный порт src/lib/sim/test-field.ts.
@@ -304,8 +514,24 @@ function traceMaskOutline(zoneRects, margin) {
   return best;
 }
 
-/** Полигон кромки в клеточных долях: зоны + полклетки, Чайкин ×3, дрожь ±5%, Чайкин ×1. */
+/** Полигон кромки в клеточных долях: с пиксельной отрисовкой — контуры кисти
+ *  (все петли: острова и дыры), без неё — зоны + полклетки, Чайкин ×3, дрожь ±5%, Чайкин ×1. */
 function buildIsland(map) {
+  if (TEST_PAINT) {
+    const loops = tracePaintLoops();
+    if (loops.length > 0) {
+      const flat = [];
+      for (const l of loops) flat.push(...l);
+      return flat;
+    }
+    // пустой рисунок — весь мир (страховка, как у зон без контура)
+    return [
+      { x: -map.margin, y: -map.margin },
+      { x: map.cols + map.margin, y: -map.margin },
+      { x: map.cols + map.margin, y: map.rows + map.margin },
+      { x: -map.margin, y: map.rows + map.margin },
+    ];
+  }
   const rnd = mulberry32(hashStr(map.seed || TEST_ROOM));
   const zoneRects = map.zones.map((z) => [z.c0, z.r0, z.c1, z.r1]);
   const outline = traceMaskOutline(zoneRects, map.margin);
@@ -363,6 +589,14 @@ function buildCells(map, island) {
     if (z.kind !== 'cells') continue;
     for (let r = z.r0; r <= z.r1; r++) {
       for (let c = z.c0; c <= z.c1; c++) mask[r][c] = true;
+    }
+  }
+  // одиночные боевые клетки (объекты kind «battle») — тоже боевые клетки:
+  // шаги, прыжки и удары работают по ним, как по зонам
+  for (const o of map.objects || []) {
+    if (o.kind !== 'battle') continue;
+    if (Number.isInteger(o.c) && Number.isInteger(o.r) && o.c >= 0 && o.r >= 0 && o.c < map.cols && o.r < map.rows) {
+      mask[o.r][o.c] = true;
     }
   }
   const blocked = obstacleBlockedCells(map);
@@ -568,7 +802,9 @@ function sanitizeTestMap(raw) {
                 ? 'entry'
                 : o.kind === 'ground'
                   ? 'ground'
-                  : null);
+                  : o.kind === 'battle'
+                    ? 'battle'
+                    : null);
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
       // считаем из клетки и положения в ней (зеркало sanitizeTestMap клиента).
@@ -639,6 +875,26 @@ function sanitizeTestMap(raw) {
       });
     }
   }
+  // Пиксельная отрисовка (зеркало sanitizeTestMap клиента): строгий формат и
+  // декод — рисунок обязан совпадать с миром в пикселях (cols*100 x rows*150).
+  let paint = null;
+  let paintDecoded = null;
+  if (raw.paint != null) {
+    if (typeof raw.paint !== 'string' || !raw.paint) return { error: 'рисунок локации не распознан' };
+    if (raw.paint.length > 3500000) return { error: 'рисунок локации слишком велик' };
+    if (!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw.paint)) {
+      return { error: 'рисунок локации не base64' };
+    }
+    if (!raw.paint.startsWith('iVBORw0KGgo')) return { error: 'рисунок локации не PNG' };
+    paintDecoded = decodePaintPng(raw.paint);
+    if (!paintDecoded) return { error: 'рисунок локации не декодируется' };
+    if (paintDecoded.w !== cols * 100 || paintDecoded.h !== rows * 150) {
+      return { error: 'рисунок локации не совпадает с размером мира' };
+    }
+    paint = raw.paint;
+  }
+  // С рисунком проталины и покрытия не нужны: они «запечены» в пиксели кистью.
+  if (paint) objects = objects.filter((o) => o.kind !== 'dirt' && o.kind !== 'ground');
   const zones = [];
   for (let i = 0; i < raw.zones.length; i++) {
     const z = raw.zones[i];
@@ -658,13 +914,18 @@ function sanitizeTestMap(raw) {
       String(z.name ?? '').trim().slice(0, 24) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
     zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
   }
-  if (!zones.some((z) => z.kind === 'cells')) {
+  if (!zones.some((z) => z.kind === 'cells') && !(paint && objects.some((o) => o.kind === 'battle'))) {
     return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
   }
   // Клетки захода: только на траве, и по направлению шага обязана быть боевая
   // клетка (зеркало проверки из src/lib/sim/test-map.ts).
   const battleAt = (c, r) =>
-    c >= 0 && r >= 0 && c < cols && r < rows && zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
+    (c >= 0 &&
+      r >= 0 &&
+      c < cols &&
+      r < rows &&
+      zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1)) ||
+    objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
   for (const o of objects) {
     if (o.kind !== 'entry' || !o.dir) continue;
     if (battleAt(o.c, o.r)) {
@@ -676,8 +937,21 @@ function sanitizeTestMap(raw) {
       return { error: `заход на клетке ${o.c}×${o.r}: по направлению шага должна быть боевая клетка` };
     }
   }
-  // Зоны обязаны срастаться в один островок (касание сторонами, не углами):
-  // иначе контур кромки распадается на несколько петель и локация собирается неверно.
+  // Зоны обязаны срастаться в один островок (касание сторонами, не углами) —
+  // но только без пиксельной отрисовки: с рисунком форма локации из пикселей,
+  // зоны — просто списки боевых областей и могут стоять островами.
+  if (paint) {
+    // Логика боевых клеток (зеркало редактора): боевая клетка и заход ставятся
+    // только на место, покрашенное кистью целиком.
+    for (const o of objects) {
+      if (o.kind !== 'battle' && o.kind !== 'entry') continue;
+      if (paintCellCoverageMask(paintDecoded, o.c, o.r) < 0.995) {
+        return {
+          error: `${o.kind === 'battle' ? 'боевая клетка' : 'заход'} на клетке ${o.c}×${o.r}: место покрашено не целиком — закрасьте область клетки кистью`,
+        };
+      }
+    }
+  } else {
   const cells = new Set();
   for (const z of zones) {
     for (let r = z.r0; r <= z.r1; r++) {
@@ -700,6 +974,7 @@ function sanitizeTestMap(raw) {
   if (seen.size !== cells.size) {
     return { error: 'зоны должны соединяться в одну локацию (касаться сторонами, не углами)' };
   }
+  }
   // Клетки спавна: необязательный список (старые конфиги без него — «пусто»).
   // Ставятся только на траве (зелёной зоне) и не на боевых клетках: новичок
   // появляется в мирном режиме. Дубликаты схлопываются, порядок сохраняется
@@ -718,9 +993,16 @@ function sanitizeTestMap(raw) {
         return { error: `спавн №${i + 1}: вне границ мира` };
       }
       const onGreen = zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-      const onBattle = zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-      if (!onGreen || onBattle) {
+      const onBattle =
+        zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) ||
+        objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
+      // С рисунком спавн — на любом закрашенном месте не на боевых клетках;
+      // без рисунка — по-старому, только в зелёной зоне.
+      if ((paint && onBattle) || (!paint && (!onGreen || onBattle))) {
         return { error: `спавн №${i + 1}: клетка спавна ставится на траве (зелёной зоне), не на боевых клетках` };
+      }
+      if (paint && paintPxMask(paintDecoded, (c + 0.5) * 100, (r + 0.5) * 150) !== true) {
+        return { error: `спавн №${i + 1}: место не закрашено кистью — закрасьте клетку в редакторе` };
       }
       const key = `${c},${r}`;
       if (seenSp.has(key)) continue;
@@ -757,8 +1039,32 @@ function sanitizeTestMap(raw) {
       objects,
       spawns,
       ...(elev ? { elev } : {}),
+      ...(paint ? { paint } : {}),
     },
   };
+}
+
+/** Пиксель маски по декодированному рисунку (для проверок sanitize до rebuild). */
+function paintPxMask(decoded, x, y) {
+  if (!decoded) return true;
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  if (xi < 0 || yi < 0 || xi >= decoded.w || yi >= decoded.h) return false;
+  return decoded.mask[yi * decoded.w + xi] === 1;
+}
+
+/** Доля закрашенных пикселей клетки по декодированному рисунку. */
+function paintCellCoverageMask(decoded, c, r) {
+  if (!decoded) return 1;
+  const x0 = c * 100;
+  const y0 = r * 150;
+  if (x0 < 0 || y0 < 0 || x0 + 100 > decoded.w || y0 + 150 > decoded.h) return 0;
+  let on = 0;
+  for (let y = y0; y < y0 + 150; y++) {
+    const row = y * decoded.w;
+    for (let x = x0; x < x0 + 100; x++) on += decoded.mask[row + x];
+  }
+  return on / (100 * 150);
 }
 
 function loadTestMap() {
@@ -1091,6 +1397,20 @@ function spawnCell(room) {
       if (free.length > 0) return free[Math.floor(Math.random() * free.length)];
       console.log(`spawn cells all blocked/occupied: raw=${JSON.stringify(sp)}`);
     }
+    // С пиксельной отрисовкой зелёные зоны больше не задают мирную территорию:
+    // новичок появляется на любой закрашенной кистью клетке не на боевых.
+    if (TEST_PAINT) {
+      for (let y = 1; y <= H; y++) {
+        for (let x = 1; x <= W; x++) {
+          if (!paintPxOn((x - 0.5) * 100, (y - 0.5) * 150)) continue;
+          if (testWalkable(x, y)) continue; // боевые клетки — не для мирного спавна
+          if (TEST_OBST_CELLS.has(`${x - 1},${y - 1}`)) continue;
+          if (!pointInPolygon(TEST_ISLAND, x - 0.5, y - 0.5)) continue;
+          if (occupied(room, x, y)) return [x, y];
+        }
+      }
+      // закрашенных свободных нет — fallback на обычный перебор ниже
+    }
     // Новичок в «тесте» появляется в мирном режиме — на траве (зелёная зона):
     // бой сам включится, когда игрок дойдёт до боевых клеток.
     const green = testMap.zones.filter((z) => z.kind === 'green');
@@ -1206,7 +1526,26 @@ function leave(ws) {
     console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
   }
   ws.room = null;
-  if (room.sockets.size === 0) rooms.delete(room.code);
+  if (room.sockets.size === 0) keepEmptyRoom(room);
+}
+
+/**
+ * Пустая комната живёт ещё RETENTION — на случай перезахода. Комната хранит
+ * атмосферу (часы суток и погоду), чат и состояние манекена/мишени: когда игрок
+ * «перезаходит на другого персонажа», сокет покидает комнату и тут же возвращается
+ * — сброс комнаты в этот момент прыгал бы временем суток (часы стартовали заново
+ * с середины «дня») и стирал чат. Если за отведённое время никто не вернулся,
+ * комната удаляется совсем (память не течёт).
+ */
+const EMPTY_ROOM_RETENTION_MS = 10 * 60_000;
+
+function keepEmptyRoom(room) {
+  if (room.emptyTimer) clearTimeout(room.emptyTimer);
+  room.emptyTimer = setTimeout(() => {
+    room.emptyTimer = null;
+    if (room.sockets.size === 0 && rooms.get(room.code) === room) rooms.delete(room.code);
+  }, EMPTY_ROOM_RETENTION_MS);
+  room.emptyTimer.unref();
 }
 
 function refuseJoin(ws, room, reason) {

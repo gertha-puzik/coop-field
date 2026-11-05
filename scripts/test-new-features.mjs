@@ -101,12 +101,12 @@ const check = (label, cond, extra = "") => {
   ws.close();
 }
 
-// 4. maxPayload: кадр больше 4 КБ разрывает соединение.
+// 4. maxPayload: кадр больше потолка (4 МиБ — под рисунок локации) разрывает соединение.
 {
   const ws = await connectBare();
   const closed = new Promise((resolve) => ws.on("close", (code) => resolve(code)));
   await sleep(100);
-  ws.send(JSON.stringify(["chat", { text: "я".repeat(10_000) }]));
+  ws.send(JSON.stringify(["chat", { text: "я".repeat(5 * 1024 * 1024) }]));
   const code = await Promise.race([closed, sleep(3000).then(() => null)]);
   check("maxPayload разрывает", code === 1009, `close code ${code}`);
 }
