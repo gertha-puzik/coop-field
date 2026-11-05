@@ -24,6 +24,7 @@ export interface PointerToolsDeps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   camRef: RefObject<{ x: number; y: number; init: boolean }>;
   camFxRef: RefObject<{ z: number; sq: number; dp: number }>;
+  cursorScreenRef: RefObject<{ x: number; y: number } | null>;
   cursorWorldRef: RefObject<{ x: number; y: number } | null>;
   dirtPaintingRef: RefObject<boolean>;
   dragRef: RefObject<{
@@ -79,6 +80,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     canvasRef,
     camRef,
     camFxRef,
+    cursorScreenRef,
     cursorWorldRef,
     dirtPaintingRef,
     dragRef,
@@ -174,6 +176,11 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const cvp = canvasRef.current;
       if (cvp) {
         const rect = cvp.getBoundingClientRect();
+        // Последняя экранная позиция курсора (css px от угла канваса): кадр
+        // пересчитывает по ней мировую точку прицела ПОСЛЕ движения камеры —
+        // иначе в прыжке/приседе камера уезжает под неподвижным курсором,
+        // а прицел, посчитанный только по событию, отлипает от видимой точки.
+        cursorScreenRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
         // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
         const fxc = camFxRef.current;
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
