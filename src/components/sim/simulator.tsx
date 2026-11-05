@@ -81,17 +81,14 @@ import {
   copyPaintCanvas,
   encodeDraftPaint,
   ensureDraftPaint,
-  PAINT_MATS,
   pushPaintUndo,
   stampPaintBrush,
-  undoPaintStroke,
 } from '@/lib/sim/paint';
 import {
   EDITOR_PASS_KEY,
   type EditorDraft,
   type EditorPlace,
   type EditorTool,
-  type PaintBrushShape,
 } from '@/lib/sim/editor-model';
 import {
   dummiesOf,
@@ -111,7 +108,7 @@ import {
 import { FightLog } from './fight-log';
 import { RoomChat } from './room-chat';
 import { ThemeBackdrop } from './theme-backdrop';
-import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, THEMES, type ThemeId } from '@/lib/sim/theme';
+import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, type ThemeId } from '@/lib/sim/theme';
 import { stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import {
   currentTestMap,
@@ -170,16 +167,12 @@ import {
   objectScale,
   objectSprite,
   obstacleBodyPx,
-  GROUND_COVER_OPTS,
   mapHasPaint,
   PAINT_MAX_BASE64,
   paintFormatError,
-  OBJECT_ROT_STEP,
   OBJECT_SCALE_MAX,
   OBJECT_SCALE_MIN,
-  ROCK_SPRITE_OPTS,
   TERRAIN_MAX_LEVEL,
-  TREE_SPRITE_OPTS,
   TEST_MAP_DEFAULT,
   TEST_MAP_LIMITS,
   testMapConnectivityError,
@@ -204,7 +197,6 @@ import {
   cycleStartFor,
   dayPartOfProgress,
   dayProgressAt,
-  damageLevelLabel,
   dirByDeg,
   GAME_CREDITS,
   inWindow,
@@ -221,52 +213,15 @@ import {
   type WeatherKind,
 } from '@/lib/sim/settings';
 import { drawFieldHud } from './simulator/hud-canvas';
-import { fmtSec, stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
+import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
+import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
+import { EditorOverlay } from './simulator/components/editor-overlay';
+import { FieldStage } from './simulator/components/field-stage';
 import { useSimKeyboard } from './simulator/hooks/use-keyboard';
 import { useSimNet } from './simulator/hooks/use-network';
 import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
 
 
-/**
- * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
- * соседней панели. Сам ничего не хранит — отдаёт дельту dx родителю.
- */
-function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () => void }) {
-  const last = useRef(0);
-  const dragging = useRef(false);
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Потяните, чтобы изменить ширину панели"
-      title="Потяните, чтобы изменить ширину"
-      onPointerDown={(ev) => {
-        ev.preventDefault();
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        last.current = ev.clientX;
-        dragging.current = true;
-      }}
-      onPointerMove={(ev) => {
-        if (!dragging.current || !(ev.buttons & 1)) return;
-        onDrag(ev.clientX - last.current);
-        last.current = ev.clientX;
-      }}
-      onPointerUp={(ev) => {
-        if (!dragging.current) return;
-        dragging.current = false;
-        try {
-          ev.currentTarget.releasePointerCapture(ev.pointerId);
-        } catch {}
-        onEnd();
-      }}
-      onPointerCancel={() => {
-        dragging.current = false;
-        onEnd();
-      }}
-      className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-[var(--sim-divider)] transition-colors hover:bg-[var(--sim-accent-soft)] active:bg-[var(--sim-accent-soft)] lg:block"
-    />
-  );
-}
 
 
 export default function Simulator() {
@@ -5585,127 +5540,26 @@ export default function Simulator() {
   return (
     <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]">
       <ThemeBackdrop theme={theme} />
-      <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
-        <div>
-          <h1 className="text-base font-bold leading-tight">abnocw</h1>
-          <p className="text-[11px] text-[var(--sim-text-faint)]">
-            {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
-          </p>
-        </div>
-        {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
-        <div
-          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
-          aria-label="Выбранные скрытые параметры"
-        >
-          <span className="font-bold text-[var(--sim-text)]">СП:</span>
-          <span className="text-[var(--sim-text-muted)]">
-            стрела <b className="font-semibold text-[var(--sim-text)]">{fmtSec(settings.arrow.periodSec)}</b>
-          </span>
-          <span className="text-[var(--sim-text-faint)]">·</span>
-          <span className="text-[var(--sim-text-muted)]">
-            дамаг <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.damageLevel)}</b>
-          </span>
-          <span className="text-[var(--sim-text-faint)]">·</span>
-          <span className="text-[var(--sim-text-muted)]">
-            броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <Button
-            size="sm"
-            variant="outline"
-            className="btn-neutral h-8 text-xs"
-            onClick={() => {
-              setRoomsStale(false);
-              setSwitchOpen(true);
-            }}
-          >
-            Перейти в другую комнату
-          </Button>
-          <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
-        </div>
-        <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
-            тема
-            <select
-              value={theme}
-              onChange={(ev) => changeTheme(ev.target.value as ThemeId)}
-              className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-xs text-[var(--sim-text)] outline-none"
-            >
-              {THEMES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {fieldFormat === 'test' ? (
-            <Button
-              size="sm"
-              variant={editorOpen ? 'default' : 'outline'}
-              className={
-                editorOpen
-                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                  : 'btn-neutral h-8 text-xs'
-              }
-              onClick={() => (editorOpen ? closeEditor() : openEditor())}
-            >
-              Редактор локации
-            </Button>
-          ) : null}
-          {testField ? (
-            <>
-              <Button
-                size="sm"
-                variant={settings.character.peaceView ? 'default' : 'outline'}
-                className={
-                  settings.character.peaceView
-                    ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                    : 'btn-neutral h-8 text-xs'
-                }
-                title="Масштаб камеры, наклон земли и глубина в мирном режиме. Выключите — вид сверху, без перспективы; колесо мыши продолжает работать в любом случае."
-                onClick={() => patchCharacter({ peaceView: !settings.character.peaceView })}
-              >
-                Перспектива: {settings.character.peaceView ? 'ВКЛ' : 'ВЫКЛ'}
-              </Button>
-              <Button
-                size="sm"
-                variant={settings.arrow.battleMode ? 'default' : 'outline'}
-                className={
-                  settings.arrow.battleMode
-                    ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                    : 'btn-neutral h-8 text-xs'
-                }
-                title="Вход в бой — с клетки захода (две галочки у боевой зоны): встаньте на неё и нажмите. Выключение на боевой клетке возвращает на заход. Клавиша B."
-                onClick={toggleBattleMode}
-              >
-                Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="sm"
-              variant={settings.arrow.battleMode ? 'default' : 'outline'}
-              className={
-                settings.arrow.battleMode
-                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                  : 'btn-neutral h-8 text-xs'
-              }
-              onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
-            >
-              Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant={settingsOpen ? 'default' : 'outline'}
-            className={settingsOpen ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]' : 'btn-neutral h-8 text-xs'}
-            onClick={() => setSettingsOpen((v) => !v)}
-          >
-            Настройки
-          </Button>
-        </div>
-      </header>
+      <SimulatorHeader
+        settings={settings}
+        roomCode={roomCode}
+        peerCount={peerCount}
+        netStatus={netStatus}
+        theme={theme}
+        changeTheme={changeTheme}
+        fieldFormat={fieldFormat}
+        editorOpen={editorOpen}
+        closeEditor={closeEditor}
+        openEditor={openEditor}
+        testField={testField}
+        patchCharacter={patchCharacter}
+        toggleBattleMode={toggleBattleMode}
+        patchArrow={patchArrow}
+        settingsOpen={settingsOpen}
+        setSettingsOpen={setSettingsOpen}
+        setRoomsStale={setRoomsStale}
+        setSwitchOpen={setSwitchOpen}
+      />
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
           Ширины колонок тянутся разделителями и запоминаются. */}
@@ -5721,624 +5575,54 @@ export default function Simulator() {
           onEnd={() => saveLayout(layoutRef.current)}
         />
 
-        <section className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1">
-          <div className="relative w-full min-w-0 flex-1 lg:min-h-0">
-            <div
-              ref={fieldFrameRef}
-              role="region"
-              aria-label="Игровое поле"
-              className="relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
-            >
-              <div
-                className={
-                  testField
-                    ? 'relative h-full w-full'
-                    : fieldFit
-                      ? 'relative mx-auto'
-                      : 'relative mx-auto w-full max-w-full'
-                }
-                style={
-                  testField
-                    ? undefined
-                    : fieldFit
-                      ? { width: fieldFit.w, height: fieldFit.h }
-                      : { maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
-                }
-              >
-                <canvas
-                  ref={canvasRef}
-                  className="block h-full w-full cursor-crosshair rounded-lg"
-                  onPointerMove={onMove}
-                  onPointerDown={onPointerDown}
-                  onPointerUp={onUp}
-                  onPointerCancel={onUp}
-                  onPointerLeave={onLeave}
-                  onContextMenu={onContextMenu}
-                  onClick={onClick}
-                />
-                {/* Слой атмосферы: PixiJS выводит мир (как текстуру 2D-холста) вместе
-                    с цветокоррекцией, тенями облаков и дождём. События мыши проходят
-                    сквозь него на игровой холст. Без WebGL слой прозрачен. */}
-                <canvas
-                  ref={pixiRef}
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 z-10 block h-full w-full rounded-lg"
-                />
-                {/* HUD поля поверх атмосферы: циферблат день/ночь с движущимся
-                    солнцем/луной и значок текущей погоды. Не темнеет ночью и
-                    не прячется под дождём. */}
-                <canvas
-                  ref={hudRef}
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 z-20 block h-full w-full rounded-lg"
-                />
-              </div>
-              {battleHint ? (
-                <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
-                  {battleHint}
-                </div>
-              ) : null}
-              {mapLoading ? (
-                <div className="pointer-events-none absolute left-1/2 top-4 z-40 -translate-x-1/2 animate-pulse rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-4 py-2 text-sm font-semibold text-[var(--sim-text)] shadow-lg">
-                  Загрузка локации…
-                </div>
-              ) : null}
-              {editorOpen && editorView ? (
-                <div className="absolute left-3 top-3 z-20 flex max-h-[calc(100%-24px)] w-[272px] flex-col overflow-hidden rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] shadow-xl">
-                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
-                    <div className="text-xs font-bold">Редактор локации</div>
-                    <button
-                      type="button"
-                      aria-label="Закрыть редактор"
-                      className="btn-neutral flex h-6 w-6 items-center justify-center rounded-md text-xs"
-                      onClick={closeEditor}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 text-[11px]">
-                    <div>
-                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Инструмент</div>
-                      <div className="flex gap-1.5">
-                        {(
-                          [
-                            { id: 'cells', label: 'Клетки' },
-                            { id: 'green', label: 'Зелёная' },
-                            { id: 'erase', label: 'Ластик' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'stone', label: '⛰ Камень' },
-                            { id: 'tree', label: '🌲 Дерево' },
-                            { id: 'dirt', label: '🟫 Земля' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'ground', label: '🌸 Покрытие' },
-                            { id: 'entry', label: '🚪 Заход' },
-                            { id: 'spawn', label: '🛏 Спавн' },
-                            { id: 'battle', label: '⚔ Клетка' },
-                            { id: 'paint', label: '🖌 Кисть' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'raise', label: '⬆ Насыпать' },
-                            { id: 'lower', label: '⬇ Срыть' },
-                            { id: 'flat', label: '▬ Ровно' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      {editorView.tool === 'raise' || editorView.tool === 'lower' || editorView.tool === 'flat' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Клик или протяжка по клеткам: «Насыпать» поднимает землю на уровень (до трёх),
-                          «Срыть» опускает, «Ровно» срезает весь росчерк в уровень первой клетки. Перепад
-                          в один уровень проходится шагом, в два и больше — только прыжком с зарядом
-                          (удержать Пробел и отпустить). Ластик и «Срыть» до нуля убирают насыпь совсем.
-                        </p>
-                      ) : null}
-                      {editorView.tool === 'paint' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Материал кисти</div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {PAINT_MATS.map((mt) => (
-                              <button
-                                key={mt.id}
-                                type="button"
-                                className={
-                                  editorView.pmat === mt.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => {
-                                  const d = editorRef.current;
-                                  if (d) {
-                                    d.pmat = mt.id;
-                                    syncEditorView();
-                                  }
-                                }}
-                              >
-                                {mt.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер круглой кисти</div>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="range"
-                              min={1}
-                              max={200}
-                              value={editorView.psize}
-                              className="min-w-0 flex-1"
-                              onChange={(ev) => {
-                                const d = editorRef.current;
-                                if (d) {
-                                  d.psize = Math.min(200, Math.max(1, Math.round(Number(ev.target.value) || 1)));
-                                  syncEditorView();
-                                }
-                              }}
-                            />
-                            <span className="w-12 text-center font-semibold">{editorView.psize} px</span>
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Готовые области</div>
-                          <div className="flex gap-1.5">
-                            {(
-                              [
-                                { id: 'round', label: '⚪ Круг' },
-                                { id: 'cell', label: '▭ 150×100' },
-                                { id: 'half', label: '▫ 75×50' },
-                              ] as { id: PaintBrushShape; label: string }[]
-                            ).map((sh) => (
-                              <button
-                                key={sh.id}
-                                type="button"
-                                className={
-                                  editorView.pshape === sh.id
-                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => {
-                                  const d = editorRef.current;
-                                  if (d) {
-                                    d.pshape = sh.id;
-                                    syncEditorView();
-                                  }
-                                }}
-                              >
-                                {sh.label}
-                              </button>
-                            ))}
-                          </div>
-                          <button
-                            type="button"
-                            className="btn-neutral mt-2 w-full rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1"
-                            onClick={() => {
-                              const d = editorRef.current;
-                              if (!d) return;
-                              if (undoPaintStroke(d)) {
-                                d.dirty = true;
-                                syncEditorView();
-                              }
-                            }}
-                          >
-                            ↩ Отменить мазок
-                          </button>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Кисть рисует саму локацию в пикселях: закрашенное — земля, по ней ходят в мирном режиме;
-                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, колесо — размер круглой кисти.
-                            Пресеты «150×100» и «75×50» — готовые области с привязкой к сетке: боевая клетка ставится
-                            только на место, закрашенное областью «150×100» целиком. Росчерк можно отменить.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'battle' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Боевая клетка — область 150×100 (одна клетка боевого поля). Клик ставит её на закрашенное
-                          кистью место: область клетки обязана быть покрашена целиком, иначе клетка не ставится
-                          (место подсвечивается красным). Повторный клик по стоящей клетке снимает её.
-                        </p>
-                      ) : null}
-                      {editorView.tool === 'entry' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Направление шага</div>
-                          <div className="flex gap-1.5">
-                            {(
-                              [
-                                { id: 'left', label: '←' },
-                                { id: 'up', label: '↑' },
-                                { id: 'down', label: '↓' },
-                                { id: 'right', label: '→' },
-                              ] as { id: TestMapEntryDir; label: string }[]
-                            ).map((p) => (
-                              <button
-                                key={p.id}
-                                type="button"
-                                className={
-                                  editorEntryDir === p.id
-                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => setEditorEntryDir(p.id)}
-                              >
-                                {p.label}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Куда игрока перенесёт шаг с захода в боевом режиме: выберите направление в сторону
-                            боевой зоны, затем кликните по травяной клетке рядом с ней. Повторный клик с тем же
-                            направлением — убрать, с другим — сменить направление.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'stone' || editorView.tool === 'tree' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">
-                            {editorView.tool === 'tree' ? 'Вид дерева' : 'Вид камня'}
-                          </div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {(editorView.tool === 'tree'
-                              ? TREE_SPRITE_OPTS
-                              : ROCK_SPRITE_OPTS
-                            ).map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                className={
-                                  editorPlace?.kind === editorView.tool && editorPlace?.spr === v.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() =>
-                                  patchEditorPlace({ kind: editorView.tool === 'tree' ? 'tree' : 'stone', spr: v.id, pickId: null, anchored: false })
-                                }
-                              >
-                                {v.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер и поворот</div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Разм.</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              onClick={() =>
-                                patchEditorPlace({
-                                  s: Math.max(OBJECT_SCALE_MIN, Math.round(((editorPlace?.s ?? 1) - 0.1) * 100) / 100),
-                                })
-                              }
-                            >
-                              −
-                            </button>
-                            <span className="w-10 text-center font-semibold">×{(editorPlace?.s ?? 1).toFixed(1)}</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              onClick={() =>
-                                patchEditorPlace({
-                                  s: Math.min(OBJECT_SCALE_MAX, Math.round(((editorPlace?.s ?? 1) + 0.1) * 100) / 100),
-                                })
-                              }
-                            >
-                              +
-                            </button>
-                          </div>
-                          <div className="mt-1 flex items-center gap-1">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Поворот</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              title="На шаг против часовой (15°)"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - OBJECT_ROT_STEP) % 360 + 360) % 360 })
-                              }
-                            >
-                              ↺
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
-                              title="Поворот на 90° против часовой"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - 90) % 360 + 360) % 360 })
-                              }
-                            >
-                              ⟲90°
-                            </button>
-                            <span className="w-9 text-center font-semibold">{editorPlace?.rot ?? 0}°</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
-                              title="Поворот на 90° по часовой"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + 90) % 360 + 360) % 360 })
-                              }
-                            >
-                              ⟳90°
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              title="На шаг по часовой (15°)"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + OBJECT_ROT_STEP) % 360 + 360) % 360 })
-                              }
-                            >
-                              ↻
-                            </button>
-                          </div>
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Зеркало</span>
-                            <button
-                              type="button"
-                              className={
-                                (editorPlace?.mir ?? 0) === 1
-                                  ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                  : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                              }
-                              title="Отзеркалить спрайт по горизонтали"
-                              onClick={() => patchEditorPlace({ mir: (editorPlace?.mir ?? 0) === 1 ? 0 : 1 })}
-                            >
-                              ⇋ {(editorPlace?.mir ?? 0) === 1 ? 'отзеркален' : 'как есть'}
-                            </button>
-                          </div>
-                          <div className="mt-2 flex gap-1.5">
-                            <button
-                              type="button"
-                              className="flex-1 rounded-md bg-[var(--sim-accent)] px-1.5 py-1.5 font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                              onClick={confirmEditorPlace}
-                            >
-                              ✓ Поставить
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1.5"
-                              onClick={cancelEditorPlace}
-                            >
-                              ✕ Отмена
-                            </button>
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Призрак следует за курсором — клик фиксирует точку (потом можно перетащить).
-                            Колесо мыши над полем — размер, кнопки — размер и поворот. Клик по уже
-                            стоящему объекту поднимает его для правки. ✓ ставит, ✕ отменяет.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'ground' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Вид покрытия</div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {GROUND_COVER_OPTS.map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                className={
-                                  editorCover === v.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => setEditorCover(v.id)}
-                              >
-                                {v.label}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Клик или протяжка красит клетки: цветы, каменная плитка разной густоты,
-                            сплошной пол, просто трава. Соседние клетки сходятся швами в сплошной настил.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'spawn' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Точки появления игроков: клик по траве ставит клетку спавна, повторный клик
-                          по той же клетке — снимает, протяжка красит несколько. Игроки появляются на
-                          случайной свободной из них. На поле клетка ничем не отличается от соседних —
-                          флажки видны только здесь, в редакторе.
-                        </p>
-                      ) : null}
-                      <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
-                        Тяните по полю — зона. Камень и дерево ставятся свободно: призрак едет за
-                        курсором, размер и поворот подгоняются до ✓ «Поставить» (через них нельзя пройти).
-                        Земля и покрытие — клик или протяжка, ходьбе не мешают. Кисти рельефа насыпают
-                        и срывают уступы: перепад в уровень проходится шагом, выше — прыжком.
-                        Заход — вход в боевую зону: травяная клетка с галочками,
-                        в бою шаг с неё переносит по направлению захода.
-                      </p>
-                    </div>
-                    <div>
-                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Размер мира</div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-4 text-[var(--sim-text-faint)]">Ш</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols - 1, editorView.rows)}>
-                          −
-                        </button>
-                        <span className="w-7 text-center font-semibold">{editorView.cols}</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols + 1, editorView.rows)}>
-                          +
-                        </button>
-                        <span className="ml-2 w-4 text-[var(--sim-text-faint)]">В</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows - 1)}>
-                          −
-                        </button>
-                        <span className="w-7 text-center font-semibold">{editorView.rows}</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows + 1)}>
-                          +
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={undoEditor}>
-                        Отменить
-                      </button>
-                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={resetEditor}>
-                        Сбросить
-                      </button>
-                    </div>
-                    <div>
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="font-semibold text-[var(--sim-text-muted)]">
-                          Зоны ({editorView.zones.length}/{TEST_MAP_LIMITS.zonesMax})
-                        </span>
-                        {editorView.dirty ? <span className="text-[10px] text-[var(--sim-text-faint)]">не сохранено</span> : null}
-                      </div>
-                      {editorView.sel.length >= 2 ? (
-                        <button
-                          type="button"
-                          className="mb-1.5 w-full rounded-md bg-[var(--sim-accent)] px-1.5 py-1 text-[11px] font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                          onClick={mergeEditorZones}
-                        >
-                          Объединить ({editorView.sel.length})
-                        </button>
-                      ) : (
-                        <p className="mb-1.5 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Отметьте галочками две и более зон — появится кнопка объединения.
-                        </p>
-                      )}
-                      <div className="flex flex-col gap-1">
-                        {editorView.zones.map((z) => (
-                          <div key={z.id} className="flex items-center gap-1.5 rounded-md border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] px-1.5 py-1">
-                            <input
-                              type="checkbox"
-                              checked={editorView.sel.includes(z.id)}
-                              onChange={() => toggleEditorSel(z.id)}
-                              className="h-3 w-3 shrink-0 accent-[var(--sim-accent)]"
-                              aria-label={`Отметить зону ${z.name} для объединения`}
-                            />
-                            <span
-                              aria-hidden
-                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-                              style={{ background: z.kind === 'cells' ? 'rgba(120,170,250,0.85)' : 'rgba(112,178,92,0.9)' }}
-                            />
-                            <input
-                              value={z.name}
-                              onChange={(ev2) => renameEditorZone(z.id, ev2.target.value)}
-                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-0.5 py-0.5 text-[11px] outline-none focus:border-[var(--sim-line-strong)] focus:bg-[var(--sim-input-bg)]"
-                              aria-label="Название зоны"
-                            />
-                            <span className="shrink-0 text-[10px] text-[var(--sim-text-faint)]">
-                              {z.c1 - z.c0 + 1}×{z.r1 - z.r0 + 1}
-                            </span>
-                            <button
-                              type="button"
-                              aria-label={`Удалить зону ${z.name}`}
-                              className="btn-neutral flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px]"
-                              onClick={() => deleteEditorZone(z.id)}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                        {editorView.zones.length === 0 ? (
-                          <p className="text-[var(--sim-text-faint)]">Пока пусто — нарисуйте первую зону.</p>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="mt-auto flex flex-col gap-1.5 border-t border-[var(--sim-line)] pt-2.5">
-                      <input
-                        type="password"
-                        value={editorPass}
-                        onChange={(ev2) => setEditorPass(ev2.target.value)}
-                        placeholder="Пароль редактора"
-                        aria-label="Пароль редактора локации"
-                        className="h-7 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-2 text-[11px] text-[var(--sim-text)] outline-none"
-                      />
-                      <button
-                        type="button"
-                        className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                        onClick={saveEditorMap}
-                      >
-                        Сохранить локацию
-                      </button>
-                      {editorMsg ? <p className="leading-snug text-[var(--sim-text-muted)]">{editorMsg}</p> : null}
-                      <p className="leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                        Сохранение применяет локацию всем в комнате сразу.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
-            <span>W A S D — идти (зажать; на траве — свободная ходьба по пикселям, в боевых клетках — шаг по клеткам)</span>
-            <span>Q E Z X — диагонали</span>
-            <span>Колесо мыши — приблизить/отдалить вид</span>
-            <span>ЛКМ — идти к точке · манекен — тянуть</span>
-            <span>{testField ? 'вход в бой — с клетки захода кнопкой «Боевой режим» (B), выход — ею же' : 'B — бой'}</span>
-            <span>Enter — чат</span>
-            <span>I — удар</span>
-            <span>K (удерживать) — блок</span>
-            <span>Пробел (удержать и отпустить) — прыжок через обрыв: чем дольше держите, тем выше перепад перепрыгнете</span>
-            <span>J — стрела против часовой</span>
-            <span>L — по часовой</span>
-            <span className="ml-auto">
-              Скорость = 100% − замедление · замедление фиксируется в момент прыжка
-            </span>
-          </div>
-        </section>
+        <FieldStage
+          fieldFrameRef={fieldFrameRef}
+          testField={testField}
+          fieldFit={fieldFit}
+          fieldW={fieldW}
+          fieldH={fieldH}
+          canvasRef={canvasRef}
+          onMove={onMove}
+          onPointerDown={onPointerDown}
+          onUp={onUp}
+          onLeave={onLeave}
+          onContextMenu={onContextMenu}
+          onClick={onClick}
+          pixiRef={pixiRef}
+          hudRef={hudRef}
+          battleHint={battleHint}
+          mapLoading={mapLoading}
+          editorOverlay={
+            editorOpen && editorView ? (
+              <EditorOverlay
+                editorRef={editorRef}
+                syncEditorView={syncEditorView}
+                editorView={editorView}
+                setEditorTool={setEditorTool}
+                editorEntryDir={editorEntryDir}
+                setEditorEntryDir={setEditorEntryDir}
+                editorPlace={editorPlace}
+                patchEditorPlace={patchEditorPlace}
+                confirmEditorPlace={confirmEditorPlace}
+                cancelEditorPlace={cancelEditorPlace}
+                resizeEditorWorld={resizeEditorWorld}
+                undoEditor={undoEditor}
+                resetEditor={resetEditor}
+                mergeEditorZones={mergeEditorZones}
+                toggleEditorSel={toggleEditorSel}
+                renameEditorZone={renameEditorZone}
+                deleteEditorZone={deleteEditorZone}
+                editorPass={editorPass}
+                setEditorPass={setEditorPass}
+                saveEditorMap={saveEditorMap}
+                editorCover={editorCover}
+                setEditorCover={setEditorCover}
+                editorMsg={editorMsg}
+                closeEditor={closeEditor}
+              />
+            ) : null
+          }
+        />
 
         {settings.arrow.battleMode && settings.combat.showLog ? (
           <>
@@ -6362,74 +5646,45 @@ export default function Simulator() {
       </footer>
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
-      {settingsOpen ? (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
-          <aside
-            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl"
-            onKeyDown={(ev) => {
-              if (ev.key === 'Escape') setSettingsOpen(false);
-            }}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
-              <h2 className="text-sm font-bold text-[var(--sim-text)]">Настройки</h2>
-              <Button size="sm" variant="outline" className="btn-neutral h-7 text-xs" onClick={() => setSettingsOpen(false)}>
-                Закрыть
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <SettingsPanel
-                settings={settings}
-                testField={testField}
-                atmo={atmoState}
-                onAtmo={changeAtmo}
-                atmoCfg={settings.atmo}
-                onAtmoCfg={changeAtmoCfg}
-                dummyOn={dummyOn}
-                onToggleDummy={toggleDummy}
-                dummySprite={dummySprite}
-                onDummySprite={changeDummySprite}
-                rabOn={rabOn}
-                onToggleRab={toggleRab}
-                patchField={patchField}
-                patchCharacter={patchCharacter}
-                patchArrow={patchArrow}
-                patchSlowdown={patchSlowdown}
-                patchWindow={patchWindow}
-                patchTier={patchTier}
-                patchHud={patchHud}
-                patchCombat={patchCombat}
-                patchZone={patchZone}
-                onResetCombat={onResetCombat}
-                onResetAll={onResetAll}
-                onExport={onExport}
-                onImport={onImport}
-                getAngle={getEngineAngle}
-                onManualAngle={setEngineAngle}
-              />
-            </div>
-          </aside>
-        </>
-      ) : null}
+      {settingsOpen ? <SettingsPanelOverlay
+        setSettingsOpen={setSettingsOpen}
+        settings={settings}
+        testField={testField}
+        atmoState={atmoState}
+        changeAtmo={changeAtmo}
+        changeAtmoCfg={changeAtmoCfg}
+        dummyOn={dummyOn}
+        toggleDummy={toggleDummy}
+        dummySprite={dummySprite}
+        changeDummySprite={changeDummySprite}
+        rabOn={rabOn}
+        toggleRab={toggleRab}
+        patchField={patchField}
+        patchCharacter={patchCharacter}
+        patchArrow={patchArrow}
+        patchSlowdown={patchSlowdown}
+        patchWindow={patchWindow}
+        patchTier={patchTier}
+        patchHud={patchHud}
+        patchCombat={patchCombat}
+        patchZone={patchZone}
+        onResetCombat={onResetCombat}
+        onResetAll={onResetAll}
+        onExport={onExport}
+        onImport={onImport}
+        getEngineAngle={getEngineAngle}
+        setEngineAngle={setEngineAngle}
+      /> : null}
 
       {/* Переход в другую комнату — модалка с тем же выбором гротов.
           Текущая комната помечена «вы здесь», клик по ней disabled. */}
-      {switchOpen ? (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSwitchOpen(false)} />
-          <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4">
-            <div className="w-full max-w-3xl rounded-2xl border border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl">
-              <RoomPicker
-                rows={roomRows}
-                ready={roomsRows !== null}
-                stale={roomsStale}
-                onPick={pickRoom}
-                onCancel={() => setSwitchOpen(false)}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
+      {switchOpen ? <RoomSwitchOverlay
+        setSwitchOpen={setSwitchOpen}
+        roomRows={roomRows}
+        roomsRows={roomsRows}
+        roomsStale={roomsStale}
+        pickRoom={pickRoom}
+      /> : null}
     </div>
   );
 }
