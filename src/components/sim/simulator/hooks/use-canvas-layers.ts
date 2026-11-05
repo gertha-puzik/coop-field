@@ -123,10 +123,11 @@ export interface AtmosphereLayerDeps {
   pixiRef: RefObject<HTMLCanvasElement | null>;
   atmoRef: RefObject<AtmosphereLike | null>;
   atmoStateRef: RefObject<CoopAtmo>;
+  atmoOnRef: RefObject<boolean>;
 }
 
 export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
-  const { stage, canvasRef, pixiRef, atmoRef, atmoStateRef } = deps;
+  const { stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef } = deps;
   useEffect(() => {
     if (stage !== 'field') return;
     const el = pixiRef.current;
@@ -143,6 +144,8 @@ export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
         atmoRef.current = a;
         a.setDaypart(atmoStateRef.current.dp);
         a.setWeather(atmoStateRef.current.w);
+        // повторно созданный слой (смена комнаты) помнит дебаг-тумблер
+        a.setVisible(atmoOnRef.current);
       })
       .catch(() => {
         /* без WebGL — работает прежний 2D-рендер */

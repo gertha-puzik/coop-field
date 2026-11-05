@@ -390,6 +390,9 @@ export default function Simulator() {
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
   /** Атмосфера комнаты: время суток + погода. Общая для всех (состояние на сервере). */
   const [atmoState, setAtmoState] = useState<CoopAtmo>({ dp: 'day', w: 'sun' });
+  /** Дебаг-тумблер атмосферного слоя: локальный (не по сети), по умолчанию включён. */
+  const [atmoLayerOn, setAtmoLayerOn] = useState(true);
+  const atmoLayerOnRef = useRef(true);
   const atmoStateRef = useRef<CoopAtmo>(atmoState);
   /** Часы атмосферы: якорь комнаты (сервер) или локальный — до первого якоря и без сети. */
   const atmoAnchorRef = useRef<AtmoClock>({ cs: 0, pl: 0, wl: 0, w: 'sun', ws: 0, srv: false });
@@ -897,6 +900,14 @@ export default function Simulator() {
     netRef.current?.emit('atmoset', { pl: plMin, wl: wlMin });
   }, []);
 
+  /** Дебаг: показать/спрятать атмосферный слой локально (тонировка суток,
+   *  облака и дождь). Часы и значок погоды на HUD остаются. По сети не едет. */
+  const toggleAtmoLayer = useCallback((on: boolean) => {
+    atmoLayerOnRef.current = on;
+    setAtmoLayerOn(on);
+    atmoRef.current?.setVisible(on);
+  }, []);
+
   /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
    *  «выход из боя», телепорт на клетку выхода не нужен. */
   const suppressExitTeleportRef = useRef(false);
@@ -1181,7 +1192,7 @@ export default function Simulator() {
   // (цветокоррекция времени суток, тени облаков, дождь). Модуль грузим динамически:
   // pixi.js не попадает в основной бандл, а без WebGL игра просто остаётся
   // на чистом 2D-канвасе — без атмосферы, но без ошибок.
-  useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef });
+  useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef: atmoLayerOnRef });
 
   /* ---------- игровой цикл ---------- */
 
@@ -4350,6 +4361,8 @@ export default function Simulator() {
         atmoState={atmoState}
         changeAtmo={changeAtmo}
         changeAtmoCfg={changeAtmoCfg}
+        atmoLayerOn={atmoLayerOn}
+        toggleAtmoLayer={toggleAtmoLayer}
         dummyOn={dummyOn}
         toggleDummy={toggleDummy}
         dummySprite={dummySprite}

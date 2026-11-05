@@ -210,6 +210,11 @@ export class Atmosphere {
   private w = 0;
   private h = 0;
   private dpr = 1;
+  /** Буфер мир-канваса, под который собран спрайт (см. frame(): пересбор при изменении). */
+  private texBufW = 0;
+  private texBufH = 0;
+  /** Видимость слоя: выключается дебаг-тумблером — слой прячется и не рендерится. */
+  private visible = true;
 
   private constructor(private view: HTMLCanvasElement, private world: HTMLCanvasElement) {}
 
@@ -285,6 +290,47 @@ export class Atmosphere {
     app.stage.addChild(spr, this.cloudC, this.rainC);
     this.w = 0;
     this.h = 0;
+    // Спрайт собран под текущий буфер мир-канваса (при create он может быть ещё
+    // дефолтным 300×150 — frame() пересоберёт спрайт на первом валидном кадре).
+    this.texBufW = this.world.width;
+    this.texBufH = this.world.height;
+  }
+
+  /**
+   * Полный пересбор спрайта мир-текстуры. Pixi не инвалидирует батч-квад спрайта,
+   * когда у CanvasSource меняется размер (ресайз окна, перетаскивание колонок
+   * чата/лога, смена dpr): спрайт продолжает рисовать кусок старого квада, а за
+   * его правой/нижней кромкой из-под тонировки выглядитывает сырое поле — тот
+   * самый «сдвинутый дубль атмосферы». Свежий спрайт собирается уже под новый
+   * буфер, и слой снова покрывает поле целиком.
+   */
+  private rebuildWorldSprite(): void {
+    const app = this.app;
+    if (!app || !this.worldTex || !this.filter) return;
+    const old = this.worldSpr;
+    const fresh = new Sprite(this.worldTex);
+    fresh.filters = [this.filter];
+    if (old) {
+      const idx = app.stage.getChildIndex(old);
+      app.stage.removeChild(old);
+      old.destroy(); // текстура и фильтр общие — убиваем только спрайт
+      app.stage.addChildAt(fresh, idx);
+    } else {
+      app.stage.addChildAt(fresh, 0);
+    }
+    this.worldSpr = fresh;
+    this.texBufW = this.world.width;
+    this.texBufH = this.world.height;
+  }
+
+  /**
+   * Показать/спрятать слой. Дебаг-тумблер: слой выключается локально у одного
+   * клиента (например, чтобы сравнить поле с тонировкой и без). HUD часов и
+   * погоды рисуется отдельным канвасом и остаётся.
+   */
+  setVisible(on: boolean): void {
+    this.visible = on;
+    this.view.style.display = on ? '' : 'none';
   }
 
   /**
@@ -338,6 +384,16 @@ export class Atmosphere {
       app.renderer.resize(cw, ch);
     }
     if (this.w <= 0 || this.h <= 0) return;
+
+    // Буфер мир-канваса изменился (ресайз окна/колонок, смена карты, dpr) —
+    // спрайт собран под старый буфер и рисует лишь его кусок (см.
+    // rebuildWorldSprite). Сверяем каждый кадр, пересбор дешёвый и редкий.
+    if (this.world.width !== this.texBufW || this.world.height !== this.texBufH) {
+      this.rebuildWorldSprite();
+    }
+    // Слой выключен дебаг-тумблером: ничего не рендерим, но размеры и спрайт
+    // держим актуальными — чтобы после включения не показать устаревший кадр.
+    if (!this.visible) return;
 
     const dt = Math.min(50, Math.max(1, dtMs)) / 1000;
     // Цель пересчитывается каждый кадр: сутки едут непрерывно, погода включается

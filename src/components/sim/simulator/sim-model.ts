@@ -19,6 +19,7 @@ export interface AtmosphereLike {
   setDayProgress(p: number): void;
   setDaypart(dp: DayPart): void;
   setWeather(w: WeatherKind): void;
+  setVisible(on: boolean): void;
   frame(now: number, dtMs: number, camDx: number, camDy: number): void;
   destroy(): void;
 }

@@ -234,6 +234,8 @@ export interface SettingsPanelOverlayProps {
   atmoState: PanelProps['atmo'];
   changeAtmo: PanelProps['onAtmo'];
   changeAtmoCfg: PanelProps['onAtmoCfg'];
+  atmoLayerOn: PanelProps['atmoLayerOn'];
+  toggleAtmoLayer: PanelProps['onAtmoLayer'];
   dummyOn: PanelProps['dummyOn'];
   toggleDummy: PanelProps['onToggleDummy'];
   dummySprite: PanelProps['dummySprite'];
@@ -265,6 +267,8 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
     atmoState,
     changeAtmo,
     changeAtmoCfg,
+    atmoLayerOn,
+    toggleAtmoLayer,
     dummyOn,
     toggleDummy,
     dummySprite,
@@ -310,6 +314,8 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
                 onAtmo={changeAtmo}
                 atmoCfg={settings.atmo}
                 onAtmoCfg={changeAtmoCfg}
+                atmoLayerOn={atmoLayerOn}
+                onAtmoLayer={toggleAtmoLayer}
                 dummyOn={dummyOn}
                 onToggleDummy={toggleDummy}
                 dummySprite={dummySprite}
