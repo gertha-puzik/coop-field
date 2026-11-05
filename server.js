@@ -4,6 +4,37 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import zlib from "node:zlib";
+import {
+  AIM_MIN_GAP_MS,
+  ARMOR_CURVE,
+  ATMO_PHASE_LIST,
+  ATMO_PHASE_MS_DEF,
+  ATMO_PHASE_MS_MAX,
+  ATMO_PHASE_MS_MIN,
+  ATMO_WEATHER_LIST,
+  ATMO_WEATHER_MS_DEF,
+  ATMO_WEATHER_MS_MAX,
+  ATMO_WEATHER_MS_MIN,
+  CHAT_COOLDOWN_MS,
+  CHAT_HISTORY,
+  CHAT_MAX_LEN,
+  DUMMY_DEFAULT,
+  EV,
+  GROUND_COVER_IDS,
+  JOIN_COOLDOWN_MS,
+  JUMP_COOLDOWN_MS,
+  JUMP_MAX_CELLS,
+  JUMP_MAX_DROP,
+  MAX_PLAYERS,
+  MOVE_COOLDOWN_MS,
+  MOVE_QUEUE_MAX,
+  RAB_CELL,
+  STRIKE_CATCH_MAX_MS,
+  STRIKE_CATCH_MS,
+  STRIKE_ZONES,
+  TERRAIN_MAX_LEVEL,
+  TEST_MAP_LIMITS,
+} from "./server/protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
@@ -44,15 +75,6 @@ function isAllowedOrigin(origin) {
 }
 const WIDTH = 10;
 const HEIGHT = 6;
-/** Потолок комнаты. Клеток на поле 60, но в одну комнату пускаем не больше этого числа. */
-const MAX_PLAYERS = 30;
-/** Кулдаун шага на сервере. Ходы, пришедшие раньше, не теряются — встают
- *  в очередь MOVE_QUEUE_MAX и применяются ровно в момент снятия кулдауна. */
-const MOVE_COOLDOWN_MS = 80;
-/** Глубина очереди шагов: залипшая клавиша не должна превращаться в длинный буфер. */
-const MOVE_QUEUE_MAX = 3;
-/** Кулдаун на повторный join: самое дорогое событие (снимок field всей комнате). */
-const JOIN_COOLDOWN_MS = 1000;
 /** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
 const HEARTBEAT_MS = 30_000;
 /** Потолок входящего кадра: протокол состоит из коротких JSON-строк,
@@ -67,14 +89,6 @@ const MAX_PAYLOAD = 4 * 1024 * 1024;
  *  различаем уже на приёме: setmap с рисунком легально весит мегабайты,
  *  раздутый кадр любого другого события до обработчиков не доходит. */
 const FRAME_LIMIT = 64 * 1024;
-/**
- * Короткий предохранитель от пачки aim подряд. Угол в cat.deg пишется сразу.
- * Если с прошлой рассылки прошло больше этого — пакет уходит сразу.
- * Более плотный залп не копится в очереди: остаётся последний угол и уходит
- * по короткому таймеру, так что свежий угол не застревает.
- * 20 мс — не сглаживание картинки (его делает клиент), а только отсечка всплеска.
- */
-const AIM_MIN_GAP_MS = 20;
 /** Нижняя граница отклика удара в симе — 30 мс. Кулдаун чуть ниже, чтобы легитимный удар не отбрасывался. */
 const STRIKE_COOLDOWN_MS = 25;
 /**
@@ -83,25 +97,6 @@ const STRIKE_COOLDOWN_MS = 25;
  * «висящий в воздухе», когда цель встала в блок, всё равно уходит в «Лапы».
  * Клиент присылает свой отклик удара (flightMs); без него — 170 мс.
  */
-const STRIKE_CATCH_MS = 170;
-const STRIKE_CATCH_MAX_MS = 600;
-/** Одно сообщение комнате. Длиннее обрезается, чаще этого интервала — отказ. */
-const CHAT_MAX_LEN = 200;
-const CHAT_COOLDOWN_MS = 450;
-const CHAT_HISTORY = 40;
-/**
- * Зоны abnocw (id → подпись и урон при пресете 0,0). Совпадает с DEFAULT_SETTINGS.combat.zones.
- * Когтей и зубов нет: weapon в логе пустой.
- */
-const STRIKE_ZONES = {
-  tail: { part: "Хвост", damage: 2 },
-  paws: { part: "Лапы", damage: 6 },
-  back: { part: "Спина", damage: 12 },
-  muzzle: { part: "Морда", damage: 18 },
-  belly: { part: "Живот", damage: 25 },
-  neck: { part: "Шея", damage: 30 },
-  throat: { part: "Горло", damage: 42 },
-};
 const SPAWNS = [
   [4, 3],
   [5, 3],
@@ -115,13 +110,6 @@ const SPAWNS = [
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
 const SPRITES = ["blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit"];
-/**
- * Манекен «ПОЧУХАТЬ»: общий предмет комнаты, не персонаж. Не в боевом режиме,
- * но клетка под ним непроходима. Позиция в клеточных долях (x — по ширине,
- * y — по высоте, 0 — левый верх спрайта). Тащить может любой игрок; когда кто-то
- * держит манекен, комната видит курсор с его именем.
- */
-const DUMMY_DEFAULT = { x: 7, y: 2, sprite: "puhlyashik" };
 
 /* ---------- размеры спрайтов пака и их варианты.
    Объявлены ДО loadTestMap(): sanitizeTestMap читает их при загрузке карты —
@@ -145,19 +133,8 @@ const OBJECT_DIMS = {
 };
 const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
 const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
-const GROUND_COVER_IDS = new Set([
-  'grass-1', 'grass-2',
-  'flower-1', 'flower-2', 'flower-3', 'flower-4',
-  'slab-1', 'slab-2', 'slab-3', 'slab-4',
-  'floor-1', 'floor-2', 'floor-3',
-]);
 const OBJECT_SCALE_MIN = 0.4;
 const OBJECT_SCALE_MAX = 3.5;
-/**
- * Боевая мишень «РАБ»: общий предмет комнаты в боевом режиме — по ней проходят
- * удары, её клетка непроходима. Спрайт один у всех мишеней, позиция фиксирована.
- */
-const RAB_CELL = { x: 4, y: 2 };
 
 /**
  * Комната «тест» — другой формат поля: нарисованная локация с лужайкой, переходом
@@ -717,7 +694,7 @@ function testWalkable(x, y) {
 function testElev(x, y) {
   const v = testMap.elev?.[`${x - 1},${y - 1}`];
   const n = Math.round(Number(v));
-  return Number.isFinite(n) ? Math.min(3, Math.max(0, n)) : 0;
+  return Number.isFinite(n) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, n)) : 0;
 }
 
 /** Перепад высот между соседними клетками больше шага (1)? В клетку с таким
@@ -784,17 +761,17 @@ function sanitizeTestMap(raw) {
   const cols = asInt(raw.cols);
   const rows = asInt(raw.rows);
   if (cols === null || rows === null) return { error: 'размер мира не распознан' };
-  if (cols < 6 || cols > 60) return { error: 'ширина мира должна быть 6–60' };
-  if (rows < 3 || rows > 40) return { error: 'высота мира должна быть 3–40' };
+  if (cols < TEST_MAP_LIMITS.colsMin || cols > TEST_MAP_LIMITS.colsMax) return { error: 'ширина мира должна быть 6–60' };
+  if (rows < TEST_MAP_LIMITS.rowsMin || rows > TEST_MAP_LIMITS.rowsMax) return { error: 'высота мира должна быть 3–40' };
   if (!Array.isArray(raw.zones) || raw.zones.length === 0) return { error: 'список зон пуст' };
-  if (raw.zones.length > 48) return { error: 'зон не больше 48' };
+  if (raw.zones.length > TEST_MAP_LIMITS.zonesMax) return { error: 'зон не больше 48' };
   // Препятствия необязательны (старые конфиги без objects читаются как «пусто»):
   // камень/дерево стоят свободно (точка опоры, масштаб, поворот), через их тело
   // нельзя пройти ни в бою, ни в мирном; земля и покрытие — наземный декор.
   let objects = [];
   if (raw.objects != null) {
     if (!Array.isArray(raw.objects)) return { error: 'список препятствий не распознан' };
-    if (raw.objects.length > 2000) return { error: 'объектов не больше 2000' };
+    if (raw.objects.length > TEST_MAP_LIMITS.objectsMax) return { error: 'объектов не больше 2000' };
     const taken = new Set();
     for (let i = 0; i < raw.objects.length; i++) {
       const o = raw.objects[i];
@@ -863,7 +840,7 @@ function sanitizeTestMap(raw) {
         mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
-        cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
+        cv = GROUND_COVER_IDS.includes(String(o.cv)) ? String(o.cv) : 'flower-1';
       }
       // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно.
       if (kind !== 'stone' && kind !== 'tree') {
@@ -919,7 +896,7 @@ function sanitizeTestMap(raw) {
       return { error: `зона №${i + 1}: выходит за границы мира` };
     }
     const name =
-      String(z.name ?? '').trim().slice(0, 24) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
+      String(z.name ?? '').trim().slice(0, TEST_MAP_LIMITS.nameMax) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
     zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
   }
   if (!zones.some((z) => z.kind === 'cells') && !(paint && objects.some((o) => o.kind === 'battle'))) {
@@ -990,7 +967,7 @@ function sanitizeTestMap(raw) {
   const spawns = [];
   if (raw.spawns != null) {
     if (!Array.isArray(raw.spawns)) return { error: 'список клеток спавна не распознан' };
-    if (raw.spawns.length > 64) return { error: 'клеток спавна не больше 64' };
+    if (raw.spawns.length > TEST_MAP_LIMITS.spawnsMax) return { error: 'клеток спавна не больше 64' };
     const seenSp = new Set();
     for (let i = 0; i < raw.spawns.length; i++) {
       const s = raw.spawns[i];
@@ -1032,7 +1009,7 @@ function sanitizeTestMap(raw) {
       if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
       const lv = Math.round(Number(val));
       if (!Number.isFinite(lv) || lv <= 0) continue;
-      elev[key] = Math.min(3, lv);
+      elev[key] = Math.min(TERRAIN_MAX_LEVEL, lv);
     }
     if (Object.keys(elev).length === 0) elev = undefined;
   }
@@ -1042,7 +1019,7 @@ function sanitizeTestMap(raw) {
       cols,
       rows,
       margin: 0.5,
-      seed: typeof raw.seed === 'string' && raw.seed.trim() ? raw.seed.trim().slice(0, 24) : 'test',
+      seed: typeof raw.seed === 'string' && raw.seed.trim() ? raw.seed.trim().slice(0, TEST_MAP_LIMITS.nameMax) : 'test',
       zones,
       objects,
       spawns,
@@ -1160,17 +1137,17 @@ function setMap(ws, payload = {}) {
   // живёт на сокете (по аналогии с lastJoin); отброшенный кадр окно
   // не продлевает — окно отсчитывается от последнего пропущенного кадра.
   if (now - (ws.lastSetmap || 0) < SETMAP_MIN_GAP_MS) {
-    send(ws, 'info', 'Редактор: слишком часто.');
+    send(ws, EV.INFO, 'Редактор: слишком часто.');
     return;
   }
   ws.lastSetmap = now;
   if (String(payload?.pass || '') !== ADMIN_PASS) {
-    send(ws, 'info', 'Редактор: неверный пароль.');
+    send(ws, EV.INFO, 'Редактор: неверный пароль.');
     return;
   }
   const r = sanitizeTestMap(payload?.map);
   if (!r.map) {
-    send(ws, 'info', `Редактор: ${r.error}.`);
+    send(ws, EV.INFO, `Редактор: ${r.error}.`);
     return;
   }
   testMap = r.map;
@@ -1181,7 +1158,7 @@ function setMap(ws, payload = {}) {
     saveTestMap();
   } catch (e) {
     console.warn('map save failed:', e?.message || e);
-    send(ws, 'info', `Редактор: локация применилась, но записать её на диск не удалось — ${e?.message || e}. После рестарта сервера она потеряется.`);
+    send(ws, EV.INFO, `Редактор: локация применилась, но записать её на диск не удалось — ${e?.message || e}. После рестарта сервера она потеряется.`);
   }
   const room = rooms.get(TEST_ROOM);
   if (room && room.sockets.size > 0) {
@@ -1206,8 +1183,8 @@ function setMap(ws, payload = {}) {
       }
       rememberCat(cat);
     }
-    for (const w of room.sockets.keys()) send(w, 'map', testMap);
-    broadcast(room, 'field', fieldPayload(room));
+    for (const w of room.sockets.keys()) send(w, EV.MAP, testMap);
+    broadcast(room, EV.FIELD, fieldPayload(room));
   }
   console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}, spawns=${(testMap.spawns || []).length}`);
 }
@@ -1493,7 +1470,6 @@ function fieldPayload(room) {
     users[cat.x][cat.y] = publicCat(cat, room);
   }
   return {
-    huntMode: false,
     width: W,
     height: H,
     format: test ? 'test' : undefined,
@@ -1527,7 +1503,7 @@ function leave(ws) {
   // Ушедший тащил манекен — комната больше не видит курсор с его именем.
   if (room.dummyGrab && cat && room.dummyGrab === cat.login) {
     room.dummyGrab = null;
-    broadcast(room, "dummyDrop", {});
+    broadcast(room, EV.DUMMY_DROP, {});
   }
   if (cat) {
     clearAimTimer(cat);
@@ -1536,7 +1512,7 @@ function leave(ws) {
     room.cats.delete(cat.id);
     rememberCat(cat); // последняя позиция уходит в книгу — рестарт вернёт кота на место
     flushCatBook(true);
-    broadcast(room, "move", { id: cat.id, x: 0, y: 0 });
+    broadcast(room, EV.MOVE, { id: cat.id, x: 0, y: 0 });
     console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
   }
   ws.room = null;
@@ -1563,14 +1539,14 @@ function keepEmptyRoom(room) {
 }
 
 function refuseJoin(ws, room, reason) {
-  send(ws, "info", reason);
-  send(ws, "noplace", { room: room.code, reason });
+  send(ws, EV.INFO, reason);
+  send(ws, EV.NOPLACE, { room: room.code, reason });
 }
 
 function join(ws, payload = {}) {
   const now = Date.now();
   if (now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
-    send(ws, "info", "Слишком часто. Подождите секунду.");
+    send(ws, EV.INFO, "Слишком часто. Подождите секунду.");
     return;
   }
   ws.lastJoin = now;
@@ -1623,17 +1599,17 @@ function join(ws, payload = {}) {
   // Рестарт сервера не выбрасывает кота на спавн: возвращаем его последнюю позицию
   // (см. restoreCatPosition) — особенно важно для АФК-котов.
   restoreCatPosition(room, cat);
-  send(ws, "you", publicCat(cat, room));
-  send(ws, "field", fieldPayload(room));
-  if (room.chat?.length) send(ws, "chatlog", room.chat);
-  broadcast(room, "move", publicCat(cat, room), ws);
+  send(ws, EV.YOU, publicCat(cat, room));
+  send(ws, EV.FIELD, fieldPayload(room));
+  if (room.chat?.length) send(ws, EV.CHATLOG, room.chat);
+  broadcast(room, EV.MOVE, publicCat(cat, room), ws);
 }
 
 function move(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!cat) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   const step = parseMove(payload);
@@ -1674,21 +1650,21 @@ function applyMove(ws, cat, payload) {
       ? testWalkable(nx, ny) || !!testEntryCell(nx - 1, ny - 1)
       : nx >= 1 && nx <= WIDTH && ny >= 1 && ny <= HEIGHT;
   if (!inBounds) {
-    send(ws, "info", room.fmt === 'test' ? "Край локации." : "Край поля.");
+    send(ws, EV.INFO, room.fmt === 'test' ? "Край локации." : "Край поля.");
     // refuse — тот же отказ, но с кодом: клиент откатывает предикт по коду,
     // а не по подстроке русского текста (текст менять можно свободно).
-    send(ws, "refuse", { code: "edge", text: "Край поля." });
+    send(ws, EV.REFUSE, { code: "edge", text: "Край поля." });
     return;
   }
   if (occupied(room, nx, ny, cat.id)) {
-    send(ws, "info", "Клетка занята.");
-    send(ws, "refuse", { code: "cell_busy", text: "Клетка занята." });
+    send(ws, EV.INFO, "Клетка занята.");
+    send(ws, EV.REFUSE, { code: "cell_busy", text: "Клетка занята." });
     return;
   }
   // Обрыв: в «тесте» перепад высот больше 1 шагом не проходится — нужен прыжок.
   if (room.fmt === 'test' && cliffBetween(cat.x, cat.y, nx, ny)) {
-    send(ws, "info", "Обрыв — удержите Пробел и допрыгните.");
-    send(ws, "refuse", { code: "cliff", text: "Обрыв — удержите Пробел и допрыгните." });
+    send(ws, EV.INFO, "Обрыв — удержите Пробел и допрыгните.");
+    send(ws, EV.REFUSE, { code: "cliff", text: "Обрыв — удержите Пробел и допрыгните." });
     return;
   }
 
@@ -1706,8 +1682,8 @@ function applyMove(ws, cat, payload) {
   // Шагнувшему — одно эхо. Второй экземпляр той же клетки (broadcast без except)
   // клиент читал как отказ предикта: спрайт шагал назад и следующим кадром
   // перепрыгивал клетку.
-  send(ws, "update cat", patch);
-  broadcast(room, "update cat", patch, ws);
+  send(ws, EV.UPDATE_CAT, patch);
+  broadcast(room, EV.UPDATE_CAT, patch, ws);
 }
 
 function clearMoveTimer(cat) {
@@ -1735,8 +1711,8 @@ function pumpMoveQueue(ws, cat) {
 function queueMove(ws, cat, payload) {
   if (cat.moveQueue.length >= MOVE_QUEUE_MAX) {
     // Залп длиннее очереди — честный отказ, клиент откатит предикт.
-    send(ws, "info", "Слишком быстро.");
-    send(ws, "refuse", { code: "cooldown", text: "Слишком быстро." });
+    send(ws, EV.INFO, "Слишком быстро.");
+    send(ws, EV.REFUSE, { code: "cooldown", text: "Слишком быстро." });
     return;
   }
   cat.moveQueue.push(payload);
@@ -1752,7 +1728,7 @@ function setSprite(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!cat) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   const sprite = String(payload.sprite || "").trim();
@@ -1760,7 +1736,7 @@ function setSprite(ws, payload = {}) {
   cat.sprite = sprite;
   broadcast(
     room,
-    "update cat",
+    EV.UPDATE_CAT,
     publicCat(cat, room),
     ws,
   );
@@ -1803,13 +1779,13 @@ function setDeg(ws, deg) {
 function broadcastDeg(room, cat, exceptWs) {
   cat.aimDirty = false;
   cat.lastAim = Date.now();
-  broadcast(room, "update cat", publicCat(cat, room), exceptWs);
+  broadcast(room, EV.UPDATE_CAT, publicCat(cat, room), exceptWs);
 }
 
 function aim(ws, payload = {}) {
   const cat = ws.room && ws.room.sockets.get(ws);
   if (!cat) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   const deg = normalizeDeg(payload.deg ?? payload.angle);
@@ -1868,23 +1844,7 @@ function resolveZone(raw) {
 }
 
 // ---------------- Броня ----------------
-/**
- * Броня режет получаемый урон. Кривая — замеры владельца: референс-удар при броне 0,0
- * даёт 40% урона, дальше: 0,1 → 38,67; 0,12 → 37,64; 0,2 → 34,62; 0,35 → 31,62;
- * 0,66 → 26,55; 0,78 → 20,93. Между точками — линейная интерполяция, после 0,78 —
- * экстраполяция по наклону последнего отрезка (0,9 ≈ 15,31). Множитель = урон(броня)/40:
- * броня 0,0 урон не меняет, 0,8 пропускает половину, 0,9 — около 38%.
- * Тот же список лежит в src/lib/sim/settings.ts — меняйте синхронно.
- */
-const ARMOR_CURVE = [
-  [0.0, 40.0],
-  [0.1, 38.67],
-  [0.12, 37.64],
-  [0.2, 34.62],
-  [0.35, 31.62],
-  [0.66, 26.55],
-  [0.78, 20.93],
-];
+// Таблица ARMOR_CURVE — канон в server/protocol.js (W3); побайтовое зеркало — ARMOR_CURVE в src/lib/sim/settings.ts (клиент), паритет держит CI (test:protocol-parity).
 
 function armorMultiplier(armor) {
   const a = Number.isFinite(armor) ? Math.min(0.9, Math.max(0, Number(armor))) : 0;
@@ -1927,7 +1887,7 @@ function strike(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!cat) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   const now = Date.now();
@@ -1938,7 +1898,7 @@ function strike(ws, payload = {}) {
   const resolved = resolveZone(payload.zone ?? payload.part);
   if (!Number.isInteger(targetId) || !resolved || !Number.isFinite(angle)) {
     cat.lastStrike = now;
-    send(ws, "info", "Удар не разобран.");
+    send(ws, EV.INFO, "Удар не разобран.");
     return;
   }
   const [zoneId0, zone0] = resolved;
@@ -1947,18 +1907,18 @@ function strike(ws, payload = {}) {
   const target = room.cats.get(targetId);
   if (!target || target.id === cat.id) {
     cat.lastStrike = now;
-    send(ws, "info", "Цель не в комнате.");
+    send(ws, EV.INFO, "Цель не в комнате.");
     return;
   }
   const aimed = aimedNeighbor(room, cat, angle);
   if (!aimed) {
     cat.lastStrike = now;
-    send(ws, "info", "Рядом никого.");
+    send(ws, EV.INFO, "Рядом никого.");
     return;
   }
   if (aimed.id !== target.id) {
     cat.lastStrike = now;
-    send(ws, "info", "Стрела смотрит не на эту цель.");
+    send(ws, EV.INFO, "Стрела смотрит не на эту цель.");
     return;
   }
   cat.lastStrike = now;
@@ -1971,7 +1931,7 @@ function strike(ws, payload = {}) {
     const forced = diagonalZone(target.x - cat.x, target.y - cat.y);
     if (forced && zoneId !== forced) {
       cat.lastStrike = now;
-      send(ws, "info", "С этой диагонали бьётся другая часть.");
+      send(ws, EV.INFO, "С этой диагонали бьётся другая часть.");
       return;
     }
   }
@@ -2027,7 +1987,7 @@ function strike(ws, payload = {}) {
       damage: finalDamage,
     };
     for (const sock of room.sockets.keys()) {
-      send(sock, "fight", {
+      send(sock, EV.FIGHT, {
         ...entry,
         isAttacking: room.sockets.get(sock)?.id === attackerId,
       });
@@ -2090,7 +2050,7 @@ function chat(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!cat) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   const source = typeof payload === "string" ? payload : payload?.text ?? payload?.message ?? "";
@@ -2099,7 +2059,7 @@ function chat(ws, payload = {}) {
   if (!text) return;
   const now = Date.now();
   if (now - (cat.lastChat || 0) < CHAT_COOLDOWN_MS) {
-    send(ws, "info", "Сообщения слишком частые.");
+    send(ws, EV.INFO, "Сообщения слишком частые.");
     return;
   }
   cat.lastChat = now;
@@ -2115,7 +2075,7 @@ function chat(ws, payload = {}) {
   };
   room.chat.push(entry);
   if (room.chat.length > CHAT_HISTORY) room.chat.splice(0, room.chat.length - CHAT_HISTORY);
-  broadcast(room, "chat", entry);
+  broadcast(room, EV.CHAT, entry);
 }
 
 /**
@@ -2126,12 +2086,12 @@ function chat(ws, payload = {}) {
 function dummyToggle(ws, payload = {}) {
   const room = ws.room;
   if (!room) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   // В «тесте» — чистый полигон: манекен и мишень недоступны.
   if (room.fmt === 'test') {
-    send(ws, "info", "В «Элизии Эйдес» манекен недоступен.");
+    send(ws, EV.INFO, "В «Элизии Эйдес» манекен недоступен.");
     return;
   }
   const on = !!payload.on;
@@ -2144,7 +2104,7 @@ function dummyToggle(ws, payload = {}) {
     room.dummy = null;
     room.dummyGrab = null;
   }
-  broadcast(room, "dummyState", {
+  broadcast(room, EV.DUMMY_STATE, {
     on,
     x: room.dummy?.x ?? DUMMY_DEFAULT.x,
     y: room.dummy?.y ?? DUMMY_DEFAULT.y,
@@ -2174,7 +2134,7 @@ function dummyMove(ws, payload = {}) {
   if (x == null || y == null) return;
   room.dummy.x = x;
   room.dummy.y = y;
-  broadcast(room, "dummyMove", { x, y }, ws);
+  broadcast(room, EV.DUMMY_MOVE, { x, y }, ws);
 }
 
 /**
@@ -2186,7 +2146,7 @@ function dummyGrab(ws) {
   const cat = room && room.sockets.get(ws);
   if (!room || !cat || !room.dummy) return;
   room.dummyGrab = cat.login;
-  broadcast(room, "dummyGrab", { login: room.dummyGrab });
+  broadcast(room, EV.DUMMY_GRAB, { login: room.dummyGrab });
 }
 
 /** Манекен отпущен. Клиент → ["dummyDrop"]. Комнате → ["dummyDrop"]. */
@@ -2196,7 +2156,7 @@ function dummyDrop(ws) {
   const cat = room.sockets.get(ws);
   if (cat && room.dummyGrab !== cat.login) return;
   room.dummyGrab = null;
-  broadcast(room, "dummyDrop", {});
+  broadcast(room, EV.DUMMY_DROP, {});
 }
 
 /**
@@ -2206,16 +2166,16 @@ function dummyDrop(ws) {
 function rabToggle(ws, payload = {}) {
   const room = ws.room;
   if (!room) {
-    send(ws, "info", "Сначала зайдите в комнату.");
+    send(ws, EV.INFO, "Сначала зайдите в комнату.");
     return;
   }
   if (room.fmt === 'test') {
-    send(ws, "info", "В «Элизии Эйдес» мишень недоступна.");
+    send(ws, EV.INFO, "В «Элизии Эйдес» мишень недоступна.");
     return;
   }
   const on = !!payload.on;
   room.rab = on ? { on: true } : null;
-  broadcast(room, "rabState", { on });
+  broadcast(room, EV.RAB_STATE, { on });
 }
 
 /**
@@ -2235,7 +2195,7 @@ function rabHit(ws, payload = {}) {
   const damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : 0;
   for (const sock of room.sockets.keys()) {
     if (sock === ws) continue;
-    send(sock, "rabHit", { zone, part, damage });
+    send(sock, EV.RAB_HIT, { zone, part, damage });
   }
 }
 
@@ -2250,7 +2210,7 @@ function block(ws, payload = {}) {
   const cat = room && room.sockets.get(ws);
   if (!room || !cat) return;
   cat.blocking = !!payload.on;
-  broadcast(room, "block", { id: cat.id, on: cat.blocking }, ws);
+  broadcast(room, EV.BLOCK, { id: cat.id, on: cat.blocking }, ws);
 }
 
 /**
@@ -2271,20 +2231,11 @@ function space(ws, payload = {}) {
     msg.hold = Math.max(0, Math.min(4000, Math.round(Number(payload.hold) || 0)));
     msg.cancel = !!payload.cancel;
   }
-  broadcast(room, "space", msg, ws);
+  broadcast(room, EV.SPACE, msg, ws);
 }
 
-const ATMO_DAYPARTS = new Set(["morning", "day", "evening", "night"]);
-const ATMO_WEATHERS = new Set(["sun", "cloud", "rain"]);
-const ATMO_PHASE_LIST = ["morning", "day", "evening", "night"];
-/** Темпы по умолчанию: часть суток — 7 минут (полный цикл — 28), погода — 12 минут. */
-const ATMO_PHASE_MS_DEF = 7 * 60_000;
-const ATMO_WEATHER_MS_DEF = 12 * 60_000;
-/** Границы темпов: часть суток 1–120 минут, погода 2–240 минут. */
-const ATMO_PHASE_MS_MIN = 60_000;
-const ATMO_PHASE_MS_MAX = 120 * 60_000;
-const ATMO_WEATHER_MS_MIN = 2 * 60_000;
-const ATMO_WEATHER_MS_MAX = 240 * 60_000;
+const ATMO_DAYPARTS = new Set(ATMO_PHASE_LIST);
+const ATMO_WEATHERS = new Set(ATMO_WEATHER_LIST);
 
 /**
  * Стартовое состояние атмосферы новой комнаты: цикл открывается серединой «дня»,
@@ -2324,7 +2275,7 @@ function atmoAnchor(room, now = Date.now()) {
 }
 
 function atmoBroadcast(room, now = Date.now()) {
-  broadcast(room, "atmo", atmoAnchor(room, now), null);
+  broadcast(room, EV.ATMO, atmoAnchor(room, now), null);
 }
 
 /**
@@ -2421,7 +2372,7 @@ function freeMove(ws, payload = {}) {
   rememberCat(cat); // позиция в книге (на диск — общим сливом, не чаще 3 с)
   if (!payload.stop && now - (cat.lastFree || 0) < FREE_MOVE_GAP_MS) return;
   cat.lastFree = now;
-  broadcast(room, "freemove", { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0, jp: cat.jp ? 1 : 0 }, ws);
+  broadcast(room, EV.FREEMOVE, { id: cat.id, x: cat.fx, y: cat.fy, cx: cat.x, cy: cat.y, sp: cat.fsp ? 1 : 0, jp: cat.jp ? 1 : 0 }, ws);
 }
 
 /**
@@ -2460,18 +2411,9 @@ function cellsync(ws, payload = {}) {
   }
   cat.fm = 0;
   rememberCat(cat);
-  broadcast(room, "update cat", publicCat(cat, room));
+  broadcast(room, EV.UPDATE_CAT, publicCat(cat, room));
 }
 
-/** Кулдаун прыжка: рывок через обрыв заметно дороже шага, спамить им нельзя. */
-const JUMP_COOLDOWN_MS = 450;
-/** Дальность прыжка в клетках по прямой (8 направлений): заряд на клиенте
- *  выбирает дальность 1..3, сервер перепроверяет. */
-const JUMP_MAX_CELLS = 3;
-/** Максимальный перепад, который агент может допрыгнуть: уровень рельефа 0..3,
- *  значит теоретический максимум перепада — 3. Заряд (доля 0..1) масштабирует
- *  доступный перепад на клиенте; сервер ограничивает сверху. */
-const JUMP_MAX_DROP = 3;
 
 /**
  * Прыжок через обрыв (боевой режим «теста»). Клиент → ["jump", { x, y }]
@@ -2521,8 +2463,8 @@ function jump(ws, payload = {}) {
   cat.lastAim = now;
   rememberCat(cat);
   const patch = publicCat(cat, room);
-  send(ws, "update cat", patch);
-  broadcast(room, "update cat", patch, ws);
+  send(ws, EV.UPDATE_CAT, patch);
+  broadcast(room, EV.UPDATE_CAT, patch, ws);
 }
 
 /**
@@ -2548,7 +2490,7 @@ function roomsInfo(ws, payload = {}) {
       logins: room ? [...room.cats.values()].map((c) => c.login) : [],
     };
   });
-  send(ws, "roomsinfo", list);
+  send(ws, EV.ROOMSINFO, list);
 }
 
 function onMessage(ws, raw) {
@@ -2567,30 +2509,30 @@ function onMessage(ws, raw) {
   // доходит — как если бы его отбросили до JSON.parse. setmap — единственное
   // исключение: ради рисунка локации (PNG base64 до 3,5 МБ) ему оставлен
   // высокий транспортный потолок MAX_PAYLOAD.
-  if (bytes > FRAME_LIMIT && event !== "setmap") return;
+  if (bytes > FRAME_LIMIT && event !== EV.SETMAP) return;
   const payload = Array.isArray(msg) ? msg[1] : msg;
-  if (event === "join" || event === "first") join(ws, payload || {});
-  else if (event === "move") move(ws, payload || {});
-  else if (event === "aim") aim(ws, payload || {});
-  else if (event === "strike") strike(ws, payload || {});
-  else if (event === "chat") chat(ws, payload ?? {});
-  else if (event === "sprite") setSprite(ws, payload || {});
-  else if (event === "dummy") dummyToggle(ws, payload || {});
-  else if (event === "dummyMove") dummyMove(ws, payload || {});
-  else if (event === "dummyGrab") dummyGrab(ws);
-  else if (event === "dummyDrop") dummyDrop(ws);
-  else if (event === "rab") rabToggle(ws, payload || {});
-  else if (event === "rabHit") rabHit(ws, payload || {});
-  else if (event === "block") block(ws, payload || {});
-  else if (event === "space") space(ws, payload || {});
-  else if (event === "atmo") atmo(ws, payload || {});
-  else if (event === "atmoset") atmoset(ws, payload || {});
-  else if (event === "armor") armor(ws, payload || {});
-  else if (event === "freemove") freeMove(ws, payload || {});
-  else if (event === "cellsync") cellsync(ws, payload || {});
-  else if (event === "jump") jump(ws, payload || {});
-  else if (event === "setmap") setMap(ws, payload || {});
-  else if (event === "rooms") roomsInfo(ws, payload || {});
+  if (event === EV.JOIN) join(ws, payload || {});
+  else if (event === EV.MOVE) move(ws, payload || {});
+  else if (event === EV.AIM) aim(ws, payload || {});
+  else if (event === EV.STRIKE) strike(ws, payload || {});
+  else if (event === EV.CHAT) chat(ws, payload ?? {});
+  else if (event === EV.SPRITE) setSprite(ws, payload || {});
+  else if (event === EV.DUMMY) dummyToggle(ws, payload || {});
+  else if (event === EV.DUMMY_MOVE) dummyMove(ws, payload || {});
+  else if (event === EV.DUMMY_GRAB) dummyGrab(ws);
+  else if (event === EV.DUMMY_DROP) dummyDrop(ws);
+  else if (event === EV.RAB) rabToggle(ws, payload || {});
+  else if (event === EV.RAB_HIT) rabHit(ws, payload || {});
+  else if (event === EV.BLOCK) block(ws, payload || {});
+  else if (event === EV.SPACE) space(ws, payload || {});
+  else if (event === EV.ATMO) atmo(ws, payload || {});
+  else if (event === EV.ATMOSET) atmoset(ws, payload || {});
+  else if (event === EV.ARMOR) armor(ws, payload || {});
+  else if (event === EV.FREEMOVE) freeMove(ws, payload || {});
+  else if (event === EV.CELLSYNC) cellsync(ws, payload || {});
+  else if (event === EV.JUMP) jump(ws, payload || {});
+  else if (event === EV.SETMAP) setMap(ws, payload || {});
+  else if (event === EV.ROOMS) roomsInfo(ws, payload || {});
 }
 
 const MIME = {
