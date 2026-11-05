@@ -119,8 +119,15 @@ export function buildPointerTools(deps: PointerToolsDeps) {
   const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const cv = canvasRef.current!;
     const rect = cv.getBoundingClientRect();
-    const mx = ((ev.clientX - rect.left) * cv.width) / rect.width;
-    const my = ((ev.clientY - rect.top) * cv.height) / rect.height;
+    // Хит проецируется в МИР поля (cols×cellW), а не в буфер канваса: в grid-формате
+    // буфер = мир×k (k — devicePixelRatio с капом 2, см. цикл отрисовки), а рисунок
+    // идёт в мировых координатах через ctx.setTransform(k). Проекция по размеру буфера
+    // умножала точку ещё на k — на ретине подсветка и клики уходили ровно на k клеток
+    // правее-ниже курсора. В «тест»-формате результат ниже всё равно перезаписывается
+    // обратной проекцией камеры, так что правка его не затрагивает.
+    const fw = settingsRef.current.field;
+    const mx = ((ev.clientX - rect.left) * fw.cols * fw.cellW) / rect.width;
+    const my = ((ev.clientY - rect.top) * fw.rows * fw.cellH) / rect.height;
     return { mx, my };
   };
 
