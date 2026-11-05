@@ -5,10 +5,14 @@
  * волной W5a (этап 1) в src/lib/sim/{engine-consts, particles, editor-model,
  * paint, combat-log, geometry, targeting} и вернулся импортом — behavior-
  * preserving; карта поясов — docs/ARCHITECTURE.md §2.
- * Осталось здесь: HUD-циферблат суток/погоды, интерфейсы AtmosphereLike/AtmoClock,
- * ColResize, типы FloatLabel/Step/Engine (стейт главного rAF-замыкания),
- * remote-draw-хелперы (потребляют lib/net/move-book — lib/sim не знает сетевого
- * слоя, см. ARCHITECTURE §1) и весь стейт + rAF + ввод + JSX.
+ * W5b (этап 2) продолжил карвинг: HUD-циферблат уехал в ./simulator/hud-canvas,
+ * типы и remote-draw-хелперы — в ./simulator/sim-model, клавиатура/сеть/слои
+ * канваса — в ./simulator/hooks/*, JSX-блоки — в ./simulator/components/*,
+ * операции черновика редактора — в ./simulator/editor-ops, мышиные
+ * обработчики поля — в ./simulator/pointer-tools, конвейер удара — в
+ * ./simulator/hooks/use-strike (карта — docs/ARCHITECTURE.md §2). Здесь
+ * остался главный rAF-цикл: его 2700-строчное замыкание нельзя разорвать без
+ * изменения поведения, а целиком вынести нельзя из-за лимита 800 строк.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
@@ -31,7 +35,6 @@ import {
   DUMMY_SCALE,
   FIELD_MAX_UPSCALE,
   FREE_EMIT_MS,
-  NET_ROLLBACK_LOCK_MS,
   OCCLUDE_ALPHA,
   OCCLUDE_COVER,
   PEACE_BATTLE_LEAN_Y,
@@ -81,17 +84,14 @@ import {
   copyPaintCanvas,
   encodeDraftPaint,
   ensureDraftPaint,
-  PAINT_MATS,
   pushPaintUndo,
   stampPaintBrush,
-  undoPaintStroke,
 } from '@/lib/sim/paint';
 import {
   EDITOR_PASS_KEY,
   type EditorDraft,
   type EditorPlace,
   type EditorTool,
-  type PaintBrushShape,
 } from '@/lib/sim/editor-model';
 import {
   dummiesOf,
@@ -104,21 +104,15 @@ import {
   strikeTargetDrawn,
   type CharRef,
 } from '@/lib/sim/targeting';
-import { ROOMS, catToDummy, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
+import { ROOMS, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import {
-  advanceRemoteDraw,
-  applyOwnMoveAck,
-  enqueueRemoteCell,
-  rejectOwnMove,
-  seedRemoteDraw,
   type RemoteDraw,
 } from '@/lib/net/move-book';
 import { FightLog } from './fight-log';
 import { RoomChat } from './room-chat';
 import { ThemeBackdrop } from './theme-backdrop';
-import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, THEMES, type ThemeId } from '@/lib/sim/theme';
-import { createRemoteAim, noteRemoteAim, stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
-import { keyAction } from '@/lib/sim/keys';
+import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, type ThemeId } from '@/lib/sim/theme';
+import { stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
 import {
   currentTestMap,
   drawDirtPatch,
@@ -176,17 +170,12 @@ import {
   objectScale,
   objectSprite,
   obstacleBodyPx,
-  GROUND_COVER_OPTS,
   mapHasPaint,
   PAINT_MAX_BASE64,
   paintFormatError,
-  OBJECT_ROT_STEP,
   OBJECT_SCALE_MAX,
   OBJECT_SCALE_MIN,
-  ROCK_SPRITE_OPTS,
   TERRAIN_MAX_LEVEL,
-  TREE_SPRITE_OPTS,
-  sanitizeTestMap,
   TEST_MAP_DEFAULT,
   TEST_MAP_LIMITS,
   testMapConnectivityError,
@@ -201,11 +190,9 @@ import {
 import {
   DEFAULT_SETTINGS,
   DAYPARTS,
-  DAYPART_LABEL,
   DIRECTIONS,
   DUMMY_DEFAULT_SPRITE,
   DUMMY_NAME,
-  FIELD_SPRITES,
   RAB_SPRITE,
   SPRITES,
   WEATHERS,
@@ -213,7 +200,6 @@ import {
   cycleStartFor,
   dayPartOfProgress,
   dayProgressAt,
-  damageLevelLabel,
   dirByDeg,
   GAME_CREDITS,
   inWindow,
@@ -225,441 +211,24 @@ import {
   stepDuration,
   throatDamageFor,
   tierColor,
-  wrap180,
   wrap360,
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
+import { drawFieldHud } from './simulator/hud-canvas';
+import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
+import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
+import { EditorOverlay } from './simulator/components/editor-overlay';
+import { FieldStage } from './simulator/components/field-stage';
+import { buildEditorOps } from './simulator/editor-ops';
+import { buildPointerTools } from './simulator/pointer-tools';
+import { useStrike } from './simulator/hooks/use-strike';
+import { useSimKeyboard } from './simulator/hooks/use-keyboard';
+import { useSimNet } from './simulator/hooks/use-network';
+import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
 
-/** Минимальный облик слоя атмосферы. Модуль с PixiJS грузится динамически (чтобы
- *  не попадать в основной бандл и не падать при SSR), поэтому здесь только интерфейс. */
-interface AtmosphereLike {
-  setDayProgress(p: number): void;
-  setDaypart(dp: DayPart): void;
-  setWeather(w: WeatherKind): void;
-  frame(now: number, dtMs: number, camDx: number, camDy: number): void;
-  destroy(): void;
-}
 
-/** Часы атмосферы: якорь комнаты с сервера либо локальный (поле без сети).
- *  srv — якорь пришёл с сервера: тогда погоду двигает только он. */
-interface AtmoClock {
-  cs: number;
-  pl: number;
-  wl: number;
-  w: WeatherKind;
-  ws: number;
-  srv: boolean;
-}
 
-/* ---------- HUD поля: циферблат «день/ночь» и значок погоды ---------- */
-
-/** Радиус циферблата и значка погоды (px экрана), отступ от угла поля и зазор. */
-const HUD_DIAL_R = 21;
-const HUD_WX_R = 13;
-const HUD_PAD = 12;
-const HUD_GAP = 10;
-const HUD_DEG = Math.PI / 180;
-const HUD_NIGHT_SKY = '#182a5c';
-
-/** Облако из кругов с подошвой — и на светлой половине циферблата, и в значке погоды. */
-function hudCloud(g: CanvasRenderingContext2D, x: number, y: number, s: number, fill: string): void {
-  g.fillStyle = fill;
-  g.beginPath();
-  g.arc(x - s * 0.45, y + s * 0.15, s * 0.42, 0, Math.PI * 2);
-  g.arc(x + s * 0.05, y - s * 0.2, s * 0.55, 0, Math.PI * 2);
-  g.arc(x + s * 0.5, y + s * 0.12, s * 0.4, 0, Math.PI * 2);
-  g.fill();
-  g.fillRect(x - s * 0.8, y, s * 1.65, s * 0.42);
-}
-
-/** Солнце-маркер циферблата: тёплый диск с короткими лучами. */
-function hudSun(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
-  g.strokeStyle = '#f0a92e';
-  g.lineWidth = 1.3;
-  g.lineCap = 'round';
-  for (let i = 0; i < 8; i++) {
-    const a = i * Math.PI * 0.25;
-    g.beginPath();
-    g.moveTo(x + Math.cos(a) * (r + 1.6), y + Math.sin(a) * (r + 1.6));
-    g.lineTo(x + Math.cos(a) * (r + 3.4), y + Math.sin(a) * (r + 3.4));
-    g.stroke();
-  }
-  g.fillStyle = '#ffd44d';
-  g.beginPath();
-  g.arc(x, y, r, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = 'rgba(255,255,255,0.45)';
-  g.beginPath();
-  g.arc(x - r * 0.3, y - r * 0.3, r * 0.4, 0, Math.PI * 2);
-  g.fill();
-}
-
-/** Луна-маркер: светлый диск с «откусом» в цвет ночного неба. */
-function hudMoon(g: CanvasRenderingContext2D, x: number, y: number, r: number, sky: string): void {
-  g.fillStyle = '#f4efcf';
-  g.beginPath();
-  g.arc(x, y, r, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = sky;
-  g.beginPath();
-  g.arc(x + r * 0.45, y - r * 0.3, r * 0.85, 0, Math.PI * 2);
-  g.fill();
-}
-
-/** Значок погоды: солнце / облачко / туча с косыми каплями. */
-function hudWeatherIcon(g: CanvasRenderingContext2D, x: number, y: number, kind: WeatherKind): void {
-  if (kind === 'sun') {
-    g.strokeStyle = '#f0a92e';
-    g.lineWidth = 1.2;
-    g.lineCap = 'round';
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI * 0.25;
-      g.beginPath();
-      g.moveTo(x + Math.cos(a) * 5, y + Math.sin(a) * 5);
-      g.lineTo(x + Math.cos(a) * 6.8, y + Math.sin(a) * 6.8);
-      g.stroke();
-    }
-    g.fillStyle = '#ffd44d';
-    g.beginPath();
-    g.arc(x, y, 3.6, 0, Math.PI * 2);
-    g.fill();
-    return;
-  }
-  if (kind === 'cloud') {
-    hudCloud(g, x, y + 0.5, 7.5, '#dbe4ec');
-    return;
-  }
-  g.strokeStyle = '#3f97e4';
-  g.lineWidth = 1.5;
-  g.lineCap = 'round';
-  for (let i = -1; i <= 1; i++) {
-    g.beginPath();
-    g.moveTo(x + i * 3.6 - 1, y + 3.2);
-    g.lineTo(x + i * 3.6 - 2.4, y + 6.8);
-    g.stroke();
-  }
-  hudCloud(g, x, y - 2, 7.5, '#c9d4de');
-}
-
-/**
- * Кадр HUD поля: круг, разделённый на день (светлая половина с облаками) и ночь
- * (тёмная со звёздами), с маркером, который движется по времени суток: солнце
- * выкатывается по светлой половине от восхода к закату, луна — по тёмной.
- * Рядом — значок текущей погоды с мягким кроссфейдом при смене. HUD рисуется
- * поверх слоя атмосферы (Pixi), поэтому сам не темнеет ночью и не прячется под дождём.
- */
-function drawFieldHud(
-  cv: HTMLCanvasElement,
-  vw: number,
-  vh: number,
-  p4: number,
-  weather: WeatherKind,
-  weatherPrev: WeatherKind,
-  weatherAt: number,
-): void {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const bw = Math.round(vw * dpr);
-  const bh = Math.round(vh * dpr);
-  if (cv.width !== bw || cv.height !== bh) {
-    cv.width = bw;
-    cv.height = bh;
-  }
-  const g = cv.getContext('2d');
-  if (!g) return;
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, vw, vh);
-
-  const R = HUD_DIAL_R;
-  const cx = vw - HUD_PAD - R;
-  const cy = HUD_PAD + R;
-  const wxX = cx - R - HUD_GAP - HUD_WX_R;
-
-  // тени-подложки: читаемость на любом фоне
-  g.fillStyle = 'rgba(0,0,0,0.32)';
-  g.beginPath();
-  g.arc(cx, cy, R + 2.5, 0, Math.PI * 2);
-  g.arc(wxX, cy, HUD_WX_R + 2.5, 0, Math.PI * 2);
-  g.fill();
-
-  // половины циферблата: день — верхний-левый полукруг (от 135° до 315°), ночь — нижний-правый
-  g.save();
-  g.beginPath();
-  g.arc(cx, cy, R, 0, Math.PI * 2);
-  g.clip();
-  g.fillStyle = '#a9d7f2';
-  g.beginPath();
-  g.moveTo(cx, cy);
-  g.arc(cx, cy, R, 135 * HUD_DEG, 315 * HUD_DEG);
-  g.closePath();
-  g.fill();
-  hudCloud(g, cx - R * 0.42, cy - R * 0.3, R * 0.3, 'rgba(255,255,255,0.85)');
-  hudCloud(g, cx - R * 0.08, cy - R * 0.55, R * 0.22, 'rgba(255,255,255,0.7)');
-  g.fillStyle = HUD_NIGHT_SKY;
-  g.beginPath();
-  g.moveTo(cx, cy);
-  g.arc(cx, cy, R, 315 * HUD_DEG, 495 * HUD_DEG);
-  g.closePath();
-  g.fill();
-  g.fillStyle = 'rgba(255,233,168,0.95)';
-  const stars: ReadonlyArray<readonly [number, number, number]> = [
-    [0.34, 0.34, 1.1],
-    [0.55, 0.1, 0.9],
-    [0.14, 0.52, 0.8],
-    [0.46, 0.52, 1.2],
-  ];
-  for (const [sx, sy, sr] of stars) {
-    g.beginPath();
-    g.arc(cx + R * sx, cy + R * sy, sr, 0, Math.PI * 2);
-    g.fill();
-  }
-  const stx = cx + R * 0.5;
-  const sty = cy + R * 0.28;
-  g.strokeStyle = 'rgba(255,233,168,0.9)';
-  g.lineWidth = 1;
-  g.beginPath();
-  g.moveTo(stx - 2.2, sty);
-  g.lineTo(stx + 2.2, sty);
-  g.moveTo(stx, sty - 2.2);
-  g.lineTo(stx, sty + 2.2);
-  g.stroke();
-  g.restore();
-
-  // обод
-  g.strokeStyle = 'rgba(255,255,255,0.92)';
-  g.lineWidth = 2;
-  g.beginPath();
-  g.arc(cx, cy, R, 0, Math.PI * 2);
-  g.stroke();
-
-  // маркер времени: солнце едет по светлой половине (0,125→0,625 суток),
-  // луна — по тёмной (0,625→1,125); пока «не взошло» — маркера нет
-  const cyc = (((p4 / 4) % 1) + 1) % 1;
-  const mr = R - 7.5;
-  if (cyc > 0.125 && cyc < 0.625) {
-    const a = (135 + 180 * ((cyc - 0.125) / 0.5)) * HUD_DEG;
-    hudSun(g, cx + Math.cos(a) * mr, cy + Math.sin(a) * mr, 5);
-  } else {
-    const u = (cyc + 1 - 0.625) % 1;
-    if (u < 0.5) {
-      const a = (315 + 180 * (u / 0.5)) * HUD_DEG;
-      hudMoon(g, cx + Math.cos(a) * mr, cy + Math.sin(a) * mr, 4.6, HUD_NIGHT_SKY);
-    }
-  }
-
-  // подпись части суток
-  const label = DAYPART_LABEL[dayPartOfProgress(p4)];
-  g.font = '600 10px ui-sans-serif, system-ui, sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'top';
-  g.lineWidth = 3;
-  g.strokeStyle = 'rgba(0,0,0,0.55)';
-  g.strokeText(label, cx, cy + R + 5);
-  g.fillStyle = 'rgba(255,255,255,0.95)';
-  g.fillText(label, cx, cy + R + 5);
-
-  // значок погоды с мягким кроссфейдом при смене
-  g.beginPath();
-  g.arc(wxX, cy, HUD_WX_R, 0, Math.PI * 2);
-  g.fillStyle = 'rgba(252,252,255,0.88)';
-  g.fill();
-  g.strokeStyle = 'rgba(255,255,255,0.9)';
-  g.lineWidth = 1.5;
-  g.stroke();
-  const wt = Math.min(1, Math.max(0, (performance.now() - weatherAt) / 900));
-  g.save();
-  g.beginPath();
-  g.arc(wxX, cy, HUD_WX_R - 0.5, 0, Math.PI * 2);
-  g.clip();
-  if (wt < 1) {
-    g.globalAlpha = 1 - wt;
-    hudWeatherIcon(g, wxX, cy, weatherPrev);
-    g.globalAlpha = 1;
-  }
-  g.globalAlpha = wt;
-  hudWeatherIcon(g, wxX, cy, weather);
-  g.restore();
-  g.globalAlpha = 1;
-}
-
-/** «4,8 сек» — подпись скорости стрелы для панели СП в шапке. */
-const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
-
-/** Темп достройки чужого шага: не быстрее одной клетки в это время.
- *  Пачка кадров после лага не превращается в спринт через всё поле. */
-const REMOTE_STEP_MS = 60;
-/** Дальше этого отставания чужого кота не анимируем — сразу ставим в клетку сервера. */
-const REMOTE_BACKLOG_MAX = 4;
-
-/**
- * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
- * соседней панели. Сам ничего не хранит — отдаёт дельту dx родителю.
- */
-function ColResize({ onDrag, onEnd }: { onDrag: (dx: number) => void; onEnd: () => void }) {
-  const last = useRef(0);
-  const dragging = useRef(false);
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Потяните, чтобы изменить ширину панели"
-      title="Потяните, чтобы изменить ширину"
-      onPointerDown={(ev) => {
-        ev.preventDefault();
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        last.current = ev.clientX;
-        dragging.current = true;
-      }}
-      onPointerMove={(ev) => {
-        if (!dragging.current || !(ev.buttons & 1)) return;
-        onDrag(ev.clientX - last.current);
-        last.current = ev.clientX;
-      }}
-      onPointerUp={(ev) => {
-        if (!dragging.current) return;
-        dragging.current = false;
-        try {
-          ev.currentTarget.releasePointerCapture(ev.pointerId);
-        } catch {}
-        onEnd();
-      }}
-      onPointerCancel={() => {
-        dragging.current = false;
-        onEnd();
-      }}
-      className="hidden w-1.5 shrink-0 cursor-col-resize touch-none rounded bg-[var(--sim-divider)] transition-colors hover:bg-[var(--sim-accent-soft)] active:bg-[var(--sim-accent-soft)] lg:block"
-    />
-  );
-}
-
-interface FloatLabel {
-  x: number;
-  y: number;
-  born: number;
-  text: string;
-  color: string;
-}
-
-interface Step {
-  dir: number;
-  sd: number;
-  start: number;
-  dur: number;
-}
-
-interface Engine {
-  angle: number;
-  col: number;
-  row: number;
-  step: Step | null;
-  path: { c: number; r: number }[];
-  held: number[];
-  /** Ручное вращение стрелы: -1 — против часовой (J), 1 — по часовой (L), 0 — стоит. */
-  rot: -1 | 0 | 1;
-  /** Якорь вращения: угол и время старта удержания J/L — угол считается по абсолютному
-   *  времени, поэтому пропущенные кадры не дают ни отставания, ни дёрганья стрелы. */
-  rotBase: number;
-  rotBaseT: number;
-  rotPeriod: number;
-  rotActive: -1 | 0 | 1;
-  /** Накопитель тиков регенерации энергии, мс. */
-  regenAcc: number;
-  /** performance.now() последнего прожатия удара (не чаще, чем раз в отклик удара). */
-  lastStrike: number;
-  /** Клавиша удара (I) удерживается — удары повторяются с интервалом отклика. */
-  strikeHeld: boolean;
-  /** performance.now() следующего автоматического удара при удержании I. */
-  nextHoldStrike: number;
-  /** Блок (удержание К): удары по игроку уходят в «Лапы», сам он не двигается,
-   *  не бьёт и не крутит стрелу. Исключение — хвост: удар в хвост блок не ловит.
-   *  Значок замка видит только сам игрок. */
-  blocking: boolean;
-  labels: FloatLabel[];
-  hover: { c: number; r: number } | null;
-  lastSpeed: number;
-  lastDir: number | null;
-  /** performance.now(), до которого новые шаги подавлены после отката предикта. */
-  moveLockUntil: number;
-  /** Комната «тест», мирный режим: свободная позиция в клеточных долях мира
-   *  (левый верх спрайта). В бою совпадает с col/row. */
-  fx: number;
-  fy: number;
-  /** Мирный режим: цель ходьбы по клику (клеточные доли, левый верх спрайта).
-   *  stuck/lastD — копилка «нет прогресса» (мс) и прошлая дистанция: цель
-   *  упирается в стену — ходьба отменяется. null — стоит на месте. */
-  ptarget: { x: number; y: number; stuck: number; lastD: number } | null;
-  /** Мирный режим: скорость кота (px мира/с, в экранных осях) — разгон и
-   *  «выбегание» с инерцией: кот не встаёт как вкопанный, а мягко тормозит. */
-  pvx: number;
-  pvy: number;
-  /** Куда смотрит моделька в мирном режиме: 1 — вправо (зеркало), -1 — влево
-   *  (как нарисован спрайт). Меняется от направления бега — с «желе». */
-  face: 1 | -1;
-  /** performance.now() последнего кадра спринта — после него выбегание дольше. */
-  lastSprint: number;
-  /** Прыжок через обрыв (по отпусканию Пробела с зарядом): мирный — лерп fx/fy
-   *  с дугой, боевой — клетка уже сменилась, лерп рисуется по px. l0/l1 — подъём
-   *  земли (px) в точках отрыва и посадки. null — кот на земле. */
-  leap: {
-    battle: boolean;
-    t0: number;
-    dur: number;
-    x0: number;
-    y0: number;
-    x1: number;
-    y1: number;
-    l0: number;
-    l1: number;
-    zH: number;
-  } | null;
-  /** Текущая высота дуги прыжка, px (рисование; в update пересчитывается). */
-  leapZ: number;
-  /** Сглаженный подъём земли под своим котом, px: цель — уровень его клетки,
-   *  догоняет экспоненциально — шаг на уступ не телепортирует модельку. */
-  liftV: number;
-}
-
-/**
- * Живые соседи с сервера и их отрисовка. Состояние живёт в refs внутри компонента
- * (liveRemotesRef, remoteAimRef, remoteDrawRef), а не в модульных переменных:
- * два экземпляра Simulator не должны делить состояние, а cleanup одного
- * не должен обнулять поле другого.
- * (Не уехали в lib/sim/targeting волной W5a: функции потребуют lib/net/move-book,
- * а lib/sim не знает сетевого слоя — ARCHITECTURE §1.)
- */
-
-function rememberRemoteCell(map: Map<string, RemoteDraw>, id: string, col: number, row: number) {
-  const vis = map.get(id);
-  if (!vis) {
-    map.set(id, seedRemoteDraw({ col, row }));
-    return;
-  }
-  enqueueRemoteCell(vis, { col, row });
-}
-
-function stepRemoteDraws(remotes: DummyConfig[], map: Map<string, RemoteDraw>, now: number) {
-  for (const d of remotes) {
-    let vis = map.get(d.id);
-    if (!vis) {
-      vis = seedRemoteDraw({ col: d.col, row: d.row });
-      map.set(d.id, vis);
-      continue;
-    }
-    if (vis.queue.length > REMOTE_BACKLOG_MAX) {
-      // Кот отстал на несколько шагов (лаг вкладки/сети): не прогоняем его
-      // спринтом через занятые клетки, а сразу ставим в последнюю клетку сервера.
-      const last = vis.queue[vis.queue.length - 1];
-      vis.col = last.col;
-      vis.row = last.row;
-      vis.queue = [];
-      continue;
-    }
-    if (now - vis.lastStepAt >= REMOTE_STEP_MS) {
-      advanceRemoteDraw(vis);
-      vis.lastStepAt = now;
-    }
-  }
-}
 
 export default function Simulator() {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
@@ -874,51 +443,7 @@ export default function Simulator() {
   const publishAimRef = useRef<(angle: number, force: boolean) => void>(() => {});
   // Присвоение — в эффекте, а не в теле рендера: мутация ref во время render —
   // антипаттерн React (конкурентный режим рендерит компонент повторно).
-  useEffect(() => {
-    publishAimRef.current = (angle: number, force: boolean) => {
-      const net = netRef.current;
-      if (!net?.ready || settingsRef.current.controlled !== 'main') return;
-      const deg = Math.round(wrap360(angle) * 10) / 10;
-      const sync = aimSyncRef.current;
-      const now = performance.now();
-      const changed = sync.deg == null || Math.abs(wrap180(deg - sync.deg)) >= 0.05;
-      if (!changed) {
-        sync.pending = null;
-        if (sync.timer) {
-          clearTimeout(sync.timer);
-          sync.timer = null;
-        }
-        return;
-      }
-      const AIM_EMIT_MS = 32;
-      const due = sync.at === 0 || now - sync.at >= AIM_EMIT_MS;
-      if (force || due) {
-        if (sync.timer) {
-          clearTimeout(sync.timer);
-          sync.timer = null;
-        }
-        sync.pending = null;
-        sync.deg = deg;
-        sync.at = now;
-        net.emit('aim', { deg });
-        return;
-      }
-      sync.pending = deg;
-      if (sync.timer) return;
-      const wait = Math.max(0, AIM_EMIT_MS - (now - sync.at));
-      sync.timer = setTimeout(() => {
-        sync.timer = null;
-        const latest = sync.pending;
-        sync.pending = null;
-        const netNow = netRef.current;
-        if (latest == null || !netNow?.ready || settingsRef.current.controlled !== 'main') return;
-        if (sync.deg != null && Math.abs(wrap180(latest - sync.deg)) < 0.05) return;
-        sync.deg = latest;
-        sync.at = performance.now();
-        netNow.emit('aim', { deg: latest });
-      }, wait);
-    };
-  });
+  useAimPublisher({ netRef, settingsRef, aimSyncRef, publishAimRef });
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
   const [netStatus, setNetStatus] = useState('подключение…');
@@ -1261,716 +786,55 @@ export default function Simulator() {
     }
   }, []);
 
-  const syncEditorView = () => {
-    const d = editorRef.current;
-    if (!d) return;
-    setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
-  };
-
-  const draftMap = (d: EditorDraft): TestMap => ({
-    // Правки редактора сохраняются в текущей версии конфига (v2 — деление поля
-    // на траву и боевые клетки).
-    v: 2,
-    cols: d.cols,
-    rows: d.rows,
-    margin: savedMapRef.current.margin,
-    seed: savedMapRef.current.seed,
-    zones: d.zones.map((z) => ({ ...z })),
-    objects: d.objects.map((o) => ({ ...o })),
-    spawns: d.spawns.map((s) => ({ ...s })),
-    ...(Object.keys(d.elev).length > 0 ? { elev: { ...d.elev } } : {}),
-    // Кисть локации: холст черновика уходит в конфиг PNG base64. С рисунком
-    // проталины/покрытия больше не нужны (запечены) — как в sanitize.
-    ...(d.pcv ? { paint: encodeDraftPaint(d) } : {}),
+  const {
+    syncEditorView,
+    pushEditorUndo,
+    openEditor,
+    closeEditor,
+    setEditorTool,
+    clampPlacePos,
+    editorPlacementClick,
+    confirmEditorPlace,
+    cancelEditorPlace,
+    resizeEditorWorld,
+    commitEditorDrag,
+    deleteEditorZone,
+    toggleEditorSel,
+    mergeEditorZones,
+    paintEditorCellObject,
+    placeBattleCell,
+    applyElevBrush,
+    beginElevStroke,
+    endElevStroke,
+    addEditorSpawn,
+    toggleEditorSpawn,
+    placeEditorEntry,
+    renameEditorZone,
+    undoEditor,
+    resetEditor,
+    saveEditorMap,
+  } = buildEditorOps({
+    editorRef,
+    camRef,
+    netRef,
+    savedMapRef,
+    elevStrokeRef,
+    editorCoverRef,
+    editorEntryDirRef,
+    editorPlaceRef,
+    engineRef,
+    lastSprRef,
+    settingsRef,
+    patchEditorPlace,
+    setPaintOverride,
+    setTestMap,
+    setEditorView,
+    setEditorOpen,
+    setEditorMsg,
+    setEditorPass,
+    setEditorPlace,
+    editorPass,
   });
-
-  /** Черновик сразу рисуется на поле (WYSIWYG): setTestMap пересобирает кэши.
-   *  Холст кисти черновика подменяет декодированный рисунок: мазки видны сразу,
-   *  без PNG-декодирования на каждый росчерк. */
-  const applyDraftPreview = () => {
-    const d = editorRef.current;
-    if (!d) return;
-    setTestMap(draftMap(d));
-    if (d.pcv) setPaintOverride(d.pcv, true);
-  };
-
-  const pushEditorUndo = () => {
-    const d = editorRef.current;
-    if (!d) return;
-    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), elev: { ...d.elev }, cols: d.cols, rows: d.rows });
-    if (d.undo.length > 40) d.undo.shift();
-  };
-
-  const openEditor = () => {
-    const m = savedMapRef.current;
-    const draft: EditorDraft = {
-      zones: m.zones.map((z) => ({ ...z })),
-      objects: (m.objects ?? []).map((o) => ({ ...o })),
-      spawns: (m.spawns ?? []).map((s) => ({ ...s })),
-      elev: { ...(m.elev ?? {}) },
-      pcv: copyPaintCanvas(),
-      pmat: 'grass-1',
-      psize: 24,
-      pshape: 'round',
-      pundo: [],
-      pdirty: false,
-      ppaint: null,
-      cols: m.cols,
-      rows: m.rows,
-      tool: 'cells',
-      drag: null,
-      undo: [],
-      sel: [],
-      dirty: false,
-    };
-    editorRef.current = draft;
-    setEditorView({ ...draft, zones: draft.zones.map((z) => ({ ...z })), objects: draft.objects.map((o) => ({ ...o })), undo: [] });
-    // Рисунок локации ещё декодируется (конфиг пришёл только что): как только
-    // готов, черновик получает его копию — кисть правит сохранённый рисунок.
-    if (mapHasPaint(m) && !draft.pcv) {
-      void ensurePaintDecoded().then((ok2) => {
-        const d = editorRef.current;
-        if (!ok2 || !d || d.pcv || d.pdirty) return;
-        d.pcv = copyPaintCanvas();
-        if (d.pcv) setPaintOverride(d.pcv, true);
-        syncEditorView();
-      });
-    }
-    patchOrClearPlace(null);
-    setEditorMsg(null);
-    try {
-      setEditorPass(localStorage.getItem(EDITOR_PASS_KEY) || '');
-    } catch {
-      /* приватный режим — пароль вводится вручную */
-    }
-    setEditorOpen(true);
-    // Режим редактирования выключает мирную ходьбу: цель клика и маршрут гасим.
-    const e = engineRef.current;
-    e.ptarget = null;
-    e.path = [];
-    e.hover = null;
-    camRef.current.init = false;
-  };
-
-  const closeEditor = () => {
-    editorRef.current = null;
-    setEditorOpen(false);
-    setEditorView(null);
-    setEditorMsg(null);
-    // Черновик без записи: поле возвращается к сохранённой сервером локации.
-    setTestMap(savedMapRef.current);
-    // Подмену рисунка (черновой холст кисти) снимаем: декодируем заново рисунок
-    // сохранённой локации, если он есть.
-    void ensurePaintDecoded();
-    camRef.current.init = false;
-  };
-
-  const setEditorTool = (tool: EditorTool) => {
-    const d = editorRef.current;
-    if (!d) return;
-    d.tool = tool;
-    // Камень/дерево: сразу создаём «призрак» постановки — следует за курсором,
-    // размер/поворот подгоняются до клика-фиксации; остальные инструменты его снимают.
-    if (tool === 'tree' || tool === 'stone') {
-      const p = editorPlaceRef.current;
-      if (!p || p.kind !== tool) {
-        patchEditorPlace({
-          kind: tool,
-          spr: lastSprRef.current[tool],
-          anchored: false,
-          pickId: null,
-        });
-      }
-    } else {
-      patchOrClearPlace(null);
-    }
-    syncEditorView();
-  };
-
-  /** Полная очистка ставящегося объекта (ref + state). */
-  const patchOrClearPlace = (p: EditorPlace | null) => {
-    editorPlaceRef.current = p;
-    setEditorPlace(p);
-  };
-
-  /** Зажим точки опоры призрака в пределы мира (плюс небольшой запас по краям). */
-  const clampPlacePos = (x: number, y: number): { x: number; y: number } => {
-    const d = editorRef.current;
-    if (!d) return { x, y };
-    return {
-      x: Math.min(d.cols + 0.5, Math.max(-0.5, Math.round(x * 100) / 100)),
-      y: Math.min(d.rows + 1.5, Math.max(-0.2, Math.round(y * 100) / 100)),
-    };
-  };
-
-  /** Препятствие под курсором (для подъёма существующего объекта в призрак).
- *  Считается расстояние до точки опоры тела; exceptId — чей-то поднятый объект. */
-  const pickObstacleAt = (mx: number, my: number, exceptId: string | null): TestMapObject | null => {
-    const s = settingsRef.current;
-    let best: TestMapObject | null = null;
-    let bestD = 34; // px вокруг точки опоры — щедрый захват
-    for (const ob of testObstacleBodies()) {
-      if (exceptId && ob.o.id === exceptId) continue;
-      const dist = Math.hypot(mx - ob.x * s.field.cellW, my - ob.y * s.field.cellH);
-      if (dist < bestD) {
-        bestD = dist;
-        best = ob.o;
-      }
-    }
-    return best;
-  };
-
-  /** Подъём существующего препятствия в призрак: оригинал остаётся в черновике,
-   * но скрывается — ✓ поставит правленый объект вместо него, ✕ вернёт как было. */
-  const liftObstacleToPlace = (o: TestMapObject) => {
-    const b = objectBase(o);
-    lastSprRef.current[o.kind === 'tree' ? 'tree' : 'stone'] = objectSprite(o);
-    patchEditorPlace({
-      kind: o.kind === 'tree' ? 'tree' : 'stone',
-      spr: objectSprite(o),
-      s: objectScale(o),
-      rot: objectRotDeg(o),
-      mir: objectMir(o),
-      x: b.x,
-      y: b.y,
-      anchored: true,
-      pickId: o.id,
-    });
-  };
-
-  /** Клик инструментом камня/дерева: фиксация/перенос точки призрака или подъём
-   *  существующего объекта под курсором. */
-  const editorPlacementClick = (mx: number, my: number) => {
-    const p = editorPlaceRef.current;
-    if (!p) return;
-    const s = settingsRef.current;
-    if (p.anchored) {
-      // клик по другому объекту — поднимаем его; по земле — переносим точку
-      const hit = pickObstacleAt(mx, my, p.pickId);
-      if (hit) {
-        liftObstacleToPlace(hit);
-        return;
-      }
-      const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
-      patchEditorPlace(b);
-      return;
-    }
-    const hit = pickObstacleAt(mx, my, null);
-    if (hit) {
-      liftObstacleToPlace(hit);
-      return;
-    }
-    const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
-    patchEditorPlace({ ...b, anchored: true });
-  };
-
-  /** ✓ — поставить: поднятый объект заменяется, новый добавляется; призрак
-   *  остаётся неприкреплённым — можно ставить следующий сразу. */
-  const confirmEditorPlace = () => {
-    const d = editorRef.current;
-    const p = editorPlaceRef.current;
-    if (!d || !p) return;
-    if (d.objects.length - (p.pickId ? 1 : 0) >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return;
-    }
-    pushEditorUndo();
-    d.objects = d.objects.filter((o) => o.id !== p.pickId);
-    d.objects.push({
-      id: newObjectId(),
-      kind: p.kind,
-      spr: p.spr,
-      s: p.s,
-      rot: p.rot,
-      mir: p.mir,
-      x: p.x,
-      y: p.y,
-      c: Math.min(d.cols - 1, Math.max(0, Math.floor(p.x))),
-      r: Math.min(d.rows - 1, Math.max(0, Math.floor(p.y - 0.01))),
-      pos: 'center',
-    });
-    d.dirty = true;
-    lastSprRef.current[p.kind] = p.spr;
-    patchEditorPlace({ pickId: null, anchored: false });
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  /** ✕ — отмена: поднятый объект возвращается (он никуда не удалялся из черновика). */
-  const cancelEditorPlace = () => {
-    const d = editorRef.current;
-    patchOrClearPlace(null);
-    if (d) {
-      applyDraftPreview();
-      syncEditorView();
-    }
-  };
-
-  /** Смена размера мира: зоны и препятствия, вылезшие за новый край, обрезаются/удаляются. */
-  const resizeEditorWorld = (cols: number, rows: number) => {
-    const d = editorRef.current;
-    if (!d) return;
-    const nc = Math.min(TEST_MAP_LIMITS.colsMax, Math.max(TEST_MAP_LIMITS.colsMin, cols));
-    const nr = Math.min(TEST_MAP_LIMITS.rowsMax, Math.max(TEST_MAP_LIMITS.rowsMin, rows));
-    if (nc === d.cols && nr === d.rows) return;
-    pushEditorUndo();
-    d.cols = nc;
-    d.rows = nr;
-    const kept: TestMapZone[] = [];
-    for (const z of d.zones) {
-      const c1 = Math.min(z.c1, nc - 1);
-      const r1 = Math.min(z.r1, nr - 1);
-      if (z.c0 <= c1 && z.r0 <= r1) kept.push({ ...z, c1, r1 });
-    }
-    d.zones = kept;
-    d.objects = d.objects.filter((o) => {
-      if (o.kind === 'stone' || o.kind === 'tree') {
-        const b = objectBase(o);
-        return b.x < nc && b.y - 0.01 < nr;
-      }
-      return o.c < nc && o.r < nr;
-    });
-    // Клетки высот за новым краем мира исчезают вместе с краем.
-    const keptElev: Record<string, number> = {};
-    for (const [key, lv] of Object.entries(d.elev)) {
-      const [c, r] = key.split(',').map(Number);
-      if (c < nc && r < nr) keptElev[key] = lv;
-    }
-    d.elev = keptElev;
-    // Холст кисти живёт в канонических пикселях мира: при смене размера — новый
-    // холст нужного размера, старый рисунок переносится 1:1 (вылезшее — срезано,
-    // добавленное — пустота за кромкой).
-    if (d.pcv) {
-      const next = document.createElement('canvas');
-      next.width = nc * PAINT_CELL_W;
-      next.height = nr * PAINT_CELL_H;
-      const g = next.getContext('2d');
-      if (g) {
-        g.imageSmoothingEnabled = false;
-        g.drawImage(d.pcv, 0, 0);
-      }
-      d.pcv = next;
-      d.pundo = [];
-      d.pdirty = true;
-      setPaintOverride(next, true);
-    }
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  /** Вычитание прямоугольника из зоны: остаток распадается максимум на 4 полосы. */
-  const subtractFromZone = (
-    z: TestMapZone,
-    cut: { c0: number; r0: number; c1: number; r1: number },
-  ): TestMapZone[] => {
-    const c0 = Math.max(z.c0, cut.c0);
-    const r0 = Math.max(z.r0, cut.r0);
-    const c1 = Math.min(z.c1, cut.c1);
-    const r1 = Math.min(z.r1, cut.r1);
-    if (c0 > c1 || r0 > r1) return [z];
-    const pieces: TestMapZone[] = [];
-    if (z.r0 < r0) pieces.push({ ...z, id: newZoneId(), r0: z.r0, r1: r0 - 1 });
-    if (z.r1 > r1) pieces.push({ ...z, id: newZoneId(), r0: r1 + 1, r1: z.r1 });
-    if (z.c0 < c0) pieces.push({ ...z, id: newZoneId(), c0: z.c0, c1: c0 - 1, r0, r1 });
-    if (z.c1 > c1) pieces.push({ ...z, id: newZoneId(), c0: c1 + 1, c1: z.c1, r0, r1 });
-    return pieces;
-  };
-
-  /** Завершение рисунка: прямоугольник становится зоной (или стирает зоны ластиком). */
-  const commitEditorDrag = () => {
-    const d = editorRef.current;
-    if (!d || !d.drag) return;
-    const drag = d.drag;
-    d.drag = null;
-    const c0 = Math.min(drag.c0, drag.c1);
-    const c1 = Math.max(drag.c0, drag.c1);
-    const r0 = Math.min(drag.r0, drag.r1);
-    const r1 = Math.max(drag.r0, drag.r1);
-    if (c1 < c0 || r1 < r0) {
-      syncEditorView();
-      return;
-    }
-    pushEditorUndo();
-    if (drag.erase || d.tool === 'erase') {
-      d.zones = d.zones.flatMap((z) => subtractFromZone(z, { c0, r0, c1, r1 }));
-      // ластик снимает препятствия (по точке опоры), клеточные объекты
-      // (землю/покрытие/заход) и клетки спавна внутри стёртого прямоугольника
-      d.objects = d.objects.filter((o) => {
-        if (o.kind === 'stone' || o.kind === 'tree') {
-          const b = objectBase(o);
-          const fc = Math.floor(b.x);
-          const fr = Math.floor(b.y - 0.01);
-          return !(fc >= c0 && fc <= c1 && fr >= r0 && fr <= r1);
-        }
-        return !(o.c >= c0 && o.c <= c1 && o.r >= r0 && o.r <= r1);
-      });
-      d.spawns = d.spawns.filter((s) => !(s.c >= c0 && s.c <= c1 && s.r >= r0 && s.r <= r1));
-      // и срезает рельеф: стёртый участок возвращается к базовой земле
-      let elevChanged = false;
-      for (let r = r0; r <= r1; r++) {
-        for (let c = c0; c <= c1; c++) {
-          if (`${c},${r}` in d.elev) {
-            delete d.elev[`${c},${r}`];
-            elevChanged = true;
-          }
-        }
-      }
-      if (elevChanged) applyDraftPreview();
-    } else {
-      const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
-      const n = d.zones.filter((z) => z.kind === kind).length + 1;
-      d.zones = [
-        ...d.zones,
-        {
-          id: newZoneId(),
-          name: kind === 'cells' ? `Клетки ${n}` : `Зелёная зона ${n}`,
-          kind,
-          c0,
-          r0,
-          c1,
-          r1,
-        },
-      ];
-    }
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  const deleteEditorZone = (id: string) => {
-    const d = editorRef.current;
-    if (!d) return;
-    pushEditorUndo();
-    d.zones = d.zones.filter((z) => z.id !== id);
-    d.sel = d.sel.filter((s) => s !== id);
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  /** Отметка зоны для объединения (галка в списке зон). */
-  const toggleEditorSel = (id: string) => {
-    const d = editorRef.current;
-    if (!d) return;
-    d.sel = d.sel.includes(id) ? d.sel.filter((s) => s !== id) : [...d.sel, id];
-    syncEditorView();
-  };
-
-  /** Объединение отмеченных зон в одну: общий охватывающий прямоугольник, тип и
-   *  имя — от первой отмеченной в списке. Зоны — прямоугольники, поэтому союз
-   *  двух угловатых областей — это всегда их охват (клетки между ними входят). */
-  const mergeEditorZones = () => {
-    const d = editorRef.current;
-    if (!d) return;
-    const chosen = d.zones.filter((z) => d.sel.includes(z.id));
-    if (chosen.length < 2) return;
-    pushEditorUndo();
-    const first = chosen[0];
-    const merged: TestMapZone = {
-      id: newZoneId(),
-      name: first.name,
-      kind: first.kind,
-      c0: Math.min(...chosen.map((z) => z.c0)),
-      r0: Math.min(...chosen.map((z) => z.r0)),
-      c1: Math.max(...chosen.map((z) => z.c1)),
-      r1: Math.max(...chosen.map((z) => z.r1)),
-    };
-    d.zones = [...d.zones.filter((z) => !d.sel.includes(z.id)), merged];
-    d.sel = [];
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  /** Протяжка «Земли»/«Покрытия»: насыпает клетки без снятия и без записи отмены
-   *  на каждую клетку (отмена пишется один раз на росчерк — см. pointerdown).
-   *  Земля и покрытие не совмещаются на одной клетке: покрытие заменяет проталину. */
-  const paintEditorCellObject = (kind: 'dirt' | 'ground', c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (d.objects.some((o) => (o.kind === 'dirt' || o.kind === 'ground') && o.c === c && o.r === r)) return false;
-    if (d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return false;
-    }
-    d.objects.push(
-      kind === 'ground'
-        ? { id: newObjectId(), kind: 'ground', c, r, cv: editorCoverRef.current, pos: 'center' }
-        : { id: newObjectId(), kind: 'dirt', c, r, pos: 'center' },
-    );
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Клетка спавна разрешена только на траве (зелёной зоне) и не на боевых
-   *  клетках: новичок появляется в мирном режиме (это же проверяет сервер). */
-  /** Поставить/снять одиночную боевую клетку (kind «battle»). Боевая клетка —
-   *  область 150×100: ставится только на место, покрашенное кистью целиком;
-   *  если место не соответствует размерам — клетка не ставится. Повторный клик
-   *  по уже стоящей клетке снимает её. */
-  const placeBattleCell = (c: number, r: number) => {
-    const d = editorRef.current;
-    if (!d) return;
-    const existing = d.objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
-    if (!existing && !d.pcv) {
-      setEditorMsg(
-        'Боевая клетка ставится на закрашенное кистью место: проведите кистью (пресет «Клетка 150×100»), затем кликните по клетке.',
-      );
-      return;
-    }
-    if (!existing && paintCellCoverage(c, r) < 0.995) {
-      setEditorMsg(
-        `Боевая клетка ${c + 1}×${r + 1} не поставлена: место покрашено не целиком. Закрасьте область клетки пресетом кисти «Клетка 150×100».`,
-      );
-      return;
-    }
-    if (!existing && testObjectAt(c, r)) {
-      setEditorMsg(`Боевая клетка ${c + 1}×${r + 1} не поставлена: на клетке уже стоит другой объект.`);
-      return;
-    }
-    pushEditorUndo();
-    if (existing) {
-      d.objects = d.objects.filter((o) => !(o.kind === 'battle' && o.c === c && o.r === r));
-    } else {
-      d.objects.push({ id: newObjectId(), kind: 'battle', c, r, pos: 'center' });
-    }
-    d.dirty = true;
-    setEditorMsg(existing ? `Боевая клетка ${c + 1}×${r + 1} снята.` : null);
-    syncEditorView();
-    applyDraftPreview();
-  };
-
-  const editorSpawnAllowed = (d: EditorDraft, c: number, r: number): boolean => {
-    const onBattle =
-      d.zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) ||
-      d.objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
-    if (onBattle) return false;
-    // С рисунком кисти спавн — на любом закрашенном месте (не на боевых клетках);
-    // без рисунка — по-старому, только в зелёной зоне.
-    if (d.pcv) return paintPointOn(c + 0.5, r + 0.5);
-    return d.zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-  };
-
-  /**
-   * Кисть рельефа: «насыпать» (+1 уровень, предел 3), «срыть» (−1, до базовой
-   * земли) и «ровно» (срезает все клетки росчерка на уровень первой клетки).
-   * Росчерк пишет отмену один раз и не обрабатывает клетку дважды — протяжка
-   * с зажатой кнопкой насыпает уступ целиком (см. pointerdown/pointermove).
-   */
-  const applyElevBrush = (mode: 'raise' | 'lower' | 'flat', c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (c < 0 || r < 0 || c >= d.cols || r >= d.rows) return false;
-    const stroke = elevStrokeRef.current;
-    if (!stroke) return false;
-    const key = `${c},${r}`;
-    if (stroke.touched.has(key)) return false;
-    stroke.touched.add(key);
-    const cur = d.elev[key] ?? 0;
-    let next: number;
-    if (mode === 'raise') next = Math.min(TERRAIN_MAX_LEVEL, cur + 1);
-    else if (mode === 'lower') next = Math.max(0, cur - 1);
-    else next = Math.min(TERRAIN_MAX_LEVEL, Math.max(0, stroke.flat));
-    if (next === cur) return false;
-    if (next <= 0) delete d.elev[key];
-    else d.elev[key] = next;
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Начало росчерка кисти рельефа: копилка тронутых клеток + уровень «Ровно»
-   *  (уровень первой клетки под кистью — весь росчерк срезается в неё). */
-  const beginElevStroke = (mode: 'raise' | 'lower' | 'flat', c: number, r: number) => {
-    const d = editorRef.current;
-    const first = d ? d.elev[`${c},${r}`] ?? 0 : 0;
-    elevStrokeRef.current = { touched: new Set(), flat: mode === 'flat' ? first : 0 };
-    applyElevBrush(mode, c, r);
-  };
-
-  const endElevStroke = () => {
-    elevStrokeRef.current = null;
-  };
-
-  /** Добавить клетку спавна (клик/протяжка инструмента «Спавн»): одна точка
-   *  на клетку, лимит TEST_MAP_LIMITS.spawnsMax. */
-  const addEditorSpawn = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (d.spawns.some((s) => s.c === c && s.r === r)) return true;
-    if (!editorSpawnAllowed(d, c, r)) {
-      setEditorMsg('Клетка спавна ставится на траве (зелёной зоне), не на боевых клетках.');
-      return false;
-    }
-    if (d.spawns.length >= TEST_MAP_LIMITS.spawnsMax) {
-      setEditorMsg(`Клеток спавна не больше ${TEST_MAP_LIMITS.spawnsMax}.`);
-      return false;
-    }
-    d.spawns.push({ c, r });
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Клик инструментом «Спавн»: клетка со спавном — снимает, без — ставит. */
-  const toggleEditorSpawn = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    const idx = d.spawns.findIndex((s) => s.c === c && s.r === r);
-    if (idx < 0) return addEditorSpawn(c, r);
-    d.spawns.splice(idx, 1);
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Постановка клетки захода (инструмент «Заход»): клик ставит заход с выбранным
-   *  направлением, клик по тому же заходу с тем же направлением — убирает, с другим —
-   *  меняет направление. На боевой клетке заход не ставится; по направлению шага
-   *  обязана быть боевая клетка (это же проверяет сервер при сохранении). */
-  const placeEditorEntry = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    const dir = editorEntryDirRef.current;
-    const idx = d.objects.findIndex((o) => o.c === c && o.r === r);
-    if (idx >= 0 && d.objects[idx].kind === 'entry') {
-      pushEditorUndo();
-      if (d.objects[idx].dir === dir) d.objects.splice(idx, 1);
-      else d.objects[idx] = { ...d.objects[idx], dir };
-      d.dirty = true;
-      applyDraftPreview();
-      syncEditorView();
-      return true;
-    }
-    const isBattleAt = (cc: number, rr: number): boolean =>
-      d.zones.some((z) => z.kind === 'cells' && cc >= z.c0 && cc <= z.c1 && rr >= z.r0 && rr <= z.r1) ||
-      d.objects.some((o) => o.kind === 'battle' && o.c === cc && o.r === rr);
-    const battleCell = isBattleAt(c, r);
-    const targetBattle = isBattleAt(
-      c + (dir === 'left' ? -1 : dir === 'right' ? 1 : 0),
-      r + (dir === 'up' ? -1 : dir === 'down' ? 1 : 0),
-    );
-    if (battleCell) {
-      setEditorMsg('Клетка захода ставится на траве рядом с боевой зоной, не на боевых клетках.');
-      return false;
-    }
-    if (!targetBattle) {
-      setEditorMsg('По направлению шага должна быть боевая клетка — выберите направление в сторону зоны.');
-      return false;
-    }
-    // Логика боевых клеток — и для заходов: заход занимает клетку 150×100 и
-    // ставится только на место, покрашенное кистью целиком.
-    if (d.pcv && paintCellCoverage(c, r) < 0.995) {
-      setEditorMsg(
-        `Заход ${c + 1}×${r + 1} не поставлен: место покрашено не целиком. Закрасьте область клетки пресетом кисти «Клетка 150×100».`,
-      );
-      return false;
-    }
-    if (idx < 0 && d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return false;
-    }
-    pushEditorUndo();
-    if (idx >= 0) d.objects.splice(idx, 1); // замена другого объекта на заход
-    d.objects.push({ id: newObjectId(), kind: 'entry', c, r, pos: 'center', dir });
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  const renameEditorZone = (id: string, name: string) => {
-    const d = editorRef.current;
-    if (!d) return;
-    const z = d.zones.find((zz) => zz.id === id);
-    if (!z) return;
-    z.name = name.slice(0, TEST_MAP_LIMITS.nameMax);
-    d.dirty = true;
-    syncEditorView();
-  };
-
-  const undoEditor = () => {
-    const d = editorRef.current;
-    if (!d || d.undo.length === 0) return;
-    const back = d.undo.pop()!;
-    d.zones = back.zones.map((z) => ({ ...z }));
-    d.objects = back.objects.map((o) => ({ ...o }));
-    d.spawns = back.spawns.map((s) => ({ ...s }));
-    d.elev = { ...back.elev };
-    d.cols = back.cols;
-    d.rows = back.rows;
-    d.sel = d.sel.filter((id) => d.zones.some((z) => z.id === id));
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  const resetEditor = () => {
-    const d = editorRef.current;
-    if (!d) return;
-    pushEditorUndo();
-    const m = savedMapRef.current;
-    d.zones = m.zones.map((z) => ({ ...z }));
-    d.objects = (m.objects ?? []).map((o) => ({ ...o }));
-    d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
-    d.elev = { ...(m.elev ?? {}) };
-    d.cols = m.cols;
-    d.rows = m.rows;
-    d.sel = [];
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-  };
-
-  /** Предварительная проверка черновика — те же правила, что у сервера. */
-  const editorDraftError = (): string | null => {
-    const d = editorRef.current;
-    if (!d) return null;
-    // Кисть локации: PNG base64 обязан быть валидным и не слишком большим.
-    if (d.pcv) {
-      const perr = paintFormatError(encodeDraftPaint(d));
-      if (perr) return perr === 'рисунок локации слишком велик' ? 'Рисунок локации слишком велик — сотрите лишнее и сохраните снова.' : perr;
-    }
-    if (d.pcv) {
-      // С рисунком зоны не обязаны быть вовсе (форма — из пикселей), но бой
-      // обязан быть: зоны с клетками или одиночные боевые клетки.
-      const hasBattle =
-        d.zones.some((z) => z.kind === 'cells') || d.objects.some((o) => o.kind === 'battle');
-      if (!hasBattle) return 'Нужна хотя бы одна боевая клетка или зона с клетками — иначе бой не работает.';
-      return null;
-    }
-    if (d.zones.length === 0) return 'Нужна хотя бы одна зона.';
-    if (!d.zones.some((z) => z.kind === 'cells')) return 'Нужна хотя бы одна зона с клетками.';
-    if (d.objects.length > TEST_MAP_LIMITS.objectsMax) return `Препятствий не больше ${TEST_MAP_LIMITS.objectsMax}.`;
-    return testMapConnectivityError(d.zones);
-  };
-
-  const saveEditorMap = () => {
-    const d = editorRef.current;
-    const net = netRef.current;
-    if (!d || !net) return;
-    if (!net.ready) {
-      setEditorMsg('Нет связи с сервером.');
-      return;
-    }
-    const err = editorDraftError();
-    if (err) {
-      setEditorMsg(err);
-      return;
-    }
-    try {
-      localStorage.setItem(EDITOR_PASS_KEY, editorPass);
-    } catch {
-      /* приватный режим — просто не запоминаем */
-    }
-    net.emit('setmap', { pass: editorPass, map: draftMap(d) });
-    setEditorMsg('Сохраняем…');
-  };
 
   /**
    * Применить якорь атмосферы с сервера (снапшот, эхо нажатия или рассылка смены):
@@ -2033,489 +897,61 @@ export default function Simulator() {
     netRef.current?.emit('atmoset', { pl: plMin, wl: wlMin });
   }, []);
 
-  useEffect(() => {
-    if (!loaded || !netStarted) return;
-    const pending = pendingJoinRef.current;
-    const login = (pending?.login || nameFromUrl() || '').trim();
-    // Сокет нужен уже на экране входа: он слушает состав комнат (roomsinfo),
-    // пока игрок печатает имя. Вход без имени не делаем — join уйдёт из
-    // pickRoom(), где имя берётся из pendingJoinRef (его кладёт joinFromEntry).
-    if (login) setPlayerName(login);
-    const client = createCoopClient({
-      onOpen: () => {
-        setNetStatus('соединение есть');
-        // Состав комнат для выбора/модалки: спрашиваем сразу после соединения —
-        // дальше экран выбора опрашивает сам по своему интервалу.
-        client.requestRooms(wantedRoomIds());
-      },
-      onRooms: (list) => {
-        setRoomsRows(list);
-        setRoomsStale(false);
-      },
-      onYou: (cat) => {
-        meIdRef.current = cat.id;
-        setMeId(cat.id);
-        setNetReady(true);
-        freshJoinRef.current = true;
-        const e = engineRef.current;
-        const col = typeof cat.x === 'number' ? Math.max(0, cat.x - 1) : e.col;
-        const row = typeof cat.y === 'number' ? Math.max(0, cat.y - 1) : e.row;
-        e.col = col;
-        e.row = row;
-        // В «тесте» свободная позиция — серверная freemove-точка, а не логическая
-        // клетка: точку сервер хранит в книге позиций и возвращает после рестарта,
-        // поэтому ни вход, ни переподключение не сбрасывают кота на клетку спавна.
-        if (cat.fm === 1 && Number.isFinite(cat.fx) && Number.isFinite(cat.fy)) {
-          e.fx = cat.fx!;
-          e.fy = cat.fy!;
-        } else {
-          e.fx = col;
-          e.fy = row;
-        }
-        netMovesRef.current = { server: { col, row }, pending: [] };
-        setNetStatus(`Вы — ${cat.login || 'кот'} (#${cat.id})`);
-        if (cat.login) setPlayerName(cat.login);
-        // После переподключения сервер завёл нового кота без блока: сообщаем стойку заново,
-        // иначе удерживаемый К после обрыва перестал бы ловить удары в «Лапы».
-        if (e.blocking) netRef.current?.emit('block', { on: true });
-        // Броня — тоже: новый кот на сервере без брони, и входящий урон шёл бы целиком.
-        netRef.current?.emit('armor', { armor: settingsRef.current.combat.armorLevel / 10 });
-      },
-      onField: (field) => {
-        const cats = field.cats || [];
-        const others = cats.filter((c) => c.id !== meIdRef.current);
-        // Формат поля комнаты: «test» — лужайка/переход/закуток (камера, свободная ходьба).
-        const fmt = field.format === 'test' ? 'test' : 'grid';
-        if (fmt !== fieldFormatRef.current) {
-          fieldFormatRef.current = fmt;
-          setFieldFormat(fmt);
-          // Ушли из «теста» (переход в другой комнате) — редактор закрывается сам.
-          if (fmt !== 'test' && editorOpenRef.current) closeEditor();
-        }
-        // Конфиг локации «теста»: применяется до любой отрисовки — setTestMap
-        // сбрасывает кэши, и поле рисуется уже по новому конфигу.
-        if (field.map) {
-          const checkedMap = sanitizeTestMap(field.map).map;
-          if (checkedMap) {
-            applyTestMap(checkedMap);
-            showMapLoading();
-          }
-        }
-        // Атмосфера комнаты — общая: якорь часов цикла и погода приходят в снапшоте
-        // (вход, переподключение, сохранение локации).
-        if (field.atmo) applyAtmoAnchor(field.atmo);
-        camRef.current.init = false;
-        remoteFreeRef.current.clear();
-        remoteFmRef.current.clear();
-        liveRemotesRef.current = others.map(catToDummy);
-        // Кто из чужих котов идёт свободно (fm=1) — сеем плавную доведённую позицию.
-        for (const c of others) {
-          // Режим каждого чужого кота — для стрел/процентов: мирный кот стрелы не имеет.
-          remoteFmRef.current.set(`p${c.id}`, c.fm === 1 ? 1 : 0);
-          if (c.fm === 1 && Number.isFinite(c.fx) && Number.isFinite(c.fy)) {
-            remoteFreeRef.current.set(`p${c.id}`, { x: c.fx!, y: c.fy!, tx: c.fx!, ty: c.fy! });
-          }
-        }
-        // В «тесте» свежий вход — в мирном режиме (спавн на траве). Дальше
-        // режимом управляет кнопка боя с клетки захода; страховка на боевых
-        // клетках остаётся (см. игровой цикл). Правка локации (setmap) тоже
-        // присылает field — гасить боевой режим у всех в этот момент нельзя:
-        // принудительный мирный режим — только на самом входе в комнату (после you).
-        if (fmt === 'test' && settingsRef.current.arrow.battleMode && freshJoinRef.current) {
-          freshJoinRef.current = false;
-          suppressExitTeleportRef.current = true;
-          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
-        }
-        // Спавн-точка считаем «внутри зоны»: свежий вход в боевую зону срабатывает
-        // только после реального выхода из неё (край, а не «пока внутри»).
-        inZonePrevRef.current = true;
-        // Кто из чужих котов держит блок — из снапшота комнаты (после обрыва тоже).
-        remoteBlockRef.current = new Set(cats.filter((c) => c.blocking && c.id !== meIdRef.current).map((c) => c.id));
-        // Кто из чужих котов держит пробел (присед) — тоже из снапшота комнаты.
-        remoteSpaceRef.current.clear();
-        for (const c of others) {
-          if (c.sq === 1) remoteSpaceRef.current.set(`p${c.id}`, { holding: true, since: performance.now(), releaseAt: 0, charge: 0 });
-        }
-        remoteAimRef.current.clear();
-        remoteDrawRef.current.clear();
-        for (const d of liveRemotesRef.current) remoteDrawRef.current.set(d.id, seedRemoteDraw({ col: d.col, row: d.row }));
-        const seenAt = performance.now();
-        for (const d of liveRemotesRef.current) remoteAimRef.current.set(d.id, createRemoteAim(d.angle, seenAt));
-        setPeerCount(cats.length || 1);
-        if (field.room) setRoomCode(field.room);
-        if (field.width && field.height) {
-          setSettings((s) => ({
-            ...s,
-            field: { ...s.field, cols: field.width!, rows: field.height! },
-          }));
-        }
-        const me = cats.find((c) => c.id === meIdRef.current);
-        if (me && netMovesRef.current.pending.length === 0) {
-          const col = Math.max(0, me.x - 1);
-          const row = Math.max(0, me.y - 1);
-          engineRef.current.col = col;
-          engineRef.current.row = row;
-          if (fmt === 'test' && me.fm === 1 && Number.isFinite(me.fx) && Number.isFinite(me.fy)) {
-            // «Тест»: свою мирную точку берём из серверной freemove-позиции, а не из
-            // логической клетки. Раньше каждый снапшот (сохранение локации,
-            // переподключение) ставил кота на клетку сервера — при сохранении
-            // локации все улетали на боевые клетки, а после рестарта — на спавн.
-            engineRef.current.fx = me.fx!;
-            engineRef.current.fy = me.fy!;
-          } else {
-            engineRef.current.fx = col;
-            engineRef.current.fy = row;
-          }
-          netMovesRef.current.server = { col, row };
-        }
-        setNetStatus(`Вы в комнате ${roomTitle(field.room || 'demo')} · ${cats.length} на поле`);
-        // Манекен и мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
-        const fd = field.dummy;
-        if (fd && fd.on && Number.isFinite(fd.x) && Number.isFinite(fd.y)) {
-          const spr = SPRITES.find((sp) => sp.id === fd.sprite)?.id;
-          applyDummy(true, { x: fd.x, y: fd.y }, spr);
-          dummyGrabRef.current = fd.grab || null;
-        } else {
-          applyDummy(false, null);
-          dummyGrabRef.current = null;
-        }
-        applyRab(!!field.rab?.on);
-      },
-      onMap: (map) => {
-        // Кто-то сохранил локацию в редакторе (и мы сами — сервер шлёт map и автору).
-        applyTestMap(map);
-        showMapLoading();
-        setEditorMsg('Локация обновлена.');
-      },
-      onCat: (cat) => {
-        if (cat.x === 0 && cat.y === 0) {
-          remoteAimRef.current.delete(`p${cat.id}`);
-          remoteDrawRef.current.delete(`p${cat.id}`);
-          remoteBlockRef.current.delete(cat.id);
-          remoteSpaceRef.current.delete(`p${cat.id}`);
-          remoteFmRef.current.delete(`p${cat.id}`);
-          remoteFreeRef.current.delete(`p${cat.id}`);
-          liveRemotesRef.current = liveRemotesRef.current.filter((d) => d.id !== `p${cat.id}`);
-          setPeerCount(1 + liveRemotesRef.current.length);
-          return;
-        }
-        // Режим чужого кота (fm из publicCat): 1 — мирный (без стрелы), 0 — боевой.
-        if (typeof cat.fm === 'number') remoteFmRef.current.set(`p${cat.id}`, cat.fm === 1 ? 1 : 0);
-        if (cat.id === meIdRef.current) {
-          if (typeof cat.x === 'number' && typeof cat.y === 'number') {
-            const col = Math.max(0, cat.x - 1);
-            const row = Math.max(0, cat.y - 1);
-            const verdict = applyOwnMoveAck(netMovesRef.current, { col, row }, {
-              col: engineRef.current.col,
-              row: engineRef.current.row,
-            });
-            if (verdict.type === 'reject') {
-              // Сервер поставил другую клетку — догоняем его и забываем неподтверждённые шаги.
-              engineRef.current.col = verdict.cell.col;
-              engineRef.current.row = verdict.cell.row;
-              engineRef.current.path = [];
-              engineRef.current.step = null;
-              // Короткая пауза на новый шаг: мгновенный перешаг после отката
-              // уходил в серверный кулдаун и терялся — снова откат и телепорт.
-              engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
-            } else if (verdict.type === 'place') {
-              engineRef.current.col = verdict.cell.col;
-              engineRef.current.row = verdict.cell.row;
-            }
-          }
-          const path = engineRef.current.path;
-          if (path.length > 0 && path[0].c === engineRef.current.col && path[0].r === engineRef.current.row) {
-            path.shift();
-          }
-          return;
-        }
-        // Блок чужого кота приходит и с move-пакетами (publicCat несёт blocking).
-        if (cat.blocking === true) remoteBlockRef.current.add(cat.id);
-        else if (cat.blocking === false) remoteBlockRef.current.delete(cat.id);
-        const prev = liveRemotesRef.current.find((d) => d.id === `p${cat.id}`);
-        const dummy = catToDummy({
-          id: cat.id,
-          login: cat.login || prev?.name,
-          sprite: cat.sprite || prev?.sprite,
-          x: typeof cat.x === 'number' ? cat.x : (prev?.col ?? 0) + 1,
-          y: typeof cat.y === 'number' ? cat.y : (prev?.row ?? 0) + 1,
-          deg: cat.deg ?? prev?.angle,
-          // Рост обязан доехать до пересчёта модельки: если size в пакете нет —
-          // держим прежний масштаб соседа, иначе catToDummy вернёт дефолтные 100%
-          // и при каждом шаге сосед «вырастал» до максимума (баг «новичок не видит
-          // истинный рост старых игроков»).
-          size: cat.size ?? prev?.scale,
-        });
-        // «Тест»: чужой кот в свободной ходьбе — позиция едет в карту плавного
-        // доведения, клетка сервера обновляется без анимации шага.
-        if (cat.fm === 1 && Number.isFinite(cat.fx) && Number.isFinite(cat.fy)) {
-          const fr = remoteFreeRef.current.get(dummy.id);
-          if (fr) {
-            fr.tx = cat.fx!;
-            fr.ty = cat.fy!;
-          } else {
-            remoteFreeRef.current.set(dummy.id, { x: cat.fx!, y: cat.fy!, tx: cat.fx!, ty: cat.fy! });
-          }
-          if (prev) {
-            prev.col = dummy.col;
-            prev.row = dummy.row;
-            prev.name = dummy.name;
-            prev.sprite = dummy.sprite;
-            prev.angle = dummy.angle;
-            // Рост — как в боевом ходе ниже: только когда он реально приехал в пакете.
-            if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;
-          } else {
-            // Новый кот сразу в мирном режиме (fm=1 со спавна): ветка боевого
-            // добавления не выполняется — добавляем его здесь, иначе соседи
-            // не увидят его до первого боевого cellsync.
-            rememberRemoteCell(remoteDrawRef.current, dummy.id, dummy.col, dummy.row);
-            liveRemotesRef.current = [...liveRemotesRef.current, dummy];
-            setPeerCount(1 + liveRemotesRef.current.length);
-          }
-          const visF = remoteDrawRef.current.get(dummy.id);
-          if (visF) {
-            visF.col = dummy.col;
-            visF.row = dummy.row;
-            visF.queue = [];
-          }
-          return;
-        }
-        remoteFreeRef.current.delete(dummy.id);
-        // Сетевой угол пишем в тот же объект, без setState. На кадре рисуем
-        // не его, а сглаженный display. Клетка сервера — в col/row сразу,
-        // картинка догоняет её по одной за кадр (remoteDrawRef.current).
-        const seenAt = performance.now();
-        remoteAimRef.current.set(dummy.id, noteRemoteAim(remoteAimRef.current.get(dummy.id), dummy.angle, seenAt, !prev));
-        if (prev) {
-          const moved = prev.col !== dummy.col || prev.row !== dummy.row;
-          prev.col = dummy.col;
-          prev.row = dummy.row;
-          prev.angle = dummy.angle;
-          prev.name = dummy.name;
-          prev.sprite = dummy.sprite;
-          // Рост обновляем только когда он реально пришёл в пакете (иначе сбросили бы
-          // выбранный при спавне размер до дефолта).
-          if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;
-          if (moved) rememberRemoteCell(remoteDrawRef.current, prev.id, dummy.col, dummy.row);
-          return;
-        }
-        rememberRemoteCell(remoteDrawRef.current, dummy.id, dummy.col, dummy.row);
-        liveRemotesRef.current = [...liveRemotesRef.current, dummy];
-        setPeerCount(1 + liveRemotesRef.current.length);
-      },
-      onBlock: (info) => {
-        // Стойка блока чужого кота: нужна бьющему, чтобы проводить удары в «Лапы»
-        // (кроме хвоста — удар в хвост блок не ловит).
-        if (info.id === meIdRef.current) return;
-        if (info.on) remoteBlockRef.current.add(info.id);
-        else remoteBlockRef.current.delete(info.id);
-      },
-      onSpace: (info) => {
-        // Присед-желе чужого кота: времена якорим к локальным часам, а длительность
-        // удержания приходит в пакете отпускания — заряд считается без синхронизации
-        // часов клиентов. Своему коту анимация и так рисуется локально (эхо не шлём).
-        if (info.id === meIdRef.current) return;
-        const key = `p${info.id}`;
-        if (info.on) {
-          remoteSpaceRef.current.set(key, { holding: true, since: performance.now(), releaseAt: 0, charge: 0 });
-          return;
-        }
-        if (info.cancel) {
-          // Окно отправителя потеряло фокус — чужой кот просто выпрямляется.
-          remoteSpaceRef.current.set(key, { holding: false, since: 0, releaseAt: 0, charge: 0 });
-          return;
-        }
-        const hold = Math.max(0, Math.min(4000, Math.round(info.hold ?? 0)));
-        remoteSpaceRef.current.set(key, {
-          holding: false,
-          since: 0,
-          releaseAt: performance.now(),
-          charge: 0.15 + 0.85 * (hold / 4000),
-        });
-      },
-      onFreeMove: (m) => {
-        // Чужой кот идёт свободно («тест», мирный режим): обновляем цель доведения
-        // и логическую клетку — по ней работают удары и препятствия. Режим — мирный:
-        // стрела и проценты у такого кота не рисуются. sp — чужой спринт: под этим
-        // котом сыплются комочки земли/травы (см. игровой цикл).
-        const key = `p${m.id}`;
-        remoteFmRef.current.set(key, 1);
-        const fr = remoteFreeRef.current.get(key);
-        if (fr) {
-          fr.tx = m.x;
-          fr.ty = m.y;
-          fr.sp = m.sp;
-          // jp — чужой кот в прыжке: одна дуга на прыжок (пакеты внутри прыжка
-          // продлевают текущую дугу только когда она уже закончилась)
-          if (m.jp) {
-            const nowJp = performance.now();
-            if (!fr.jpUntil || nowJp >= fr.jpUntil) fr.jpUntil = nowJp + 430;
-          }
-        } else {
-          remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y, sp: m.sp, jpUntil: m.jp ? performance.now() + 430 : undefined });
-        }
-        if (m.cx != null && m.cy != null) {
-          const prev = liveRemotesRef.current.find((d) => d.id === key);
-          if (prev) {
-            prev.col = m.cx - 1;
-            prev.row = m.cy - 1;
-          }
-          const vis = remoteDrawRef.current.get(key);
-          if (vis) {
-            vis.col = m.cx - 1;
-            vis.row = m.cy - 1;
-            vis.queue = [];
-          }
-        }
-      },
-      onFight: (fight) => applyNetFight(fight),
-      onChat: (message) => {
-        setChatLines((prev) => {
-          if (prev.some((line) => line.seq === message.seq)) return prev;
-          return [...prev, message].slice(-80);
-        });
-      },
-      onChatLog: (messages) => setChatLines(messages.slice(-80)),
-      onInfo: (text) => {
-        setNetStatus(text);
-        // Совместимость со старым сервером без refuse-кодов: откат предикта по тексту.
-        if (
-          !text.includes('Клетка занята') &&
-          !text.includes('Край поля') &&
-          !text.includes('Слишком быстро') &&
-          !text.includes('Обрыв')
-        )
-          return;
-        const cell = rejectOwnMove(netMovesRef.current);
-        if (cell) {
-          engineRef.current.col = cell.col;
-          engineRef.current.row = cell.row;
-        }
-        engineRef.current.path = [];
-        engineRef.current.step = null;
-        engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
-      },
-      onRefuse: (refuse) => {
-        if (refuse?.text) setNetStatus(refuse.text);
-        // Основной путь — код отказа: редактура русских текстов на сервере
-        // больше не ломает откат предикта. cliff — обрыв: шаг на клетку с
-        // перепадом больше 1 отвергнут (нужен прыжок), предикт откатывается.
-        if (
-          refuse?.code !== 'cell_busy' &&
-          refuse?.code !== 'edge' &&
-          refuse?.code !== 'cooldown' &&
-          refuse?.code !== 'cliff'
-        )
-          return;
-        const cell = rejectOwnMove(netMovesRef.current);
-        if (cell) {
-          engineRef.current.col = cell.col;
-          engineRef.current.row = cell.row;
-        }
-        engineRef.current.path = [];
-        engineRef.current.step = null;
-        engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
-      },
-      onNoplace: (payload) =>
-        setNetStatus(payload?.reason || 'Комната полная (макс. 30). Смените ?room='),
-      onDummyState: (state) => {
-        // Авторитет сервера: подтверждает optimistic-тумблер и синхронизирует остальных.
-        const spr = SPRITES.find((sp) => sp.id === state.sprite)?.id;
-        applyDummy(state.on, state.on ? { x: state.x, y: state.y } : null, spr);
-        dummyGrabRef.current = state.on ? state.grab || null : null;
-      },
-      onDummyMove: (pos) => {
-        // Чужой тащит манекен: позиция на кадр, скорость сдвига раскачивает «желе».
-        const prev = dummyPosRef.current;
-        const nowMs = performance.now();
-        if (prev) {
-          const s0 = settingsRef.current;
-          const dist = Math.hypot((pos.x - prev.x) * s0.field.cellW, (pos.y - prev.y) * s0.field.cellH);
-          const speed = dist / Math.max(1, nowMs - dummySeenRef.current);
-          jellyRef.current[DUMMY_ID] = Math.max(jellyRef.current[DUMMY_ID] ?? 0, Math.min(1, speed / 2.2));
-        }
-        dummySeenRef.current = nowMs;
-        dummyPosRef.current = { x: pos.x, y: pos.y };
-      },
-      onDummyGrab: (info) => {
-        // Обозначение «кто тащит»: курсор с именем игрока над манекеном.
-        dummyGrabRef.current = info.login;
-      },
-      onDummyDrop: () => {
-        dummyGrabRef.current = null;
-      },
-      onRabState: (state) => {
-        // Авторитет сервера: подтверждает optimistic-тумблер мишени РАБ.
-        applyRab(state.on);
-      },
-      onAtmo: (info) => {
-        // Якорь атмосферы: смена времени суток/погоды/темпа (уходит и тому, кто
-        // сменил — эхо-подтверждение) и стартовые часы при входе.
-        applyAtmoAnchor(info);
-      },
-      onRabHit: (info) => {
-        // Чужой удар по РАБу — та же анимация, что видит бьющий: качание «желе»
-        // и всплывающий урон над мишенью. Свой удар анимируется локально в момент
-        // попадания (эхо сервером не возвращается), так что задвоения нет.
-        const s = settingsRef.current;
-        const e = engineRef.current;
-        const zone = s.combat.zones.find((z) => z.id === info.zone);
-        const dmg = Math.max(0, Math.round(Number(info.damage) || 0));
-        e.labels.push({
-          x: RAB_POS.col * s.field.cellW + s.field.cellW / 2,
-          y: RAB_POS.row * s.field.cellH + s.field.cellH / 2 - s.field.cellH * 0.35,
-          born: performance.now(),
-          text: `${info.part || info.zone || 'удар'} -${dmg}%`,
-          color: zone?.color || '#ffd60a',
-        });
-        jellyRef.current[RAB_ID] = 1;
-      },
-      onClose: (info) => {
-        setNetReady(false);
-        // При обрыве клиент сам переподключается с backoff и повторным join:
-        // движение в это время заблокировано (requestStep), состояние вернут you/field.
-        if (info?.retrying) {
-          setNetStatus(`Связь потеряна — переподключаемся (попытка ${info.attempt})…`);
-        } else {
-          setNetStatus('Сокет закрыт. Обновите страницу.');
-        }
-      },
-    });
-    setChatLines([]);
-    setNetReady(false);
-    setMeId(null);
-    netRef.current = client;
-    // Слушающий режим: без room — join не шлём, ждём выбора комнаты (pickRoom).
-    client.connect({
-      login,
-      sprite: pending?.sprite || settingsRef.current.character.sprite,
-    });
-    return () => {
-      liveRemotesRef.current = [];
-      remoteAimRef.current.clear();
-      remoteDrawRef.current.clear();
-      remoteFreeRef.current.clear();
-      remoteFmRef.current.clear();
-      battleEntryRef.current = null;
-      battleExitRef.current = null;
-      entryAnchorRef.current = null;
-      fieldFormatRef.current = 'grid';
-      setFieldFormat('grid');
-      camRef.current.init = false;
-      netMovesRef.current = { server: null, pending: [] };
-      applyDummy(false, null);
-      dummySeenRef.current = 0;
-      dummySyncRef.current.at = 0;
-      dummyGrabRef.current = null;
-      applyRab(false);
-      const sync = aimSyncRef.current;
-      if (sync.timer) clearTimeout(sync.timer);
-      sync.timer = null;
-      sync.pending = null;
-      client.close();
-      netRef.current = null;
-    };
-  }, [loaded, netStarted, applyNetFight, wantedRoomIds]);
+  /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
+   *  «выход из боя», телепорт на клетку выхода не нужен. */
+  const suppressExitTeleportRef = useRef(false);
+  useSimNet({
+    loaded,
+    netStarted,
+    setChatLines,
+    setEditorMsg,
+    setFieldFormat,
+    setMeId,
+    setNetReady,
+    setNetStatus,
+    setPeerCount,
+    setPlayerName,
+    setRoomCode,
+    setRoomsRows,
+    setRoomsStale,
+    setSettings,
+    aimSyncRef,
+    battleEntryRef,
+    battleExitRef,
+    camRef,
+    dummyGrabRef,
+    dummyPosRef,
+    dummySeenRef,
+    dummySyncRef,
+    editorOpenRef,
+    entryAnchorRef,
+    fieldFormatRef,
+    engineRef,
+    freshJoinRef,
+    inZonePrevRef,
+    jellyRef,
+    liveRemotesRef,
+    meIdRef,
+    netMovesRef,
+    netRef,
+    pendingJoinRef,
+    remoteAimRef,
+    remoteBlockRef,
+    remoteDrawRef,
+    remoteFmRef,
+    remoteFreeRef,
+    remoteSpaceRef,
+    settingsRef,
+    suppressExitTeleportRef,
+    applyAtmoAnchor,
+    applyDummy,
+    applyNetFight,
+    applyRab,
+    applyTestMap,
+    closeEditor,
+    showMapLoading,
+    wantedRoomIds,
+  });
 
   /** Обновление ?room=/&name= в адресной строке после выбора/смены комнаты: ссылкой
    *  можно вернуться прямо в тот же грот (и имя подставится в пикер персонажа). */
@@ -2597,39 +1033,7 @@ export default function Simulator() {
 
   /* ---------- спрайты ---------- */
 
-  useEffect(() => {
-    let cancelled = false;
-    for (const sp of FIELD_SPRITES) {
-      const img = new Image();
-      const store = () => {
-        if (cancelled || spritesRef.current[sp.id]) return;
-        spritesRef.current[sp.id] = img;
-        // светлый силуэт того же спрайта: тонкая обводка своего кота
-        const wc = document.createElement('canvas');
-        wc.width = img.naturalWidth;
-        wc.height = img.naturalHeight;
-        const wctx = wc.getContext('2d');
-        if (wctx) {
-          wctx.drawImage(img, 0, 0);
-          wctx.globalCompositeOperation = 'source-in';
-          wctx.fillStyle = '#f4f4f5';
-          wctx.fillRect(0, 0, wc.width, wc.height);
-        }
-        whiteSpritesRef.current[sp.id] = wc;
-      };
-      // Обработчик до src: у уже лежащего в кэше PNG load бывает синхронным,
-      // и назначенный после src onload его не видит — кот остаётся без картинки.
-      img.onload = store;
-      img.onerror = () => {
-        if (!cancelled) brokenSpritesRef.current.add(sp.id);
-      };
-      img.src = sp.src;
-      if (img.complete && img.naturalWidth > 0) store();
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useSpriteCache({ spritesRef, whiteSpritesRef, brokenSpritesRef });
 
   /* ---------- геометрия ---------- */
 
@@ -2657,9 +1061,6 @@ export default function Simulator() {
   /** Каким был боевой режим на прошлом срабатывании эффекта ниже: отличаем
    *  настоящий выход из боя (телепорт на заход) от простых перерисовок. */
   const prevBattleModeRef = useRef(false);
-  /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
-   *  «выход из боя», телепорт на клетку выхода не нужен. */
-  const suppressExitTeleportRef = useRef(false);
   useEffect(() => {
     if (fieldFormat !== 'test') return;
     const e = engineRef.current;
@@ -2780,32 +1181,7 @@ export default function Simulator() {
   // (цветокоррекция времени суток, тени облаков, дождь). Модуль грузим динамически:
   // pixi.js не попадает в основной бандл, а без WebGL игра просто остаётся
   // на чистом 2D-канвасе — без атмосферы, но без ошибок.
-  useEffect(() => {
-    if (stage !== 'field') return;
-    const el = pixiRef.current;
-    const worldCv = canvasRef.current;
-    if (!el || !worldCv) return;
-    let dead = false;
-    import('@/lib/sim/atmosphere')
-      .then(({ Atmosphere }) => Atmosphere.create(el, worldCv))
-      .then((a) => {
-        if (dead) {
-          a.destroy();
-          return;
-        }
-        atmoRef.current = a;
-        a.setDaypart(atmoStateRef.current.dp);
-        a.setWeather(atmoStateRef.current.w);
-      })
-      .catch(() => {
-        /* без WebGL — работает прежний 2D-рендер */
-      });
-    return () => {
-      dead = true;
-      atmoRef.current?.destroy();
-      atmoRef.current = null;
-    };
-  }, [stage]);
+  useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef });
 
   /* ---------- игровой цикл ---------- */
 
@@ -5531,894 +3907,82 @@ export default function Simulator() {
 
   /* ---------- клавиатура ---------- */
 
-  useEffect(() => {
-    const isForm = (t: EventTarget | null) => {
-      const el = t as HTMLElement | null;
-      return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
-    };
-    const down = (ev: KeyboardEvent) => {
-      // Shift — спринт мирного режима (×2 к скорости + комочки из-под лап):
-      // ловим раньше всех ранних выходов, зажатие не зависит от контекста
-      if (ev.key === 'Shift') sprintRef.current = true;
-      if (!enteredRef.current) return;
-      if (isForm(ev.target)) return;
-      // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
-      if (editorOpenRef.current) {
-        if (ev.key === 'Escape') {
-          ev.preventDefault();
-          closeEditor();
-        }
-        return;
-      }
-      // Пробел — «приседание-желе» своего кота: удержание приплющивает модельку
-      // (полный эффект за 4 с, с дрожью), отпускание выстреливает её вверх.
-      // Автоповтор ОС не перезапускает приседание — важен только первый нажатие.
-      if (ev.code === 'Space' || ev.key === ' ') {
-        ev.preventDefault();
-        if (!ev.repeat && settingsRef.current.controlled === 'main' && !engineRef.current.blocking) {
-          const sp = spaceHoldRef.current;
-          if (!sp.holding) {
-            sp.holding = true;
-            sp.since = performance.now();
-            sp.releaseAt = 0;
-            sp.charge = 0;
-            // Присед видят все: комнату ставим в известность (эхо себе не приходит).
-            netRef.current?.emit('space', { on: true });
-          }
-        }
-        return;
-      }
-      const action = keyAction(ev);
-      const t = ev.target as HTMLElement | null;
-      if (t && t.tagName === 'BUTTON' && (action?.type === 'chat' || ev.code === 'Space' || ev.key === ' ')) t.blur();
-      // автоповтор ОС игнорируем: каждое физическое нажатие — ровно одно срабатывание;
-      // темп движения ограничен только замедлением (спам не превышает скорость шага)
-      if (ev.repeat) return;
-      if (!action) return;
-      const eB = engineRef.current;
-      // Блок (удержание К): встаёт в стойку сразу, снимается отпусканием.
-      if (action.type === 'block') {
-        ev.preventDefault();
-        // Блок — стойка игрока (своего кота): за манекеном блокировать нечего.
-        if (settingsRef.current.controlled !== 'main' || eB.blocking) return;
-        eB.blocking = true;
-        // В блоке нельзя двигаться, бить и крутить стрелу — всё начатое прекращаем.
-        eB.held = [];
-        eB.path = [];
-        eB.step = null;
-        eB.rot = 0;
-        eB.strikeHeld = false;
-        netRef.current?.emit('block', { on: true });
-        return;
-      }
-      // Пока блок держится — движение, удары и вращение не работают.
-      if (eB.blocking && (action.type === 'rot' || action.type === 'strike' || action.type === 'move')) {
-        ev.preventDefault();
-        return;
-      }
-      if (action.type === 'rot') {
-        ev.preventDefault();
-        engineRef.current.rot = action.sign;
-        return;
-      }
-      if (action.type === 'chat') {
-        if (t?.tagName === 'BODY' || t?.tagName === 'CANVAS') {
-          ev.preventDefault();
-          document.getElementById('roomChatInput')?.focus();
-        }
-        return;
-      }
-      if (action.type === 'battle') {
-        // В «тесте» бой включается кнопкой с клетки захода (та же логика, что
-        // у кнопки в шапке); в обычных комнатах B — прямой тумблер.
-        battleToggleRef.current();
-        return;
-      }
-      if (action.type === 'strike') {
-        ev.preventDefault();
-        const e = engineRef.current;
-        e.strikeHeld = true;
-        e.nextHoldStrike = performance.now() + strikeResponseMs(settingsRef.current);
-        doStrikeRef.current?.();
-        return;
-      }
-      ev.preventDefault();
-      const e = engineRef.current;
-      if (!e.held.includes(action.dir)) {
-        e.held.push(action.dir);
-        e.path = [];
-      }
-      // мирный «тест»: ходьба свободная (по пикселям) — её ведёт игровой цикл
-      // по зажатым клавишам; клик-цель перебивается клавишами там же.
-      const sK = settingsRef.current;
-      if (fieldFormatRef.current === 'test' && !sK.arrow.battleMode && sK.controlled === 'main') {
-        e.ptarget = null;
-        return;
-      }
-      // одиночное нажатие: шаг сразу, если предыдущий завершён, — быстрее,
-      // чем разрешает замедление, двигаться нельзя
-      startStepRef.current?.(action.dir);
-    };
-    const up = (ev: KeyboardEvent) => {
-      if (ev.key === 'Shift') sprintRef.current = false;
-      // Отпускание пробела — желейный «выстрел» вверх из приплющенного состояния
-      // и прыжок через обрыв: заряд (длительность удержания) определяет максимальный
-      // перепад. Сам прыжок запускает игровой цикл — забирает запрос из leapRequestRef.
-      if (ev.code === 'Space' || ev.key === ' ') {
-        const sp = spaceHoldRef.current;
-        if (sp.holding) {
-          sp.holding = false;
-          // Заряд «выстрела» по времени удержания: тап — минимальный подпрыг,
-          // полные 4 с приседа — максимальный (нижняя планка 0.15, чтобы тап
-          // не был нулевым, а верхняя ровно 1 — дальше заряд не растёт).
-          sp.charge = 0.15 + 0.85 * Math.min(1, (performance.now() - sp.since) / 4000);
-          sp.releaseAt = performance.now();
-          leapRequestRef.current = sp.charge;
-          // hold — длительность удержания: чужие клиенты посчитают по ней заряд,
-          // не сверяя часы (у каждого свои performance.now()).
-          netRef.current?.emit('space', { on: false, hold: Math.round(sp.releaseAt - sp.since) });
-        }
-        return;
-      }
-      const e = engineRef.current;
-      const action = keyAction(ev);
-      if (!action) return;
-      if (action.type === 'block') {
-        if (e.blocking) {
-          e.blocking = false;
-          netRef.current?.emit('block', { on: false });
-        }
-        return;
-      }
-      if (action.type === 'rot') {
-        if (action.sign === -1 && e.rot === -1) e.rot = 0;
-        if (action.sign === 1 && e.rot === 1) e.rot = 0;
-      } else if (action.type === 'strike') {
-        e.strikeHeld = false;
-      } else if (action.type === 'move') {
-        e.held = e.held.filter((d) => d !== action.dir);
-      }
-    };
-    const blur = () => {
-      const e = engineRef.current;
-      e.held = [];
-      e.rot = 0;
-      e.strikeHeld = false;
-      sprintRef.current = false; // Shift при потере фокуса уже не поймаем
-      // Пробел при потере фокуса: keyup не придёт — тихо снимаем присед без
-      // «выстрела», иначе кот застыл бы приплющенным навсегда.
-      const sp = spaceHoldRef.current;
-      if (sp.holding) {
-        sp.holding = false;
-        sp.releaseAt = 0;
-        // Присед снят без «выстрела» — чужим тоже (cancel: кот просто выпрямится).
-        netRef.current?.emit('space', { on: false, cancel: true });
-      }
-      // Окно потеряло фокус при зажатом блоке — стойку снимаем, иначе кот
-      // остался бы в блоке навсегда (keyup уже не пришёл бы).
-      if (e.blocking) {
-        e.blocking = false;
-        netRef.current?.emit('block', { on: false });
-      }
-    };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    window.addEventListener('blur', blur);
-    return () => {
-      window.removeEventListener('keydown', down);
-      window.removeEventListener('keyup', up);
-      window.removeEventListener('blur', blur);
-    };
-  }, []);
+  useSimKeyboard({
+    sprintRef,
+    enteredRef,
+    editorOpenRef,
+    settingsRef,
+    engineRef,
+    spaceHoldRef,
+    netRef,
+    fieldFormatRef,
+    battleToggleRef,
+    doStrikeRef,
+    startStepRef,
+    leapRequestRef,
+    closeEditor,
+  });
 
   /* ---------- мышь ---------- */
 
-  const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement>) => {
-    const cv = canvasRef.current!;
-    const rect = cv.getBoundingClientRect();
-    const mx = ((ev.clientX - rect.left) * cv.width) / rect.width;
-    const my = ((ev.clientY - rect.top) * cv.height) / rect.height;
-    return { mx, my };
-  };
+  const { canvasPoint, hitTargetAt, hitDummyObjAt, onMove, onLeave, onPointerDown, onUp, onContextMenu, onClick, dropTarget } = buildPointerTools({
+    canvasRef,
+    camRef,
+    camFxRef,
+    cursorWorldRef,
+    dirtPaintingRef,
+    dragRef,
+    dummyOnRef,
+    dummyPosRef,
+    dummySpriteRef,
+    dummySyncRef,
+    editorOpenRef,
+    editorPlaceRef,
+    editorRef,
+    engineRef,
+    fieldFormatRef,
+    inZonePrevRef,
+    jellyRef,
+    liveRemotesRef,
+    mainSavedRef,
+    netRef,
+    paintStrokeRef,
+    skipClickRef,
+    spritesRef,
+    settingsRef,
+    objectExtras,
+    setSettings,
+    patchDummy: (id, p) => patchDummy(id, p),
+    addEditorSpawn,
+    applyElevBrush,
+    beginElevStroke,
+    clampPlacePos,
+    commitEditorDrag,
+    endElevStroke,
+    paintEditorCellObject,
+    placeBattleCell,
+    placeEditorEntry,
+    pushEditorUndo,
+    toggleEditorSpawn,
+    editorPlacementClick,
+  });
 
-  /** Манекен, чей спрайт накрыт точкой (mx,my) канваса (с небольшим запасом в 4px).
-   *  Управляемый манекен проверяется по его фактической клетке (движок), остальные — по настройкам. */
-  const hitTargetAt = (s: SimSettings, mx: number, my: number): DummyConfig | null => {
-    const e = engineRef.current;
-    for (const d of dummiesOf(s, liveRemotesRef.current)) {
-      if (!dummyIsDrawn(d, s.controlled)) continue;
-      const sprT = spritesRef.current[d.sprite] ?? null;
-      const pos =
-        d.id === s.controlled
-          ? { x: e.col * s.field.cellW, y: e.row * s.field.cellH }
-          : { x: d.col * s.field.cellW, y: d.row * s.field.cellH };
-      const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, d.scale);
-      if (mx >= pos.x - 4 && mx <= pos.x + b.w + 4 && my >= pos.y - 4 && my <= pos.y + b.h + 4) return d;
-    }
-    return null;
-  };
-
-  /** Прямоугольник манекена под точкой (mx,my) канваса — px и размеры спрайта, либо null.
-   *  Пока манекен тащат, проверка не нужна: его уже удерживает захват указателя. */
-  const hitDummyObjAt = (s: SimSettings, mx: number, my: number) => {
-    if (!dummyOnRef.current) return null;
-    const pos = dummyPosRef.current;
-    if (!pos) return null;
-    const sprT = spritesRef.current[dummySpriteRef.current] ?? null;
-    const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, DUMMY_SCALE);
-    const px = pos.x * s.field.cellW;
-    const py = pos.y * s.field.cellH;
-    if (mx >= px - 4 && mx <= px + b.w + 4 && my >= py - 4 && my <= py + b.h + 4) {
-      return { x: px, y: py, w: b.w, h: b.h };
-    }
-    return null;
-  };
-
-  const onMove = (ev: React.MouseEvent<HTMLCanvasElement>) => {
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    const testMode = fieldFormatRef.current === 'test';
-    // «Тест»: мир больше вьюпорта — курсор переводится в мировые координаты через камеру
-    let { mx, my } = canvasPoint(ev);
-    if (testMode) {
-      const cvp = canvasRef.current;
-      if (cvp) {
-        const rect = cvp.getBoundingClientRect();
-        // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
-        const fxc = camFxRef.current;
-        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
-      }
-      // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку);
-      // «Земля»/«Покрытие» при зажатой кнопке красят протяжкой; «призрак»
-      // камня/дерева следует за курсором, пока точка не зафиксирована кликом.
-      const ed = editorRef.current;
-      if (editorOpenRef.current && ed) {
-        const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
-        const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
-        if (ed.drag) {
-          ed.drag.c1 = c;
-          ed.drag.r1 = r;
-        }
-        if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground') && ev.buttons & 1) {
-          paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
-        }
-        // протяжка «Спавна» — только добавляет точки (снимает кликом)
-        if (dirtPaintingRef.current && ed.tool === 'spawn' && ev.buttons & 1) {
-          addEditorSpawn(c, r);
-        }
-        // протяжка кистей рельефа: каждая клетка росчерка — один раз
-        if (dirtPaintingRef.current && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat') && ev.buttons & 1) {
-          applyElevBrush(ed.tool, c, r);
-        }
-        // мазок кисти локации: ЛКМ — материал, ПКМ — ластик; холст черновика
-        // становится активным рисунком сразу (маска обновляется, контур — по
-        // окончании росчерка, см. onUp)
-        if (paintStrokeRef.current && ed.tool === 'paint' && ed.pcv) {
-          if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH);
-          else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH);
-          setPaintOverride(ed.pcv, false);
-        }
-        const pG = editorPlaceRef.current;
-        if (pG && !pG.anchored) {
-          // пишем прямо в ref: кадр читает его каждый тик, панель позиции не показывает
-          const b = clampPlacePos(mx / s.field.cellW, my / s.field.cellH);
-          pG.x = b.x;
-          pG.y = b.y;
-        }
-        e.hover = { c, r };
-        const cvE = canvasRef.current;
-        if (cvE) cvE.style.cursor = 'crosshair';
-        return;
-      }
-      // Прицел прыжка: курсор в мире с поправкой на подъём земли — клик по
-      // видимой поверхности возвышенности указывает в её клетку, а не в землю
-      // перед обрывом. В редакторе прицел не нужен (прыжка там нет).
-      cursorWorldRef.current = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
-    }
-    const dg = dragRef.current;
-    if (dg) {
-      // перетаскивание: спрайт следует за курсором в пределах поля,
-      // скорость мыши раскачивает «желе» — быстрое дрожание качает манекен
-      const nowT = performance.now();
-      const dtm = Math.max(1, nowT - dg.lastT);
-      const speed = Math.hypot(mx - dg.lastX, my - dg.lastY) / dtm; // px/мс
-      jellyRef.current[dg.key] = Math.max(jellyRef.current[dg.key] ?? 0, Math.min(1, speed / 2.2));
-      dg.x = Math.min(Math.max(mx - dg.grabDX, 0), s.field.cols * s.field.cellW - dg.w);
-      dg.y = Math.min(Math.max(my - dg.grabDY, 0), s.field.rows * s.field.cellH - dg.h);
-      if (Math.abs(mx - dg.lastX) > 2 || Math.abs(my - dg.lastY) > 2) dg.moved = true;
-      dg.lastX = mx;
-      dg.lastY = my;
-      dg.lastT = nowT;
-      if (dg.key === DUMMY_ID) {
-        // Манекен — общий: пока тащим, позиция уходит на сервер с постоянным темпом,
-        // чтобы остальные видели движение в реальном времени.
-        const net = netRef.current;
-        if (net?.ready && nowT - dummySyncRef.current.at >= DUMMY_EMIT_MS) {
-          dummySyncRef.current.at = nowT;
-          net.emit('dummyMove', { x: round2(dg.x / s.field.cellW), y: round2(dg.y / s.field.cellH) });
-        }
-      }
-      return;
-    }
-    const c = Math.floor(mx / s.field.cellW);
-    const r = Math.floor(my / s.field.cellH);
-    // подсветка клетки — в бою и только по проходимым зонам «теста» (и по заходам)
-    const hoverOk =
-      c >= 0 &&
-      c < s.field.cols &&
-      r >= 0 &&
-      r < s.field.rows &&
-      (!testMode || (s.arrow.battleMode && (testWalkableCell(c, r) || !!testEntryAt(c, r))));
-    if (hoverOk) e.hover = { c, r };
-    else e.hover = null;
-    const cv = canvasRef.current;
-    if (testMode) {
-      // манекена в «тесте» нет — таскать нечего; ходьба свободная, курсор обычный
-      if (cv) cv.style.cursor = '';
-      return;
-    }
-    const hov = hitTargetAt(s, mx, my);
-    const hovT = hitDummyObjAt(s, mx, my);
-    if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'grab' : '';
-  };
-
-  const onLeave = () => {
-    const e = engineRef.current;
-    e.hover = null;
-    const cv = canvasRef.current;
-    if (cv && !dragRef.current) cv.style.cursor = '';
-  };
-
-  /** Захват манекена: зажатая ЛКМ на его спрайте начинает перетаскивание.
-   *  В редакторе локации зажатая кнопка начинает рисунок зоны (ПКМ — стирание). */
-  const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
-    const ed = editorRef.current;
-    if (editorOpenRef.current && ed) {
-      if (ev.button !== 0 && ev.button !== 2) return;
-      const s = settingsRef.current;
-      const cvp = canvasRef.current;
-      let mx = 0;
-      let my = 0;
-      if (cvp) {
-        const rect = cvp.getBoundingClientRect();
-        const fxc = camFxRef.current;
-        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
-      }
-      const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
-      const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
-      // Инструменты препятствий: призрак постановки (клик — фиксация/подъём);
-      // «Земля» и «Покрытие» красятся кликом и протяжкой (одна отмена на росчерк);
-      // ПКМ по-прежнему рисует ластик, чтобы стирать зоны и объекты протяжкой.
-      if (ev.button === 0 && ed.tool === 'entry') {
-        placeEditorEntry(c, r);
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 0 && ed.tool === 'spawn') {
-        // Клик — поставить/снять точку появления; протяжка — только ставит
-        // (без снятия), как у «Земли»/«Покрытия».
-        pushEditorUndo();
-        toggleEditorSpawn(c, r);
-        dirtPaintingRef.current = true;
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 0 && (ed.tool === 'stone' || ed.tool === 'tree')) {
-        editorPlacementClick(mx, my);
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 0 && ed.tool === 'battle') {
-        placeBattleCell(c, r);
-        ev.preventDefault();
-        return;
-      }
-      if ((ev.button === 0 || ev.button === 2) && ed.tool === 'paint') {
-        // Кисть локации: ЛКМ — выбранный материал, ПКМ — ластик. Росчерк ставит
-        // один снимок отмены; контур локации пересчитается на отпускании.
-        ensureDraftPaint(ed);
-        pushPaintUndo(ed);
-        paintStrokeRef.current = true;
-        stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH);
-        if (ed.pcv) setPaintOverride(ed.pcv, false);
-        ed.dirty = true;
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 0 && (ed.tool === 'dirt' || ed.tool === 'ground')) {
-        pushEditorUndo();
-        dirtPaintingRef.current = true;
-        paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
-        ev.preventDefault();
-        return;
-      }
-      if (ev.button === 0 && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat')) {
-        pushEditorUndo();
-        dirtPaintingRef.current = true;
-        beginElevStroke(ed.tool, c, r);
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
-        ev.preventDefault();
-        return;
-      }
-      ed.drag = { c0: c, r0: r, c1: c, r1: r, erase: ev.button === 2 };
-      ev.currentTarget.setPointerCapture(ev.pointerId);
-      ev.currentTarget.style.cursor = 'crosshair';
-      ev.preventDefault();
-      return;
-    }
-    if (ev.button !== 0) return;
-    const s = settingsRef.current;
-    const { mx, my } = canvasPoint(ev);
-    // Манекен тащится всегда (и в комнате с игроками — это его смысл):
-    // захват до проверки манекенов, чтобы живые коты его не блокировали.
-    const tObj = hitDummyObjAt(s, mx, my);
-    if (tObj) {
-      dragRef.current = {
-        key: DUMMY_ID,
-        grabDX: mx - tObj.x,
-        grabDY: my - tObj.y,
-        x: tObj.x,
-        y: tObj.y,
-        w: tObj.w,
-        h: tObj.h,
-        lastX: mx,
-        lastY: my,
-        lastT: performance.now(),
-        moved: false,
-      };
-      // Комната видит курсор с именем тащщего; своё имя рисуем тоже — после dummyGrab.
-      const net = netRef.current;
-      if (net?.ready) net.emit('dummyGrab');
-      ev.currentTarget.setPointerCapture(ev.pointerId);
-      ev.currentTarget.style.cursor = 'grabbing';
-      ev.preventDefault();
-      return;
-    }
-    const t = hitTargetAt(s, mx, my);
-    if (!t) return;
-    if (liveRemotesRef.current.length > 0) return; // чужих игроков не таскаем
-    if (t.id === s.controlled) return; // активную (управляемую) модель перетаскивать нельзя
-    const sprT = spritesRef.current[t.sprite] ?? null;
-    const pos = { x: t.col * s.field.cellW, y: t.row * s.field.cellH };
-    const b = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, 0, 0, t.scale);
-    dragRef.current = {
-      key: t.id,
-      grabDX: mx - pos.x,
-      grabDY: my - pos.y,
-      x: pos.x,
-      y: pos.y,
-      w: b.w,
-      h: b.h,
-      lastX: mx,
-      lastY: my,
-      lastT: performance.now(),
-      moved: false,
-    };
-    // захват указателя: move/up продолжают приходить даже за пределами канваса
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-    ev.currentTarget.style.cursor = 'grabbing';
-    ev.preventDefault();
-  };
-
-  /** Завершение перетаскивания: манекен ставится в клетку под его центром; если она
-   *  занята другим персонажем — берётся ближайшая свободная. */
-  const dropTarget = () => {
-    const dg = dragRef.current;
-    if (!dg) return;
-    dragRef.current = null;
-    skipClickRef.current = dg.moved;
-    const cv = canvasRef.current;
-    if (cv) cv.style.cursor = '';
-    const s = settingsRef.current;
-    let c = Math.floor((dg.x + dg.w / 2) / s.field.cellW);
-    let r = Math.floor((dg.y + dg.h / 2) / s.field.cellH);
-    c = Math.min(Math.max(c, 0), s.field.cols - 1);
-    r = Math.min(Math.max(r, 0), s.field.rows - 1);
-    if (dg.key === DUMMY_ID) {
-      // Манекен — общий предмет: с котами не конфликтует, ставится в клетку под центром
-      // и отправляет финальную позицию на сервер (без ожидания темпа рассылки).
-      dummyPosRef.current = { x: c, y: r };
-      dummySyncRef.current.at = performance.now();
-      const net = netRef.current;
-      if (net?.ready) {
-        net.emit('dummyMove', { x: c, y: r });
-        net.emit('dummyDrop');
-      }
-      return;
-    }
-    const e = engineRef.current;
-    const mp = s.controlled === 'main' ? null : mainSavedRef.current;
-    // занято любым персонажем, кроме перетаскиваемого: управляемый (движок),
-    // свой кот (когда стоит сам) и остальные манекены
-    const occupied = (cc: number, cr: number) => {
-      if (dg.key !== s.controlled && e.col === cc && e.row === cr) return true;
-      if (s.controlled !== 'main' && mp && mp.col === cc && mp.row === cr) return true;
-      return dummiesOf(s, liveRemotesRef.current).some((d) => d.id !== dg.key && d.col === cc && d.row === cr);
-    };
-    if (occupied(c, r)) {
-      search: for (let rad = 1; rad <= 4; rad++) {
-        for (let drr = -rad; drr <= rad; drr++) {
-          for (let dcc = -rad; dcc <= rad; dcc++) {
-            if (Math.max(Math.abs(dcc), Math.abs(drr)) !== rad) continue;
-            const cc = c + dcc;
-            const cr = r + drr;
-            if (cc < 0 || cc >= s.field.cols || cr < 0 || cr >= s.field.rows) continue;
-            if (!occupied(cc, cr)) {
-              c = cc;
-              r = cr;
-              break search;
-            }
-          }
-        }
-      }
-    }
-    const cur = s.dummies.find((d) => d.id === dg.key);
-    if (!cur || (cur.col === c && cur.row === r)) return; // позиция не изменилась
-    patchDummy(dg.key, { col: c, row: r });
-  };
-
-  const onUp = (ev: React.PointerEvent<HTMLCanvasElement>) => {
-    // Редактор: отпускание кнопки завершает рисунок — прямоугольник становится
-    // зоной; росчерк «Земли» просто заканчивается (отмена уже записана).
-    const ed = editorRef.current;
-    dirtPaintingRef.current = false;
-    endElevStroke();
-    // Мазок кисти закончен: пересчитываем контур локации по обновлённой маске.
-    if (paintStrokeRef.current) {
-      paintStrokeRef.current = false;
-      if (ed?.pcv) setPaintOverride(ed.pcv, true);
-    }
-    if (editorOpenRef.current && ed) {
-      try {
-        ev.currentTarget.releasePointerCapture(ev.pointerId);
-      } catch {
-        /* захват мог уже сняться */
-      }
-      commitEditorDrag();
-      const cvE = canvasRef.current;
-      if (cvE) cvE.style.cursor = 'crosshair';
-      return;
-    }
-    if (!dragRef.current) return;
-    try {
-      ev.currentTarget.releasePointerCapture(ev.pointerId);
-    } catch {
-      /* захват мог уже сняться */
-    }
-    dropTarget();
-  };
-
-  /** ПКМ в редакторе — стирание без смены инструмента; вне редактора меню не нужно. */
-  const onContextMenu = (ev: React.MouseEvent<HTMLCanvasElement>) => {
-    ev.preventDefault();
-  };
-
-  const onClick = (ev: React.MouseEvent<HTMLCanvasElement>) => {
-    // клик сразу после перетаскивания маршрут не строит
-    if (skipClickRef.current) {
-      skipClickRef.current = false;
-      return;
-    }
-    // В редакторе клики обрабатывает рисунок зон (pointer down/up) — маршруты не строим.
-    if (editorOpenRef.current && editorRef.current) return;
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    const testMode = fieldFormatRef.current === 'test';
-    let { mx, my } = canvasPoint(ev);
-    if (testMode) {
-      const cvp = canvasRef.current;
-      if (!cvp) return;
-      const rect = cvp.getBoundingClientRect();
-      // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
-      const fxc = camFxRef.current;
-      mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-      my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
-      // Поправка на подъём земли: клик по видимой поверхности возвышенности
-      // указывает в её клетку, а не в землю перед обрывом — с ближнего ракурса
-      // на возвышенность теперь можно и кликнуть, и забраться.
-      const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
-      mx = ground.x;
-      my = ground.y;
-      if (!s.arrow.battleMode) {
-        // мирный «тест»: клик пускает свободную ходьбу до точки (по прямой,
-        // стены обкатываются скольжением); клавиши перебивают цель.
-        // Со строгими заходами клик в боевую зону цель не ставит: туда
-        // всё равно не пустит ходьба — вход только через клетку захода.
-        const wx = mx / s.field.cellW;
-        const wy = my / s.field.cellH;
-        if (!testPointInIsland(wx, wy)) return;
-        if (testEntryStrict() && testPeaceBattleBlocked(wx, wy)) return;
-        const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        e.ptarget = { x: wx - hb.dx, y: wy - hb.dy, stuck: 0, lastD: 1e9 };
-        return;
-      }
-      // боевой «тест»: клик по проходимой клетке или клетке захода строит маршрут
-      // по клеткам; при открытой логике (без заходов) клик по траве вне зоны —
-      // выход в мирный режим и ходьба к точке
-      const wxB = mx / s.field.cellW;
-      const wyB = my / s.field.cellH;
-      const cB = Math.floor(wxB);
-      const rB = Math.floor(wyB);
-      const walkableClick =
-        cB >= 0 && cB < s.field.cols && rB >= 0 && rB < s.field.rows && (testWalkableCell(cB, rB) || !!testEntryAt(cB, rB));
-      if (
-        !walkableClick &&
-        !testEntryStrict() &&
-        !testPointInCellsZone(wxB, wyB) &&
-        testPointInIsland(wxB, wyB)
-      ) {
-        const hbB = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        e.ptarget = { x: wxB - hbB.dx, y: wyB - hbB.dy, stuck: 0, lastD: 1e9 };
-        inZonePrevRef.current = true; // ещё внутри зоны — бой выключится по выходу центра
-        setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
-        return;
-      }
-      if (!walkableClick) return;
-      const c = cB;
-      const r = rB;
-      // клетки персонажей непроходимы — маршрут через/на них не строится;
-      // в «тесте» непроходимы и клетки вне зон клеточной ходьбы
-      const mp = s.controlled === 'main' ? null : mainSavedRef.current;
-      e.path = bfsPath(
-        e.col,
-        e.row,
-        c,
-        r,
-        s.field.cols,
-        s.field.rows,
-        [
-          ...othersOf(s, s.controlled, mp, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
-          ...(testMode ? testBattleRouteBlocked() : []),
-        ],
-      );
-      return;
-    }
-    const c2 = Math.floor(mx / s.field.cellW);
-    const r2 = Math.floor(my / s.field.cellH);
-    if (c2 < 0 || c2 >= s.field.cols || r2 < 0 || r2 >= s.field.rows) return;
-    // клетки персонажей непроходимы — маршрут через/на них не строится
-    const mp2 = s.controlled === 'main' ? null : mainSavedRef.current;
-    e.path = bfsPath(
-      e.col,
-      e.row,
-      c2,
-      r2,
-      s.field.cols,
-      s.field.rows,
-      othersOf(s, s.controlled, mp2, liveRemotesRef.current, objectExtras()).map((t) => ({ c: t.col, r: t.row })),
-    );
-  };
-
-  /* ---------- броня ---------- */
-
-  /** Пресет брони уходит на сервер при смене кнопкой (и повторяется после
-   *  переподключения — см. onYou). Сервер режет этой бронёй входящий урон;
-   *  соседям значение не рассылается — они видят уже порезанный урон в fight.
-   *  Пока сокета нет, emit просто молчит: onYou всё равно пришлёт запрос заново. */
-  const armorLevel = settings.combat.armorLevel;
-  useEffect(() => {
-    netRef.current?.emit('armor', { armor: armorLevel / 10 });
-  }, [armorLevel]);
-
-  /* ---------- удар (клавиша I) ---------- */
-
-  /** Отложенные удары «в полёте» (закрываются при размонтировании компонента). */
-  const pendingStrikesRef = useRef<number[]>([]);
-  useEffect(
-    () => () => {
-      for (const id of pendingStrikesRef.current) window.clearTimeout(id);
-      pendingStrikesRef.current = [];
-    },
-    [],
-  );
-
-  /** Применение результата удара: расчёт и отправка на сервер — сразу при нажатии,
-   *  локальные видимые эффекты — с откликом удара (visual=true). */
-  const landStrike = useCallback((snap: { angle: number; col: number; row: number; flightMs?: number }, visual: boolean) => {
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    const now = performance.now();
-    const cellCX = (cc: number) => cc * s.field.cellW + s.field.cellW / 2;
-    const cellCY = (cr: number) => cr * s.field.cellH + s.field.cellH / 2;
-    const selfId = s.controlled;
-    const mp = selfId === 'main' ? null : mainSavedRef.current;
-
-    /** Кого задел удар: единственный соседний персонаж, а если соседних несколько —
-     *  тот, на который точнее наведена стрела. null — рядом никого. */
-    const t = pickStrikeTarget(s, snap.col, snap.row, snap.angle, selfId, mp, liveRemotesRef.current, rabExtra());
-    /** Лаповая зона пресета бьющего: урон, который уходит на сервер для удара по блоку. */
-    const zPaws = s.combat.zones.find((zz) => zz.id === 'paws');
-    /** Поражённый персонаж (для списания его энергии; null — попадания не было). */
-    let struck: CharRef | null = null;
-    /** Урон по цели этим ударом (null — попадания не было). */
-    let hitDamage: number | null = null;
-    let entry: CombatLogEntry;
-
-    /** Всплывающая надпись «зона -урон%» над поражённым (вылетает вверх и тает). */
-    const pushDamageLabel = (z: StrikeZone, tc: number, tr: number) => {
-      e.labels.push({
-        x: cellCX(tc),
-        y: cellCY(tr) - s.field.cellH * 0.35,
-        born: now,
-        text: `${z.name} -${z.damage}%`,
-        color: z.color,
-      });
-    };
-
-    if (!t) {
-      // рядом никого — удар в пустоту (без надписи и без строки в логе)
-      entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
-    } else {
-      const tCol = t.col;
-      const tRow = t.row;
-      const dx = tCol - snap.col;
-      const dy = tRow - snap.row;
-      const targetBlocking =
-        t.id.startsWith('p') && remoteBlockRef.current.has(Number(t.id.slice(1)));
-      // Прицельная зона считается ДО блока: хвост — исключение из блока, поэтому
-      // важно знать, куда именно шла стрела, даже по блокирующему игроку.
-      let aimed: StrikeZone | null | undefined;
-      if (Math.abs(dx) === 1 && Math.abs(dy) === 1) {
-        // Удар с диагонали: зона задаётся стойкой относительно цели, а стрела обязана
-        // стоять в окне замедления направления на цель:
-        //  слева-сверху (стрела вправо-вниз, окно 45°) и справа-сверху (влево-вниз, 135°) — Морда,
-        //  слева-снизу (стрела вправо-вверх, 315°) — Лапы, справа-снизу (влево-вверх, 225°) — Хвост.
-        // Вне окна направления — промах, из полос тела с диагонали ничего не берётся.
-        const phi = wrap360((Math.atan2(dy, dx) * 180) / Math.PI);
-        const forcedId = phi === 45 || phi === 135 ? 'muzzle' : phi === 225 ? 'tail' : 'paws';
-        const win = s.slowdown.windows[String(phi) as WindowKey];
-        aimed = win && inWindow(snap.angle, win) ? s.combat.zones.find((zz) => zz.id === forcedId) : undefined;
-      } else {
-        // Прямая стойка: зона — полоса тела, в которую входит луч стрелы.
-        // Луч идёт из точки закрепления стрелы под её углом; промах — луч не задел тело.
-        const sprT = spritesRef.current[t.sprite] ?? null;
-        const sprSelf = spritesRef.current[selfId === 'main' ? s.character.sprite : (s.dummies.find((d) => d.id === selfId)?.sprite ?? s.character.sprite)] ?? null;
-        const scaleSelf = selfId === 'main' ? s.character.spriteScale : (s.dummies.find((d) => d.id === selfId)?.scale ?? s.character.spriteScale);
-        const a = anchorOf(s, sprSelf ? sprSelf.width / sprSelf.height : 2 / 3, snap.col, snap.row, scaleSelf);
-        const box = spriteBoxOf(s, sprT ? sprT.width / sprT.height : 2 / 3, tCol, tRow, t.scale);
-        const rad = (snap.angle * Math.PI) / 180;
-        const hit = rayBox(a.ax, a.ay, Math.cos(rad), Math.sin(rad), box.x, box.y, box.w, box.h);
-        aimed = hit.hit ? resolveZonePixel(hit.ny, entrySide(hit), s.combat.zones) : null;
-      }
-      // Блок цели: ЛЮБОЙ удар по блокирующему игроку — в «Лапы», куда бы стрела
-      // ни шла и с какой стойки ни бьём (прямая/диагональ, любое окно).
-      // Единственное исключение — хвост: удар в хвост блок не ловит и остаётся
-      // хвостом (хвост — зона с самым маленьким получаемым уроном).
-      const z = targetBlocking && zPaws ? (aimed && aimed.id === 'tail' ? aimed : zPaws) : aimed;
-      if (z) {
-        hitDamage = z.damage;
-        struck = t;
-        // Манекены и РАБ без брони: полученный урон = урон зоны. По живым игрокам
-        // строку с реальным уроном (после брони) принесёт fight от сервера.
-        entry = { target: t.name, zoneId: z.id, zoneLabel: z.name, count: 1, actor: 'Я', dmg: hitDamage };
-      } else {
-        // луч прошёл мимо тела — промах, без надписи и без строки в логе
-        entry = { target: '', zoneId: 'miss', zoneLabel: 'мимо', count: 1, actor: 'Я' };
-      }
-    }
-
-    // Локальные эффекты (манекен, промах, РАБ, оффлайн) проявляются с откликом удара:
-    // сетевой удар уже улетел при нажатии — окно отклика бьющего на цель не тратим.
-    if (!visual) {
-      const id = window.setTimeout(() => landStrike(snap, true), strikeResponseMs(settingsRef.current));
-      pendingStrikesRef.current.push(id);
-      return;
-    }
-
-    // Попадание по живому соседу уходит на сервер. Строку лога и урон принесёт fight,
-    // иначе удар останется только в состоянии бьющего.
-    if (
-      hitDamage !== null &&
-      struck &&
-      selfId === 'main' &&
-      struck.id.startsWith('p') &&
-      netRef.current?.ready
-    ) {
-      const target = Number(struck.id.slice(1));
-      if (Number.isInteger(target)) {
-        // Урон едет вместе с ударом: это пресет «Урон игрока» бьющего.
-        // Сервер нормализует число и раздаёт fight с этим уроном всей комнате —
-        // иначе у цели всегда будет серверная таблица, и пресет 0,0–0,9 не работает.
-        // pawsDamage — лаповый урон пресета: если блок встанет за время полёта,
-        // сервер переведёт удар в «Лапы» и спишет именно его. Исключение — хвост:
-        // блок не переносит удар из хвоста в «Лапы». flightMs — окно отклика
-        // бьющего: столько удар «летит» на сервере, и блок успевает его поймать.
-        netRef.current.emit('strike', {
-          target,
-          zone: entry.zoneId,
-          angle: snap.angle,
-          damage: hitDamage,
-          pawsDamage: zPaws ? zPaws.damage : undefined,
-          flightMs: snap.flightMs,
-        });
-        return;
-      }
-    }
-
-    if (hitDamage !== null && struck) {
-      const z = s.combat.zones.find((zz) => zz.id === entry.zoneId);
-      if (z) pushDamageLabel(z, struck.col, struck.row);
-      // Попадание по мишени РАБ качает её «желе»; бьющий анимирует локально,
-      // остальных догоняет rabHit от сервера — анимация видна всей комнате.
-      if (struck.id === RAB_ID) {
-        jellyRef.current[RAB_ID] = 1;
-        if (netRef.current?.ready) {
-          netRef.current.emit('rabHit', {
-            zone: entry.zoneId,
-            part: entry.zoneLabel,
-            damage: hitDamage,
-          });
-        }
-      }
-    }
-
-    // энергия и лог обновляются функционально от последнего состояния,
-    // чтобы не затирать параллельные изменения (например, тик регенерации)
-    setCombat((prev) => {
-      const es = Math.max(1, s.combat.energyStart);
-      let playerEnergy = prev.playerEnergy;
-      const de = pruneRemoteEnergy(prev.dummyEnergy, s, liveRemotesRef.current, rabOnRef.current ? [RAB_ID] : []);
-      // энергия тратится только при попадании в зону удара — промах бесплатен;
-      // платит тот, кем управляем (свой кот — playerEnergy, манекен — своя энергия)
-      if (hitDamage !== null) {
-        if (selfId === 'main') playerEnergy = Math.max(0, playerEnergy - s.combat.strikeCost);
-        else de[selfId] = Math.max(0, (de[selfId] ?? es) - s.combat.strikeCost);
-      }
-      // урон списывается с энергии того, в кого пришёлся удар
-      if (hitDamage !== null && struck) {
-        if (struck.id === 'main') playerEnergy = Math.max(0, playerEnergy - hitDamage);
-        else de[struck.id] = Math.max(0, (de[struck.id] ?? es) - hitDamage);
-      }
-      // лог пишется последовательно: каждый удар — новая строка наверх; счётчик растёт
-      // только когда удар совпал с самой верхней строкой (тот же бьющий, цель и зона)
-      return { playerEnergy, dummyEnergy: de, log: mergeLog(prev.log, entry) };
-    });
-  }, []);
-
-  const doStrike = useCallback(() => {
-    const s = settingsRef.current;
-    const e = engineRef.current;
-    if (!s.arrow.battleMode) return;
-    // В блоке бить нельзя.
-    if (e.blocking) return;
-    // удар не проходит, пока стрела вращается (J/L) — сначала нужно остановить стрелу
-    if (e.rot !== 0 || e.rotActive !== 0) return;
-    // В комнате без связи удар по чужим котам локально не моделируется:
-    // иначе получился бы «зомби»-урон, которого нет у остальных.
-    if (s.controlled === 'main' && liveRemotesRef.current.length > 0 && !netRef.current?.ready) return;
-    const now = performance.now();
-    const resp = strikeResponseMs(s);
-    // удары не чаще, чем раз в отклик (170 мс по умолчанию): ни спам, ни удержание
-    // клавиши удара не дают больше одного удара в этот интервал
-    if (now - e.lastStrike < resp) return;
-    // энергии не хватает — удар просто не начинается (без всплывающих подсказок);
-    // платит тот, кем управляем
-    const esNow = Math.max(1, s.combat.energyStart);
-    const myEnergy =
-      s.controlled === 'main'
-        ? combatRef.current.playerEnergy
-        : (combatRef.current.dummyEnergy[s.controlled] ?? esNow);
-    if (myEnergy < s.combat.strikeCost) return;
-    e.lastStrike = now;
-    // Стойка, угол, расчёт и отправка удара — в момент нажатия. Раньше удар ещё
-    // resp ждал на клиенте, а сервер потом то же окно полёта: до касания шло
-    // ~два отклика. Теперь окно одно, серверное (flightMs) — блок цели успевает.
-    const snap = { angle: e.angle, col: e.col, row: e.row, flightMs: resp };
-    landStrike(snap, false);
-  }, [landStrike]);
-
-  useEffect(() => {
-    doStrikeRef.current = doStrike;
-  }, [doStrike]);
+  useStrike({
+    settings,
+    settingsRef,
+    combatRef,
+    doStrikeRef,
+    engineRef,
+    jellyRef,
+    liveRemotesRef,
+    mainSavedRef,
+    netRef,
+    rabOnRef,
+    remoteBlockRef,
+    spritesRef,
+    rabExtra,
+    setCombat,
+  });
 
   /* ---------- патчи настроек ---------- */
 
@@ -6673,127 +4237,26 @@ export default function Simulator() {
   return (
     <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]">
       <ThemeBackdrop theme={theme} />
-      <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
-        <div>
-          <h1 className="text-base font-bold leading-tight">abnocw</h1>
-          <p className="text-[11px] text-[var(--sim-text-faint)]">
-            {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
-          </p>
-        </div>
-        {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
-        <div
-          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
-          aria-label="Выбранные скрытые параметры"
-        >
-          <span className="font-bold text-[var(--sim-text)]">СП:</span>
-          <span className="text-[var(--sim-text-muted)]">
-            стрела <b className="font-semibold text-[var(--sim-text)]">{fmtSec(settings.arrow.periodSec)}</b>
-          </span>
-          <span className="text-[var(--sim-text-faint)]">·</span>
-          <span className="text-[var(--sim-text-muted)]">
-            дамаг <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.damageLevel)}</b>
-          </span>
-          <span className="text-[var(--sim-text-faint)]">·</span>
-          <span className="text-[var(--sim-text-muted)]">
-            броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <Button
-            size="sm"
-            variant="outline"
-            className="btn-neutral h-8 text-xs"
-            onClick={() => {
-              setRoomsStale(false);
-              setSwitchOpen(true);
-            }}
-          >
-            Перейти в другую комнату
-          </Button>
-          <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
-        </div>
-        <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
-            тема
-            <select
-              value={theme}
-              onChange={(ev) => changeTheme(ev.target.value as ThemeId)}
-              className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-xs text-[var(--sim-text)] outline-none"
-            >
-              {THEMES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {fieldFormat === 'test' ? (
-            <Button
-              size="sm"
-              variant={editorOpen ? 'default' : 'outline'}
-              className={
-                editorOpen
-                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                  : 'btn-neutral h-8 text-xs'
-              }
-              onClick={() => (editorOpen ? closeEditor() : openEditor())}
-            >
-              Редактор локации
-            </Button>
-          ) : null}
-          {testField ? (
-            <>
-              <Button
-                size="sm"
-                variant={settings.character.peaceView ? 'default' : 'outline'}
-                className={
-                  settings.character.peaceView
-                    ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                    : 'btn-neutral h-8 text-xs'
-                }
-                title="Масштаб камеры, наклон земли и глубина в мирном режиме. Выключите — вид сверху, без перспективы; колесо мыши продолжает работать в любом случае."
-                onClick={() => patchCharacter({ peaceView: !settings.character.peaceView })}
-              >
-                Перспектива: {settings.character.peaceView ? 'ВКЛ' : 'ВЫКЛ'}
-              </Button>
-              <Button
-                size="sm"
-                variant={settings.arrow.battleMode ? 'default' : 'outline'}
-                className={
-                  settings.arrow.battleMode
-                    ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                    : 'btn-neutral h-8 text-xs'
-                }
-                title="Вход в бой — с клетки захода (две галочки у боевой зоны): встаньте на неё и нажмите. Выключение на боевой клетке возвращает на заход. Клавиша B."
-                onClick={toggleBattleMode}
-              >
-                Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="sm"
-              variant={settings.arrow.battleMode ? 'default' : 'outline'}
-              className={
-                settings.arrow.battleMode
-                  ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                  : 'btn-neutral h-8 text-xs'
-              }
-              onClick={() => patchArrow({ battleMode: !settings.arrow.battleMode })}
-            >
-              Боевой режим: {settings.arrow.battleMode ? 'ВКЛ' : 'ВЫКЛ'} (B)
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant={settingsOpen ? 'default' : 'outline'}
-            className={settingsOpen ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]' : 'btn-neutral h-8 text-xs'}
-            onClick={() => setSettingsOpen((v) => !v)}
-          >
-            Настройки
-          </Button>
-        </div>
-      </header>
+      <SimulatorHeader
+        settings={settings}
+        roomCode={roomCode}
+        peerCount={peerCount}
+        netStatus={netStatus}
+        theme={theme}
+        changeTheme={changeTheme}
+        fieldFormat={fieldFormat}
+        editorOpen={editorOpen}
+        closeEditor={closeEditor}
+        openEditor={openEditor}
+        testField={testField}
+        patchCharacter={patchCharacter}
+        toggleBattleMode={toggleBattleMode}
+        patchArrow={patchArrow}
+        settingsOpen={settingsOpen}
+        setSettingsOpen={setSettingsOpen}
+        setRoomsStale={setRoomsStale}
+        setSwitchOpen={setSwitchOpen}
+      />
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
           Ширины колонок тянутся разделителями и запоминаются. */}
@@ -6809,624 +4272,54 @@ export default function Simulator() {
           onEnd={() => saveLayout(layoutRef.current)}
         />
 
-        <section className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1">
-          <div className="relative w-full min-w-0 flex-1 lg:min-h-0">
-            <div
-              ref={fieldFrameRef}
-              role="region"
-              aria-label="Игровое поле"
-              className="relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
-            >
-              <div
-                className={
-                  testField
-                    ? 'relative h-full w-full'
-                    : fieldFit
-                      ? 'relative mx-auto'
-                      : 'relative mx-auto w-full max-w-full'
-                }
-                style={
-                  testField
-                    ? undefined
-                    : fieldFit
-                      ? { width: fieldFit.w, height: fieldFit.h }
-                      : { maxWidth: fieldW, aspectRatio: `${fieldW} / ${fieldH}` }
-                }
-              >
-                <canvas
-                  ref={canvasRef}
-                  className="block h-full w-full cursor-crosshair rounded-lg"
-                  onPointerMove={onMove}
-                  onPointerDown={onPointerDown}
-                  onPointerUp={onUp}
-                  onPointerCancel={onUp}
-                  onPointerLeave={onLeave}
-                  onContextMenu={onContextMenu}
-                  onClick={onClick}
-                />
-                {/* Слой атмосферы: PixiJS выводит мир (как текстуру 2D-холста) вместе
-                    с цветокоррекцией, тенями облаков и дождём. События мыши проходят
-                    сквозь него на игровой холст. Без WebGL слой прозрачен. */}
-                <canvas
-                  ref={pixiRef}
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 z-10 block h-full w-full rounded-lg"
-                />
-                {/* HUD поля поверх атмосферы: циферблат день/ночь с движущимся
-                    солнцем/луной и значок текущей погоды. Не темнеет ночью и
-                    не прячется под дождём. */}
-                <canvas
-                  ref={hudRef}
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 z-20 block h-full w-full rounded-lg"
-                />
-              </div>
-              {battleHint ? (
-                <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
-                  {battleHint}
-                </div>
-              ) : null}
-              {mapLoading ? (
-                <div className="pointer-events-none absolute left-1/2 top-4 z-40 -translate-x-1/2 animate-pulse rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-4 py-2 text-sm font-semibold text-[var(--sim-text)] shadow-lg">
-                  Загрузка локации…
-                </div>
-              ) : null}
-              {editorOpen && editorView ? (
-                <div className="absolute left-3 top-3 z-20 flex max-h-[calc(100%-24px)] w-[272px] flex-col overflow-hidden rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] shadow-xl">
-                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
-                    <div className="text-xs font-bold">Редактор локации</div>
-                    <button
-                      type="button"
-                      aria-label="Закрыть редактор"
-                      className="btn-neutral flex h-6 w-6 items-center justify-center rounded-md text-xs"
-                      onClick={closeEditor}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 text-[11px]">
-                    <div>
-                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Инструмент</div>
-                      <div className="flex gap-1.5">
-                        {(
-                          [
-                            { id: 'cells', label: 'Клетки' },
-                            { id: 'green', label: 'Зелёная' },
-                            { id: 'erase', label: 'Ластик' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'stone', label: '⛰ Камень' },
-                            { id: 'tree', label: '🌲 Дерево' },
-                            { id: 'dirt', label: '🟫 Земля' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'ground', label: '🌸 Покрытие' },
-                            { id: 'entry', label: '🚪 Заход' },
-                            { id: 'spawn', label: '🛏 Спавн' },
-                            { id: 'battle', label: '⚔ Клетка' },
-                            { id: 'paint', label: '🖌 Кисть' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1.5 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1.5 flex gap-1.5">
-                        {(
-                          [
-                            { id: 'raise', label: '⬆ Насыпать' },
-                            { id: 'lower', label: '⬇ Срыть' },
-                            { id: 'flat', label: '▬ Ровно' },
-                          ] as { id: EditorTool; label: string }[]
-                        ).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={
-                              editorView.tool === t.id
-                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                            }
-                            onClick={() => setEditorTool(t.id)}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </div>
-                      {editorView.tool === 'raise' || editorView.tool === 'lower' || editorView.tool === 'flat' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Клик или протяжка по клеткам: «Насыпать» поднимает землю на уровень (до трёх),
-                          «Срыть» опускает, «Ровно» срезает весь росчерк в уровень первой клетки. Перепад
-                          в один уровень проходится шагом, в два и больше — только прыжком с зарядом
-                          (удержать Пробел и отпустить). Ластик и «Срыть» до нуля убирают насыпь совсем.
-                        </p>
-                      ) : null}
-                      {editorView.tool === 'paint' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Материал кисти</div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {PAINT_MATS.map((mt) => (
-                              <button
-                                key={mt.id}
-                                type="button"
-                                className={
-                                  editorView.pmat === mt.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => {
-                                  const d = editorRef.current;
-                                  if (d) {
-                                    d.pmat = mt.id;
-                                    syncEditorView();
-                                  }
-                                }}
-                              >
-                                {mt.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер круглой кисти</div>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="range"
-                              min={1}
-                              max={200}
-                              value={editorView.psize}
-                              className="min-w-0 flex-1"
-                              onChange={(ev) => {
-                                const d = editorRef.current;
-                                if (d) {
-                                  d.psize = Math.min(200, Math.max(1, Math.round(Number(ev.target.value) || 1)));
-                                  syncEditorView();
-                                }
-                              }}
-                            />
-                            <span className="w-12 text-center font-semibold">{editorView.psize} px</span>
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Готовые области</div>
-                          <div className="flex gap-1.5">
-                            {(
-                              [
-                                { id: 'round', label: '⚪ Круг' },
-                                { id: 'cell', label: '▭ 150×100' },
-                                { id: 'half', label: '▫ 75×50' },
-                              ] as { id: PaintBrushShape; label: string }[]
-                            ).map((sh) => (
-                              <button
-                                key={sh.id}
-                                type="button"
-                                className={
-                                  editorView.pshape === sh.id
-                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => {
-                                  const d = editorRef.current;
-                                  if (d) {
-                                    d.pshape = sh.id;
-                                    syncEditorView();
-                                  }
-                                }}
-                              >
-                                {sh.label}
-                              </button>
-                            ))}
-                          </div>
-                          <button
-                            type="button"
-                            className="btn-neutral mt-2 w-full rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1"
-                            onClick={() => {
-                              const d = editorRef.current;
-                              if (!d) return;
-                              if (undoPaintStroke(d)) {
-                                d.dirty = true;
-                                syncEditorView();
-                              }
-                            }}
-                          >
-                            ↩ Отменить мазок
-                          </button>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Кисть рисует саму локацию в пикселях: закрашенное — земля, по ней ходят в мирном режиме;
-                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, колесо — размер круглой кисти.
-                            Пресеты «150×100» и «75×50» — готовые области с привязкой к сетке: боевая клетка ставится
-                            только на место, закрашенное областью «150×100» целиком. Росчерк можно отменить.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'battle' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Боевая клетка — область 150×100 (одна клетка боевого поля). Клик ставит её на закрашенное
-                          кистью место: область клетки обязана быть покрашена целиком, иначе клетка не ставится
-                          (место подсвечивается красным). Повторный клик по стоящей клетке снимает её.
-                        </p>
-                      ) : null}
-                      {editorView.tool === 'entry' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Направление шага</div>
-                          <div className="flex gap-1.5">
-                            {(
-                              [
-                                { id: 'left', label: '←' },
-                                { id: 'up', label: '↑' },
-                                { id: 'down', label: '↓' },
-                                { id: 'right', label: '→' },
-                              ] as { id: TestMapEntryDir; label: string }[]
-                            ).map((p) => (
-                              <button
-                                key={p.id}
-                                type="button"
-                                className={
-                                  editorEntryDir === p.id
-                                    ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => setEditorEntryDir(p.id)}
-                              >
-                                {p.label}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Куда игрока перенесёт шаг с захода в боевом режиме: выберите направление в сторону
-                            боевой зоны, затем кликните по травяной клетке рядом с ней. Повторный клик с тем же
-                            направлением — убрать, с другим — сменить направление.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'stone' || editorView.tool === 'tree' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">
-                            {editorView.tool === 'tree' ? 'Вид дерева' : 'Вид камня'}
-                          </div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {(editorView.tool === 'tree'
-                              ? TREE_SPRITE_OPTS
-                              : ROCK_SPRITE_OPTS
-                            ).map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                className={
-                                  editorPlace?.kind === editorView.tool && editorPlace?.spr === v.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() =>
-                                  patchEditorPlace({ kind: editorView.tool === 'tree' ? 'tree' : 'stone', spr: v.id, pickId: null, anchored: false })
-                                }
-                              >
-                                {v.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер и поворот</div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Разм.</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              onClick={() =>
-                                patchEditorPlace({
-                                  s: Math.max(OBJECT_SCALE_MIN, Math.round(((editorPlace?.s ?? 1) - 0.1) * 100) / 100),
-                                })
-                              }
-                            >
-                              −
-                            </button>
-                            <span className="w-10 text-center font-semibold">×{(editorPlace?.s ?? 1).toFixed(1)}</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              onClick={() =>
-                                patchEditorPlace({
-                                  s: Math.min(OBJECT_SCALE_MAX, Math.round(((editorPlace?.s ?? 1) + 0.1) * 100) / 100),
-                                })
-                              }
-                            >
-                              +
-                            </button>
-                          </div>
-                          <div className="mt-1 flex items-center gap-1">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Поворот</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              title="На шаг против часовой (15°)"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - OBJECT_ROT_STEP) % 360 + 360) % 360 })
-                              }
-                            >
-                              ↺
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
-                              title="Поворот на 90° против часовой"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) - 90) % 360 + 360) % 360 })
-                              }
-                            >
-                              ⟲90°
-                            </button>
-                            <span className="w-9 text-center font-semibold">{editorPlace?.rot ?? 0}°</span>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-8 rounded-md text-[11px] font-semibold"
-                              title="Поворот на 90° по часовой"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + 90) % 360 + 360) % 360 })
-                              }
-                            >
-                              ⟳90°
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral h-6 w-6 rounded-md"
-                              title="На шаг по часовой (15°)"
-                              onClick={() =>
-                                patchEditorPlace({ rot: (((editorPlace?.rot ?? 0) + OBJECT_ROT_STEP) % 360 + 360) % 360 })
-                              }
-                            >
-                              ↻
-                            </button>
-                          </div>
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span className="w-10 text-[var(--sim-text-faint)]">Зеркало</span>
-                            <button
-                              type="button"
-                              className={
-                                (editorPlace?.mir ?? 0) === 1
-                                  ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                  : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                              }
-                              title="Отзеркалить спрайт по горизонтали"
-                              onClick={() => patchEditorPlace({ mir: (editorPlace?.mir ?? 0) === 1 ? 0 : 1 })}
-                            >
-                              ⇋ {(editorPlace?.mir ?? 0) === 1 ? 'отзеркален' : 'как есть'}
-                            </button>
-                          </div>
-                          <div className="mt-2 flex gap-1.5">
-                            <button
-                              type="button"
-                              className="flex-1 rounded-md bg-[var(--sim-accent)] px-1.5 py-1.5 font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                              onClick={confirmEditorPlace}
-                            >
-                              ✓ Поставить
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1.5"
-                              onClick={cancelEditorPlace}
-                            >
-                              ✕ Отмена
-                            </button>
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Призрак следует за курсором — клик фиксирует точку (потом можно перетащить).
-                            Колесо мыши над полем — размер, кнопки — размер и поворот. Клик по уже
-                            стоящему объекту поднимает его для правки. ✓ ставит, ✕ отменяет.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'ground' ? (
-                        <>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Вид покрытия</div>
-                          <div className="grid grid-cols-3 gap-1">
-                            {GROUND_COVER_OPTS.map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                className={
-                                  editorCover === v.id
-                                    ? 'rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
-                                    : 'btn-neutral rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
-                                }
-                                onClick={() => setEditorCover(v.id)}
-                              >
-                                {v.label}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                            Клик или протяжка красит клетки: цветы, каменная плитка разной густоты,
-                            сплошной пол, просто трава. Соседние клетки сходятся швами в сплошной настил.
-                          </p>
-                        </>
-                      ) : null}
-                      {editorView.tool === 'spawn' ? (
-                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Точки появления игроков: клик по траве ставит клетку спавна, повторный клик
-                          по той же клетке — снимает, протяжка красит несколько. Игроки появляются на
-                          случайной свободной из них. На поле клетка ничем не отличается от соседних —
-                          флажки видны только здесь, в редакторе.
-                        </p>
-                      ) : null}
-                      <p className="mt-1 leading-snug text-[var(--sim-text-faint)]">
-                        Тяните по полю — зона. Камень и дерево ставятся свободно: призрак едет за
-                        курсором, размер и поворот подгоняются до ✓ «Поставить» (через них нельзя пройти).
-                        Земля и покрытие — клик или протяжка, ходьбе не мешают. Кисти рельефа насыпают
-                        и срывают уступы: перепад в уровень проходится шагом, выше — прыжком.
-                        Заход — вход в боевую зону: травяная клетка с галочками,
-                        в бою шаг с неё переносит по направлению захода.
-                      </p>
-                    </div>
-                    <div>
-                      <div className="mb-1 font-semibold text-[var(--sim-text-muted)]">Размер мира</div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-4 text-[var(--sim-text-faint)]">Ш</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols - 1, editorView.rows)}>
-                          −
-                        </button>
-                        <span className="w-7 text-center font-semibold">{editorView.cols}</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols + 1, editorView.rows)}>
-                          +
-                        </button>
-                        <span className="ml-2 w-4 text-[var(--sim-text-faint)]">В</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows - 1)}>
-                          −
-                        </button>
-                        <span className="w-7 text-center font-semibold">{editorView.rows}</span>
-                        <button type="button" className="btn-neutral h-6 w-6 rounded-md" onClick={() => resizeEditorWorld(editorView.cols, editorView.rows + 1)}>
-                          +
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={undoEditor}>
-                        Отменить
-                      </button>
-                      <button type="button" className="btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1.5 py-1" onClick={resetEditor}>
-                        Сбросить
-                      </button>
-                    </div>
-                    <div>
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="font-semibold text-[var(--sim-text-muted)]">
-                          Зоны ({editorView.zones.length}/{TEST_MAP_LIMITS.zonesMax})
-                        </span>
-                        {editorView.dirty ? <span className="text-[10px] text-[var(--sim-text-faint)]">не сохранено</span> : null}
-                      </div>
-                      {editorView.sel.length >= 2 ? (
-                        <button
-                          type="button"
-                          className="mb-1.5 w-full rounded-md bg-[var(--sim-accent)] px-1.5 py-1 text-[11px] font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                          onClick={mergeEditorZones}
-                        >
-                          Объединить ({editorView.sel.length})
-                        </button>
-                      ) : (
-                        <p className="mb-1.5 leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                          Отметьте галочками две и более зон — появится кнопка объединения.
-                        </p>
-                      )}
-                      <div className="flex flex-col gap-1">
-                        {editorView.zones.map((z) => (
-                          <div key={z.id} className="flex items-center gap-1.5 rounded-md border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] px-1.5 py-1">
-                            <input
-                              type="checkbox"
-                              checked={editorView.sel.includes(z.id)}
-                              onChange={() => toggleEditorSel(z.id)}
-                              className="h-3 w-3 shrink-0 accent-[var(--sim-accent)]"
-                              aria-label={`Отметить зону ${z.name} для объединения`}
-                            />
-                            <span
-                              aria-hidden
-                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-                              style={{ background: z.kind === 'cells' ? 'rgba(120,170,250,0.85)' : 'rgba(112,178,92,0.9)' }}
-                            />
-                            <input
-                              value={z.name}
-                              onChange={(ev2) => renameEditorZone(z.id, ev2.target.value)}
-                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-0.5 py-0.5 text-[11px] outline-none focus:border-[var(--sim-line-strong)] focus:bg-[var(--sim-input-bg)]"
-                              aria-label="Название зоны"
-                            />
-                            <span className="shrink-0 text-[10px] text-[var(--sim-text-faint)]">
-                              {z.c1 - z.c0 + 1}×{z.r1 - z.r0 + 1}
-                            </span>
-                            <button
-                              type="button"
-                              aria-label={`Удалить зону ${z.name}`}
-                              className="btn-neutral flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px]"
-                              onClick={() => deleteEditorZone(z.id)}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                        {editorView.zones.length === 0 ? (
-                          <p className="text-[var(--sim-text-faint)]">Пока пусто — нарисуйте первую зону.</p>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="mt-auto flex flex-col gap-1.5 border-t border-[var(--sim-line)] pt-2.5">
-                      <input
-                        type="password"
-                        value={editorPass}
-                        onChange={(ev2) => setEditorPass(ev2.target.value)}
-                        placeholder="Пароль редактора"
-                        aria-label="Пароль редактора локации"
-                        className="h-7 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-2 text-[11px] text-[var(--sim-text)] outline-none"
-                      />
-                      <button
-                        type="button"
-                        className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
-                        onClick={saveEditorMap}
-                      >
-                        Сохранить локацию
-                      </button>
-                      {editorMsg ? <p className="leading-snug text-[var(--sim-text-muted)]">{editorMsg}</p> : null}
-                      <p className="leading-snug text-[10px] text-[var(--sim-text-faint)]">
-                        Сохранение применяет локацию всем в комнате сразу.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
-            <span>W A S D — идти (зажать; на траве — свободная ходьба по пикселям, в боевых клетках — шаг по клеткам)</span>
-            <span>Q E Z X — диагонали</span>
-            <span>Колесо мыши — приблизить/отдалить вид</span>
-            <span>ЛКМ — идти к точке · манекен — тянуть</span>
-            <span>{testField ? 'вход в бой — с клетки захода кнопкой «Боевой режим» (B), выход — ею же' : 'B — бой'}</span>
-            <span>Enter — чат</span>
-            <span>I — удар</span>
-            <span>K (удерживать) — блок</span>
-            <span>Пробел (удержать и отпустить) — прыжок через обрыв: чем дольше держите, тем выше перепад перепрыгнете</span>
-            <span>J — стрела против часовой</span>
-            <span>L — по часовой</span>
-            <span className="ml-auto">
-              Скорость = 100% − замедление · замедление фиксируется в момент прыжка
-            </span>
-          </div>
-        </section>
+        <FieldStage
+          fieldFrameRef={fieldFrameRef}
+          testField={testField}
+          fieldFit={fieldFit}
+          fieldW={fieldW}
+          fieldH={fieldH}
+          canvasRef={canvasRef}
+          onMove={onMove}
+          onPointerDown={onPointerDown}
+          onUp={onUp}
+          onLeave={onLeave}
+          onContextMenu={onContextMenu}
+          onClick={onClick}
+          pixiRef={pixiRef}
+          hudRef={hudRef}
+          battleHint={battleHint}
+          mapLoading={mapLoading}
+          editorOverlay={
+            editorOpen && editorView ? (
+              <EditorOverlay
+                editorRef={editorRef}
+                syncEditorView={syncEditorView}
+                editorView={editorView}
+                setEditorTool={setEditorTool}
+                editorEntryDir={editorEntryDir}
+                setEditorEntryDir={setEditorEntryDir}
+                editorPlace={editorPlace}
+                patchEditorPlace={patchEditorPlace}
+                confirmEditorPlace={confirmEditorPlace}
+                cancelEditorPlace={cancelEditorPlace}
+                resizeEditorWorld={resizeEditorWorld}
+                undoEditor={undoEditor}
+                resetEditor={resetEditor}
+                mergeEditorZones={mergeEditorZones}
+                toggleEditorSel={toggleEditorSel}
+                renameEditorZone={renameEditorZone}
+                deleteEditorZone={deleteEditorZone}
+                editorPass={editorPass}
+                setEditorPass={setEditorPass}
+                saveEditorMap={saveEditorMap}
+                editorCover={editorCover}
+                setEditorCover={setEditorCover}
+                editorMsg={editorMsg}
+                closeEditor={closeEditor}
+              />
+            ) : null
+          }
+        />
 
         {settings.arrow.battleMode && settings.combat.showLog ? (
           <>
@@ -7450,74 +4343,46 @@ export default function Simulator() {
       </footer>
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
-      {settingsOpen ? (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
-          <aside
-            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl"
-            onKeyDown={(ev) => {
-              if (ev.key === 'Escape') setSettingsOpen(false);
-            }}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
-              <h2 className="text-sm font-bold text-[var(--sim-text)]">Настройки</h2>
-              <Button size="sm" variant="outline" className="btn-neutral h-7 text-xs" onClick={() => setSettingsOpen(false)}>
-                Закрыть
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <SettingsPanel
-                settings={settings}
-                testField={testField}
-                atmo={atmoState}
-                onAtmo={changeAtmo}
-                atmoCfg={settings.atmo}
-                onAtmoCfg={changeAtmoCfg}
-                dummyOn={dummyOn}
-                onToggleDummy={toggleDummy}
-                dummySprite={dummySprite}
-                onDummySprite={changeDummySprite}
-                rabOn={rabOn}
-                onToggleRab={toggleRab}
-                patchField={patchField}
-                patchCharacter={patchCharacter}
-                patchArrow={patchArrow}
-                patchSlowdown={patchSlowdown}
-                patchWindow={patchWindow}
-                patchTier={patchTier}
-                patchHud={patchHud}
-                patchCombat={patchCombat}
-                patchZone={patchZone}
-                onResetCombat={onResetCombat}
-                onResetAll={onResetAll}
-                onExport={onExport}
-                onImport={onImport}
-                getAngle={getEngineAngle}
-                onManualAngle={setEngineAngle}
-              />
-            </div>
-          </aside>
-        </>
-      ) : null}
+      {settingsOpen ? <SettingsPanelOverlay
+        setSettingsOpen={setSettingsOpen}
+        settings={settings}
+        testField={testField}
+        atmoState={atmoState}
+        changeAtmo={changeAtmo}
+        changeAtmoCfg={changeAtmoCfg}
+        dummyOn={dummyOn}
+        toggleDummy={toggleDummy}
+        dummySprite={dummySprite}
+        changeDummySprite={changeDummySprite}
+        rabOn={rabOn}
+        toggleRab={toggleRab}
+        patchField={patchField}
+        patchCharacter={patchCharacter}
+        patchArrow={patchArrow}
+        patchSlowdown={patchSlowdown}
+        patchWindow={patchWindow}
+        patchTier={patchTier}
+        patchHud={patchHud}
+        patchCombat={patchCombat}
+        patchZone={patchZone}
+        onResetCombat={onResetCombat}
+        onResetAll={onResetAll}
+        onExport={onExport}
+        onImport={onImport}
+        getEngineAngle={getEngineAngle}
+        setEngineAngle={setEngineAngle}
+      /> : null}
 
       {/* Переход в другую комнату — модалка с тем же выбором гротов.
           Текущая комната помечена «вы здесь», клик по ней disabled. */}
-      {switchOpen ? (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSwitchOpen(false)} />
-          <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4">
-            <div className="w-full max-w-3xl rounded-2xl border border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl">
-              <RoomPicker
-                rows={roomRows}
-                ready={roomsRows !== null}
-                stale={roomsStale}
-                onPick={pickRoom}
-                onCancel={() => setSwitchOpen(false)}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
+      {switchOpen ? <RoomSwitchOverlay
+        setSwitchOpen={setSwitchOpen}
+        roomRows={roomRows}
+        roomsRows={roomsRows}
+        roomsStale={roomsStale}
+        pickRoom={pickRoom}
+      /> : null}
     </div>
   );
 }
+
