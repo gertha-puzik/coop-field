@@ -60,6 +60,13 @@ const HEARTBEAT_MS = 30_000;
  *  Исключение — рисунок локации (кисть): PNG base64 до 3,5 МБ едет в setmap
  *  одним кадром, поэтому потолок поднят до 4 МиБ. */
 const MAX_PAYLOAD = 4 * 1024 * 1024;
+/** Потолок обычного кадра: всё, кроме setmap, — команды в сотни байт,
+ *  64 КиБ покрывает их с запасом на порядки. Кадр длиннее — молчаливый
+ *  drop в onMessage. Исключение только одно — setmap: maxPayload библиотеки
+ *  ws глобален (см. MAX_PAYLOAD выше), поэтому размер для отдельного события
+ *  различаем уже на приёме: setmap с рисунком легально весит мегабайты,
+ *  раздутый кадр любого другого события до обработчиков не доходит. */
+const FRAME_LIMIT = 64 * 1024;
 /**
  * Короткий предохранитель от пачки aim подряд. Угол в cat.deg пишется сразу.
  * Если с прошлой рассылки прошло больше этого — пакет уходит сразу.
@@ -159,8 +166,9 @@ const RAB_CELL = { x: 4, y: 2 };
  * логическую клетку — ближайшую проходимую — для ударов и препятствий).
  */
 const TEST_ROOM = 'test';
-/** Пароль редактора локации (событие setmap). По умолчанию — как в настройках клиента. */
-const ADMIN_PASS = String(process.env.ADMIN_PASS || "1946");
+/** Пароль редактора локации (событие setmap). */
+// legacy default; смена значения — через env ADMIN_PASS на VPS (см. аудит SRV-01), решение заказчицы 2026-11-05: пока оставить.
+const ADMIN_PASS = process.env.ADMIN_PASS || '1946';
 /** Конфиг локации «теста» живёт в data/test-map.json рядом с server.js: правится
  *  редактором локации и переживает перезапуски (apply.sh копирует только server.js
  *  и package*.json — каталог data не трогает). Переопределяется переменной
@@ -1142,15 +1150,21 @@ rebuildTestGeometry();
  * перестраивается, всем в комнате уходит ["map", map] и свежий field (коты,
  * оставшиеся за пределами новой локации, переезжают на ближайшую клетку).
  */
-const SETMAP_MIN_GAP_MS = 1000;
+const SETMAP_MIN_GAP_MS = 10000;
 
 function setMap(ws, payload = {}) {
   const now = Date.now();
-  // Лимит — только для неверного пароля (перебор): верный пароль отвечает сразу,
-  // даже на ошибочный конфиг — редактор не должен молча терять нажатия.
+  // Троттлинг на ЛЮБОЙ setmap-кадр, верный пароль тому не исключение: кадр
+  // запускает тяжёлую работу (PNG-декод, пересборку всей геометрии, запись
+  // с бэкапами), так что защита нужна не только от перебора пароля. Счётчик
+  // живёт на сокете (по аналогии с lastJoin); отброшенный кадр окно
+  // не продлевает — окно отсчитывается от последнего пропущенного кадра.
+  if (now - (ws.lastSetmap || 0) < SETMAP_MIN_GAP_MS) {
+    send(ws, 'info', 'Редактор: слишком часто.');
+    return;
+  }
+  ws.lastSetmap = now;
   if (String(payload?.pass || '') !== ADMIN_PASS) {
-    if (now - (ws.lastBadMap || 0) < SETMAP_MIN_GAP_MS) return;
-    ws.lastBadMap = now;
     send(ws, 'info', 'Редактор: неверный пароль.');
     return;
   }
@@ -2538,6 +2552,9 @@ function roomsInfo(ws, payload = {}) {
 }
 
 function onMessage(ws, raw) {
+  // Длина кадра в байтах: ws отдаёт Buffer (length уже октеты), byteLength —
+  // запасной путь на случай строки.
+  const bytes = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(String(raw));
   let msg;
   try {
     msg = JSON.parse(String(raw));
@@ -2545,6 +2562,12 @@ function onMessage(ws, raw) {
     return;
   }
   const event = Array.isArray(msg) ? msg[0] : msg && msg.event;
+  // Размерный лимит на НЕ-setmap кадры: имя события известно только после
+  // парса (мягкая реализация), зато после проверки кадр до обработчиков не
+  // доходит — как если бы его отбросили до JSON.parse. setmap — единственное
+  // исключение: ради рисунка локации (PNG base64 до 3,5 МБ) ему оставлен
+  // высокий транспортный потолок MAX_PAYLOAD.
+  if (bytes > FRAME_LIMIT && event !== "setmap") return;
   const payload = Array.isArray(msg) ? msg[1] : msg;
   if (event === "join" || event === "first") join(ws, payload || {});
   else if (event === "move") move(ws, payload || {});
