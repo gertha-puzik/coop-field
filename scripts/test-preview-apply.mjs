@@ -79,13 +79,13 @@ const longHost = run({
 });
 eq("deny long server_name", longHost.status === 0 ? "ok" : "fail", "fail");
 
-const shaHostVal = run({
+const prHostVal = run({
   PREVIEW_SLUG: "pr-41",
-  PREVIEW_HOST: "b0f9fa41.abnocw.miew.ru",
+  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
   PREVIEW_ACTION: "validate",
 });
-eq("validate sha host", shaHostVal.status, 0);
-eq("validate sha host printed", shaHostVal.stdout.includes("host=b0f9fa41.abnocw.miew.ru"), true);
+eq("validate pr host", prHostVal.status, 0);
+eq("validate pr host printed", prHostVal.stdout.includes("host=pr-41.abnocw.miew.ru"), true);
 
 const t = staging();
 fillIncoming(t.incoming, "alpha");
@@ -111,27 +111,56 @@ eq("alpha nginx", existsSync(join(t.nginxD, "preview-alpha.conf")), true);
 eq("alpha env not prod data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes("/opt/coop-field/data"), false);
 eq("alpha env preview data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes(join(t.previewRoot, "alpha/data")), true);
 eq(
+  "alpha env origins follow host",
+  readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes("ALLOWED_ORIGINS=http://alpha.abnocw.miew.ru,https://alpha.abnocw.miew.ru"),
+  true,
+);
+eq(
   "apex cert without wildcard is not hung on preview vhost",
   readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8").includes("ssl_certificate"),
   false,
 );
 fillIncoming(t.incoming, "pr-41");
-const hashed = run({
+const prApply = run({
   ...base,
   PREVIEW_SLUG: "pr-41",
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
-  PREVIEW_HOST: "deadbeef.abnocw.miew.ru",
+  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
   PREVIEW_SHA: "deadbeefcafebabe",
 });
-dump("sha host apply", hashed);
-eq("apply sha host", hashed.status, 0);
+dump("pr host apply", prApply);
+eq("apply pr host", prApply.status, 0);
 eq(
-  "nginx server_name is short sha",
-  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name deadbeef.abnocw.miew.ru;"),
+  "nginx server_name is pr id",
+  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name pr-41.abnocw.miew.ru;"),
   true,
 );
-eq("dir is pr-id not sha", existsSync(join(t.previewRoot, "pr-41/www/index.html")), true);
+eq("dir is pr-id", existsSync(join(t.previewRoot, "pr-41/www/index.html")), true);
+eq(
+  "pr-41 env origins follow host",
+  readFileSync(join(t.previewRoot, "pr-41/env"), "utf8").includes("ALLOWED_ORIGINS=http://pr-41.abnocw.miew.ru,https://pr-41.abnocw.miew.ru"),
+  true,
+);
+// Легаси-env без ALLOWED_ORIGINS (какой был на VPS до фикса): re-apply добавляет
+// ключ вместе с новым хостом и не теряет ADMIN_PASS.
+writeFileSync(
+  join(t.previewRoot, "pr-41/env"),
+  "PORT=41041\nHOST=127.0.0.1\nDATA_DIR=/tmp/coop-legacy/data\nADMIN_PASS=zz\nREQUIRE_ORIGIN=0\n",
+);
+const legacy = run({
+  ...base,
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_IN: join(t.incoming, "pr-41"),
+  PREVIEW_PORT: "41041",
+  PREVIEW_HOST: "cafebabe.abnocw.miew.ru",
+  PREVIEW_SHA: "cafebabe1205719",
+});
+eq("apply over legacy env", legacy.status, 0);
+const legacyEnv = readFileSync(join(t.previewRoot, "pr-41/env"), "utf8");
+eq("legacy env gained origins", legacyEnv.includes("ALLOWED_ORIGINS=http://cafebabe.abnocw.miew.ru,https://cafebabe.abnocw.miew.ru"), true);
+eq("legacy env kept admin pass", legacyEnv.includes("ADMIN_PASS=zz"), true);
+eq("legacy env erased stale origins", legacyEnv.includes("pr-41.abnocw.miew.ru"), false);
 
 const b = run({
   ...base,

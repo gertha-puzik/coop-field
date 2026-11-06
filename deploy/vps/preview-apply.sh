@@ -263,9 +263,15 @@ ADMIN_PASS=$PASS
 REQUIRE_ORIGIN=0
 EOF
 fi
-sed -i "s/^PORT=.*/PORT=$PORT/" "$APP/env"
-grep -v '^PREVIEW_SHA=' "$APP/env" > "$APP/env.n" || true
-printf 'PREVIEW_SHA=%s\n' "$SHA" >> "$APP/env.n"
+# Порт и Origin-allowlist обновляем на каждый apply: хост приходит снаружи и
+# может смениться (формат URL, ручной re-apply), а Origin сокета из
+# server/config.js (allowlist) обязан идти за ним. Оба scheme — http сейчас,
+# https после wildcard DNS-01.
+# grep -v + mv вместо sed -i: одинаково работает на GNU (VPS/CI) и BSD sed
+# (локальный запуск тестов на mac), как уже делает PREVIEW_SHA ниже.
+AO="http://$HOST,https://$HOST"
+grep -v -E '^(PORT|ALLOWED_ORIGINS|PREVIEW_SHA)=' "$APP/env" > "$APP/env.n" || true
+printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPREVIEW_SHA=%s\n' "$PORT" "$AO" "$SHA" >> "$APP/env.n"
 mv "$APP/env.n" "$APP/env"
 if grep -Eq "^DATA_DIR=$PROD_ROOT(/|$)" "$APP/env"; then
   fail "отказ: DATA_DIR указывает на прод"
