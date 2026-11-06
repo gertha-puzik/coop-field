@@ -3,9 +3,8 @@ import {
   previewHost,
   previewId,
   previewPort,
-  previewPublicHost,
   previewRoot,
-  previewShaLabel,
+  previewSiteHost,
   previewSlug,
 } from "./preview-slug.mjs";
 
@@ -32,10 +31,9 @@ eq("root-branch", previewRoot("Ab/Cd"), "/opt/coop-field-preview/ab-cd");
 eq("id 41", previewId(41), "pr-41");
 eq("id string", previewId("41"), "pr-41");
 eq("root-id", previewRoot("pr-41"), "/opt/coop-field-preview/pr-41");
-eq("sha label 8", previewShaLabel("b0f9fa412af6670010e1e7251f88215682a5ef0c"), "b0f9fa41");
-eq("sha host", previewPublicHost("b0f9fa412af6670010e1e7251f88215682a5ef0c"), "b0f9fa41.abnocw.miew.ru");
-eq("sha short rejected", previewShaLabel("abc"), "");
-eq("sha mixed", previewShaLabel("B0F9FA41"), "b0f9fa41");
+eq("site host pr 41", previewSiteHost(41), "pr-41.abnocw.miew.ru");
+eq("site host pr string", previewSiteHost("999"), "pr-999.abnocw.miew.ru");
+eq("site host bad input", previewSiteHost("не-число"), "pr-0.abnocw.miew.ru");
 
 if (failed) {
   console.error("preview slug: FAIL");

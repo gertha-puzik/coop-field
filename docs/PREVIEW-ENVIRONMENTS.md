@@ -3,11 +3,12 @@
 Простыми словами: у каждой ветки свой маленький сайт и своя комната, чтобы
 пробовать игру **не на живой Элизии**. Пока нет wildcard TLS, адрес:
 
-`http://<8 символов SHA коммита>.abnocw.miew.ru`
+`http://pr-<номер PR>.abnocw.miew.ru`
 
-Например `http://b0f9fa41.abnocw.miew.ru`. Каталог и systemd — `pr-<номер PR>`
-(не меняются с каждым пушем, снос при close знает номер). Имя сайта короткое:
-длинный slug ветки ломал nginx (`server_names_hash_bucket_size: 64`).
+Например `http://pr-41.abnocw.miew.ru`. Каталог, systemd и имя сайта — `pr-<номер PR>`:
+не меняется от пуша к пушу, короткий (длинный slug ветки ломал nginx
+`server_names_hash_bucket_size: 64`). Ранний вариант имени из 8 hex SHA
+отменён 2026-11-07 — URL менялся с каждым коммитом.
 
 Комната: `ws://<тот-же-хост>/ws`. HTTPS появится после DNS-01 на
 `*.abnocw.miew.ru`. Сертификат апекса `abnocw.miew.ru` на поддомен не вешаем.
@@ -23,7 +24,7 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 | SSH | `deploy` + `VPS_SSH_KEY` | **`deploy-preview`** + `PREVIEW_SSH_KEY` |
 | Каталог | `/opt/coop-field` | `/opt/coop-field-preview/pr-<N>/` |
 | Юнит | `coop-field` | `coop-field-preview@pr-<N>` |
-| Сайт | sslip.io / апекс | `http://<8 hex SHA>.abnocw.miew.ru` |
+| Сайт | sslip.io / апекс | `http://pr-<N>.abnocw.miew.ru` |
 | Порт | 8787 | `41000 + PR%1000` |
 | Данные | `data/` прода | пустой `…/<slug>/data` |
 | nginx | vhost sslip.io / `abnocw.miew.ru` | `/etc/nginx/preview.d/preview-<slug>.conf` |
@@ -45,11 +46,24 @@ Workflow `.github/workflows/preview.yml` на событие `closed` (это и
 
 Чужой slug (`../`, слэш, имя юнита прода) скрипт отвергает до любых `rm`.
 
+## Origin сокета и ссылка в шапке PR
+
+`preview-apply.sh` держит в env юнита `ALLOWED_ORIGINS=http://<хост>,https://<хост>`
+и обновляет на каждый apply вместе с хостом: сервер (`server/config.js`) пускает
+`ws://` только с этих Origin. Без строки браузер с preview-страницы ловит отказ
+сокета — выглядит как «бекенд не работает», хотя `/health` отвечает.
+
+Ссылка на окружение стоит первым блоком в описании PR между маркерами
+`<!-- coop-field-preview-link -->`: workflow обновляет её на каждый прогон
+(`scripts/preview-pr-link.mjs`, гейт `test:preview-pr-link`) — живой URL,
+«не выложен» или «снесён». Комментарий с маркером `<!-- coop-field-preview -->`
+и Deployment `preview-pr-<N>` остаются как раньше.
+
 ## Что уже сделано (2026-11-07, Europe/Samara)
 
 Ключ `PREVIEW_SSH_KEY` работает (Cursor и GitHub Actions). Bootstrap на VPS
 выполнен. Каталог `/opt/coop-field-preview/pr-<N>/`, юнит
-`coop-field-preview@pr-<N>`, сайт `http://<8 hex SHA>.abnocw.miew.ru`.
+`coop-field-preview@pr-<N>`, сайт `http://pr-<N>.abnocw.miew.ru`.
 Прод и `root` этим ключом не открываются. Однострочный PEM собирает
 `scripts/write-openssh-key.sh`.
 
@@ -69,8 +83,8 @@ sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
 include nginx, шаблон юнита. Новый SSH-ключ **не создаёт**, если
 `authorized_keys` уже есть — текущий `PREVIEW_SSH_KEY` не перезаписывать.
 
-Bootstrap **уже выполнен** (2026-11-07). Следующий push выкладывает
-`http://<8 hex SHA>.abnocw.miew.ru` (каталог `pr-<номер>`, порт `41000+PR%1000`).
+Bootstrap **уже выполнен** (2026-11-07). Следующий push выложит
+`http://pr-<номер>.abnocw.miew.ru` (порт `41000+PR%1000`).
 Форки не деплоим. Сборка из SHA коммита.
 
 TLS: HTTP-01 на звёздочку нельзя. DNS-01 на `*.abnocw.miew.ru` — отдельно.

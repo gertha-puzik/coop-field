@@ -1,5 +1,6 @@
-# Preview PR: http://<8 hex SHA>.abnocw.miew.ru
-# Каталог/юнит — pr-<номер>, имя сайта — короткий хэш коммита (nginx hash bucket).
+# Preview PR: http://pr-<номер>.abnocw.miew.ru — URL стабилен между пушами.
+# Каталог/юнит/имя сайта — pr-<номер>: короткое имя не бьёт nginx hash bucket
+# (длинный slug ветки ломал 64), читаемое и не меняется от коммита к коммиту.
 # Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
 # Тот же VPS, что прод: каталог /opt/coop-field-preview/, свои порты и data/.
@@ -45,7 +46,7 @@ jobs:
           SHA="${{ github.event.pull_request.head.sha }}"
           PR="${{ github.event.pull_request.number }}"
           SLUG=$(node scripts/preview-slug.mjs id "$PR")
-          HOST=$(node scripts/preview-slug.mjs host "$SHA")
+          HOST=$(node scripts/preview-slug.mjs site-host "$PR")
           PORT=$((41000 + PR % 1000))
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           echo "port=$PORT" >> "$GITHUB_OUTPUT"
@@ -170,3 +171,23 @@ jobs:
           else
             gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -f body="$BODY"
           fi
+
+          # Шапка PR: живая ссылка первым блоком описания. Маркеры делают
+          # перезапись идемпотентной — комментарий в треде так не может (тонет).
+          if [ "${{ github.event.action }}" = "closed" ]; then
+            HDR="> 🚀 **Preview:** снесён — PR закрыт, окружение убрано с VPS."
+          else
+            case "$STATUS" in
+              live)
+                HDR="> 🚀 **Preview:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`. Данные прода не используются; HTTPS появится после DNS-01 на \`*.abnocw.miew.ru\`." ;;
+              needs-secret)
+                HDR="> 🚀 **Preview:** ещё не выложен — не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md). Будет: ${URL}" ;;
+              needs-bootstrap)
+                HDR="> 🚀 **Preview:** ждёт один bootstrap на VPS от root. Будет: ${URL}" ;;
+              *)
+                HDR="> 🚀 **Preview:** не выложен (ошибка джобы). Будет: ${URL}" ;;
+            esac
+          fi
+          printf '%s\n' "$HDR" > /tmp/preview-header.md
+          node scripts/preview-pr-link.mjs apply --repo "${{ github.repository }}" --pr "$PR" --file /tmp/preview-header.md \
+            || echo "::warning::шапка PR не обновилась — ссылка осталась в комментарии"

@@ -1,8 +1,9 @@
 /**
  * Preview identity vs public host.
- * Directory/unit: pr-<number> (stable across commits, destroy on close).
- * Public site: first 8 hex of the commit SHA — short enough for nginx
- * server_names_hash_bucket_size 64 (the old branch slug was not).
+ * Directory/unit/public site: pr-<number> — stable across pushes, known at
+ * destroy time, short enough for nginx server_names_hash_bucket_size 64
+ * (the old branch slug was not). The interim 8-hex-SHA site name is retired:
+ * readable beats per-commit URL churn (owner decision, 2026-11-07).
  */
 export function previewSlug(input) {
   const raw = String(input || "")
@@ -24,17 +25,9 @@ export function previewId(prNumber) {
   return `pr-${n}`;
 }
 
-export function previewShaLabel(sha) {
-  const hex = String(sha || "")
-    .toLowerCase()
-    .replace(/[^a-f0-9]/g, "");
-  if (hex.length < 7) return "";
-  return hex.slice(0, 8);
-}
-
-export function previewPublicHost(sha) {
-  const label = previewShaLabel(sha);
-  return label ? `${label}.abnocw.miew.ru` : "";
+export function previewSiteHost(prNumber) {
+  const label = previewId(prNumber);
+  return `${label}.abnocw.miew.ru`;
 }
 
 export function previewHost(slug) {
@@ -57,7 +50,6 @@ if (invoked && process.argv[2]) {
   const cmd = process.argv[2];
   const arg = process.argv[3];
   if (cmd === "id") process.stdout.write(previewId(arg) + "\n");
-  else if (cmd === "host") process.stdout.write(previewPublicHost(arg) + "\n");
-  else if (cmd === "label") process.stdout.write(previewShaLabel(arg) + "\n");
+  else if (cmd === "site-host") process.stdout.write(previewSiteHost(arg) + "\n");
   else process.stdout.write(previewSlug(cmd) + "\n");
 }
