@@ -1,0 +1,23 @@
+# Шаблон preview-комнаты. %i — DNS-slug ветки.
+# Не ставить вместо coop-field.service (это прод).
+# Включается скриптом preview-apply.sh: systemd-run / enable --now coop-field-preview@<slug>
+#
+# EnvironmentFile кладёт preview-apply.sh в /opt/coop-field-preview/%i/env
+# (PORT, DATA_DIR, ADMIN_PASS случайный, BOOTSTRAP_ADMIN пустой).
+# Прод-секреты сюда не копируются.
+
+[Unit]
+Description=coop-field preview (%i)
+After=network.target
+
+[Service]
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/coop-field-preview/%i
+EnvironmentFile=/opt/coop-field-preview/%i/env
+ExecStart=/opt/coop-field/.node/bin/node server.js
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

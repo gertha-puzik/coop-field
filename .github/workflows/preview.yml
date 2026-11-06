@@ -1,0 +1,145 @@
+# Preview PR: https://<slug>.abnocw.miew.ru
+# Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
+# Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
+# Секрет PREVIEW_SSH_KEY — отдельный ключ на каталог preview; пока его нет,
+# джоба выходит 0 с предупреждением, чтобы не краснеть до настройки VPS.
+name: Preview PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+jobs:
+  preview:
+    name: Окружение ветки
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: github.event.action != 'closed'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Slug, порт, URL
+        id: meta
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          PR="${{ github.event.pull_request.number }}"
+          SLUG=$(node scripts/preview-slug.mjs "$BRANCH")
+          PORT=$((41000 + PR % 1000))
+          HOST="${SLUG}.abnocw.miew.ru"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "url=https://$HOST" >> "$GITHUB_OUTPUT"
+
+      - name: Сборка статики
+        if: github.event.action != 'closed'
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -f out/index.html
+
+      - name: Выкладка или снос на VPS
+        id: ship
+        env:
+          SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+          SLUG: ${{ steps.meta.outputs.slug }}
+          PORT: ${{ steps.meta.outputs.port }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          ACTION: ${{ github.event.action == 'closed' && 'destroy' || 'apply' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Preview на VPS не выложен. Что сделать Сырь — docs/PREVIEW-ENVIRONMENTS.md"
+            echo "status=needs-secret" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          if [ "$ACTION" = "destroy" ]; then
+            rsync -az -e "$SSH" deploy/vps/preview-apply.sh "$SSH_USER@$SSH_HOST:incoming-preview/preview-apply.sh"
+            $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_ACTION=destroy bash incoming-preview/preview-apply.sh"
+            echo "status=destroyed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www incoming-preview/$SLUG/server"
+          rsync -az -e "$SSH" \
+            deploy/vps/preview-apply.sh \
+            deploy/vps/coop-field-preview@.service \
+            "$SSH_USER@$SSH_HOST:incoming-preview/"
+          rsync -az --delete -e "$SSH" server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
+          rsync -az -e "$SSH" server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
+          rsync -az --delete -e "$SSH" out/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
+          rsync -az --delete -e "$SSH" scripts/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/scripts/"
+          rsync -az -e "$SSH" package.json package-lock.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
+          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
+          echo "status=live" >> "$GITHUB_OUTPUT"
+
+      - name: Deployment и один комментарий
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.meta.outputs.url }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          SLUG: ${{ steps.meta.outputs.slug }}
+          STATUS: ${{ steps.ship.outputs.status }}
+          PR: ${{ github.event.pull_request.number }}
+          ENV_NAME: preview-pr-${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- coop-field-preview -->"
+          if [ "${{ github.event.action }}" = "closed" ] || [ "${STATUS:-}" = "destroyed" ]; then
+            BODY="${MARKER}
+          Preview этой ветки снесён."
+            STATE=inactive
+          elif [ "${STATUS:-}" = "live" ]; then
+            BODY="${MARKER}
+          Preview: ${URL}
+          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются."
+            STATE=success
+          else
+            BODY="${MARKER}
+          Preview ещё не на VPS: нет секрета \`PREVIEW_SSH_KEY\` или wildcard DNS. Что сделать Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
+          Будет: ${URL}"
+            STATE=""
+          fi
+          if [ -n "$STATE" ] && [ "$STATE" != "inactive" ]; then
+            DEP=$(gh api -X POST "repos/${{ github.repository }}/deployments" \
+              -f ref="$SHA" -f environment="$ENV_NAME" -F auto_merge=false -f description="preview $SLUG" \
+              --jq .id || true)
+            if [ -n "$DEP" ]; then
+              gh api -X POST "repos/${{ github.repository }}/deployments/${DEP}/statuses" \
+                -f state="$STATE" -f environment_url="$URL" \
+                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+            fi
+          fi
+          CID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${CID}" -f body="$BODY"
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -f body="$BODY"
+          fi
