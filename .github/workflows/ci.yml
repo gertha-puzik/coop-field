@@ -73,3 +73,5 @@ jobs:
         run: npm run test:auth
       - name: Preview slug
         run: npm run test:preview-slug
+      - name: Preview apply/destroy guards
+        run: npm run test:preview-apply

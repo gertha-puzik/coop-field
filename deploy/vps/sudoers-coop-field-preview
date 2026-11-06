@@ -1,0 +1,9 @@
+# Узкий sudo для пользователя preview. Не ALL, не юнит прода coop-field.
+# Ставит preview-bootstrap.sh в /etc/sudoers.d/coop-field-preview (режим 0440).
+# Проверка: visudo -cf /etc/sudoers.d/coop-field-preview
+
+Cmnd_Alias COOP_PREVIEW_SVC = /usr/bin/systemctl start coop-field-preview@*, /usr/bin/systemctl stop coop-field-preview@*, /usr/bin/systemctl restart coop-field-preview@*, /usr/bin/systemctl enable coop-field-preview@*, /usr/bin/systemctl disable coop-field-preview@*, /usr/bin/systemctl enable --now coop-field-preview@*, /usr/bin/systemctl reset-failed coop-field-preview@*, /usr/bin/systemctl --no-pager status coop-field-preview@*, /usr/bin/systemctl daemon-reload, /usr/bin/cp /home/deploy-preview/incoming-preview/coop-field-preview@.service /etc/systemd/system/coop-field-preview@.service
+
+Cmnd_Alias COOP_PREVIEW_NGINX = /usr/sbin/nginx -t, /usr/bin/systemctl reload nginx
+
+deploy-preview ALL=(root) NOPASSWD: COOP_PREVIEW_SVC, COOP_PREVIEW_NGINX

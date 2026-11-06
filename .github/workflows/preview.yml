@@ -66,7 +66,7 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
           SSH_HOST: 89.232.184.77
-          SSH_USER: deploy
+          SSH_USER: deploy-preview
           SLUG: ${{ steps.meta.outputs.slug }}
           PORT: ${{ steps.meta.outputs.port }}
           SHA: ${{ steps.meta.outputs.sha }}
@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${SSH_KEY:-}" ]; then
-            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Preview на тот же VPS не выложен. Осталось: ключ, TLS *.abnocw.miew.ru, nginx, каталоги — docs/PREVIEW-ENVIRONMENTS.md"
+            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Один шаг Сырь: docs/PREVIEW-ENVIRONMENTS.md (bootstrap + секрет)."
             echo "status=needs-secret" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -93,6 +93,8 @@ jobs:
           rsync -az -e "$SSH" \
             deploy/vps/preview-apply.sh \
             deploy/vps/coop-field-preview@.service \
+            deploy/vps/nginx-preview.conf \
+            deploy/vps/nginx-preview-include.conf \
             "$SSH_USER@$SSH_HOST:incoming-preview/"
           rsync -az --delete -e "$SSH" server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
           rsync -az -e "$SSH" server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
@@ -126,7 +128,7 @@ jobs:
             STATE=success
           else
             BODY="${MARKER}
-          Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\` (DNS \`*.abnocw.miew.ru\` уже на этом VPS). Что осталось Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
+          Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\`. Один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
           Будет: ${URL}"
             STATE=""
           fi

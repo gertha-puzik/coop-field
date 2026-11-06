@@ -254,8 +254,9 @@ Slug: нижний регистр, `[^a-z0-9-]` → `-`, обрезка, без 
 секрета и SSH не получает. На **приватном** репо то же условие: секреты есть
 у PR из этого репозитория; `GITHUB_TOKEN` пишет комментарий и Deployment.
 
-Агент VPS не настраивает. Что уже есть и что осталось Сырь —
-`docs/PREVIEW-ENVIRONMENTS.md` (TLS, `PREVIEW_SSH_KEY`, nginx, каталоги).
+Снос на `closed` (в т.ч. merge): stop unit этого slug, rm каталог, rm nginx-фрагмент,
+`nginx -t` затем reload. Лимит 8. Агент без SSH-ключа сервер не менял. Остался
+один шаг Сырь — `docs/PREVIEW-ENVIRONMENTS.md`.
 
 ---
 

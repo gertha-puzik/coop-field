@@ -12,6 +12,7 @@
     "test:queue": "node scripts/test-move-queue.mjs",
     "test:auth": "node scripts/test-auth.mjs",
     "test:preview-slug": "node scripts/test-preview-slug.mjs",
+    "test:preview-apply": "node scripts/test-preview-apply.mjs",
     "test:elev": "node scripts/test-elev-cliff.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:server-modules": "node scripts/test-server-modules.mjs",
