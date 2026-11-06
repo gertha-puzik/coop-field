@@ -125,6 +125,7 @@ import {
   drawTestObject,
   elevAny,
   elevLevelAt,
+  terrainCellClipPath,
   elevLiftAtPoint,
   groundPointAtWorld,
   hashStr,
@@ -424,6 +425,12 @@ export default function Simulator() {
   const [atmoState, setAtmoState] = useState<CoopAtmo>({ dp: 'day', w: 'sun' });
   /** Дебаг-тумблер атмосферного слоя: локальный (не по сети), по умолчанию включён. */
   const [atmoLayerOn, setAtmoLayerOn] = useState(true);
+  /** Локальные тумблеры атмосферы (кнопки шапки): погода — частицы, сутки — вуаль.
+   *  Значения живут в ref'ах: их подхватывает слой при (пере)монтаже, по сети не едут. */
+  const [weatherFxOn, setWeatherFxOn] = useState(true);
+  const [dayTintOn, setDayTintOn] = useState(true);
+  const weatherFxOnRef = useRef(true);
+  const dayTintOnRef = useRef(true);
   const atmoLayerOnRef = useRef(true);
   const atmoStateRef = useRef<CoopAtmo>(atmoState);
   /** Часы атмосферы: якорь комнаты (сервер) или локальный — до первого якоря и без сети. */
@@ -1002,6 +1009,22 @@ export default function Simulator() {
     atmoRef.current?.setVisible(on);
   }, []);
 
+  /** Кнопка «Погода»: облака и дождь локально. Комнатную погоду не трогает —
+   *  у остальных игроков своя картинка остаётся. */
+  const toggleWeatherFx = useCallback((on: boolean) => {
+    weatherFxOnRef.current = on;
+    setWeatherFxOn(on);
+    atmoRef.current?.setWeatherFx(on);
+  }, []);
+
+  /** Кнопка «Сутки»: цветовая вуаль времени суток локально. Часы и
+   *  серверный цикл суток продолжают идти — гаснет только подкраска. */
+  const toggleDayTint = useCallback((on: boolean) => {
+    dayTintOnRef.current = on;
+    setDayTintOn(on);
+    atmoRef.current?.setDayTint(on);
+  }, []);
+
   /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
    *  «выход из боя», телепорт на клетку выхода не нужен. */
   const suppressExitTeleportRef = useRef(false);
@@ -1287,7 +1310,7 @@ export default function Simulator() {
   // (цветокоррекция времени суток, тени облаков, дождь). Модуль грузим динамически:
   // pixi.js не попадает в основной бандл, а без WebGL игра просто остаётся
   // на чистом 2D-канвасе — без атмосферы, но без ошибок.
-  useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef: atmoLayerOnRef });
+  useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef: atmoLayerOnRef, weatherFxOnRef, dayTintOnRef });
 
   // ВРЕМЕННО (отладка бага рельефа): живое состояние сима в консоли.
   useEffect(() => {
@@ -1710,14 +1733,14 @@ export default function Simulator() {
             return null;
           }
         }
-        // обрыв: перепад высот больше 1 шагом не проходится (переходы через
-        // клетку захода перепадом не считаются — сервер проверяет так же).
-        // Большой перепад перепрыгивается зарядом Пробела.
+        // обрыв: ЛЮБОЙ перепад высот шагом не проходится — возвышенность
+        // останавливает (переходы через клетку захода перепадом не считаются —
+        // сервер проверяет так же). Перепрыгивается зарядом Пробела.
         if (
           testMode &&
           !entry?.dir &&
           !testEntryAt(tc, tr) &&
-          Math.abs(elevLevelAt(tc, tr) - elevLevelAt(e.col, e.row)) > 1
+          elevLevelAt(tc, tr) !== elevLevelAt(e.col, e.row)
         ) {
           return null;
         }
@@ -1782,7 +1805,7 @@ export default function Simulator() {
             testMode &&
             !testEntryAt(e.col, e.row) &&
             !testEntryAt(nx.c, nx.r) &&
-            Math.abs(elevLevelAt(nx.c, nx.r) - elevLevelAt(e.col, e.row)) > 1;
+            elevLevelAt(nx.c, nx.r) !== elevLevelAt(e.col, e.row);
           if (
             d &&
             nx.c === e.col + d.dx &&
@@ -1803,8 +1826,8 @@ export default function Simulator() {
       // якорным точкам нет: зажатые клавиши двигают кота по всем направлениям ровно
       // столько, сколько держат; клик пускает ходьбу до точки (прямой линией,
       // стены обкатываются скольжением по осям). Препятствия: кромка локации,
-      // камни/деревья, клетки остальных котов и обрывы рельефа (перепад больше
-      // 1 — только прыжком). В прыжке обычная ходьба выключена: позицией ведёт
+      // камни/деревья, клетки остальных котов и рельеф (любой перепад уровней —
+      // стенка: только прыжком). В прыжке обычная ходьба выключена: позицией ведёт
       // дуга (stepLeap). Вход в боевую зону переключает режим — см. ниже.
       if (peaceWalk && !e.leap) {
         const net = netRef.current;
@@ -1904,15 +1927,14 @@ export default function Simulator() {
             }
           }
           const myR = peaceBodyRadius(hb.dx * 2 * cellW);
-          // Обрывы рельефа: перепад между клеткой точки опоры и целевой больше 1 —
-          // стенка (шаг на уступ в 1 уровень — обычный шаг). В прыжке правило
-          // отключено: дуга несёт кота через обрыв. Выталкивание ходит через тот
-          // же blocked, поэтому мягкое выталкивание не закинет кота на скалу.
+          // Обрывы рельефа: ЛЮБОЙ перепад между клеткой точки опоры и целевой —
+          // стенка (возвышенность останавливает, уступ проезжается только прыжком
+          // с зарядом). В прыжке правило отключено: дуга несёт кота через обрыв.
+          // Выталкивание ходит через тот же blocked, поэтому мягкое выталкивание
+          // не закинет кота на скалу.
           const elevWalkBlocked = (fxT: number, fyT: number): boolean =>
-            Math.abs(
-              elevLevelAt(Math.floor(fxT + hb.dx), Math.floor(fyT + hb.dy * 2)) -
-                elevLevelAt(Math.floor(e.fx + hb.dx), Math.floor(e.fy + hb.dy * 2)),
-            ) > 1;
+            elevLevelAt(Math.floor(fxT + hb.dx), Math.floor(fyT + hb.dy * 2)) !==
+            elevLevelAt(Math.floor(e.fx + hb.dx), Math.floor(e.fy + hb.dy * 2));
           // Стенка боевых зон для мирной ходьбы — по глубине внутри зоны вдоль оси
           // движения. По горизонтали стенка на кромке (depth > 0 нельзя), по вертикали
           // центр может углубиться на PEACE_BATTLE_LEAN_Y: перспектива сжимает землю,
@@ -3258,7 +3280,6 @@ export default function Simulator() {
       // (бой/покрытия/заход) едет вместе с верхом плато.
       if (testMode && elevAny()) {
         const fxcT = camFxRef.current;
-        const geoT = testFieldGeometry(s.field.cellW, s.field.cellH);
         const gpatT = grassPattern(ctx);
         // верх плато поднимает кусок пиксельной отрисовки клетки (если рисунок есть)
         const pcvT = paintReady() ? paintCanvas() : null;
@@ -3286,6 +3307,11 @@ export default function Simulator() {
           const flatsT = flatsByCellT.get(key);
           const sameLvlBattleT = (cc: number, rr: number): boolean =>
             isBattleCellT(cc, rr) && elevLevelAt(cc, rr) === lvT;
+          // Клип клетки: полный контур локации на десятки тысяч вершин на КАЖДУЮ
+          // клетку рельефа (~180 клипов за кадр) «сильно тормозил» и подвешивал
+          // слабые машины. Теперь клетка без кромки не режется вовсе, у клетки на
+          // кромке — маленький путь по маске рисунка (terrainCellClipPath).
+          const clipT = terrainCellClipPath(cT, rT, cwT, chT);
           // ВЕРХ: ключ — поднятая верхняя грань клетки; всё, что стоит на этой
           // земле (лапы строго ниже верхней грани), рисуется поверх.
           bills.push({
@@ -3293,7 +3319,7 @@ export default function Simulator() {
             fn: () => {
               ctx.save();
               ctx.scale(1, fxcT.sq);
-              ctx.clip(geoT.path);
+              if (clipT) ctx.clip(clipT);
               // поднятая земля этой клетки
               drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT);
               // разметка клетки поверх поднятой земли
@@ -3347,7 +3373,7 @@ export default function Simulator() {
               fn: () => {
                 ctx.save();
                 ctx.scale(1, fxcT.sq);
-                ctx.clip(geoT.path);
+                if (clipT) ctx.clip(clipT);
                 drawTerrainWall(ctx, cwT, chT, cT, rT);
                 ctx.restore();
               },
@@ -4470,6 +4496,10 @@ export default function Simulator() {
         patchCharacter={patchCharacter}
         toggleBattleMode={toggleBattleMode}
         patchArrow={patchArrow}
+        weatherFxOn={weatherFxOn}
+        toggleWeatherFx={toggleWeatherFx}
+        dayTintOn={dayTintOn}
+        toggleDayTint={toggleDayTint}
         settingsOpen={settingsOpen}
         setSettingsOpen={setSettingsOpen}
         setRoomsStale={setRoomsStale}

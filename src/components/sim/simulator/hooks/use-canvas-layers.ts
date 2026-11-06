@@ -129,10 +129,13 @@ export interface AtmosphereLayerDeps {
   atmoRef: RefObject<AtmosphereLike | null>;
   atmoStateRef: RefObject<CoopAtmo>;
   atmoOnRef: RefObject<boolean>;
+  /** Локальные тумблеры кнопок шапки: погода (частицы) и сутки (вуаль). */
+  weatherFxOnRef: RefObject<boolean>;
+  dayTintOnRef: RefObject<boolean>;
 }
 
 export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
-  const { stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef } = deps;
+  const { stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef, weatherFxOnRef, dayTintOnRef } = deps;
   useEffect(() => {
     if (stage !== 'field') return;
     const slot = pixiRef.current;
@@ -161,8 +164,10 @@ export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
         atmoRef.current = a;
         a.setDaypart(atmoStateRef.current.dp);
         a.setWeather(atmoStateRef.current.w);
-        // повторно созданный слой (смена комнаты) помнит дебаг-тумблер
+        // повторно созданный слой (смена комнаты) помнит и дебаг-тумблер, и кнопки шапки
         a.setVisible(atmoOnRef.current);
+        a.setWeatherFx(weatherFxOnRef.current);
+        a.setDayTint(dayTintOnRef.current);
       })
       .catch(() => {
         // без WebGL слой не встал — пустой канвас убираем из слота;
