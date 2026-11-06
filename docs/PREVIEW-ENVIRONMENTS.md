@@ -5,67 +5,106 @@
 
 `https://<имя-ветки-буквами>.abnocw.miew.ru`
 
-Прод (`abnocw` / `coop.89-232-184-77.sslip.io`) этот процесс **не трогает**.
+## Решение владелицы (2026-11-06)
 
-## Что уже лежит в репозитории
-
-- Нормализация имени: `scripts/preview-slug.mjs` (проверка `npm run test:preview-slug`)
-- Скрипт на VPS: `deploy/vps/preview-apply.sh` — каталог `/opt/coop-field-preview/<slug>/`,
-  свой порт, свои `data/`, случайный пароль редактора. Прод `/opt/coop-field` не копирует.
-- systemd: `deploy/vps/coop-field-preview@.service`
-- nginx-фрагмент: `deploy/vps/nginx-preview.conf`
-- GitHub Actions: `.github/workflows/preview.yml`
-  - открыли PR → создать (или обновить то же окружение)
-  - новый коммит → пересобрать **из SHA коммита**
-  - закрыли / смержили → снести
-  - **форк не деплоим** (чужой код с правами на VPS не запускается)
-  - один комментарий в PR, не спам; GitHub Deployment с URL
-
-Пока нет секрета и DNS, джоба **зелёная** и пишет, чего не хватает.
-
-## Что должна подтвердить Сырь (агент на VPS не заходит)
-
-1. **DNS.** Wildcard `*.abnocw.miew.ru` → IP `89.232.184.77`.
-   Проверка: `dig cursor-test.abnocw.miew.ru` должен показать тот же A, что у сайта.
-2. **TLS.** Сертификат на `*.abnocw.miew.ru` (Let’s Encrypt DNS-01). Без него
-   будет только http, браузер ругнётся.
-3. **Секрет GitHub** `PREVIEW_SSH_KEY` — отдельный ключ пользователя `deploy`,
-   не прод-секрет в чат. Лучше отдельный ключ, которому можно писать только
-   `incoming-preview/` и `/opt/coop-field-preview/`.
-4. **nginx один раз от root:** include фрагментов `preview-*.conf` или копировать
-   шаблон `deploy/vps/nginx-preview.conf`, подставляя `__SLUG__` / `__PORT__` /
-   `__ROOT__`. Пользователь `deploy` sudo на nginx не имеет — как с
-   `nginx-www.conf`.
-5. **systemd-юнит** `coop-field-preview@.service` в `/etc/systemd/system/`
-   (скрипт копирует, если есть sudo).
-6. **Каталоги:** `mkdir -p /opt/coop-field-preview && chown deploy:deploy ...`
-7. **Не включать** в preview `ADMIN_PASS` прода и не копировать `data/` прода.
-
-После этого новый PR сам получит ссылку в комментарии.
-
-## Как устроено внутри
+Preview живёт **на том же VPS, что прод** (`89.232.184.77`), не на отдельном
+хосте. Изоляция — каталог, порт и данные:
 
 | | Прод | Preview |
 | --- | --- | --- |
 | Когда | push в `main` | PR своего репо |
+| Каталог | `/opt/coop-field` | `/opt/coop-field-preview/<slug>/` |
 | Фронт | Vercel + `/opt/coop-field/www` | `/opt/coop-field-preview/<slug>/www` |
 | Комната | systemd `coop-field`, порт 8787 | `coop-field-preview@slug`, порт `41000 + PR%1000` |
-| Данные | `data/` прода | пустой `.../preview/<slug>/data` |
+| Данные | `data/` прода | пустой `/opt/coop-field-preview/<slug>/data` |
 | Сокет клиента | `wss://coop.89-…sslip.io` | `wss://<slug>.abnocw.miew.ru/ws` |
+| Секреты | `ADMIN_PASS` юнита прода | случайный пароль редактора, **не** копия прода |
 
-Сборка всегда с `github.event.pull_request.head.sha`, даже если ветку переименовали.
+Прод-пайплайн (`deploy-frontend.yml`, `deploy-backend.yml`, URL
+`abnocw` / `coop.…sslip.io`) **не меняем**. Агент на VPS не заходит.
+
+## Что уже сделано
+
+- В репо: slug (`scripts/preview-slug.mjs`, `npm run test:preview-slug`),
+  `deploy/vps/preview-apply.sh`, юнит `coop-field-preview@.service`,
+  фрагмент nginx, workflow `.github/workflows/preview.yml`.
+- Сборка из **SHA коммита** PR, не из имени ветки.
+- Открыли PR → создать или обновить то же окружение; закрыли / смержили →
+  снести. Форк не деплоим. Один комментарий в PR, GitHub Deployment с URL.
+- **DNS.** Wildcard `*.abnocw.miew.ru` указывает на `89.232.184.77`
+  (проверено 2026-11-06: `cursor-test.abnocw.miew.ru` и `foo.abnocw.miew.ru`
+  отдают тот же A, что прод). Запрос `*.abnocw…` целиком спрашивать не нужно —
+  спрашивайте конкретное имя.
+
+Пока нет секрета `PREVIEW_SSH_KEY`, джоба **зелёная** и пишет, чего не хватает
+(DNS больше не в этом списке).
+
+## Что осталось Сырь (один раз, от root / GitHub)
+
+Агент эти команды **не выполняет**. Копировать на сервер самой.
+
+1. **Каталоги**
+
+```bash
+sudo mkdir -p /opt/coop-field-preview /home/deploy/incoming-preview
+sudo chown deploy:deploy /opt/coop-field-preview /home/deploy/incoming-preview
+```
+
+2. **sudoers для `deploy`.** `preview-apply.sh` вызывает `sudo systemctl` для
+   `coop-field-preview@*` и копирует юнит — как прод уже делает `restart coop-field`.
+   Нужны те же узкие правила на эти команды (не на nginx). Юнит из репо:
+
+```bash
+sudo cp /home/deploy/incoming-preview/coop-field-preview@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+3. **TLS на `*.abnocw.miew.ru`.** Сейчас `:443` отвечает сертификатом
+   `abnocw.89-232-184-77.sslip.io`, а неизвестный Host уходит 301 на sslip.io.
+   Нужен свой сертификат (Let’s Encrypt **DNS-01**, HTTP-01 для wildcard
+   не подойдёт), затем прописать его в nginx-фрагменте preview.
+
+```bash
+sudo certbot certonly --manual --preferred-challenges dns \
+  -d '*.abnocw.miew.ru' -d abnocw.miew.ru
+```
+
+4. **nginx от root.** Пользователь `deploy` sudo на nginx не имеет (как с
+   `nginx-www.conf`). Включить шаблон `deploy/vps/nginx-preview.conf`
+   (подстановка `__SLUG__` / `__PORT__` / `__ROOT__`) так, чтобы
+   `*.abnocw.miew.ru` не падал в дефолтный vhost. После правки:
+   `sudo nginx -t && sudo systemctl reload nginx`.
+
+5. **Секрет GitHub** `PREVIEW_SSH_KEY`: Settings → Secrets and variables →
+   Actions → New repository secret. Имя ровно `PREVIEW_SSH_KEY`. Значение —
+   приватный ключ `deploy`, лучше отдельный, с записью только в
+   `incoming-preview/` и `/opt/coop-field-preview/`. Прод-ключ `VPS_SSH_KEY`
+   в чат и в этот секрет не копировать, если можно выпустить узкий.
+
+6. **Не копировать** в preview `ADMIN_PASS` и `data/` прода.
+
+После пунктов 1–5 новый коммит в PR сам получит ссылку в комментарии.
 
 ## Нормализация slug
 
 `cursor/product-roadmap-and-platform-42e0` → `cursor-product-roadmap-and-platform-42e0`.
 Только латиница, цифры, дефис, не длиннее 48 символов. Пустое → `pr`.
 
-## Форки
+## Форки и приватный репозиторий
 
-Джоба смотрит `head.repo.full_name == github.repository`. Чужой форк не
-получает SSH. Так и должно быть.
+Владелица решила закрыть `gertha-puzik/coop-field`. Агент visibility не
+переключает. Кнопка: GitHub → репозиторий → **Settings → General →
+Danger Zone → Change repository visibility → Private**.
 
-## Если preview нельзя проверить end-to-end
+После этого Vercel и GitHub Actions продолжат работать, если у аккаунта
+есть доступ; публичные клоны перестанут; форки снаружи и так не деплоим.
 
-Это нормально, пока пункты 1–6 не подтверждены. В репо уже есть скрипты,
-workflow, тест slug и документация. Живой URL появится после шагов Сырь.
+Джоба смотрит `head.repo.full_name == github.repository`. Чужой форк SSH
+не получает. На приватном репо то же условие: секреты есть только у PR
+из этого репозитория; `GITHUB_TOKEN` с `pull-requests: write` и
+`deployments: write` пишет один комментарий и Deployment.
+
+## Если preview ещё не открывается в браузере
+
+Это ожидаемо, пока нет TLS, `PREVIEW_SSH_KEY` и nginx-vhost. DNS уже
+смотрит на VPS. Код и workflow в репо готовы.

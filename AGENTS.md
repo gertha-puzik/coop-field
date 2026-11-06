@@ -146,7 +146,7 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 3. **External chat AIs (no file-system access, z.ai-style):** point them to `docs/AI-CONTEXT.md` FIRST — it is the one-file EN project brief (stack, deploy, module map, hard rules, human-intermediary protocol). Paste files they ask for; take unified diffs back.
 4. **localStorage routes (client persistence):** `simulator.tsx:664` (read saved SP), `:679` (write SP), `:1116` (write combat log), `:4187–4188` (reset), `:4200` (log rotation); `editor-ops.ts:144`/`:769` (editor password). Storage keys are named constants in `src/lib/sim/engine-consts.ts`.
 5. **Sprite whitelist mirror (no CI coverage):** `server/config.js:86` (`SPRITES`, 31) <-> `src/lib/sim/settings.ts:96` (`SPRITES: SpriteMeta[]`) — always change both sides in one PR, keep the counts equal.
-6. **Production/VPS is owner-only.** Agents never run prod operations, even with SSH access: write the exact commands/steps for the owner (game nick «Сырь») and wait for her confirmation. VPS root is owner-only. Preview environments (`docs/PREVIEW-ENVIRONMENTS.md`) wait on the same owner steps (wildcard DNS, `PREVIEW_SSH_KEY`, nginx fragment).
+6. **Production/VPS is owner-only.** Agents never run prod operations, even with SSH access: write the exact commands/steps for the owner (game nick «Сырь») and wait for her confirmation. VPS root is owner-only. Preview lives on **the same VPS** under `/opt/coop-field-preview/` (owner decision 2026-11-06). Wildcard DNS `*.abnocw.miew.ru` is already in the zone. Remaining owner steps: TLS (Let’s Encrypt DNS-01), secret `PREVIEW_SSH_KEY`, nginx include, directories — `docs/PREVIEW-ENVIRONMENTS.md`. Agents do not SSH, rsync to prod, reload nginx, or run certbot.
 
 ## Doc index
 
@@ -154,7 +154,7 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 - `docs/ARCHITECTURE.md` — as-is map, data flows, mirrors, coordinates, target structure (W3–W5).
 - `docs/PRODUCT-ROADMAP.md` — product audit: what exists, what's missing, order of platform work.
 - `docs/PLATFORM-ARCHITECTURE.md` — accounts / modes / sessions / pages (on top of this map).
-- `docs/PREVIEW-ENVIRONMENTS.md` — PR preview `*.abnocw.miew.ru`; VPS steps for Сырь.
+- `docs/PREVIEW-ENVIRONMENTS.md` — PR preview on the same VPS (`/opt/coop-field-preview/`, `*.abnocw.miew.ru`); remaining owner steps.
 - `README.md` — human overview in Russian: what the game is, quick start, prod, feature eras.
 - `scripts/` — npm runners: test:ws (against a running server or `WS_URL`), test:queue (self-spawn),
   test:unit, arch:check; manual probes with self-spawn carry a "how to run" header line.

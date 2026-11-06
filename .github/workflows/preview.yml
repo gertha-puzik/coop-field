@@ -1,8 +1,11 @@
 # Preview PR: https://<slug>.abnocw.miew.ru
 # Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
-# Секрет PREVIEW_SSH_KEY — отдельный ключ на каталог preview; пока его нет,
-# джоба выходит 0 с предупреждением, чтобы не краснеть до настройки VPS.
+# Тот же VPS, что прод: каталог /opt/coop-field-preview/, свои порты и data/.
+# Секрет PREVIEW_SSH_KEY — отдельный ключ только на preview; пока его нет,
+# джоба выходит 0 с предупреждением (DNS wildcard уже в зоне).
+# Приватный репо: PR своего репо видит secrets; форк отсекается if ниже.
+# GITHUB_TOKEN (deployments/pull-requests: write) пишет комментарий и Deployment.
 name: Preview PR
 
 on:
@@ -71,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${SSH_KEY:-}" ]; then
-            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Preview на VPS не выложен. Что сделать Сырь — docs/PREVIEW-ENVIRONMENTS.md"
+            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Preview на тот же VPS не выложен. Осталось: ключ, TLS *.abnocw.miew.ru, nginx, каталоги — docs/PREVIEW-ENVIRONMENTS.md"
             echo "status=needs-secret" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -123,7 +126,7 @@ jobs:
             STATE=success
           else
             BODY="${MARKER}
-          Preview ещё не на VPS: нет секрета \`PREVIEW_SSH_KEY\` или wildcard DNS. Что сделать Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
+          Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\` (DNS \`*.abnocw.miew.ru\` уже на этом VPS). Что осталось Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
           Будет: ${URL}"
             STATE=""
           fi

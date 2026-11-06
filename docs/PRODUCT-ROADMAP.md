@@ -11,8 +11,13 @@
 
 **Статус ветки `cursor/product-roadmap-and-platform-42e0`:** фазы 0–5 сделаны в
 коде (аудит, архитектура, аккаунты + закрытая Элизия, страницы режимов,
-справочник Герты, безопасный `/cfg`). Фаза 6 — скрипты и workflow в репо;
-живой URL `*.abnocw.miew.ru` ждёт шаги Сырь в [PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md).
+справочник Герты, безопасный `/cfg`). Фаза 6 — скрипты и workflow в репо.
+
+**Решения владелицы (2026-11-06).** Preview — **тот же VPS**, каталог
+`/opt/coop-field-preview/` (не отдельный хост). Wildcard DNS `*.abnocw.miew.ru`
+уже смотрит на `89.232.184.77`. Репозиторий должен стать **private** (кнопка в
+GitHub Settings; агент visibility не меняет). Живой HTTPS-preview ещё ждёт TLS,
+`PREVIEW_SSH_KEY`, nginx и каталоги — список в [PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md).
 
 ---
 
@@ -254,11 +259,10 @@
 6. **Админка** — вкладки той же панели + серверный каталог безопасных полей.
 7. **Справочник Герты** — типизированные метаданные в репо, UI на русском.
 8. **ИИ:** не строить. Cursor читает этот справочник и `AGENTS.md`.
-9. **Preview:** GitHub Actions на PR (не fork) → rsync в
-   `/opt/coop-field/preview/<slug>/` + отдельный порт + nginx
+9. **Preview (решение владелицы):** тот же VPS, каталог
+   `/opt/coop-field-preview/<slug>/` + отдельный порт + свои `data/` + nginx
    `*.abnocw.miew.ru`. Сборка из SHA коммита. Прод-пайплайн не менять.
-   Без доступа к VPS агент готовит workflow/скрипты/док и список, что
-   подтвердить Сырь.
+   DNS wildcard уже в зоне. Агент на VPS не заходит; остаток шагов — у Сырь.
 
 ---
 
@@ -274,7 +278,7 @@
 | **3** | Страницы трёх режимов + комнаты combat/hunger | Гроты как были; Элизия как была (логика поля); голодные — каркас |
 | **4** | Админка: русские подписи, опасное с подтверждением, серверный каталог безопасного | UI и сервер не расходятся; инварианты протокола не в каталоге |
 | **5** | Справочник Герты во вкладке панели | Карточки из метаданных, поиск, файлы существуют |
-| **6** | Preview в репо (workflow, slug, док) | Владелица подтверждает DNS/секреты/SSH; агент на VPS не заходит |
+| **6** | Preview в репо (workflow, slug, док) | Тот же VPS, DNS есть; остались TLS / `PREVIEW_SSH_KEY` / nginx / каталоги. Агент на VPS не заходит |
 
 Приоритет при нехватке объёма — сверху вниз. Не делать «всё одним рефакторингом».
 
@@ -304,7 +308,7 @@
 | Контент локаций и скинов | Редактор + whitelist скинов | Расширять их, не второй редактор | `editor-ops.ts`, `settings.ts` SPRITES |
 | Справочник «как устроена игра» | Документы для агентов (`AGENTS.md`, `ARCHITECTURE.md`, `AI-CONTEXT.md`) | Внутриадминные карточки на простом русском из метаданных | `src/lib/handbook/*`, вкладка панели |
 | ИИ-помощник в игре | Нет, и **не делать** | Cursor + справочник + AGENTS.md | этот документ §10 |
-| Preview PR `*.abnocw.miew.ru` | Нет; есть только прод-deploy с `main` | Workflow + slug + nginx/systemd шаблон; VPS — владелица | `.github/workflows/`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
+| Preview PR `*.abnocw.miew.ru` | В этой ветке: workflow + slug; DNS wildcard на том же VPS. Живой HTTPS ещё нет | TLS DNS-01, `PREVIEW_SSH_KEY`, nginx, каталоги — Сырь, не агент | `.github/workflows/preview.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
 | Не грузить все режимы сразу | Next code-split по маршрутам сам | Не импортировать hunger-каркас в грот без нужды | `src/app/*/page.tsx` |
 | Не три копии движка | Один `Simulator` | Проп `mode` / стартовая комната | `simulator.tsx` (тонкий проп, без роста логики) |
 

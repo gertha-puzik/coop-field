@@ -12,7 +12,9 @@ the CI gate `npm run check:landmarks` keeps them honest — line numbers drift, 
 **coop-field** — a browser co-op game: cats battle on a shared canvas field (WASD walking
 that survives the Russian keyboard layout, aimed strikes with zones and block, skins,
 chat, day/night + weather, a drawn location with an in-game editor). Two independent apps
-live in one GitHub repo (`gertha-puzik/coop-field`, public):
+live in one GitHub repo (`gertha-puzik/coop-field`; owner decision: **private** —
+if it is still public, GitHub → Settings → General → Danger Zone → Change
+repository visibility → Private):
 
 - **Frontend** — Next.js static export (`output: "export"`): canvas engine, HUD, panels. `src/`.
 - **Room server** — plain Node process (`ws` WebSocket library): rooms, cell authority,
@@ -46,6 +48,9 @@ A push to `main` IS a production deploy. Three workflows start on `main`:
 
 So **nobody ever pushes to `main` directly** — that would ship to production unreviewed
 (the live game AND the room server). The workflow is always: branch → PR → green CI → merge.
+
+PR preview (same VPS, `/opt/coop-field-preview/`, host `*.abnocw.miew.ru`) is a fourth
+workflow on pull_request, not on `main`. It does not replace the prod pipeline.
 
 ## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-06)
 
