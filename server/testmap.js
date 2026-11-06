@@ -439,7 +439,8 @@ function setMap(ws, payload = {}) {
     return;
   }
   ws.lastSetmap = now;
-  if (String(payload?.pass || '') !== ADMIN_PASS) {
+  const asAdmin = ws.account && ws.account.role === 'admin';
+  if (!asAdmin && String(payload?.pass || '') !== ADMIN_PASS) {
     send(ws, EV.INFO, 'Редактор: неверный пароль.');
     return;
   }

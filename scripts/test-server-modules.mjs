@@ -35,6 +35,11 @@ const dummyRab = await import("../server/dummy-rab.js");
 const atmo = await import("../server/atmo.js");
 const net = await import("../server/net.js");
 const protocol = await import("../server/protocol.js");
+const modes = await import("../server/modes.js");
+const accounts = await import("../server/accounts.js");
+const auth = await import("../server/auth.js");
+const hunger = await import("../server/hunger.js");
+const runtimeConfig = await import("../server/runtime-config.js");
 
 let failed = 0;
 let passed = 0;
@@ -59,7 +64,7 @@ eq("config.isAllowedOrigin: пустой Origin без REQUIRE_ORIGIN", cfg.isAl
 eq("config.isAllowedOrigin: чужой https", cfg.isAllowedOrigin("https://random.example"), false);
 
 /* ---------- protocol.js (W3-канон, не изменился) ---------- */
-eq("protocol: 22+22 событий", [protocol.CLIENT_EVENTS.length, protocol.SERVER_EVENTS.length], [22, 22]);
+eq("protocol: 23+23 событий", [protocol.CLIENT_EVENTS.length, protocol.SERVER_EVENTS.length], [23, 23]);
 eq("protocol: ARMOR_CURVE точек", protocol.ARMOR_CURVE.length, 7);
 
 /* ---------- combat.js — чистая математика боя (золото со старого кода) ---------- */
@@ -186,10 +191,18 @@ eq("atmoPhaseIdx: глубина ночи (500000 от старта)", atmo.atmo
 eq("atmoPhaseIdx: якорь в прошлом (cs=500000, now=1000)", atmo.atmoPhaseIdx({ cs: 500000, pl: 420000, wl: 720000 }, 1000), 2);
 eq("atmoPhaseIdx: граница дня (419999)", atmo.atmoPhaseIdx({ cs: 0, pl: 420000, wl: 720000 }, 419999), 0);
 eq("atmoPhaseIdx: старт ночи (1140000)", atmo.atmoPhaseIdx({ cs: 0, pl: 420000, wl: 720000 }, 1140000), 2);
+eq("modes: test registered-only", modes.requiresAccount("test"), true);
+eq("modes: grot open", modes.requiresAccount("grot-1"), false);
+eq("hunger idle", hunger.hungerState({}).phase, "idle");
+eq("auth cookie name", auth.COOKIE, "coop_session");
+eq("accounts PASS_MIN", accounts.PASS_MIN, 8);
+eq("cfg sanitize phase clamp", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 999, weatherMin: 12 } }).config.atmo.phaseMin, 120);
+eq("cfg sanitize weather floor", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 7, weatherMin: 0 } }).config.atmo.weatherMin, 2);
 
 // ---------- отчёт ----------
 if (failed > 0) {
   console.error(`\nсмоук модулей сервера: FAIL — ${failed} провалено, ${passed} прошло.`);
   process.exit(1);
 }
-console.log(`смоук модулей сервера: зелёный — ${passed} проверок, 11 модулей импортированы чисто.`);
+
+console.log(`смоук модулей сервера: зелёный — ${passed} проверок, модули импортированы чисто.`);

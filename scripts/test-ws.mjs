@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { sendJoin } from "./ws-auth.mjs";
 
 const url = process.env.WS_URL || "ws://127.0.0.1:3780";
 const room = `t${Date.now().toString(36)}`;
@@ -8,7 +9,7 @@ function client(name, roomCode = room) {
     const ws = new WebSocket(url);
     const inbox = [];
     ws.on("open", () => {
-      ws.send(JSON.stringify(["join", { room: roomCode, login: name }]));
+      sendJoin(ws, { room: roomCode, login: name });
     });
     ws.on("message", (raw) => {
       const msg = JSON.parse(String(raw));

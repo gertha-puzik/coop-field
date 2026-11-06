@@ -28,7 +28,7 @@ owner's VPS behind nginx.
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind 4, pixi.js 8 (weather overlay, lazy).
 - Room server: Node ESM JavaScript, no build step; `ws@8`; data in `data/*.json`.
-- Protocol: 22 client→server + 22 server→client events, mirrored by hand in
+- Protocol: 23 client→server + 23 server→client events, mirrored by hand in
   `server/protocol.js` and `src/lib/net/protocol.ts` (constants like ARMOR_CURVE are
   re-exported per side); CI gates pin the mirror.
 - CI: GitHub Actions on every PR (node 22) — see gates below.
@@ -116,7 +116,7 @@ npm run check:landmarks      # doc sizes == wc -l
 ## Files to ask for, by task
 
 - **Change/add an event (anything on the wire):** `src/lib/net/protocol.ts`,
-  `server/protocol.js`, `AGENTS.md` (the 22+22 tables), `src/lib/net/coop.ts` (client
+  `server/protocol.js`, `AGENTS.md` (the 23+23 tables), `src/lib/net/coop.ts` (client)
   dispatch), the `server/*.js` domain module, `scripts/test-ws.mjs`. Always ALL sides
   of the registry in one change — single-sided edits are guaranteed rework.
 - **Combat/damage/armor:** `src/lib/sim/settings.ts` (single client source) ↔

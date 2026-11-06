@@ -14,6 +14,9 @@ import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition } from "./persist.js";
 import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
+import { requiresAccount } from "./modes.js";
+import { activeCharacter, attachSprite } from "./accounts.js";
+import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
 import { testMap, TEST_PAINT, TEST_OBST_CELLS, TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
 import { testCellInIsland, testWalkable, paintPxOn, pointInPolygon } from "./world.js";
@@ -203,6 +206,7 @@ function fieldPayload(room) {
     rab: room.rab ? { on: true } : null,
     // Атмосфера комнаты: якорь цикла суток и погоды — новичок видит то же, что и все.
     atmo: atmoAnchor(room),
+    ...(room.code === "hunger" ? { hunger: hungerState(room) } : {}),
   };
 }
 
@@ -269,6 +273,12 @@ function join(ws, payload = {}) {
   ws.lastJoin = now;
   if (ws.room) leave(ws);
   const room = roomOf(payload.room);
+  if (requiresAccount(room.code) && !ws.account) {
+    send(ws, EV.REFUSE, { code: "auth_required", text: "Элизия только для зарегистрированных." });
+    send(ws, EV.INFO, "Элизия только для зарегистрированных.");
+    send(ws, EV.NOPLACE, { room: room.code, reason: "auth_required" });
+    return;
+  }
   if (room.cats.size >= MAX_PLAYERS) {
     refuseJoin(ws, room, `В комнате уже ${MAX_PLAYERS} котов — мест нет. Смените ?room=.`);
     return;
@@ -280,7 +290,10 @@ function join(ws, payload = {}) {
     return;
   }
   const slot = room.cats.size;
-  const login = uniqueLogin(room, sanitizeLogin(payload.login, NAMES[slot] || `Кот ${slot + 1}`));
+  const fromAccount = ws.account ? activeCharacter(ws.account) : null;
+  if (fromAccount) attachSprite(ws.account, payload.sprite, payload.size);
+  const wantedName = fromAccount ? fromAccount.name : payload.login;
+  const login = uniqueLogin(room, sanitizeLogin(wantedName, NAMES[slot] || `Кот ${slot + 1}`));
   // Рост модельки, выбранный при спавне: клиент шлёт проценты (60–100).
   // Вне диапазона/не число — 100% (обычный рост).
   const sizeRaw = Number(payload.size);
