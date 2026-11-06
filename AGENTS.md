@@ -154,3 +154,14 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
   test:unit, arch:check; manual probes with self-spawn carry a "how to run" header line.
 - Local per-module `AGENTS.md` files appear in W5 (simulator.tsx/panel split) — until then use the belt
   line ranges in ARCHITECTURE §2.
+
+## Cursor Cloud specific instructions
+
+- Install is `npm ci`. The image already has Node 22. `test:unit` and `check:landmarks` need Node 22.6 or newer; `package.json` `engines` only says `>=18`.
+- Boot starts two processes and waits until they answer:
+  - room: `npm start` — `http://127.0.0.1:3780/health`, socket `ws://127.0.0.1:3780`
+  - front: `npm run dev -- --hostname 0.0.0.0 --port 3000` — open `http://localhost:3000`. The dev HMR socket rejects a page opened as `127.0.0.1` while the server listens on all interfaces.
+- A localhost page connects to `ws://localhost:3780` by itself. Hello-world: `/?name=...`, confirm the three hidden parameters («Использовать предыдущие СП»), pick «Пивной грот №1». Join answers `you` then `field`; a step answers `update cat` or `refuse`.
+- `npm run test:queue` spawns its own server on a random port. `npm run test:ws` needs the room already listening (`WS_URL`, default `ws://127.0.0.1:3780`).
+- `next dev` rewrites `next-env.d.ts` to `.next/dev/types`; `next build` points it back at `.next/types`. Leave that flip out of feature commits. `agentRules: false` in `next.config.ts` keeps `next dev` from appending its own block to this file.
+- Production sockets stay untouched unless a script is given `--prod`. `ADMIN_PASS` is optional for local play.
