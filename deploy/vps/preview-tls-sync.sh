@@ -60,6 +60,9 @@ if [ -f "$FRAG" ] && ! grep -q "listen 443 ssl;" "$FRAG"; then
     { print }
   ' "$FRAG" > "$FRAG.new"
   mv "$FRAG.new" "$FRAG"
+  # mv меняет владельца файла на root — вернуть владельца каталога
+  # (deploy-preview), иначе следующий apply не сможет переписать фрагмент.
+  chown --reference="$NGINX_D" "$FRAG" 2>/dev/null || true
   if ! nginx -t >/dev/null 2>&1; then
     printf '%s\n' "$OLD" > "$FRAG"
     echo "coop-preview-tls-sync: nginx -t упал после апгрейда $FRAG — откатил, фрагмент без ssl" >&2
