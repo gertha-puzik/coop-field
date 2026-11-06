@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Guards of deploy/vps/preview-apply.sh: slug, destroy isolation, max 8. No SSH. */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,6 +137,22 @@ eq(
   true,
 );
 eq("dir is pr-id", existsSync(join(t.previewRoot, "pr-41/www/index.html")), true);
+chmodSync(join(t.nginxD, "preview-pr-41.conf"), 0o444);
+const overwrite = run({
+  ...base,
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_IN: join(t.incoming, "pr-41"),
+  PREVIEW_PORT: "41041",
+  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_SHA: "overwrite1",
+});
+dump("overwrite read-only fragment", overwrite);
+eq("overwrite read-only fragment", overwrite.status, 0);
+eq(
+  "fragment replaced after unlink",
+  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name pr-41.abnocw.miew.ru;"),
+  true,
+);
 eq(
   "pr-41 env origins follow host",
   readFileSync(join(t.previewRoot, "pr-41/env"), "utf8").includes("ALLOWED_ORIGINS=http://pr-41.abnocw.miew.ru,https://pr-41.abnocw.miew.ru"),

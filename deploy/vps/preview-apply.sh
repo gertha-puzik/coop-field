@@ -121,6 +121,9 @@ write_nginx_fragment() {
     if (\$cf_r = 1) { return 301 https://\$host\$request_uri; }"
   fi
   mkdir -p "$NGINX_D"
+  # Certbot/root-cron может оставить фрагмент от root. Каталог наш —
+  # unlink чужого файла можно, перезаписать через cat > нельзя.
+  rm -f "$FRAG"
   cat > "$FRAG" <<EOF
 server {
     listen 80;
