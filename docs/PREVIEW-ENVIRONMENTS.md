@@ -45,26 +45,13 @@ Workflow `.github/workflows/preview.yml` на событие `closed` (это и
 
 Чужой slug (`../`, слэш, имя юнита прода) скрипт отвергает до любых `rm`.
 
-## Что уже сделано (2026-11-06, Europe/Samara)
+## Что уже сделано (2026-11-07, Europe/Samara)
 
-Ключ `PREVIEW_SSH_KEY` в Cursor Secrets **работает**: вход
-`deploy-preview@89.232.184.77` есть. Пользователь `deploy-preview` создан.
-Прод и `root` этим ключом не открываются.
-
-На сервере ещё нет bootstrap:
-
-- нет `/opt/coop-field-preview`
-- нет sudoers `coop-field-preview`
-- нет юнита `coop-field-preview@.service`
-- нет `/etc/nginx/preview.d` и include в sites-enabled
-
-Файлы bootstrap лежат в `/home/deploy-preview/incoming-preview/` (агент
-залил, ждать клон репо не нужно).
-
-GitHub Actions на прогоне 22:10 UTC секрет ещё не видел (`SSH_KEY` пуст).
-Если секрет уже добавлен — следующий synchronize PR его подхватит.
-Однострочный PEM (переносы склеены) скрипт `scripts/write-openssh-key.sh`
-собирает обратно; иначе ssh пишет `error in libcrypto`.
+Ключ `PREVIEW_SSH_KEY` работает (Cursor и GitHub Actions). Bootstrap на VPS
+выполнен. Каталог `/opt/coop-field-preview/pr-<N>/`, юнит
+`coop-field-preview@pr-<N>`, сайт `http://<8 hex SHA>.abnocw.miew.ru`.
+Прод и `root` этим ключом не открываются. Однострочный PEM собирает
+`scripts/write-openssh-key.sh`.
 
 Публичный ключ на сервере:
 
