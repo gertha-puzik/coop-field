@@ -25,6 +25,8 @@ import {
   isObstacleKind,
   mapHasPaint,
   mapElevOf,
+  pointInSouthWallOf,
+  surfaceLevelOf,
   objectBase,
   objectMir,
   objectRotDeg,
@@ -805,9 +807,7 @@ export function testPeaceBattleBlocked(x: number, y: number): boolean {
 
 /** Насколько глубоко точка (клеточные доли) внутри боевых зон вдоль оси —
  *  расстояние в долях клетки до ближайшей кромки зоны по этой оси; 0 — точка
- *  вне зон (или на самой кромке). Для стенки мирной ходьбы: перспектива сжимает
- *  землю по вертикали, поэтому по оси Y стенку отодвигают вглубь зоны — см.
- *  PEACE_BATTLE_LEAN_Y в симуляторе. */
+ *  вне зон (или на самой кромке). Стенка мирной ходьбы стоит на этой кромке. */
 export function testPeaceBattleDepth(x: number, y: number, axis: 'x' | 'y'): number {
   let best = 0;
   for (const z of currentMap.zones) {
@@ -919,6 +919,17 @@ export function elevLiftAtPoint(x: number, y: number): number {
   return elevLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
 }
 
+/** Уровень нарисованного верха под точкой (доли клетки), не логической клетки.
+ *  Спина высокого плато рисуется севернее своей клетки — ходить нужно по картинке. */
+export function surfaceLevelAt(x: number, y: number): number {
+  return surfaceLevelOf(x, y, currentMap.cols, currentMap.rows, elevLevelAt);
+}
+
+/** Точка в южной стене обрыва (доли клетки). */
+export function pointInSouthWall(x: number, y: number): boolean {
+  return pointInSouthWallOf(x, y, currentMap.cols, currentMap.rows, elevLevelAt);
+}
+
 /**
  * Грунт под визуальной точкой экрана (px мира): поднятая земля рисуется
  * со сдвигом вверх на уровень рельефа, поэтому обратная проекция камеры без
@@ -937,13 +948,16 @@ export function groundPointAtWorld(
   const c = Math.floor(x / cellW);
   if (c < 0 || c >= currentMap.cols) return { x, y };
   const r0 = Math.floor(y / cellH);
+  let bestLift = -1;
   for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
     const r = r0 + k;
     if (r < 0 || r >= currentMap.rows) break;
     const lift = elevLevelAt(c, r) * TERRAIN_LIFT_PX;
-    const top = r * cellH - lift; // экранная верхняя грань поднятого верха (в мире)
-    if (y >= top && y < top + cellH) return { x, y: y + lift };
+    const top = r * cellH - lift;
+    if (y < top || y >= top + cellH) continue;
+    if (lift > bestLift) bestLift = lift;
   }
+  if (bestLift >= 0) return { x, y: y + bestLift };
   return { x, y };
 }
 
@@ -1065,29 +1079,24 @@ export function drawTerrainTop(
     ctx.fillStyle = `rgba(255, 238, 176, ${(0.055 * (e - 1)).toFixed(3)})`;
     ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
   }
-  // боковые складки: сосед сбоку ниже — тёмная кромка вдоль края плато
-  if (elevNeighborForWall(c - 1, r) < e) {
-    ctx.fillStyle = 'rgba(14, 10, 4, 0.55)';
-    ctx.fillRect(x, y - lift, 2.5, cellH);
+  // Боковые грани: сосед сбоку ниже — коричневый срез на всю высоту перепада,
+  // чтобы обход сбоку упирался в видимую стену, а не в пустую траву.
+  const sideFace = (nx: number) => {
+    const nb = elevNeighborForWall(c + nx, r);
+    if (nb >= e) return;
+    const drop = Math.min((e - nb) * TERRAIN_LIFT_PX, cellH);
+    ctx.fillStyle = '#58412b';
+    const xFace = nx < 0 ? x : x + cellW - 7;
+    ctx.fillRect(xFace, y - lift, 7, cellH + drop);
+    ctx.fillStyle = 'rgba(18, 13, 5, 0.45)';
+    ctx.fillRect(xFace, y - lift, 7, 2);
+  };
+  sideFace(-1);
+  sideFace(1);
+  if (elevNeighborForWall(c, r - 1) < e) {
+    ctx.fillStyle = '#3a2a1c';
+    ctx.fillRect(x, y - lift, cellW, 6);
   }
-  if (elevNeighborForWall(c + 1, r) < e) {
-    ctx.fillStyle = 'rgba(14, 10, 4, 0.55)';
-    ctx.fillRect(x + cellW - 2.5, y - lift, 2.5, cellH);
-  }
-}
-
-/* ---------- перспектива мирного режима ---------- */
-
-/** Масштаб спрайта на глубине wy (в клеточных долях мира): верхний край локации —
- *  дальний (меньше), нижний — ближний (больше). Сила эффекта анимируется камерой
- *  (camFx.dp): в бою эффект плавно гаснет до 1. */
-export const PEACE_DEPTH_FAR = 0.72;
-export const PEACE_DEPTH_NEAR = 1.18;
-
-export function peaceDepthScale(wy: number): number {
-  const denom = Math.max(1, currentMap.rows);
-  const t = Math.min(1, Math.max(0, wy / denom));
-  return PEACE_DEPTH_FAR + (PEACE_DEPTH_NEAR - PEACE_DEPTH_FAR) * t;
 }
 
 /* ---------- детерминированный шум ---------- */

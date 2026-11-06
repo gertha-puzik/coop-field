@@ -270,6 +270,66 @@ export function elevJumpOk(from: number, to: number, fill: number): boolean {
   return false;
 }
 
+/** Подъём одного уровня в долях клетки. Рисунок сдвигает верх на 26px
+ *  (TERRAIN_LIFT_PX) при высоте клетки 150px — столкновение считает в долях,
+ *  чтобы спина плато совпадала с нарисованным верхом, а не с логической клеткой. */
+export const TERRAIN_LIFT_CELLS = 26 / 150;
+
+/** Уровень нарисованного верха под точкой (доли клетки). Верх клетки (c,r)
+ *  уровня e лежит на [r - e*lift, r - e*lift + 1). Ищем с ряда точки на юг:
+ *  первая накрывающая клетка и есть грунт. Нет накрытия — уровень самой клетки. */
+export function surfaceLevelOf(
+  x: number,
+  y: number,
+  cols: number,
+  rows: number,
+  levelAt: (c: number, r: number) => number,
+): number {
+  const c = Math.floor(x);
+  if (c < 0 || c >= cols) return 0;
+  const r0 = Math.floor(y);
+  let best = -1;
+  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
+    const r = r0 + k;
+    if (r < 0 || r >= rows) break;
+    const e = levelAt(c, r);
+    const top = r - e * TERRAIN_LIFT_CELLS;
+    if (y < top || y >= top + 1) continue;
+    if (e > best) best = e;
+  }
+  if (best >= 0) return best;
+  if (r0 < 0 || r0 >= rows) return 0;
+  return levelAt(c, r0);
+}
+
+/** Точка внутри южной стены обрыва: от низа нарисованного верха вниз до грунта
+ *  соседа. Стоять в стене нельзя — иначе логическая клетка плато держит кота
+ *  в траве сбоку, где стены на картинке нет. */
+export function pointInSouthWallOf(
+  x: number,
+  y: number,
+  cols: number,
+  rows: number,
+  levelAt: (c: number, r: number) => number,
+): boolean {
+  const c = Math.floor(x);
+  if (c < 0 || c >= cols) return false;
+  const rBase = Math.floor(y);
+  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
+    const r = rBase - k;
+    if (r < 0 || r >= rows) continue;
+    const e = levelAt(c, r);
+    if (e <= 0) continue;
+    const southR = r + 1;
+    const south = southR < 0 || southR >= rows ? 0 : levelAt(c, southR);
+    if (e - south <= ELEV_STEP_MAX) continue;
+    const yTop = r + 1 - e * TERRAIN_LIFT_CELLS;
+    const yBot = r + 1 - south * TERRAIN_LIFT_CELLS;
+    if (y >= yTop && y < yBot) return true;
+  }
+  return false;
+}
+
 /* ---------- пиксельная отрисовка локации (кисть редактора) ---------- */
 
 /** Закрашенная кистью локация: PNG (base64, без data:-префикса) размером с мир
