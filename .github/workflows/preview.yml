@@ -181,7 +181,7 @@ jobs:
           else
             case "$STATUS" in
               live)
-                HDR="> 🚀 **Preview:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`. Данные прода не используются; HTTPS появится после DNS-01 на \`*.abnocw.miew.ru\`." ;;
+                HDR="> 🚀 **Preview:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`. Данные прода не используются; HTTPS: per-host сертификат от root-cron на VPS (до ~5 минут после деплоя)." ;;
               needs-secret)
                 HDR="> 🚀 **Preview:** ещё не выложен — не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md). Будет: ${URL}" ;;
               needs-bootstrap)
