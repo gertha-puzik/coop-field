@@ -37,12 +37,24 @@ Workflow `.github/workflows/preview.yml` на событие `closed` (это и
 
 Чужой slug (`../`, слэш, имя юнита прода) скрипт отвергает до любых `rm`.
 
+## SSH для уже запущенного агента
+
+Секрет Cursor Environment `PREVIEW_SSH_KEY` **не появляется** в VM, которая
+уже работала до добавления секрета. В таком запуске нет переменных
+`PREVIEW_SSH_KEY` / `VPS_SSH_KEY` / `SSH_PRIVATE_KEY`, в `~/.ssh` только
+`known_hosts`, и `deploy-preview@89.232.184.77` отвечает
+`Permission denied (publickey)`. Правок на сервере нет.
+
+Нужен **новый** агент/чат с текстом:
+
+«ключ PREVIEW_SSH_KEY уже в Secrets, настрой preview»
+
+Отдельно от Cursor Secrets: GitHub Actions secret с тем же именем — для
+workflow, его `gh` агенту не отдаёт.
+
 ## Что сделано в репо (агент на VPS не попал)
 
-С этой машины SSH к `deploy@` / `root@` / `ubuntu@89.232.184.77` —
-`Permission denied (publickey)`. Ключа `VPS_SSH_KEY` / `PREVIEW_SSH_KEY` в
-окружении агента нет, `gh secret` читать нельзя. Хост-ключ приняли
-(`StrictHostKeyChecking=accept-new`), правок на сервере **нет**.
+Ключа в этой VM нет. Хост-ключ приняли (`StrictHostKeyChecking=accept-new`).
 
 В репо готово к одному запуску от root:
 
