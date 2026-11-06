@@ -105,7 +105,9 @@ import {
   type CharRef,
 } from '@/lib/sim/targeting';
 import { ROOMS, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
-import { JUMP_MAX_CELLS } from '@/lib/net/protocol';
+import { JUMP_MAX_CELLS, type CoopWhoami } from '@/lib/net/protocol';
+import { authPayload } from '@/lib/net/auth';
+import { roomsForMode } from '@/lib/net/modes';
 import {
   type RemoteDraw,
 } from '@/lib/net/move-book';
@@ -236,7 +238,7 @@ import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator
 
 
 
-export default function Simulator() {
+export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' | 'combat' | 'hunger' } = {}) {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   /** Экран: вход (кот + скрытые параметры + выбор комнаты) → поле. */
@@ -251,6 +253,8 @@ export default function Simulator() {
   const [roomsRows, setRoomsRows] = useState<CoopRoomInfo[] | null>(null);
   /** roomsinfo не приходит дольше 5 с (старый сервер без протокола) — предупреждение в карточках. */
   const [roomsStale, setRoomsStale] = useState(false);
+  const [whoami, setWhoami] = useState<CoopWhoami | null>(null);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
   /** Модалка «Перейти в другую комнату» поверх поля. */
   const [switchOpen, setSwitchOpen] = useState(false);
   const [combat, setCombat] = useState<CombatState>(() => defaultCombat(100));
@@ -785,13 +789,15 @@ export default function Simulator() {
     });
   }, []);
 
-  /** Какие комнаты спрашивать у сервера: три грота + комната из ссылки, если она чужая. */
+  /** Какие комнаты спрашивать у сервера: каталог режима + комната из ссылки на хабе. */
   const wantedRoomIds = useCallback((): string[] => {
-    const ids: string[] = ROOMS.map((r) => r.id);
-    const urlRoom = roomFromUrl();
-    if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) ids.push(urlRoom);
+    const ids = roomsForMode(mode).map((r) => r.id);
+    if (mode === 'hub') {
+      const urlRoom = roomFromUrl();
+      if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) ids.push(urlRoom);
+    }
     return ids;
-  }, []);
+  }, [mode]);
 
   /* ---------- редактор локации «теста» ---------- */
 
@@ -1047,6 +1053,7 @@ export default function Simulator() {
     setRoomCode,
     setRoomsRows,
     setRoomsStale,
+    setWhoami,
     setSettings,
     aimSyncRef,
     battleEntryRef,
@@ -4383,6 +4390,11 @@ export default function Simulator() {
   /** Вход с экрана entry: подтверждённые кот/имя/размер + комната. Сокет уже
    *  слушает комнаты — join уходит в ту же связь. Настройки персонажа применяем
    *  здесь же: дальше экран входа размонтируется. */
+  const sendAuth = useCallback((action: 'register' | 'login' | 'logout', login = '', pass = '') => {
+    setAuthMessage(null);
+    netRef.current?.emit('auth', authPayload(action, { login, pass }));
+  }, []);
+
   const joinFromEntry = useCallback(
     (roomId: string, who: { name: string; sprite: SpriteId; scale: number }) => {
       const login = who.name.trim().slice(0, 24);
@@ -4464,7 +4476,8 @@ export default function Simulator() {
    *  если в URL стоит чужой код (?room=...) — старые ссылки продолжают работать. */
   const roomRows: RoomRow[] = (() => {
     const info = new Map((roomsRows ?? []).map((r) => [r.id, r]));
-    const rows: RoomRow[] = ROOMS.map((r) => ({
+    const catalog = roomsForMode(mode);
+    const rows: RoomRow[] = catalog.map((r) => ({
       id: r.id,
       title: r.title,
       count: info.get(r.id)?.count ?? 0,
@@ -4500,6 +4513,12 @@ export default function Simulator() {
               roomRows={roomRows}
               roomsReady={roomsRows !== null}
               roomsStale={roomsStale}
+              whoami={whoami}
+              authMessage={authMessage}
+              playMode={mode}
+              onLogin={(login, pass) => sendAuth('login', login, pass)}
+              onRegister={(login, pass) => sendAuth('register', login, pass)}
+              onLogout={() => sendAuth('logout')}
               onPickRoom={joinFromEntry}
               onApplySpeed={(v) => patchArrow({ periodSec: v })}
               onApplyDamage={(k) => {

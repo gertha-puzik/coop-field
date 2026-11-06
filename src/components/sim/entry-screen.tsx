@@ -18,6 +18,9 @@ import {
   type SpriteMeta,
 } from '@/lib/sim/settings';
 import { RoomPicker, type RoomRow } from './room-picker';
+import { AuthPanel } from './auth-panel';
+import type { CoopWhoami } from '@/lib/net/protocol';
+import { MODE_COPY, namedRoom, type PlayMode } from '@/lib/net/modes';
 
 /** Готовые значения периода оборота стрелы — те же, что в настройках («Стрела»). */
 const SPEED_PRESETS = [1.8, 2.5, 3.5, 4, 4.5, 5];
@@ -125,10 +128,16 @@ export function EntryScreen({
   roomRows,
   roomsReady,
   roomsStale,
+  whoami,
+  authMessage,
+  playMode = 'hub',
   onPickRoom,
   onApplySpeed,
   onApplyDamage,
   onApplyArmor,
+  onLogin,
+  onRegister,
+  onLogout,
 }: {
   initialSprite: SpriteId;
   initialName: string;
@@ -145,6 +154,12 @@ export function EntryScreen({
   onApplySpeed: (periodSec: number) => void;
   onApplyDamage: (level: number) => void;
   onApplyArmor: (level: number) => void;
+  whoami?: CoopWhoami | null;
+  authMessage?: string | null;
+  playMode?: PlayMode;
+  onLogin?: (login: string, pass: string) => void;
+  onRegister?: (login: string, pass: string) => void;
+  onLogout?: () => void;
 }) {
   const [name, setName] = useState(initialName);
   const [sprite, setSprite] = useState<SpriteId>(initialSprite);
@@ -175,7 +190,8 @@ export function EntryScreen({
     setArmorOk(p.armor);
   };
 
-  const trimmed = name.trim();
+  const accountName = whoami?.ok && whoami.accountId ? whoami.login : '';
+  const trimmed = (accountName || name).trim();
   const speedDone = speedOk !== null && Math.abs(speedOk - speedVal) < 0.05;
   const damageDone = damageOk !== null && damageOk === damageVal;
   const armorDone = armorOk !== null && armorOk === armorVal;
@@ -246,11 +262,22 @@ export function EntryScreen({
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       <header>
-        <h1 className="text-xl font-bold leading-tight">abnocw</h1>
-        <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
-          Слева — имя и скин, справа — скрытые параметры (выбранное дублируется в центре). Подтвердите три пункта —
-          ниже откроется выбор комнаты.
-        </p>
+        <h1 className="text-xl font-bold leading-tight">{MODE_COPY[playMode].title}</h1>
+        <p className="mt-1 text-sm text-[var(--sim-text-muted)]">{MODE_COPY[playMode].lead}</p>
+        <nav className="mt-2 flex flex-wrap gap-2 text-[11px]" aria-label="Режимы">
+          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/">
+            Гроты
+          </a>
+          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/elision">
+            Элизия
+          </a>
+          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/combat">
+            Активный бой
+          </a>
+          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/hunger">
+            Голодные игры
+          </a>
+        </nav>
       </header>
 
       <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]">
@@ -260,16 +287,19 @@ export function EntryScreen({
             <span className="text-sm font-semibold text-[var(--sim-text)]">Имя</span>
             <Input
               id="entry-name"
-              value={name}
+              value={accountName || name}
               maxLength={24}
               autoComplete="nickname"
               placeholder="Как вас видеть на поле"
               aria-describedby="entry-name-hint"
+              disabled={!!accountName}
               onChange={(e) => setName(e.target.value)}
               className="h-10 border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
             />
             <span id="entry-name-hint" className="text-xs text-[var(--sim-text-faint)]">
-              Обязательное поле. Пустое имя на поле не пускает.
+              {accountName
+                ? 'Имя взято из аккаунта — так вас увидят на поле и в книге позиций Элизии.'
+                : 'Обязательное поле. Пустое имя на поле не пускает.'}
             </span>
           </label>
 
@@ -555,6 +585,18 @@ export function EntryScreen({
         </section>
       </div>
 
+      {onLogin && onRegister && onLogout ? (
+        <section aria-label="Аккаунт" className="mt-4">
+          <AuthPanel
+            whoami={whoami ?? null}
+            message={authMessage}
+            onLogin={onLogin}
+            onRegister={onRegister}
+            onLogout={onLogout}
+          />
+        </section>
+      ) : null}
+
       {/* Выбор комнаты открывается ниже, когда имя введено и все пункты подтверждены */}
       <section aria-label="Выбор комнаты" className="mt-4">
         {roomsOpen ? (
@@ -563,7 +605,13 @@ export function EntryScreen({
             ready={roomsReady}
             stale={roomsStale}
             embedded
-            onPick={(id) => onPickRoom(id, { name: trimmed, sprite, scale })}
+            onPick={(id) => {
+              const gate = namedRoom(id);
+              if (gate?.access === 'registered' && !(whoami?.ok && whoami.accountId)) {
+                return;
+              }
+              onPickRoom(id, { name: trimmed, sprite, scale });
+            }}
           />
         ) : (
           <div className="rounded-xl border border-dashed border-[var(--sim-line-strong)] bg-[var(--sim-inset)] px-4 py-6 text-center">

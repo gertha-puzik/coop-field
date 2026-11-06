@@ -17,7 +17,7 @@ npm run dev
 ```
 
 Откройте `http://localhost:3000/?room=demo&name=Сырь` и вторую вкладку с другим `?name=`.
-Комнаты: «Пивные гроты» (поле 10×6) и рисованная локация «Элизия Эйдес».
+Страницы: `/` пивные гроты (гости), `/elision` Элизия Эйдес (нужен аккаунт), `/combat` активный бой, `/hunger` голодные игры (каркас).
 
 Тесты: `npm run test:queue` — очередь шагов (сервер поднимает сам); `npm run test:ws` — контракт комнаты,
 нужен уже поднятый сервер (`npm start`, либо `WS_URL=ws://...`); `npm run test:unit` — юнит-тесты движка
@@ -43,6 +43,7 @@ npm run dev
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | typecheck, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков |
 | «Фронтенд на Vercel и VPS» | изменения `src/`, `public/`, Next-конфига, зависимостей | `vercel deploy --prod` + rsync `out/` → `/opt/coop-field/www` |
 | «Сервер комнаты на VPS» | изменения `server.js`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
+| «Preview PR» | PR своего репо | `https://<slug>.abnocw.miew.ru` — ждёт секрет `PREVIEW_SSH_KEY` и wildcard DNS, см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
 Секреты в GitHub: `VERCEL_TOKEN`, `VPS_SSH_KEY` — в коде и логах их нет.
 

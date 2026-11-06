@@ -9,6 +9,7 @@ import {
   isCoopCat,
   isCoopFight,
   isCoopNoplace,
+  isCoopWhoami,
   type CoopAtmo,
   type CoopAtmoAnchor,
   type CoopCat,
@@ -21,7 +22,10 @@ import {
   type CoopRabState,
   type CoopRefuse,
   type CoopRoomInfo,
+  type CoopWhoami,
 } from "./protocol";
+import { applyWhoami, authPayload, withAuthToken } from "./auth";
+import { NAMED_ROOMS } from "./modes";
 
 // Типы протокола переехали в ./protocol (W3); прежние потребители
 // (simulator.tsx, entry-screen, room-picker, settings-panel) тянут их отсюда же.
@@ -50,12 +54,7 @@ export const LOCAL_WS = "ws://localhost:3780";
  * title — то, что видят игроки. У «Элизии» id остаётся «test»: это протокольный код,
  * по нему сервер и клиент узнают формат поля.
  */
-export const ROOMS = [
-  { id: "grot-1", title: "Пивной грот №1" },
-  { id: "grot-2", title: "Пивной грот №2" },
-  { id: "grot-3", title: "Пивной грот №3" },
-  { id: "test", title: "Элизия Эйдес" },
-] as const;
+export const ROOMS = NAMED_ROOMS.map((r) => ({ id: r.id, title: r.title }));
 
 /** Заголовок комнаты для интерфейса: у гротов — людское имя, у прочих — код. */
 export function roomTitle(code: string): string {
@@ -123,6 +122,8 @@ export type CoopHandlers = {
   onFreeMove?: (m: { id: number; x: number; y: number; cx?: number; cy?: number; sp?: boolean; jp?: boolean }) => void;
   /** Состав комнат в ответ на requestRooms(): по запрошенным id, пустые — с нулями. */
   onRooms?: (rooms: CoopRoomInfo[]) => void;
+  /** Снимок сессии после auth / handshake. */
+  onWhoami?: (row: CoopWhoami) => void;
   onOpen?: () => void;
   onClose?: (info: CoopCloseInfo) => void;
 };
@@ -144,6 +145,11 @@ export function nameFromUrl(): string {
 }
 
 export function wsUrl(): string {
+  const base = wsUrlBase();
+  return withAuthToken(base);
+}
+
+function wsUrlBase(): string {
   if (typeof window === "undefined") return PRODUCTION_WS;
   const params = new URLSearchParams(window.location.search);
   const { hostname, protocol, host } = window.location;
@@ -167,6 +173,12 @@ export function wsUrl(): string {
   }
   if (hostname === "coop.89-232-184-77.sslip.io") {
     return `wss://${host}`;
+  }
+  // Preview PR: front + комната на одном имени *.abnocw.miew.ru.
+  // Сокет — /ws того же хоста (nginx), не прод coop.sslip.io.
+  if (hostname === "abnocw.miew.ru" || hostname.endsWith(".abnocw.miew.ru")) {
+    const scheme = protocol === "https:" ? "wss:" : "ws:";
+    return `${scheme}//${host}/ws`;
   }
   // abnocw.89-232-184-77.sslip.io и vercel.app ходят на сокет комнаты,
   // а не на wss своего имени. Локальный хост разобран выше.
@@ -300,6 +312,7 @@ export function createCoopClient(handlers: CoopHandlers) {
     ws = new WebSocket(wsUrl());
     ws.onopen = () => {
       attempt = 0;
+      emit(EV.AUTH, authPayload("hello"));
       handlers.onOpen?.();
       // Каждый успешный open — повторный join теми же параметрами:
       // сервер вернёт you/field и клиент догонит состояние комнаты.
@@ -436,6 +449,8 @@ export function createCoopClient(handlers: CoopHandlers) {
             });
           }
         }
+      } else if (event === EV.WHOAMI) {
+        if (isCoopWhoami(payload)) handlers.onWhoami?.(applyWhoami(payload));
       } else if (event === EV.ROOMSINFO) {
         if (!Array.isArray(payload)) return;
         const list: CoopRoomInfo[] = [];
