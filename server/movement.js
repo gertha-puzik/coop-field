@@ -10,14 +10,14 @@
  * invariants). Cooldowns and geometry constants come from ./protocol.js (W3).
  */
 import {
-  EV, MOVE_COOLDOWN_MS, MOVE_QUEUE_MAX, JUMP_COOLDOWN_MS, JUMP_MAX_CELLS,
+  EV, MOVE_COOLDOWN_MS, MOVE_QUEUE_MAX, JUMP_COOLDOWN_MS, JUMP_MAX_CELLS, ELEV_STEP_MAX,
 } from "./protocol.js";
 import { WIDTH, HEIGHT } from "./config.js";
 import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
 import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
+import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, surfaceLevel, inSouthWall, nearestTestCell, pointInPolygon } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -167,9 +167,10 @@ function freeMove(ws, payload = {}) {
   if (jumping) {
     cat.freeJumpUntil = nowGuard + 2000;
   } else if (nowGuard >= (cat.freeJumpUntil || 0)) {
-    const fromX = Number.isFinite(cat.fx) ? Math.floor(cat.fx) : cat.x - 1;
-    const fromY = Number.isFinite(cat.fy) ? Math.floor(cat.fy) : cat.y - 1;
-    if (cliffBetween(fromX + 1, fromY + 1, Math.floor(nx) + 1, Math.floor(ny) + 1)) return;
+    const fromX = Number.isFinite(cat.fx) ? cat.fx : cat.x - 1;
+    const fromY = Number.isFinite(cat.fy) ? cat.fy : cat.y - 1;
+    if (inSouthWall(nx, ny)) return;
+    if (Math.abs(surfaceLevel(nx, ny) - surfaceLevel(fromX, fromY)) > ELEV_STEP_MAX) return;
   }
   cat.fm = 1;
   cat.fx = Math.round(nx * 100) / 100;

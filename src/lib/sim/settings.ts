@@ -305,10 +305,6 @@ export interface SimSettings {
     spriteScale: number;
     /** Скорость свободной ходьбы в мирном режиме («тест»), px мира в секунду. */
     peaceSpeed: number;
-    /** Перспектива мирного режима («тест»): зум камеры, наклон земли и
-     *  псевдо-глубина (дальние объекты мельче). Выключатель — кнопка в шапке:
-     *  вид сверху без масштабирования, колесо мыши при этом продолжает работать. */
-    peaceView: boolean;
   };
   arrow: {
     battleMode: boolean;
@@ -436,7 +432,6 @@ export const DEFAULT_SETTINGS: SimSettings = {
     spriteScale: 100,
     // Мирная ходьба по траве «теста»: прежний зашитый темп PEACE_SPEED_PX.
     peaceSpeed: 320,
-    peaceView: true,
   },
   arrow: {
     battleMode: true,
@@ -1001,8 +996,6 @@ export function mergeSettings(raw: any): SimSettings {
       spriteScale: Math.min(100, Math.max(60, num(raw?.character?.spriteScale, d.character.spriteScale))),
       // скорость мирной ходьбы: 40–800 px/с (медленный шаг — лёгкий спринт)
       peaceSpeed: Math.min(800, Math.max(40, num(raw?.character?.peaceSpeed, d.character.peaceSpeed))),
-      peaceView:
-        typeof raw?.character?.peaceView === 'boolean' ? raw.character.peaceView : d.character.peaceView,
     },
     arrow: { ...d.arrow, ...(raw?.arrow ?? {}) },
     slowdown: {

@@ -35,13 +35,11 @@ import {
   DUMMY_SCALE,
   FIELD_MAX_UPSCALE,
   FREE_EMIT_MS,
+  CAM_YAW_SPEED,
   OCCLUDE_ALPHA,
   OCCLUDE_COVER,
-  PEACE_BATTLE_LEAN_Y,
   PEACE_SPEED_DEFAULT,
   PEACE_STUCK_MS,
-  PEACE_TILT,
-  PEACE_ZOOM,
   RAB_ID,
   RAB_POS,
   RAB_SCALE,
@@ -61,7 +59,9 @@ import {
   peaceHalfBox,
   type PxRect,
   rr,
+  screenToWorld,
   spriteBoxOf,
+  viewDepth,
 } from '@/lib/sim/geometry';
 import {
   CHAT_W,
@@ -129,9 +129,10 @@ import {
   terrainCellClipPath,
   elevLiftAtPoint,
   groundPointAtWorld,
+  pointInSouthWall,
+  surfaceLevelAt,
   hashStr,
   nearestWalkableCell,
-  peaceDepthScale,
   ensurePaintDecoded,
   paintCanvas,
   paintCellCoverage,
@@ -300,9 +301,12 @@ export default function Simulator() {
   const fieldFormatRef = useRef<'grid' | 'test'>('grid');
   /** Плавная камера «теста»: центр взгляда в px мира; init — встать на игрока без анимации. */
   const camRef = useRef({ x: 0, y: 0, init: false });
-  /** Зум/наклон/глубина камеры «теста»: z — зум, sq — сжатие земли по вертикали,
-   *  dp — сила перспективы (масштаб спрайтов по глубине: 0 — бой, 1 — мирный режим). */
-  const camFxRef = useRef({ z: 1, sq: 1, dp: 0 });
+  /** Зум камеры «теста». Наклон и псевдо-глубина убраны: вид плоский, поворот — camYawRef. */
+  const camFxRef = useRef({ z: 1 });
+  /** Поворот обзора, радианы. Положительный — карта крутится по часовой (] ). */
+  const camYawRef = useRef(0);
+  /** Удержание [ (−1) и ] (+1). В редакторе эти клавиши меняют размер кисти. */
+  const camYawDirRef = useRef(0);
   /** Зум колесом мыши — множитель поверх базового зума вида (1 — как задано режимом).
    *  Меняется колесом над полем «теста» (в том числе в редакторе локации), сам
    *  плавно догоняется камерой (kz). */
@@ -718,16 +722,13 @@ export default function Simulator() {
     atmoAnchorRef.current = { cs: cycleStartFor('day', pl, now), pl, wl, w: 'sun', ws: now, srv: false };
   }, [loaded]);
 
-  /* Вход на боевые клетки — мгновенный: вид сверху (зум 1, без наклона и перспективы)
-   * ставится сразу, поэтому стрела, сетка и проценты энергии появляются сразу, без
-   * плавной анимации перехода. Обратный переход на траву остаётся плавным. */
+  /* Вход на боевые клетки — мгновенный зум без догона камеры: стрела, сетка и
+   * проценты энергии появляются сразу. Обратный переход на траву остаётся плавным. */
   const battleOn = settings.arrow.battleMode;
   useEffect(() => {
     if (!battleOn) return;
     if (editorOpenRef.current) return; // в редакторе камера сама подстраивается
     camFxRef.current.z = camUserZoomRef.current;
-    camFxRef.current.sq = 1;
-    camFxRef.current.dp = 0;
   }, [battleOn]);
 
   /** Строка удара из комнаты пишется в тот же боевой лог. Урон цели тоже живёт здесь, не только у бьющего. */
@@ -1361,13 +1362,8 @@ export default function Simulator() {
         const rect = cv.getBoundingClientRect();
         const sx = ev.clientX - rect.left;
         const sy = ev.clientY - rect.top;
-        const fxE = camFxRef.current;
-        editorPanRef.current = {
-          px: (sx - cv.clientWidth / 2) / fxE.z + camRef.current.x,
-          py: (sy - cv.clientHeight / 2) / (fxE.z * fxE.sq) + camRef.current.y / fxE.sq,
-          sx,
-          sy,
-        };
+        const hit = screenToWorld(sx, sy, cv.clientWidth, cv.clientHeight, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
+        editorPanRef.current = { px: hit.x, py: hit.y, sx, sy };
       }
       const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
       const next = Math.min(CAM_USER_ZOOM_MAX, Math.max(CAM_USER_ZOOM_MIN, camUserZoomRef.current * dir));
@@ -1643,7 +1639,7 @@ export default function Simulator() {
         const targetLift = testMode
           ? (s.arrow.battleMode
               ? elevLevelAt(e.col, e.row)
-              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
+              : surfaceLevelAt(e.fx + hbL.dx, e.fy + hbL.dy * 2)) * TERRAIN_LIFT_PX
           : 0;
         e.liftV += (targetLift - e.liftV) * (1 - Math.exp(-dt / 110));
         if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
@@ -1912,7 +1908,7 @@ export default function Simulator() {
           // шаг кадра — из текущей скорости (px/с → клеточные доли по осям);
           // по вертикали делим ещё и на сжатие земли — экранный шаг равномерный
           const stepFx = (e.pvx * dt) / 1000 / cellW;
-          const stepFy = ((e.pvy * dt) / 1000 / cellH) / Math.max(0.5, camFxRef.current.sq);
+          const stepFy = (e.pvy * dt) / 1000 / cellH;
           // разворот «лицом» по направлению ходьбы (для бейджа и привычки глаза)
           if (hasInput) {
             const wx = vx * cellW;
@@ -1953,17 +1949,28 @@ export default function Simulator() {
           // опоры и целевой — стенка. Один уровень кот перешагивает. В прыжке
           // правило отключено: дуга несёт кота через обрыв. Выталкивание ходит
           // через тот же blocked, поэтому не закинет кота на скалу.
-          const elevWalkBlocked = (fxT: number, fyT: number): boolean =>
-            !elevStepOk(
-              elevLevelAt(Math.floor(e.fx + hb.dx), Math.floor(e.fy + hb.dy * 2)),
-              elevLevelAt(Math.floor(fxT + hb.dx), Math.floor(fyT + hb.dy * 2)),
-            );
-          // Стенка боевых зон для мирной ходьбы — по глубине внутри зоны вдоль оси
-          // движения. По горизонтали стенка на кромке (depth > 0 нельзя), по вертикали
-          // центр может углубиться на PEACE_BATTLE_LEAN_Y: перспектива сжимает землю,
-          // и без этого видимый заход сверху/снизу заметно мельче бокового.
+          // Столкновение по нарисованному верху, не по логической клетке: спина
+          // высокого плато рисуется севернее клетки и иначе проходится пешком,
+          // а бок логической клетки держит кота в траве, где стены не видно.
+          // Проверяем лапы и центр модельки — корпус не заходит на верх раньше лап.
+          const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
+            const probe = (fx: number, fy: number): [number, number][] => [
+              [fx + hb.dx, fy + hb.dy * 2],
+              [fx + hb.dx, fy + hb.dy],
+            ];
+            const from = probe(e.fx, e.fy);
+            const to = probe(fxT, fyT);
+            for (let i = 0; i < from.length; i++) {
+              const [x0, y0] = from[i];
+              const [x1, y1] = to[i];
+              if (pointInSouthWall(x1, y1)) return true;
+              if (!elevStepOk(surfaceLevelAt(x0, y0), surfaceLevelAt(x1, y1))) return true;
+            }
+            return false;
+          };
+          // Стенка боевых зон для мирной ходьбы — на кромке по обеим осям.
           const battleWall = (fxT: number, fyT: number, axis: 'x' | 'y') =>
-            strictEntries && testPeaceBattleDepth(fxT, fyT, axis) > (axis === 'y' ? PEACE_BATTLE_LEAN_Y : 0);
+            strictEntries && testPeaceBattleDepth(fxT, fyT, axis) > 0;
           const blocked = (fxT: number, fyT: number, axis: 'x' | 'y') => {
             const px = fxT + hb.dx;
             const py = fyT + hb.dy;
@@ -2079,10 +2086,8 @@ export default function Simulator() {
         const ccR = s.arrow.battleMode ? e.col : Math.floor(e.fx + hbR.dx);
         const crR = s.arrow.battleMode ? e.row : Math.floor(e.fy + hbR.dy);
         const onBattle = testWalkableCell(ccR, crR);
-        // Мирный кот у кромки теперь легально углубляется центром на
-        // PEACE_BATTLE_LEAN_Y (компенсация перспективы) — аварией считаем только
-        // кота в глубине зоны: боевые и чуть выше, и чуть ниже центра. Кот у самой
-        // кромки от такой проверки бой не ловит, а заброшенный в середину зоны — да.
+        // Аварией считаем кота в глубине зоны: боевые и чуть выше, и чуть ниже
+        // центра. Кот у самой кромки от такой проверки бой не ловит.
         const deepInBattle =
           testWalkableCell(ccR, Math.floor(e.fy + hbR.dy - 0.25)) &&
           testWalkableCell(ccR, Math.floor(e.fy + hbR.dy + 0.25));
@@ -2144,9 +2149,9 @@ export default function Simulator() {
       }
 
       // Плавная камера «теста»: догоняет своего кота, упирается в кромку локации.
-      // В мирном режиме добавляются зум и наклон земли (псевдо-3D), переход туда
-      // и обратно — с той же экспоненциальной плавностью, что и сама камера.
+      // Поворот обзора — удержание [ ] (camYawDirRef), зум — колесо.
       if (testMode) {
+        camYawRef.current += camYawDirRef.current * CAM_YAW_SPEED * (dt / 1000);
         const vw = cv.clientWidth || 1;
         const vh = cv.clientHeight || 1;
         const cellW = s.field.cellW;
@@ -2162,20 +2167,23 @@ export default function Simulator() {
           const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw / (bbE.x1 - bbE.x0 + pad), vh / (bbE.y1 - bbE.y0 + pad))));
           const zT = Math.max(0.1, Math.min(1.15 * CAM_USER_ZOOM_MAX, fitZ * camUserZoomRef.current));
           camFxRef.current.z += (zT - camFxRef.current.z) * kz;
-          camFxRef.current.sq += (1 - camFxRef.current.sq) * kz;
-          camFxRef.current.dp += (0 - camFxRef.current.dp) * kz;
           let cxT = (bbE.x0 + bbE.x1) / 2;
           let cyT = (bbE.y0 + bbE.y1) / 2;
-          // Якорь зума к курсору: центр = мировая точка − смещение курсора от
-          // центра экрана в мире (при целевом зуме).
+          // Якорь зума к курсору: центр = мировая точка − повёрнутое смещение курсора.
           const panE = camUserZoomRef.current > 1.001 ? editorPanRef.current : null;
           if (panE) {
-            cxT = panE.px - (panE.sx - vw / 2) / zT;
-            cyT = panE.py - (panE.sy - vh / 2) / zT;
+            const dx = (panE.sx - vw / 2) / zT;
+            const dy = (panE.sy - vh / 2) / zT;
+            const cs = Math.cos(camYawRef.current);
+            const sn = Math.sin(camYawRef.current);
+            cxT = panE.px - (dx * cs + dy * sn);
+            cyT = panE.py - (-dx * sn + dy * cs);
           }
-          // Центр не выпускаем за кромку мира при окне видимости целевого зума.
-          const vwG = vw / zT;
-          const vhG = vh / zT;
+          // Окно видимости с учётом поворота: по осям мира берём проекцию экрана.
+          const csA = Math.abs(Math.cos(camYawRef.current));
+          const snA = Math.abs(Math.sin(camYawRef.current));
+          const vwG = (csA * vw + snA * vh) / zT;
+          const vhG = (snA * vw + csA * vh) / zT;
           cxT = bbE.x1 - bbE.x0 >= vwG ? Math.min(Math.max(cxT, bbE.x0 + vwG / 2), bbE.x1 - vwG / 2) : (bbE.x0 + bbE.x1) / 2;
           cyT = bbE.y1 - bbE.y0 >= vhG ? Math.min(Math.max(cyT, bbE.y0 + vhG / 2), bbE.y1 - vhG / 2) : (bbE.y0 + bbE.y1) / 2;
           if (!camRef.current.init) {
@@ -2188,21 +2196,16 @@ export default function Simulator() {
             camRef.current.y += (cyT - camRef.current.y) * kcE;
           }
         } else {
-          // Базовый зум вида: в мирном режиме с включённой перспективой поле
-          // приближено (Don't Starve), иначе — вид сверху; поверх — зум колесом.
-          const pv = s.character.peaceView;
-          const zBase = (peaceWalk && pv ? PEACE_ZOOM : 1) * camUserZoomRef.current;
+          const zBase = camUserZoomRef.current;
           camFxRef.current.z += (zBase - camFxRef.current.z) * kz;
-          camFxRef.current.sq += ((peaceWalk && pv ? PEACE_TILT : 1) - camFxRef.current.sq) * kz;
-          // перспектива (дальние объекты мельче) — только в мирном режиме с перспективой
-          camFxRef.current.dp += ((peaceWalk && pv ? 1 : 0) - camFxRef.current.dp) * kz;
-          const { z, sq } = camFxRef.current;
+          const { z } = camFxRef.current;
           const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
           const tyP = peaceWalk ? e.fy * cellH + (cellH - 10) / 2 : e.row * cellH + cellH / 2;
           const bb = testFieldGeometry(cellW, cellH).bboxPx;
-          // видимое окно мира: зум сужает его, наклон дополнительно сжимает вертикаль
-          const vwG = vw / z;
-          const vhG = vh / (z * sq);
+          const csA = Math.abs(Math.cos(camYawRef.current));
+          const snA = Math.abs(Math.sin(camYawRef.current));
+          const vwG = (csA * vw + snA * vh) / z;
+          const vhG = (snA * vw + csA * vh) / z;
           const cxT =
             bb.x1 - bb.x0 >= vwG ? Math.min(Math.max(txP, bb.x0 + vwG / 2), bb.x1 - vwG / 2) : (bb.x0 + bb.x1) / 2;
           const cyT =
@@ -2221,14 +2224,10 @@ export default function Simulator() {
         // момент последнего события мыши: в прыжке/приседе камера догоняет кота
         // каждый кадр, и точка мира под неподвижным курсором уплывает без
         // движения мыши. Пересчитываем мировую точку курсора по свежей камере
-        // (та же формула, что и в onMove). Камера хранит донаклонные px, а грунт
-        // сжат на sq, поэтому cam.y делится на sq — иначе кольцо висит выше курсора.
         const csL = cursorScreenRef.current;
         if (csL) {
-          const fxcL = camFxRef.current;
-          const wxL = (csL.x - vw / 2) / fxcL.z + camRef.current.x;
-          const wyL = (csL.y - vh / 2) / (fxcL.z * fxcL.sq) + camRef.current.y / fxcL.sq;
-          cursorWorldRef.current = groundPointAtWorld(wxL, wyL, cellW, cellH);
+          const hit = screenToWorld(csL.x, csL.y, vw, vh, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
+          cursorWorldRef.current = groundPointAtWorld(hit.x, hit.y, cellW, cellH);
         }
       }
 
@@ -2564,7 +2563,7 @@ export default function Simulator() {
        *  на них рисуются по дальности (кто ниже по полю — тот ближе и рисуется
        *  поверх). Объявлена до ветки «теста»: декор на плато кладёт себя в неё
        *  прямо из грунтового прохода. */
-      const bills: { y: number; fn: () => void }[] = [];
+      const bills: { x: number; y: number; fn: () => void }[] = [];
       let vw = 0;
       let vh = 0;
       if (testMode) {
@@ -2586,17 +2585,15 @@ export default function Simulator() {
         ctx.fillStyle = outside;
         ctx.fillRect(0, 0, vw, vh);
         ctx.save();
-        // камера «теста»: экран → зум → мир. В мирном режиме зум приближает поле,
-        // а наклон (sq) сжимает землю по вертикали — псевдо-глубина 2.5D
+        // камера «теста»: экран → зум → поворот → мир. Земля плоская.
         const fxc = camFxRef.current;
-        ctx.translate(Math.round(vw / 2), Math.round(vh / 2));
+        const yaw = camYawRef.current;
+        ctx.translate(vw / 2, vh / 2);
         ctx.scale(fxc.z, fxc.z);
-        ctx.translate(-Math.round(camRef.current.x), -Math.round(camRef.current.y));
+        if (Math.abs(yaw) > 1e-4) ctx.rotate(yaw);
+        ctx.translate(-camRef.current.x, -camRef.current.y);
         const geo = testFieldGeometry(s.field.cellW, s.field.cellH);
-        // ГРУНТ — наклонённая плоскость: трава, доска с сеткой, кромка и якорные
-        // точки лежат на земле и сжимаются по вертикали вместе с ней
         ctx.save();
-        ctx.scale(1, fxc.sq);
         // Пиксельная отрисовка локации: рисунок кисти — и есть земля (канонические
         // px растягиваются на фактический размер клетки); прозрачные места —
         // пустота за кромкой. Прорисовка без сглаживания — пиксель-арт.
@@ -2849,16 +2846,12 @@ export default function Simulator() {
             ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH - liftK, s.field.cellW, s.field.cellH);
           }
         }
-        // частицы спринта: комочки земли/травы над землёй. Высота z уходит вверх
-        // экрана: грунт наклонён (экранный y = мир*sq), поэтому рисуем y - z/sq —
-        // комочки взлетают вертикально, а не сползают по наклонной плоскости
         const partsD = sprintPartsRef.current;
         if (partsD.length > 0) {
-          const invSq = 1 / Math.max(0.2, fxc.sq);
           for (const p of partsD) {
             ctx.globalAlpha = Math.min(1, (1 - p.life / p.ttl) * 1.6);
             ctx.fillStyle = p.col;
-            ctx.fillRect(p.x - p.size / 2, p.y - p.z * invSq - p.size / 2, p.size, p.size);
+            ctx.fillRect(p.x - p.size / 2, p.y - p.z - p.size / 2, p.size, p.size);
           }
           ctx.globalAlpha = 1;
         }
@@ -2872,19 +2865,6 @@ export default function Simulator() {
         ctx.lineWidth = 2;
         ctx.strokeStyle = 'rgba(122, 162, 92, 0.35)';
         ctx.stroke(geo.path);
-        // атмосферная дымка у дальнего края: лёгкое затемнение верха локации
-        // усиливает ощущение глубины (только в мирном режиме — вместе с перспективой)
-        if (fxc.dp > 0.01) {
-          const bbG = geo.bboxPx;
-          const gFar = ctx.createLinearGradient(0, bbG.y0, 0, bbG.y0 + (bbG.y1 - bbG.y0) * 0.5);
-          gFar.addColorStop(0, `rgba(6, 12, 4, ${(0.2 * fxc.dp).toFixed(3)})`);
-          gFar.addColorStop(1, 'rgba(6, 12, 4, 0)');
-          ctx.save();
-          ctx.clip(geo.path);
-          ctx.fillStyle = gFar;
-          ctx.fillRect(bbG.x0, bbG.y0, bbG.x1 - bbG.x0, bbG.y1 - bbG.y0);
-          ctx.restore();
-        }
         // мирный режим: точек привязки больше нет — ходьба свободная, по пикселям.
         // Оверлей редактора: границы мира, бледная сетка всего мира, подсветка
         // зелёных зон и тянущийся прямоугольник. Клетки: c=0..cols, r=0..rows.
@@ -3092,22 +3072,23 @@ export default function Simulator() {
           }
         }
         ctx.restore();
-        // трава и цветы — билборды: стоят вертикально, основание следует за сжатой
-        // землёй (как объекты в Don't Starve); масштаб растёт с глубиной.
-        // Все уходит в глубинную очередь с ключом «верх клетки +4» (линия, на
-        // которой стоят спрайты): декор на плато рисуется поверх поднятой земли
-        // своей клетки, а декор у стены обрыва — поверх стены.
+        // Трава и цветы — билборды: земля крутится вместе с картой, травинка
+        // остаётся вертикальной. Ключ очереди — верх клетки +4.
         for (const d of geo.decor) {
-          const mD = 1 + (peaceDepthScale(d.y) - 1) * fxc.dp;
-          const liftD = hasElev ? elevLiftAtPoint(d.x, d.y) : 0;
           const cellRowD = Math.min(s.field.rows - 1, Math.max(0, Math.floor(d.y)));
           const yKeyD = cellRowD * s.field.cellH + 4;
+          const xKeyD = d.x * s.field.cellW;
           bills.push({
+            x: xKeyD,
             y: yKeyD,
             fn: () => {
+              const ax = d.x * s.field.cellW;
+              const ay = d.y * s.field.cellH;
               ctx.save();
-              ctx.translate(0, (d.y * s.field.cellH - liftD) * (fxc.sq - 1));
-              drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH, mD);
+              ctx.translate(ax, ay);
+              ctx.rotate(-camYawRef.current);
+              ctx.translate(-ax, -ay);
+              drawTestDecorItem(ctx, d, s.field.cellW, s.field.cellH, 1);
               ctx.restore();
             },
           });
@@ -3237,16 +3218,9 @@ export default function Simulator() {
       const dummies = dummiesOf(s, liveRemotesRef.current).filter(
         (d) => d.col >= 0 && d.col < s.field.cols && d.row >= 0 && d.row < s.field.rows,
       );
-      /** Множитель перспективы для точки опоры (px мира): дальние спрайты мельче.
-       *  В бою и вне «теста» — 1; в мирном «тесте» растёт вместе с camFx.dp. */
-      const depthM = (groundYpx: number): number => {
-        const fx = camFxRef.current;
-        if (!testMode || fx.dp <= 0.002) return 1;
-        return 1 + (peaceDepthScale(groundYpx / s.field.cellH) - 1) * fx.dp;
-      };
       /** Глубинная очередь «теста»: добавление — по дальности; вне «теста» — сразу. */
-      const runOrQueue = (fn: () => void, y: number) => {
-        if (testMode) bills.push({ y, fn });
+      const runOrQueue = (fn: () => void, x: number, y: number) => {
+        if (testMode) bills.push({ x, y, fn });
         else fn();
       };
 
@@ -3276,11 +3250,9 @@ export default function Simulator() {
         const key = cy + th0T;
         let rect: PxRect | null = null;
         if (sprT0) {
-          const groundY = cy + th0T;
-          const th = th0T * depthM(groundY);
+          const th = th0T;
           const tw = th * (sprT0.width / sprT0.height);
-          const py = testMode ? groundY * camFxRef.current.sq - th : cy;
-          rect = { x0: cx, y0: py, x1: cx + tw, y1: py + th };
+          rect = { x0: cx, y0: cy, x1: cx + tw, y1: cy + th };
         }
         return { cx, cy, key, rect };
       };
@@ -3294,7 +3266,6 @@ export default function Simulator() {
       // позади обрыва и скрывается за котами перед ним. Разметка клетки
       // (бой/покрытия/заход) едет вместе с верхом плато.
       if (testMode && elevAny()) {
-        const fxcT = camFxRef.current;
         const gpatT = grassPattern(ctx);
         // верх плато поднимает кусок пиксельной отрисовки клетки (если рисунок есть)
         const pcvT = paintReady() ? paintCanvas() : null;
@@ -3330,10 +3301,10 @@ export default function Simulator() {
           // ВЕРХ: ключ — поднятая верхняя грань клетки; всё, что стоит на этой
           // земле (лапы строго ниже верхней грани), рисуется поверх.
           bills.push({
+            x: (cT + 0.5) * cwT,
             y: rT * chT - liftT,
             fn: () => {
               ctx.save();
-              ctx.scale(1, fxcT.sq);
               if (clipT) ctx.clip(clipT);
               // поднятая земля этой клетки
               drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT);
@@ -3384,10 +3355,10 @@ export default function Simulator() {
           const wallYT = terrainWallBottomY(cT, rT, chT);
           if (wallYT != null) {
             bills.push({
+              x: (cT + 0.5) * cwT,
               y: wallYT - 1,
               fn: () => {
                 ctx.save();
-                ctx.scale(1, fxcT.sq);
                 if (clipT) ctx.clip(clipT);
                 drawTerrainWall(ctx, cwT, chT, cT, rT);
                 ctx.restore();
@@ -3410,13 +3381,9 @@ export default function Simulator() {
         flip = 1,
       ) => {
         const th0 = (s.field.cellH - 10) * (scalePct / 100);
-        const groundY = pos.y + th0;
-        // перспектива: рост меняется, точка опоры на земле — нет
-        const th = th0 * depthM(groundY);
+        const th = th0;
         const twd = th * (sprC.width / sprC.height);
-        // билборд: земля в мирном «тесте» наклонена (сжата по вертикали), спрайт
-        // остаётся вертикальным — низ прижат к сжатой земле, верх не заваливается
-        const py = testMode ? groundY * camFxRef.current.sq - th : pos.y;
+        const py = pos.y;
         // подсветка модели, выбранной в панели (не той, за которую играют):
         // слегка увеличенный светлый силуэт за спрайтом
         const glow = (gx: number, gy: number) => {
@@ -3474,6 +3441,7 @@ export default function Simulator() {
         const jy = 1 - amp * 0.22 * wob;
         ctx.save();
         ctx.translate(baseCx + swayX, baseY2 - lift);
+        if (testMode) ctx.rotate(-camYawRef.current);
         ctx.rotate(amp * 0.08 * Math.cos(now * 0.045) + extraRot);
         ctx.scale(flip * sqX * jx, sqY * jy);
         glow(-twd / 2, -th);
@@ -3493,6 +3461,10 @@ export default function Simulator() {
           drawChar(sprR, tr, RAB_SCALE, RAB_ID, false, whiteSpritesRef.current[RAB_SPRITE.id] ?? null, false);
           const thR = (s.field.cellH - 10) * (RAB_SCALE / 100);
           const nameX = tr.x + (sprR.width / sprR.height) * thR * 0.5;
+          ctx.save();
+          ctx.translate(nameX, tr.y + thR);
+          if (testMode) ctx.rotate(-camYawRef.current);
+          ctx.translate(-nameX, -(tr.y + thR));
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
@@ -3500,9 +3472,10 @@ export default function Simulator() {
           ctx.fillText(RAB_SPRITE.name, nameX + 1, tr.y - 16);
           ctx.fillStyle = '#f4f4f5';
           ctx.fillText(RAB_SPRITE.name, nameX, tr.y - 17);
+          ctx.restore();
         }
       };
-      runOrQueue(drawRab, RAB_POS.row * s.field.cellH + 3);
+      runOrQueue(drawRab, RAB_POS.col * s.field.cellW, RAB_POS.row * s.field.cellH + 3);
 
       // Манекен «ПОЧУХАТЬ»: виден всем, тащится любым игроком, позиция живёт
       // на сервере. Вне боя (удары по нему не проходят), но клетка непроходима.
@@ -3520,6 +3493,10 @@ export default function Simulator() {
           drawChar(sprP, tp, DUMMY_SCALE, DUMMY_ID, false, whiteSpritesRef.current[dummySpriteRef.current] ?? null, false);
           const thP = (s.field.cellH - 10) * (DUMMY_SCALE / 100);
           const nameX = tp.x + (sprP.width / sprP.height) * thP * 0.5;
+          ctx.save();
+          ctx.translate(nameX, tp.y + thP);
+          if (testMode) ctx.rotate(-camYawRef.current);
+          ctx.translate(-nameX, -(tp.y + thP));
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
@@ -3557,13 +3534,13 @@ export default function Simulator() {
             ctx.fillText(label, gx + 4, gy + 6);
             ctx.textBaseline = 'top';
           }
+          ctx.restore();
         }
       };
       runOrQueue(
         drawPoch,
-        dummyPosRef.current
-          ? Math.round(dummyPosRef.current.y) * s.field.cellH + 3
-          : -1,
+        dummyPosRef.current ? Math.round(dummyPosRef.current.x) * s.field.cellW : 0,
+        dummyPosRef.current ? Math.round(dummyPosRef.current.y) * s.field.cellH + 3 : -1,
       );
 
       // манекены-мишени (каждый со своим спрайтом и ростом). Скрытая мишень не рисуется.
@@ -3599,9 +3576,12 @@ export default function Simulator() {
           }
           if (liveRemotesRef.current.length > 0) {
             const th0 = (s.field.cellH - 10) * (d.scale / 100);
-            // имя — над верхом спрайта с учётом перспективы (рост меняет depthM)
-            const ny = testMode ? (tp.y + th0) * camFxRef.current.sq - th0 * depthM(tp.y + th0) : tp.y;
+            const ny = tp.y;
             const nameX = sprT ? tp.x + (sprT.width / sprT.height) * th0 * 0.5 : tp.x + s.field.cellW / 2;
+            ctx.save();
+            ctx.translate(nameX, ny + th0);
+            if (testMode) ctx.rotate(-camYawRef.current);
+            ctx.translate(-nameX, -(ny + th0));
             ctx.font = 'bold 12px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
@@ -3609,8 +3589,9 @@ export default function Simulator() {
             ctx.fillText(d.name, nameX + 1, ny - 16);
             ctx.fillStyle = '#f4f4f5';
             ctx.fillText(d.name, nameX, ny - 17);
+            ctx.restore();
           }
-        }, yD);
+        }, tpD.x, yD);
       }
 
       // свой кот: под управлением — по клетке движка (в мирном «тесте» — по свободной позиции),
@@ -3648,6 +3629,12 @@ export default function Simulator() {
           const w0 = th0 * (spr.width / spr.height);
           const ax0 = cellX + w0 * ARROW_ANCHOR_F;
           const ay0 = cellY + th0 * ARROW_ANCHOR_F + s.arrow.anchorOffsetY;
+          if (testMode) {
+            ctx.save();
+            ctx.translate(cellX + w0 / 2, cellY + th0);
+            ctx.rotate(-camYawRef.current);
+            ctx.translate(-(cellX + w0 / 2), -(cellY + th0));
+          }
           const u = th0 * 0.3;
           ctx.save();
           ctx.globalAlpha = 1;
@@ -3671,6 +3658,7 @@ export default function Simulator() {
           ctx.fill();
           ctx.fillRect(ax0 - u * 0.035, ay0 + u * 0.03, u * 0.07, u * 0.18);
           ctx.restore();
+          if (testMode) ctx.restore();
         }
         // Шкала заряда прыжка: вертикальная полоска справа от своего кота.
         // Заполняется снизу вверх, пока держится Пробел (4 с — полная).
@@ -3684,15 +3672,17 @@ export default function Simulator() {
               ? Math.min(1, heldMs / 4000)
               : jumpFillOf(spB.charge);
             const th0b = (s.field.cellH - 10) * (s.character.spriteScale / 100);
-            const groundYb = cellY + th0b;
-            const thb = th0b * depthM(groundYb);
+            const thb = th0b;
             const twb = thb * (spr.width / spr.height);
-            const pyb = groundYb * camFxRef.current.sq - thb;
+            const pyb = cellY;
             const barH = Math.max(36, thb * 0.55);
             const barW = Math.max(5, thb * 0.045);
             const bx = cellX + twb + Math.max(8, thb * 0.07);
             const by = pyb + (thb - barH) * 0.35;
             ctx.save();
+            ctx.translate(cellX + twb / 2, cellY + thb);
+            ctx.rotate(-camYawRef.current);
+            ctx.translate(-(cellX + twb / 2), -(cellY + thb));
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
             const fh = barH * fillB;
@@ -3717,17 +3707,12 @@ export default function Simulator() {
           ctx.fill();
         }
       };
-      runOrQueue(drawSelf, selfDrawV.key);
+      runOrQueue(drawSelf, cellX, selfDrawV.key);
 
-      /** Прямоугольник билборда персонажа (px мира) — тот же расчёт, что в drawChar:
-       *  рост с перспективой, основание прижато к наклонной земле. */
       const charBillRect = (x: number, y: number, scalePct: number, aspect: number): PxRect => {
-        const th0 = (s.field.cellH - 10) * (scalePct / 100);
-        const groundY = y + th0;
-        const th = th0 * depthM(groundY);
+        const th = (s.field.cellH - 10) * (scalePct / 100);
         const tw = th * aspect;
-        const py = testMode ? groundY * camFxRef.current.sq - th : y;
-        return { x0: x, y0: py, x1: x + tw, y1: py + th };
+        return { x0: x, y0: y, x1: x + tw, y1: y + th };
       };
       /** Прямоугольник модельки того, за кого играют: свой кот или манекен под
        *  управлением. Для проверки «объект закрывает игрока» (см. OCCLUDE_COVER). */
@@ -3747,7 +3732,6 @@ export default function Simulator() {
       // дерево перекрывает кота позади себя и скрывается за котом перед собой.
       // Земля (проталины) — часть грунта, в очередь билбордов не попадает.
       if (testMode) {
-        const fxcO = camFxRef.current;
         const selfRectO = selfBillRect();
         for (const o of testObjects()) {
           if (o.kind === 'dirt' || o.kind === 'entry' || o.kind === 'ground') continue; // земля, покрытие и заходы — часть грунта
@@ -3759,33 +3743,22 @@ export default function Simulator() {
           const objX = bO.x * s.field.cellW;
           const liftO = elevLiftAtPoint(bO.x, bO.y);
           const by = bO.y * s.field.cellH - liftO - 2;
-          // Билборд стоит на наклонной земле: основание сжато тем же множителем,
-          // что и точка опоры котов (groundY * sq в drawChar), сам спрайт вертикальный.
-          // Без этого дерево в мирной перспективе уезжало на клетку ниже своего
-          // места из редактора и не могло укрыть кота, вставшего за ним.
-          const byDrawn = by * fxcO.sq;
-          // Ключ глубины — линия земли своей клетки (+3.5, как у плато): дерево
-          // на плато рисуется поверх своей земли, коты на клетке дерева — поверх
-          // дерева только если стоят ближе (лапы ниже линии земли дерева).
           const byKey = Math.max(by, Math.floor(bO.y) * s.field.cellH + 3.5);
-          const mO = depthM(by);
           const vO = hashStr(o.id) & 7;
-          // Свой кот зашёл за объект и объект закрывает его хотя бы на OCCLUDE_COVER —
-          // рисуем этот объект полупрозрачным (только на этом экране).
           const covered =
             !!selfRectO &&
-            coveredRatio(testObjectDrawRect(o, s.field.cellH, objX, byDrawn, mO, vO), selfRectO) >= OCCLUDE_COVER;
+            coveredRatio(testObjectDrawRect(o, s.field.cellH, objX, by, 1, vO), selfRectO) >= OCCLUDE_COVER;
           bills.push({
+            x: objX,
             y: byKey,
             fn: () => {
-              if (covered) {
-                ctx.save();
-                ctx.globalAlpha = OCCLUDE_ALPHA;
-                drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
-                ctx.restore();
-              } else {
-                drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, byDrawn, mO, vO);
-              }
+              ctx.save();
+              ctx.translate(objX, by);
+              ctx.rotate(-camYawRef.current);
+              ctx.translate(-objX, -by);
+              if (covered) ctx.globalAlpha = OCCLUDE_ALPHA;
+              drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, by, 1, vO);
+              ctx.restore();
             },
           });
         }
@@ -3807,15 +3780,17 @@ export default function Simulator() {
             pos: 'center',
           };
           const gX = pend.x * s.field.cellW;
-          const gYraw = pend.y * s.field.cellH - elevLiftAtPoint(pend.x, pend.y) - 2;
-          const gY = gYraw * fxcO.sq;
-          const gM = depthM(gYraw);
+          const gY = pend.y * s.field.cellH - elevLiftAtPoint(pend.x, pend.y) - 2;
           bills.push({
-            y: Math.max(gYraw, Math.floor(pend.y) * s.field.cellH + 3.5),
+            x: gX,
+            y: Math.max(gY, Math.floor(pend.y) * s.field.cellH + 3.5),
             fn: () => {
               ctx.save();
+              ctx.translate(gX, gY);
+              ctx.rotate(-camYawRef.current);
+              ctx.translate(-gX, -gY);
               ctx.globalAlpha = 0.62;
-              drawTestObject(ctx, ghost, s.field.cellW, s.field.cellH, gX, gY, gM, 0);
+              drawTestObject(ctx, ghost, s.field.cellW, s.field.cellH, gX, gY, 1, 0);
               ctx.restore();
               // контур тела + метка точки опоры: куда «встанет» препятствие
               const bG = obstacleBodyPx(ghost);
@@ -3837,13 +3812,14 @@ export default function Simulator() {
             },
           });
         }
-        bills.sort((a, b) => a.y - b.y);
+        bills.sort((a, b) =>
+          viewDepth(a.x, a.y, camRef.current.x, camRef.current.y, camYawRef.current) -
+          viewDepth(b.x, b.y, camRef.current.x, camRef.current.y, camYawRef.current),
+        );
         for (const b of bills) b.fn();
         // метки уровней рельефа в редакторе: рисуются ПОСЛЕ глубинной очереди —
         // плато своей же клеткой накрыло бы их, а уровень должен читаться всегда
         if (editorOn && ed && Object.keys(ed.elev).length > 0) {
-          ctx.save();
-          ctx.scale(1, camFxRef.current.sq);
           ctx.font = 'bold 11px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -3854,6 +3830,10 @@ export default function Simulator() {
             if (cB < 0 || rB < 0 || cB >= ed.cols || rB >= ed.rows) continue;
             const xB = (cB + 0.5) * s.field.cellW;
             const yB = (rB + 0.5) * s.field.cellH - lvB * TERRAIN_LIFT_PX;
+            ctx.save();
+            ctx.translate(xB, yB);
+            ctx.rotate(-camYawRef.current);
+            ctx.translate(-xB, -yB);
             ctx.fillStyle = 'rgba(10, 14, 8, 0.72)';
             ctx.beginPath();
             ctx.roundRect(xB - 23, yB - 10, 46, 20, 10);
@@ -3863,8 +3843,8 @@ export default function Simulator() {
             ctx.stroke();
             ctx.fillStyle = '#eafbe7';
             ctx.fillText(`▲ ${lvB}`, xB, yB + 0.5);
+            ctx.restore();
           }
-          ctx.restore();
         }
       }
 
@@ -3876,7 +3856,6 @@ export default function Simulator() {
         const marks = (currentTestMap().objects ?? []).filter((o) => o.kind === 'entry' && o.dir);
         if (marks.length > 0) {
           ctx.save();
-          ctx.scale(1, camFxRef.current.sq);
           ctx.clip(testFieldGeometry(s.field.cellW, s.field.cellH).path);
           for (const o of marks) {
             if (!o.dir) continue;
@@ -4066,7 +4045,7 @@ export default function Simulator() {
           cam: { x: Math.round(camRef.current.x), y: Math.round(camRef.current.y), init: camRef.current.init },
           camFx: {
             z: Math.round(camFxRef.current.z * 100) / 100,
-            sq: Math.round(camFxRef.current.sq * 100) / 100,
+            yaw: Math.round(camYawRef.current * 100) / 100,
           },
           hopping: false,
           route: st.ptarget ? 1 : 0,
@@ -4203,6 +4182,7 @@ export default function Simulator() {
     startStepRef,
     leapRequestRef,
     editorSizeStepRef,
+    camYawDirRef,
     closeEditor,
     editorEsc: () => {
       const d = editorRef.current;
@@ -4226,6 +4206,7 @@ export default function Simulator() {
     canvasRef,
     camRef,
     camFxRef,
+    camYawRef,
     cursorScreenRef,
     cursorWorldRef,
     dirtPaintingRef,

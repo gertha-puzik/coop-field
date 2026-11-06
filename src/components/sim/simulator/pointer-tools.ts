@@ -18,12 +18,13 @@ import { createCoopClient } from '@/lib/net/coop';
 import { dummiesOf, dummyIsDrawn, othersOf, type CharRef } from '@/lib/sim/targeting';
 import { ensureDraftPaint, pushPaintUndo, stampPaintBrush } from '@/lib/sim/paint';
 import { groundPointAtWorld, setPaintOverride, testBattleRouteBlocked, testEntryAt, testEntryStrict, testPeaceBattleBlocked, testPointInCellsZone, testPointInIsland, testWalkableCell } from '@/lib/sim/test-field';
-import { peaceHalfBox, spriteBoxOf } from '@/lib/sim/geometry';
+import { peaceHalfBox, screenToWorld, spriteBoxOf } from '@/lib/sim/geometry';
 
 export interface PointerToolsDeps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   camRef: RefObject<{ x: number; y: number; init: boolean }>;
-  camFxRef: RefObject<{ z: number; sq: number; dp: number }>;
+  camFxRef: RefObject<{ z: number }>;
+  camYawRef: RefObject<number>;
   cursorScreenRef: RefObject<{ x: number; y: number } | null>;
   cursorWorldRef: RefObject<{ x: number; y: number } | null>;
   dirtPaintingRef: RefObject<boolean>;
@@ -83,6 +84,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     canvasRef,
     camRef,
     camFxRef,
+    camYawRef,
     cursorScreenRef,
     cursorWorldRef,
     dirtPaintingRef,
@@ -187,10 +189,18 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         // иначе в прыжке/приседе камера уезжает под неподвижным курсором,
         // а прицел, посчитанный только по событию, отлипает от видимой точки.
         cursorScreenRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-        // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
-        const fxc = camFxRef.current;
-        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
+        const wpt = screenToWorld(
+          ev.clientX - rect.left,
+          ev.clientY - rect.top,
+          cvp.clientWidth,
+          cvp.clientHeight,
+          camRef.current.x,
+          camRef.current.y,
+          camFxRef.current.z,
+          camYawRef.current,
+        );
+        mx = wpt.x;
+        my = wpt.y;
       }
       // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку);
       // «Земля»/«Покрытие» при зажатой кнопке красят протяжкой; «призрак»
@@ -307,9 +317,18 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       let my = 0;
       if (cvp) {
         const rect = cvp.getBoundingClientRect();
-        const fxc = camFxRef.current;
-        mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
+        const wpt = screenToWorld(
+          ev.clientX - rect.left,
+          ev.clientY - rect.top,
+          cvp.clientWidth,
+          cvp.clientHeight,
+          camRef.current.x,
+          camRef.current.y,
+          camFxRef.current.z,
+          camYawRef.current,
+        );
+        mx = wpt.x;
+        my = wpt.y;
       }
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
@@ -559,10 +578,18 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const cvp = canvasRef.current;
       if (!cvp) return;
       const rect = cvp.getBoundingClientRect();
-      // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
-      const fxc = camFxRef.current;
-      mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-      my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
+      const wpt = screenToWorld(
+        ev.clientX - rect.left,
+        ev.clientY - rect.top,
+        cvp.clientWidth,
+        cvp.clientHeight,
+        camRef.current.x,
+        camRef.current.y,
+        camFxRef.current.z,
+        camYawRef.current,
+      );
+      mx = wpt.x;
+      my = wpt.y;
       // Поправка на подъём земли: клик по видимой поверхности возвышенности
       // указывает в её клетку, а не в землю перед обрывом — с ближнего ракурса
       // на возвышенность теперь можно и кликнуть, и забраться.

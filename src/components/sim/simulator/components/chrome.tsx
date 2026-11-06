@@ -183,19 +183,6 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
         <>
           <Button
             size="sm"
-            variant={settings.character.peaceView ? 'default' : 'outline'}
-            className={
-              settings.character.peaceView
-                ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
-                : 'btn-neutral h-8 text-xs'
-            }
-            title="Масштаб камеры, наклон земли и глубина в мирном режиме. Выключите — вид сверху, без перспективы; колесо мыши продолжает работать в любом случае."
-            onClick={() => patchCharacter({ peaceView: !settings.character.peaceView })}
-          >
-            Перспектива: {settings.character.peaceView ? 'ВКЛ' : 'ВЫКЛ'}
-          </Button>
-          <Button
-            size="sm"
             variant={weatherFxOn ? 'default' : 'outline'}
             className={
               weatherFxOn
