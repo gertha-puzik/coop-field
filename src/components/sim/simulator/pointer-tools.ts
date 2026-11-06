@@ -190,7 +190,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
         const fxc = camFxRef.current;
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
+        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
       }
       // Редактор: курсор ведёт тянущийся прямоугольник (и подсвечивает клетку);
       // «Земля»/«Покрытие» при зажатой кнопке красят протяжкой; «призрак»
@@ -309,7 +309,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         const rect = cvp.getBoundingClientRect();
         const fxc = camFxRef.current;
         mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
+        my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
       }
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
@@ -562,7 +562,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // обратная проекция камеры: зум сужает окно, наклон сжимает вертикаль земли
       const fxc = camFxRef.current;
       mx = (ev.clientX - rect.left - cvp.clientWidth / 2) / fxc.z + camRef.current.x;
-      my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y;
+      my = (ev.clientY - rect.top - cvp.clientHeight / 2) / (fxc.z * fxc.sq) + camRef.current.y / fxc.sq;
       // Поправка на подъём земли: клик по видимой поверхности возвышенности
       // указывает в её клетку, а не в землю перед обрывом — с ближнего ракурса
       // на возвышенность теперь можно и кликнуть, и забраться.

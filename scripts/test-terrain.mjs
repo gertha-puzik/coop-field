@@ -106,7 +106,7 @@ const map = {
   spawns: [{ c: 1, r: 1 }],
   // плато на боевых клетках (ключи 0-based; строка 0-based 1 = 1-based ряд 2):
   // (9,2)=2, (10,2)=3, (11,2)=1 в 1-based — с ровного (9,2)... см. шаги ниже
-  elev: { "8,1": 2, "9,1": 3, "10,1": 1 },
+  elev: { "8,1": 2, "9,1": 3, "10,1": 1, "10,2": 8 },
 };
 
 const admin = await client(`Админ-${rnd}`);
@@ -142,10 +142,16 @@ const refuse1 = p1.inbox.find((m) => m[0] === "refuse");
 console.log("cliff refuse:", refuse1 && refuse1[1].code);
 if (!refuse1 || refuse1[1].code !== "cliff") throw new Error("обрыв не отвергнут (нет refuse cliff)");
 
-// Прыжок туда же — перепад 2 перепрыгивается: шагнуть нельзя, прыжком можно.
+// Прыжок туда же — перепад 2. Тап (нет charge) не берёт, половина шкалы берёт.
 clear(p1);
-p1.send(JSON.stringify(["jump", { x: 9, y: 2 }]));
+p1.send(JSON.stringify(["jump", { x: 9, y: 2, charge: 0.2 }]));
 await new Promise((r) => setTimeout(r, 250));
+const weakJ = p1.inbox.find((m) => m[0] === "update cat");
+console.log("half-short jump rejected:", !weakJ);
+if (weakJ) throw new Error("прыжок на перепад 2 принят без половины заряда");
+clear(p1);
+p1.send(JSON.stringify(["jump", { x: 9, y: 2, charge: 0.5 }]));
+await new Promise((r) => setTimeout(r, 500));
 const catJ = p1.inbox.find((m) => m[0] === "update cat");
 console.log("jump across cliff:", catJ && `${catJ[1].x},${catJ[1].y}`);
 if (!catJ || catJ[1].x !== 9 || catJ[1].y !== 2) throw new Error("прыжок через обрыв не сработал");
@@ -180,8 +186,21 @@ const farJ = p1.inbox.find((m) => m[0] === "update cat");
 console.log("too-far jump rejected:", !farJ);
 if (farJ) throw new Error("дальний прыжок принят");
 
-// Прыжок с перепадом 4 невозможен в принципе (уровни 0..3), а на клетку вне
-// мира — тем более: сервер молча отвергает.
+// Прыжок вверх на 4+ невозможен даже с полным зарядом: (11,2)=1 → (11,3)=8.
+// Сначала спуск 3→1 полным зарядом (перепад 2 вниз берёт и половина, здесь полный).
+clear(p1);
+p1.send(JSON.stringify(["jump", { x: 11, y: 2, charge: 1 }]));
+await new Promise((r) => setTimeout(r, 500));
+const downJ = p1.inbox.find((m) => m[0] === "update cat" && m[1].x === 11 && m[1].y === 2);
+console.log("jump down 3→1:", !!downJ);
+if (!downJ) throw new Error("спуск прыжком с полным зарядом не прошёл");
+clear(p1);
+p1.send(JSON.stringify(["jump", { x: 11, y: 3, charge: 1 }]));
+await new Promise((r) => setTimeout(r, 500));
+const highJ = p1.inbox.find((m) => m[0] === "update cat" && m[1].y === 3);
+console.log("jump up 4+ rejected:", !highJ);
+if (highJ) throw new Error("прыжок вверх на 4+ принят");
+// На клетку вне мира сервер молча отвергает.
 clear(p1);
 p1.send(JSON.stringify(["jump", { x: 20, y: 2 }]));
 await new Promise((r) => setTimeout(r, 200));

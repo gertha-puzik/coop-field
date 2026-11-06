@@ -223,10 +223,18 @@ export const GROUND_COVER_IDS = Object.freeze([
   "floor-3",
 ]);
 
-/** Предел высоты рельефа (уровней над базовой землёй): 0..3, перепад ≤3
- *  проходится только прыжком. Клиентское зеркало — TERRAIN_MAX_LEVEL в
- *  src/lib/sim/test-map.ts (заряд прыжка масштабирует перепад от него). */
-export const TERRAIN_MAX_LEVEL = 3;
+/** Предел высоты рельефа (уровней над базовой землёй): 0..10.
+ *  Клиентское зеркало — TERRAIN_MAX_LEVEL и elevStepOk/elevJumpOk в
+ *  src/lib/sim/test-map.ts. Шаг берёт перепад ≤ ELEV_STEP_MAX; прыжок —
+ *  по доле заряда (JUMP_CHARGE_*), вверх не выше JUMP_MAX_UP. */
+export const TERRAIN_MAX_LEVEL = 10;
+/** Перепад, который берётся шагом без прыжка (вверх и вниз). */
+export const ELEV_STEP_MAX = 1;
+/** Доля шкалы прыжка: половина берёт перепад 2, полная — перепад 3 и спуск 4+. */
+export const JUMP_CHARGE_HALF = 0.5;
+export const JUMP_CHARGE_FULL = 1;
+/** Выше этого вверх не запрыгнуть. Вниз — до JUMP_MAX_DROP полным зарядом. */
+export const JUMP_MAX_UP = 3;
 
 /**
  * Пределы конфига локации (sanitizeTestMap, v1|2). Клиентское зеркало —
@@ -268,5 +276,5 @@ export const JUMP_COOLDOWN_MS = 450;
 export const JUMP_MAX_CELLS = 3;
 /** Прыжок — строго вдоль одного из 8 направлений (0°/45°/…/315°). */
 export const JUMP_DIRECTIONS = 8;
-/** Максимальный перепад высот прыжка: теоретический максимум равен TERRAIN_MAX_LEVEL. */
-export const JUMP_MAX_DROP = 3;
+/** Максимальный перепад вниз. Равен TERRAIN_MAX_LEVEL; вверх режет JUMP_MAX_UP. */
+export const JUMP_MAX_DROP = TERRAIN_MAX_LEVEL;

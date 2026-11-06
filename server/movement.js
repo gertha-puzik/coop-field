@@ -3,19 +3,21 @@
  * 80 ms × 3 queue, refuse codes (edge/cell_busy/cliff) for the client
  * predictor, and the «test»-room free movement: freemove (peace walk, point-in
  * -polygon clamp, ≤1/50 ms), cellsync (battle entry, ≤6-cell ring search)
- * and the 8-direction 1–3-cell jump over cliffs (≥450 ms cooldown, drop ≤3).
+ * and the 8-direction 1–3-cell jump over cliffs (≥450 ms cooldown).
+ * Step allows elevation delta ≤1; jump charge (payload.charge, 0..1)
+ * clears +2 at half, +3 and drops of 4+ at full, and never climbs 4+.
  * Every step still gets exactly one response — echo or refuse (see AGENTS.md
  * invariants). Cooldowns and geometry constants come from ./protocol.js (W3).
  */
 import {
-  EV, MOVE_COOLDOWN_MS, MOVE_QUEUE_MAX, JUMP_COOLDOWN_MS, JUMP_MAX_CELLS, JUMP_MAX_DROP,
+  EV, MOVE_COOLDOWN_MS, MOVE_QUEUE_MAX, JUMP_COOLDOWN_MS, JUMP_MAX_CELLS,
 } from "./protocol.js";
 import { WIDTH, HEIGHT } from "./config.js";
 import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
 import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, testElev, nearestTestCell, pointInPolygon } from "./world.js";
+import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -73,7 +75,7 @@ function applyMove(ws, cat, payload) {
     send(ws, EV.REFUSE, { code: "cell_busy", text: "Клетка занята." });
     return;
   }
-  // Обрыв: в «тесте» ЛЮБОЙ перепад высот шагом не проходится — нужен прыжок.
+  // Обрыв: в «тесте» перепад больше одного уровня шагом не проходится — нужен прыжок.
   if (room.fmt === 'test' && cliffBetween(cat.x, cat.y, nx, ny)) {
     send(ws, EV.INFO, "Обрыв — удержите Пробел и допрыгните.");
     send(ws, EV.REFUSE, { code: "cliff", text: "Обрыв — удержите Пробел и допрыгните." });
@@ -156,7 +158,7 @@ function freeMove(ws, payload = {}) {
   // угол может чуть выходить за полигон при полностью легальной ходьбе — поэтому
   // достаточно, чтобы внутри была хотя бы одна из двух точек (угол и середина).
   if (!pointInPolygon(TEST_ISLAND, nx, ny) && !pointInPolygon(TEST_ISLAND, nx + 0.45, ny + 0.45)) return;
-  // Обрыв в свободной ходьбе: ЛЮБОЙ перепад уровней рельефа пешком не
+  // Обрыв в свободной ходьбе: перепад больше одного уровня пешком не
   // проходится (зеркало клиентского elevWalkBlocked). Пакет прыжка (jp=1 во
   // время дуги) открывает окно — дуга несёт кота через обрыв, и финальные
   // пакеты посадки идут сразу за ним: они проходят, пока окно не закрылось.
@@ -227,13 +229,21 @@ function cellsync(ws, payload = {}) {
 
 
 /**
- * Прыжок через обрыв (боевой режим «теста»). Клиент → ["jump", { x, y }]
+ * Прыжок через обрыв (боевой режим «теста»). Клиент → ["jump", { x, y, charge? }]
  * (1-based клетка назначения — по прямой вдоль 8 направлений на 1..3 клетки).
- * Сервер проверяет: дальность и прямизну, проходимость, занятость, перепад
- * (≤ JUMP_MAX_DROP) и кулдаун. Промежуточные клетки могут быть непроходимы
- * или выше — в этом смысл прыжка. Успех: cat.lastJump/lastMove обновляются,
- * publicCat уходит ВСЕМ (и самому прыгнувшему — его onCat подтвердит предикт).
+ * charge — доля шкалы прыжка 0..1 (удержание Пробела / 4 с). Сервер проверяет:
+ * дальность и прямизну, проходимость, занятость, перепад (elevJumpOk) и кулдаун.
+ * Промежуточные клетки могут быть непроходимы или выше — в этом смысл прыжка.
+ * Успех: cat.lastJump/lastMove обновляются, publicCat уходит ВСЕМ
+ * (и самому прыгнувшему — его onCat подтвердит предикт).
  */
+/** Доля шкалы прыжка 0..1 из кадра jump. Нет числа — тап (0). */
+function jumpFill(payload) {
+  const n = Number(payload && payload.charge);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(1, Math.max(0, n));
+}
+
 function jump(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
@@ -262,7 +272,9 @@ function jump(ws, payload = {}) {
   }
   if (!testWalkable(x, y) && !testEntryCell(x - 1, y - 1)) return;
   if (occupied(room, x, y, cat.id)) return;
-  if (Math.abs(testElev(x, y) - testElev(cat.x, cat.y)) > JUMP_MAX_DROP) return;
+  // Клетка захода перепадом не считается — как cliffBetween и клиентский прыжок.
+  const entryHop = testEntryCell(cat.x - 1, cat.y - 1) || testEntryCell(x - 1, y - 1);
+  if (!entryHop && !elevJumpOk(testElev(cat.x, cat.y), testElev(x, y), jumpFill(payload))) return;
   cat.lastJump = now;
   cat.lastMove = now; // шаг сразу после приземления не должен уходить в очередь
   cat.x = x;

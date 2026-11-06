@@ -11,7 +11,14 @@
 import zlib from "node:zlib";
 import { TEST_ROOM, OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS } from "./config.js";
 import { testMap, TEST_ISLAND, TEST_CELLS, TEST_WIDTH, TEST_HEIGHT, TEST_PAINT } from "./testmap.js";
-import { TERRAIN_MAX_LEVEL } from "./protocol.js";
+import {
+  ELEV_STEP_MAX,
+  JUMP_CHARGE_FULL,
+  JUMP_CHARGE_HALF,
+  JUMP_MAX_DROP,
+  JUMP_MAX_UP,
+  TERRAIN_MAX_LEVEL,
+} from "./protocol.js";
 /* ---------- пиксельная отрисовка: PNG-декод и маска земли ---------- */
 
 /** Канонический размер клетки пиксельной отрисовки (зеркало PAINT_CELL_W/H
@@ -531,13 +538,28 @@ function testElev(x, y) {
   return Number.isFinite(n) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, n)) : 0;
 }
 
-/** Любой перепад высот между соседними клетками — стенка: шагом не проходится,
- *  только допрыгнуть (событие jump). Зеркало клиентского elevWalkBlocked.
+/** Перепад больше одного уровня — стенка: шагом не проходится, только
+ *  прыжком (elevJumpOk). Зеркало клиентского elevWalkBlocked.
  *  Переходы через клетку захода перепадом не считаются: заход — переход между
  *  мирами. */
 function cliffBetween(x0, y0, x1, y1) {
   if (testEntryCell(x0 - 1, y0 - 1) || testEntryCell(x1 - 1, y1 - 1)) return false;
-  return testElev(x1, y1) !== testElev(x0, y0);
+  return Math.abs(testElev(x1, y1) - testElev(x0, y0)) > ELEV_STEP_MAX;
+}
+
+/** Прыжок между уровнями при доле заряда fill (0..1). Зеркало elevJumpOk
+ *  в src/lib/sim/test-map.ts: |Δ|≤1 свободно, |Δ|=2 — половина шкалы,
+ *  |Δ|=3 — полная, вверх на 4+ нельзя, вниз на 4+ — полная шкала. */
+function elevJumpOk(from, to, fill) {
+  const d = to - from;
+  const ad = Math.abs(d);
+  if (ad <= ELEV_STEP_MAX) return true;
+  const f = Number.isFinite(fill) ? Math.min(1, Math.max(0, fill)) : 0;
+  if (d > JUMP_MAX_UP) return false;
+  if (ad > JUMP_MAX_DROP) return false;
+  if (ad === 2) return f >= JUMP_CHARGE_HALF;
+  if (ad === 3 || d < 0) return f >= JUMP_CHARGE_FULL;
+  return false;
 }
 
 /** Ближайшая проходимая клетка (1-based) к точке в клеточных долях мира. */
@@ -593,7 +615,7 @@ export {
   decodePaintPng, paintPxOn, paintCellCoverage, tracePaintLoops, traceMaskOutline,
   buildIsland, testCellInIsland, buildCells, obstacleBodiesOf, obstacleBlockedCells,
   pointInPolygon, objectBase, objectSprite, objectScale, objectRotDeg, obstacleBodyPx,
-  testCellWalkable, testWalkable, testElev, cliffBetween, nearestTestCell, testEntryCell,
+  testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, nearestTestCell, testEntryCell,
   paintPxMask, paintCellCoverageMask,
   hashStr, mulberry32, chaikin,
 };
