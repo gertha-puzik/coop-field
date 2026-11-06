@@ -283,8 +283,8 @@ export function EditorOverlay(props: EditorOverlayProps) {
                           </button>
                           <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
                             Кисть рисует саму локацию в пикселях: закрашенное — земля, по ней ходят в мирном режиме;
-                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, колесо — размер круглой кисти.
-                            Пресеты «150×100» и «75×50» — готовые области с привязкой к сетке: боевая клетка ставится
+                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, Alt+колесо или [ ] — размер
+                            круглой кисти. Пресеты «150×100» и «75×50» — готовые области с привязкой к сетке: боевая клетка ставится
                             только на место, закрашенное областью «150×100» целиком. Росчерк можно отменить.
                           </p>
                         </>
@@ -355,7 +355,9 @@ export function EditorOverlay(props: EditorOverlayProps) {
                               </button>
                             ))}
                           </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]">Размер и поворот</div>
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]" title="Размер также меняют Alt+колесо и клавиши [ ]">
+                            Размер и поворот
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <span className="w-10 text-[var(--sim-text-faint)]">Разм.</span>
                             <button
