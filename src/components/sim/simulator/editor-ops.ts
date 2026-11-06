@@ -11,11 +11,15 @@ import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Engine } from './sim-model';
 import type { SimSettings } from '@/lib/sim/settings';
 import { EDITOR_PASS_KEY, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
-import { copyPaintCanvas, encodeDraftPaint } from '@/lib/sim/paint';
+import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync } from '@/lib/sim/paint';
 import { createCoopClient } from '@/lib/net/coop';
 import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap, testObstacleBodies, testObjectAt } from '@/lib/sim/test-field';
-import { newObjectId, newZoneId, objectBase, objectMir, objectRotDeg, objectScale, objectSprite, mapHasPaint, paintFormatError, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, testMapConnectivityError, type GroundCover, type TestMap, type TestMapEntryDir, type TestMapObject, type TestMapZone, type TestMapZoneKind } from '@/lib/sim/test-map';
+import { newObjectId, newZoneId, objectBase, objectMir, objectRotDeg, objectScale, objectSprite, mapHasPaint, paintFormatError, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, testMapConnectivityError, type GroundCover, type TestMap, type TestMapEntryDir, type TestMapObject, type TestMapSpawn, type TestMapZone, type TestMapZoneKind } from '@/lib/sim/test-map';
 import { rr } from '@/lib/sim/geometry';
+import { buildEditorSelect, type EditorSelState } from './editor-select';
+import { buildEditorCells } from './editor-cells';
+
+export type { EditorSelState } from './editor-select';
 
 export interface EditorOpsParams {
   editorRef: RefObject<EditorDraft | null>;
@@ -37,8 +41,20 @@ export interface EditorOpsParams {
   setEditorMsg: Dispatch<SetStateAction<string | null>>;
   setEditorPass: Dispatch<SetStateAction<string>>;
   setEditorPlace: Dispatch<SetStateAction<EditorPlace | null>>;
+  /** Прогресс сохранения локации (фазы: кодирование рисунка → отправка → подтверждение сервера). */
+  setEditorSave: Dispatch<SetStateAction<EditorSaveState | null>>;
+  /** Синхронизация размеров поля настроек с черновиком: рисунок локации тянется
+   *  на px мира именно по settings.field — рассинхрон после смены размера мира
+   *  растягивал/сдвигал текстуры (баг «съехавших текстур» при уменьшении). */
+  patchField: (p: { cols: number; rows: number }) => void;
+  /** Состояние инструмента «Перенести»: вырезанный кусок (холст + уехавшие объекты). */
+  editorSelRef: RefObject<EditorSelState | null>;
   editorPass: string;
 }
+
+/** Прогресс сохранения локации: фаза, размер рисунка, время старта (для секунд в UI). */
+export type EditorSaveState = { phase: 'encode' | 'send' | 'wait'; bytes: number; t0: number };
+
 
 export function buildEditorOps(params: EditorOpsParams) {
   const {
@@ -61,6 +77,9 @@ export function buildEditorOps(params: EditorOpsParams) {
     setEditorMsg,
     setEditorPass,
     setEditorPlace,
+    setEditorSave,
+    patchField,
+    editorSelRef,
     editorPass,
   } = params;
   const syncEditorView = () => {
@@ -96,12 +115,42 @@ export function buildEditorOps(params: EditorOpsParams) {
     if (d.pcv) setPaintOverride(d.pcv, true);
   };
 
-  const pushEditorUndo = () => {
+  const pushEditorUndo = (withPaint = false) => {
     const d = editorRef.current;
     if (!d) return;
-    d.undo.push({ zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), elev: { ...d.elev }, cols: d.cols, rows: d.rows });
+    const entry: EditorDraft['undo'][number] = { zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), elev: { ...d.elev }, cols: d.cols, rows: d.rows };
+    // Инструмент «Перенести» режет и пиксельную отрисовку — её откат нужен тем же
+    // шагом отмены (снимок холста кладётся в ту же запись, память — как у мазков).
+    if (withPaint && d.pcv) {
+      try {
+        entry.paint = d.pcv.getContext('2d')?.getImageData(0, 0, d.pcv.width, d.pcv.height) ?? undefined;
+      } catch {
+        /* холст мог быть испорчен — отмена коснётся только данных */
+      }
+    }
+    d.undo.push(entry);
     if (d.undo.length > 40) d.undo.shift();
   };
+
+  const { pickEditorSelection, dragEditorSelection, dropEditorSelection } = buildEditorSelect({
+    editorRef,
+    editorSelRef,
+    setPaintOverride,
+    setEditorMsg,
+    pushEditorUndo,
+    applyDraftPreview,
+    syncEditorView,
+  });
+
+  const { paintEditorCellObject, placeBattleCell, addEditorSpawn, toggleEditorSpawn, placeEditorEntry } = buildEditorCells({
+    editorRef,
+    editorCoverRef,
+    editorEntryDirRef,
+    setEditorMsg,
+    pushEditorUndo,
+    applyDraftPreview,
+    syncEditorView,
+  });
 
   const openEditor = () => {
     const m = savedMapRef.current;
@@ -121,6 +170,8 @@ export function buildEditorOps(params: EditorOpsParams) {
       rows: m.rows,
       tool: 'cells',
       drag: null,
+      selRect: null,
+      selFloat: null,
       undo: [],
       sel: [],
       dirty: false,
@@ -170,7 +221,15 @@ export function buildEditorOps(params: EditorOpsParams) {
   const setEditorTool = (tool: EditorTool) => {
     const d = editorRef.current;
     if (!d) return;
+    // Уход с инструмента «Перенести» с «плавающим» куском — ставим его на текущее
+    // место: вырезанным локация остаться не должна.
+    if (d.tool === 'select' && tool !== 'select' && d.selFloat) dropEditorSelection();
     d.tool = tool;
+    if (tool !== 'select') {
+      d.selRect = null;
+      d.selFloat = null;
+      editorSelRef.current = null;
+    }
     // Камень/дерево: сразу создаём «призрак» постановки — следует за курсором,
     // размер/поворот подгоняются до клика-фиксации; остальные инструменты его снимают.
     if (tool === 'tree' || tool === 'stone') {
@@ -332,6 +391,9 @@ export function buildEditorOps(params: EditorOpsParams) {
       }
       return o.c < nc && o.r < nr;
     });
+    // Клетки спавна за новым краем тоже исчезают — иначе сервер откажет всей
+    // правке («спавн №N: вне границ мира»).
+    d.spawns = d.spawns.filter((s) => s.c < nc && s.r < nr);
     // Клетки высот за новым краем мира исчезают вместе с краем.
     const keptElev: Record<string, number> = {};
     for (const [key, lv] of Object.entries(d.elev)) {
@@ -339,6 +401,12 @@ export function buildEditorOps(params: EditorOpsParams) {
       if (c < nc && r < nr) keptElev[key] = lv;
     }
     d.elev = keptElev;
+    // Выделение «Перенести» живёт в старых координатах — плавающий кусок
+    // ставится на текущее место, само выделение снимается.
+    if (d.selFloat) dropEditorSelection();
+    d.selRect = null;
+    d.selFloat = null;
+    editorSelRef.current = null;
     // Холст кисти живёт в канонических пикселях мира: при смене размера — новый
     // холст нужного размера, старый рисунок переносится 1:1 (вылезшее — срезано,
     // добавленное — пустота за кромкой).
@@ -357,11 +425,13 @@ export function buildEditorOps(params: EditorOpsParams) {
       setPaintOverride(next, true);
     }
     d.dirty = true;
+    // Размеры поля настроек едут вместе с черновиком: отрисовка тянет рисунок
+    // локации на px мира именно по ним (см. patchField в параметрах).
+    patchField({ cols: nc, rows: nr });
     applyDraftPreview();
     syncEditorView();
   };
 
-  /** Вычитание прямоугольника из зоны: остаток распадается максимум на 4 полосы. */
   const subtractFromZone = (
     z: TestMapZone,
     cut: { c0: number; r0: number; c1: number; r1: number },
@@ -379,7 +449,8 @@ export function buildEditorOps(params: EditorOpsParams) {
     return pieces;
   };
 
-  /** Завершение рисунка: прямоугольник становится зоной (или стирает зоны ластиком). */
+  /** Завершение рисунка: прямоугольник становится зоной (или стирает зоны ластиком;
+   *  инструмент «Перенести» запоминает область выделением). */
   const commitEditorDrag = () => {
     const d = editorRef.current;
     if (!d || !d.drag) return;
@@ -390,6 +461,11 @@ export function buildEditorOps(params: EditorOpsParams) {
     const r0 = Math.min(drag.r0, drag.r1);
     const r1 = Math.max(drag.r0, drag.r1);
     if (c1 < c0 || r1 < r0) {
+      syncEditorView();
+      return;
+    }
+    if (d.tool === 'select' && !drag.erase) {
+      d.selRect = { c0, r0, c1, r1 };
       syncEditorView();
       return;
     }
@@ -485,78 +561,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     syncEditorView();
   };
 
-  /** Протяжка «Земли»/«Покрытия»: насыпает клетки без снятия и без записи отмены
-   *  на каждую клетку (отмена пишется один раз на росчерк — см. pointerdown).
-   *  Земля и покрытие не совмещаются на одной клетке: покрытие заменяет проталину. */
-  const paintEditorCellObject = (kind: 'dirt' | 'ground', c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (d.objects.some((o) => (o.kind === 'dirt' || o.kind === 'ground') && o.c === c && o.r === r)) return false;
-    if (d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return false;
-    }
-    d.objects.push(
-      kind === 'ground'
-        ? { id: newObjectId(), kind: 'ground', c, r, cv: editorCoverRef.current, pos: 'center' }
-        : { id: newObjectId(), kind: 'dirt', c, r, pos: 'center' },
-    );
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Клетка спавна разрешена только на траве (зелёной зоне) и не на боевых
-   *  клетках: новичок появляется в мирном режиме (это же проверяет сервер). */
-  /** Поставить/снять одиночную боевую клетку (kind «battle»). Боевая клетка —
-   *  область 150×100: ставится только на место, покрашенное кистью целиком;
-   *  если место не соответствует размерам — клетка не ставится. Повторный клик
-   *  по уже стоящей клетке снимает её. */
-  const placeBattleCell = (c: number, r: number) => {
-    const d = editorRef.current;
-    if (!d) return;
-    const existing = d.objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
-    if (!existing && !d.pcv) {
-      setEditorMsg(
-        'Боевая клетка ставится на закрашенное кистью место: проведите кистью (пресет «Клетка 150×100»), затем кликните по клетке.',
-      );
-      return;
-    }
-    if (!existing && paintCellCoverage(c, r) < 0.995) {
-      setEditorMsg(
-        `Боевая клетка ${c + 1}×${r + 1} не поставлена: место покрашено не целиком. Закрасьте область клетки пресетом кисти «Клетка 150×100».`,
-      );
-      return;
-    }
-    if (!existing && testObjectAt(c, r)) {
-      setEditorMsg(`Боевая клетка ${c + 1}×${r + 1} не поставлена: на клетке уже стоит другой объект.`);
-      return;
-    }
-    pushEditorUndo();
-    if (existing) {
-      d.objects = d.objects.filter((o) => !(o.kind === 'battle' && o.c === c && o.r === r));
-    } else {
-      d.objects.push({ id: newObjectId(), kind: 'battle', c, r, pos: 'center' });
-    }
-    d.dirty = true;
-    setEditorMsg(existing ? `Боевая клетка ${c + 1}×${r + 1} снята.` : null);
-    syncEditorView();
-    applyDraftPreview();
-  };
-
-  const editorSpawnAllowed = (d: EditorDraft, c: number, r: number): boolean => {
-    const onBattle =
-      d.zones.some((z) => z.kind === 'cells' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1) ||
-      d.objects.some((o) => o.kind === 'battle' && o.c === c && o.r === r);
-    if (onBattle) return false;
-    // С рисунком кисти спавн — на любом закрашенном месте (не на боевых клетках);
-    // без рисунка — по-старому, только в зелёной зоне.
-    if (d.pcv) return paintPointOn(c + 0.5, r + 0.5);
-    return d.zones.some((z) => z.kind === 'green' && c >= z.c0 && c <= z.c1 && r >= z.r0 && r <= z.r1);
-  };
-
-  /**
+    /**
    * Кисть рельефа: «насыпать» (+1 уровень, предел 3), «срыть» (−1, до базовой
    * земли) и «ровно» (срезает все клетки росчерка на уровень первой клетки).
    * Росчерк пишет отмену один раз и не обрабатывает клетку дважды — протяжка
@@ -598,95 +603,6 @@ export function buildEditorOps(params: EditorOpsParams) {
     elevStrokeRef.current = null;
   };
 
-  /** Добавить клетку спавна (клик/протяжка инструмента «Спавн»): одна точка
-   *  на клетку, лимит TEST_MAP_LIMITS.spawnsMax. */
-  const addEditorSpawn = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    if (d.spawns.some((s) => s.c === c && s.r === r)) return true;
-    if (!editorSpawnAllowed(d, c, r)) {
-      setEditorMsg('Клетка спавна ставится на траве (зелёной зоне), не на боевых клетках.');
-      return false;
-    }
-    if (d.spawns.length >= TEST_MAP_LIMITS.spawnsMax) {
-      setEditorMsg(`Клеток спавна не больше ${TEST_MAP_LIMITS.spawnsMax}.`);
-      return false;
-    }
-    d.spawns.push({ c, r });
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Клик инструментом «Спавн»: клетка со спавном — снимает, без — ставит. */
-  const toggleEditorSpawn = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    const idx = d.spawns.findIndex((s) => s.c === c && s.r === r);
-    if (idx < 0) return addEditorSpawn(c, r);
-    d.spawns.splice(idx, 1);
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
-  /** Постановка клетки захода (инструмент «Заход»): клик ставит заход с выбранным
-   *  направлением, клик по тому же заходу с тем же направлением — убирает, с другим —
-   *  меняет направление. На боевой клетке заход не ставится; по направлению шага
-   *  обязана быть боевая клетка (это же проверяет сервер при сохранении). */
-  const placeEditorEntry = (c: number, r: number): boolean => {
-    const d = editorRef.current;
-    if (!d) return false;
-    const dir = editorEntryDirRef.current;
-    const idx = d.objects.findIndex((o) => o.c === c && o.r === r);
-    if (idx >= 0 && d.objects[idx].kind === 'entry') {
-      pushEditorUndo();
-      if (d.objects[idx].dir === dir) d.objects.splice(idx, 1);
-      else d.objects[idx] = { ...d.objects[idx], dir };
-      d.dirty = true;
-      applyDraftPreview();
-      syncEditorView();
-      return true;
-    }
-    const isBattleAt = (cc: number, rr: number): boolean =>
-      d.zones.some((z) => z.kind === 'cells' && cc >= z.c0 && cc <= z.c1 && rr >= z.r0 && rr <= z.r1) ||
-      d.objects.some((o) => o.kind === 'battle' && o.c === cc && o.r === rr);
-    const battleCell = isBattleAt(c, r);
-    const targetBattle = isBattleAt(
-      c + (dir === 'left' ? -1 : dir === 'right' ? 1 : 0),
-      r + (dir === 'up' ? -1 : dir === 'down' ? 1 : 0),
-    );
-    if (battleCell) {
-      setEditorMsg('Клетка захода ставится на траве рядом с боевой зоной, не на боевых клетках.');
-      return false;
-    }
-    if (!targetBattle) {
-      setEditorMsg('По направлению шага должна быть боевая клетка — выберите направление в сторону зоны.');
-      return false;
-    }
-    // Логика боевых клеток — и для заходов: заход занимает клетку 150×100 и
-    // ставится только на место, покрашенное кистью целиком.
-    if (d.pcv && paintCellCoverage(c, r) < 0.995) {
-      setEditorMsg(
-        `Заход ${c + 1}×${r + 1} не поставлен: место покрашено не целиком. Закрасьте область клетки пресетом кисти «Клетка 150×100».`,
-      );
-      return false;
-    }
-    if (idx < 0 && d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
-      setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
-      return false;
-    }
-    pushEditorUndo();
-    if (idx >= 0) d.objects.splice(idx, 1); // замена другого объекта на заход
-    d.objects.push({ id: newObjectId(), kind: 'entry', c, r, pos: 'center', dir });
-    d.dirty = true;
-    applyDraftPreview();
-    syncEditorView();
-    return true;
-  };
-
   const renameEditorZone = (id: string, name: string) => {
     const d = editorRef.current;
     if (!d) return;
@@ -700,6 +616,9 @@ export function buildEditorOps(params: EditorOpsParams) {
   const undoEditor = () => {
     const d = editorRef.current;
     if (!d || d.undo.length === 0) return;
+    // Плавающий кусок «Перенести» при отмене возвращается на место — иначе
+    // откат данных уедет от отрисовки (вырезанный участок так и останется пустым).
+    if (d.selFloat) dropEditorSelection();
     const back = d.undo.pop()!;
     d.zones = back.zones.map((z) => ({ ...z }));
     d.objects = back.objects.map((o) => ({ ...o }));
@@ -707,7 +626,15 @@ export function buildEditorOps(params: EditorOpsParams) {
     d.elev = { ...back.elev };
     d.cols = back.cols;
     d.rows = back.rows;
+    d.selRect = null;
+    d.selFloat = null;
+    editorSelRef.current = null;
     d.sel = d.sel.filter((id) => d.zones.some((z) => z.id === id));
+    if (back.paint && d.pcv && d.pcv.width === back.paint.width && d.pcv.height === back.paint.height) {
+      d.pcv.getContext('2d')?.putImageData(back.paint, 0, 0);
+      setPaintOverride(d.pcv, true);
+    }
+    patchField({ cols: d.cols, rows: d.rows });
     applyDraftPreview();
     syncEditorView();
   };
@@ -723,8 +650,12 @@ export function buildEditorOps(params: EditorOpsParams) {
     d.elev = { ...(m.elev ?? {}) };
     d.cols = m.cols;
     d.rows = m.rows;
+    d.selRect = null;
+    d.selFloat = null;
+    editorSelRef.current = null;
     d.sel = [];
     d.dirty = true;
+    patchField({ cols: d.cols, rows: d.rows });
     applyDraftPreview();
     syncEditorView();
   };
@@ -760,18 +691,35 @@ export function buildEditorOps(params: EditorOpsParams) {
       setEditorMsg('Нет связи с сервером.');
       return;
     }
-    const err = editorDraftError();
-    if (err) {
-      setEditorMsg(err);
-      return;
-    }
+    if (d.selFloat) dropEditorSelection();
     try {
       localStorage.setItem(EDITOR_PASS_KEY, editorPass);
     } catch {
       /* приватный режим — просто не запоминаем */
     }
-    net.emit('setmap', { pass: editorPass, map: draftMap(d) });
-    setEditorMsg('Сохраняем…');
+    // Сохранение — долгая дорога (кодирование многимегапиксельного рисунка,
+    // отправка, серверный декод и пересбор геометрии): каждый этап показываем
+    // в панели с секундами, чтобы было видно, что сохранение реально идёт.
+    const t0 = Date.now();
+    setEditorMsg(null);
+    setEditorSave({ phase: 'encode', bytes: 0, t0 });
+    void encodeDraftPaintAsync(d)
+      .then((paint) => {
+        if (editorRef.current !== d) return; // редактор закрыли пока кодировали
+        const err = editorDraftError(); // рисунок уже в кэше — проверка мгновенна
+        if (err) {
+          setEditorSave(null);
+          setEditorMsg(err);
+          return;
+        }
+        setEditorSave({ phase: 'send', bytes: paint.length, t0 });
+        net.emit('setmap', { pass: editorPass, map: draftMap(d) });
+        setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
+      })
+      .catch(() => {
+        setEditorSave(null);
+        setEditorMsg('Не удалось подготовить рисунок локации — попробуйте ещё раз.');
+      });
   };
   return {
     syncEditorView, pushEditorUndo, openEditor, closeEditor, setEditorTool,
@@ -780,6 +728,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     mergeEditorZones, paintEditorCellObject, placeBattleCell, applyElevBrush,
     beginElevStroke, endElevStroke, addEditorSpawn, toggleEditorSpawn,
     placeEditorEntry, renameEditorZone, undoEditor, resetEditor, saveEditorMap,
+    pickEditorSelection, dragEditorSelection, dropEditorSelection,
   };
 }
 

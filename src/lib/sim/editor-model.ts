@@ -32,7 +32,8 @@ export type EditorTool =
   | 'lower'
   | 'flat'
   | 'paint'
-  | 'battle';
+  | 'battle'
+  | 'select';
 
 /** Форма кисти локации: круглый мазок или готовые области — клетка (150×100 px)
  *  и полклетки (75×50), с привязкой к сетке. */
@@ -81,7 +82,11 @@ export type EditorDraft = {
   tool: EditorTool;
   /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
   drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
-  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; elev: Record<string, number>; cols: number; rows: number }[];
+  /** Выделенная область инструмента «Перенести» (нормализована, в клетках). */
+  selRect: { c0: number; r0: number; c1: number; r1: number } | null;
+  /** Смещение «плавающей» выделенной области после переноса (в клетках, от исходного места). */
+  selFloat: { dc: number; dr: number } | null;
+  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; elev: Record<string, number>; cols: number; rows: number; paint?: ImageData }[];
   /** Отмеченные зоны для объединения (инструмент «Объединить»). */
   sel: string[];
   dirty: boolean;

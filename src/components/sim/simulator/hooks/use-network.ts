@@ -77,6 +77,8 @@ export interface SimNetDeps {
   applyRab: (on: boolean) => void;
   applyTestMap: (map: TestMap) => void;
   closeEditor: () => void;
+  /** Прогресс сохранения завершён (локация применена или сервер отказал). */
+  clearEditorSave: () => void;
   showMapLoading: () => void;
   wantedRoomIds: () => string[];
 }
@@ -131,6 +133,7 @@ export function useSimNet(deps: SimNetDeps) {
     applyRab,
     applyTestMap,
     closeEditor,
+    clearEditorSave,
     showMapLoading,
     wantedRoomIds,
   } = deps;
@@ -287,6 +290,7 @@ export function useSimNet(deps: SimNetDeps) {
         // Строка ставится ДО applyTestMap: при открытом запачканном черновике
         // applyTestMap сбрасывает его на внешнюю карту и подменяет сообщение
         // предупреждением о потерянной правке (applyTestMap в simulator.tsx).
+        clearEditorSave(); // прогресс сохранения завершён — локация применена
         setEditorMsg('Локация обновлена.');
         applyTestMap(map);
         showMapLoading();
@@ -482,6 +486,9 @@ export function useSimNet(deps: SimNetDeps) {
       onChatLog: (messages) => setChatLines(messages.slice(-80)),
       onInfo: (text) => {
         setNetStatus(text);
+        // Ответ сервера на сохранение локации («Редактор: …») — прогресс больше
+        // не ждёт: отказ виден и в панели редактора.
+        if (text.startsWith('Редактор:')) clearEditorSave();
         // Совместимость со старым сервером без refuse-кодов: откат предикта по тексту.
         if (
           !text.includes('Клетка занята') &&

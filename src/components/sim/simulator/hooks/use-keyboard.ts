@@ -31,6 +31,9 @@ export interface SimKeyboardDeps {
   leapRequestRef: RefObject<number | null>;
   editorSizeStepRef: RefObject<((dir: 1 | -1) => void) | null>;
   closeEditor: () => void;
+  /** Esc в редакторе: гасит «плавающий» кусок/выделение инструмента «Перенести»
+   *  (true — обработано, редактор не закрывать); false — закрывать редактор. */
+  editorEsc: () => boolean;
 }
 
 export function useSimKeyboard(deps: SimKeyboardDeps) {
@@ -49,6 +52,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     leapRequestRef,
     editorSizeStepRef,
     closeEditor,
+    editorEsc,
   } = deps;
   useEffect(() => {
     const isForm = (t: EventTarget | null) => {
@@ -67,7 +71,8 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       if (editorOpenRef.current) {
         if (ev.key === 'Escape') {
           ev.preventDefault();
-          closeEditor();
+          // Сначала гасим выделение/«плавающий» кусок «Перенести» — только потом редактор.
+          if (!editorEsc()) closeEditor();
         } else if (ev.code === 'BracketLeft' || ev.code === 'BracketRight') {
           ev.preventDefault();
           editorSizeStepRef.current?.(ev.code === 'BracketRight' ? 1 : -1);

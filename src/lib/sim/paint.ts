@@ -178,6 +178,61 @@ export function encodeDraftPaint(d: EditorDraft): string {
   return b64;
 }
 
+/**
+ * То же кодирование черновика в PNG base64, но без блокировки потока:
+ * toBlob кодирует вне главного потока — большой холст локации (десятки
+ * мегапикселей) не подвешивает интерфейс на секунды. Результат кэшируется
+ * так же, как у синхронной версии (ppaint/pdirty), — последующий синхронный
+ * вызов вернёт готовый кэш. Используется сохранением локации (прогресс
+ * «Готовлю рисунок…»), синхронная — предпросмотром черновика.
+ */
+export function encodeDraftPaintAsync(d: EditorDraft): Promise<string> {
+  if (!d.pdirty && d.ppaint) return Promise.resolve(d.ppaint);
+  if (!d.pcv) {
+    d.ppaint = null;
+    return Promise.resolve('');
+  }
+  const wNeed = d.cols * PAINT_CELL_W;
+  const hNeed = d.rows * PAINT_CELL_H;
+  if (d.pcv.width !== wNeed || d.pcv.height !== hNeed) {
+    const cv = document.createElement('canvas');
+    cv.width = wNeed;
+    cv.height = hNeed;
+    const g = cv.getContext('2d');
+    if (g) {
+      g.imageSmoothingEnabled = false;
+      g.drawImage(d.pcv, 0, 0);
+    }
+    d.pcv = cv;
+    d.pundo = [];
+    setPaintOverride(cv, true);
+  }
+  return new Promise((resolve) => {
+    const cv = d.pcv;
+    if (!cv) return resolve('');
+    if (typeof cv.toBlob !== 'function') {
+      resolve(encodeDraftPaint(d));
+      return;
+    }
+    cv.toBlob((blob) => {
+      if (!blob) {
+        resolve(encodeDraftPaint(d));
+        return;
+      }
+      const rd = new FileReader();
+      rd.onload = () => {
+        const url = String(rd.result || '');
+        const b64 = url.slice(url.indexOf(',') + 1);
+        d.ppaint = b64;
+        d.pdirty = false;
+        resolve(b64);
+      };
+      rd.onerror = () => resolve(encodeDraftPaint(d));
+      rd.readAsDataURL(blob);
+    }, 'image/png');
+  });
+}
+
 /** Копия активного рисунка в черновик (правка не портит сохранённую локацию). */
 export function copyPaintCanvas(): HTMLCanvasElement | null {
   const src = paintCanvas();

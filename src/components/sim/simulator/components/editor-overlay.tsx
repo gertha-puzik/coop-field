@@ -7,6 +7,7 @@
  * tree position (absolute panel over the field frame). All mutations go
  * through the original callbacks and `editorRef` (panel-only ghost state).
  */
+import { useEffect, useState } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import {
   type EditorDraft,
@@ -14,6 +15,7 @@ import {
   type EditorTool,
   type PaintBrushShape,
 } from '@/lib/sim/editor-model';
+import type { EditorSaveState } from '../editor-ops';
 import { PAINT_MATS, undoPaintStroke } from '@/lib/sim/paint';
 import {
   GROUND_COVER_OPTS,
@@ -48,6 +50,8 @@ export interface EditorOverlayProps {
   editorPass: string;
   setEditorPass: Dispatch<SetStateAction<string>>;
   saveEditorMap: () => void;
+  /** Прогресс сохранения: фазы кодирования/отправки/подтверждения с секундами. */
+  editorSave: EditorSaveState | null;
   editorCover: GroundCover;
   setEditorCover: (c: GroundCover) => void;
   editorMsg: string | null;
@@ -76,6 +80,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
     editorPass,
     setEditorPass,
     saveEditorMap,
+    editorSave,
     editorCover,
     setEditorCover,
     editorMsg,
@@ -187,6 +192,33 @@ export function EditorOverlay(props: EditorOverlayProps) {
                           </button>
                         ))}
                       </div>
+                      <div className="mt-1.5 flex gap-1.5">
+                        {(
+                          [
+                            { id: 'select', label: '✥ Перенести' },
+                          ] as { id: EditorTool; label: string }[]
+                        ).map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className={
+                              editorView.tool === t.id
+                                ? 'flex-1 rounded-md border border-[var(--sim-accent)] bg-[var(--sim-accent)] px-1 py-1 font-semibold text-white'
+                                : 'btn-neutral flex-1 rounded-md border border-[var(--sim-line-strong)] px-1 py-1'
+                            }
+                            onClick={() => setEditorTool(t.id)}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                      {editorView.tool === 'select' ? (
+                        <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
+                          Растяните рамку и кликните внутри — кусок вырежется (рисунок, зоны, объекты,
+                          спавны, рельеф). Ведите мышью и кликните — кусок встанет на новое место;
+                          Esc вернёт как было. Отмена — кнопкой «Отменить».
+                        </p>
+                      ) : null}
                       {editorView.tool === 'raise' || editorView.tool === 'lower' || editorView.tool === 'flat' ? (
                         <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
                           Клик или протяжка по клеткам: «Насыпать» поднимает землю на уровень (до трёх),
@@ -607,11 +639,13 @@ export function EditorOverlay(props: EditorOverlayProps) {
                       />
                       <button
                         type="button"
-                        className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)]"
+                        className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)] disabled:opacity-60"
                         onClick={saveEditorMap}
+                        disabled={!!editorSave}
                       >
-                        Сохранить локацию
+                        {editorSave ? 'Сохраняется…' : 'Сохранить локацию'}
                       </button>
+                      {editorSave ? <EditorSaveProgress save={editorSave} /> : null}
                       {editorMsg ? <p className="leading-snug text-[var(--sim-text-muted)]">{editorMsg}</p> : null}
                       <p className="leading-snug text-[10px] text-[var(--sim-text-faint)]">
                         Сохранение применяет локацию всем в комнате сразу.
@@ -619,5 +653,39 @@ export function EditorOverlay(props: EditorOverlayProps) {
                     </div>
                   </div>
                 </div>
+  );
+}
+
+/** Полоса прогресса сохранения: фаза словами, секунды с начала и размер рисунка.
+ *  Секунды тикают локальным интервалом — видно, что сохранение реально идёт. */
+function EditorSaveProgress({ save }: { save: EditorSaveState }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(iv);
+  }, []);
+  const label =
+    save.phase === 'encode'
+      ? 'Готовлю рисунок локации…'
+      : save.phase === 'send'
+        ? 'Отправляю локацию…'
+        : 'Сервер применяет локацию…';
+  const sec = Math.max(0, Math.round((Date.now() - save.t0) / 100) / 10);
+  const kb = save.bytes > 0 ? Math.round((save.bytes * 3) / 4 / 1024) : 0;
+  return (
+    <div className="rounded-md border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] px-2 py-1.5">
+      <div className="flex items-center justify-between text-[10px] text-[var(--sim-text-muted)]">
+        <span>{label}</span>
+        <span className="tabular-nums">{sec.toFixed(1)} с</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded bg-[var(--sim-line)]">
+        <div className="h-full w-full animate-pulse rounded bg-[var(--sim-accent)]" />
+      </div>
+      {kb > 0 ? (
+        <div className="mt-0.5 text-[10px] tabular-nums text-[var(--sim-text-faint)]">
+          Рисунок: {kb} КБ
+        </div>
+      ) : null}
+    </div>
   );
 }
