@@ -969,22 +969,77 @@ function elevNeighborForWall(c: number, r: number): number {
   return elevLevelAt(c, r);
 }
 
-/** Низ южной стены обрыва клетки (px мира) или null — стены нет (сосед снизу
- *  той же высоты или выше). Единый источник для ключа глубины билборда стены
- *  в симуляторе и для самой отрисовки — они не разъезжаются. */
-export function terrainWallBottomY(c: number, r: number, cellH: number): number | null {
+/** Куда смотрит камера: ближайший прямой угол. Лицевая стена блока строится
+ *  на этой грани поднятой земли, чтобы после поворота обрыва смотрела на игрока.
+ *  yaw 0 — юг (как было до поворотов). */
+type FaceDir = 's' | 'e' | 'n' | 'w';
+
+const FACE_STEP: Record<FaceDir, { dc: number; dr: number }> = {
+  s: { dc: 0, dr: 1 },
+  e: { dc: 1, dr: 0 },
+  n: { dc: 0, dr: -1 },
+  w: { dc: -1, dr: 0 },
+};
+
+function terrainFaceOf(yaw: number): FaceDir {
+  const k = ((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4;
+  return (['s', 'e', 'n', 'w'] as const)[k];
+}
+
+function oppositeFace(face: FaceDir): FaceDir {
+  return face === 's' ? 'n' : face === 'n' ? 's' : face === 'e' ? 'w' : 'e';
+}
+
+/** Боковые грани относительно лицевой: складки по бокам блока, не на лице. */
+function sideFaces(face: FaceDir): [FaceDir, FaceDir] {
+  return face === 's' || face === 'n' ? ['w', 'e'] : ['n', 's'];
+}
+
+/** Прямоугольник лицевой стены: от ближней грани поднятой земли наружу на перепад.
+ *  При yaw 0 совпадает с прежней южной стеной. */
+function faceWallRect(
+  c: number,
+  r: number,
+  cellW: number,
+  cellH: number,
+  face: FaceDir,
+): { e: number; x: number; y: number; w: number; h: number; face: FaceDir } | null {
   const e = elevLevelAt(c, r);
   if (e <= 0) return null;
-  const sNb = elevNeighborForWall(c, r + 1);
-  if (sNb >= e) return null;
-  return (r + 1) * cellH - sNb * TERRAIN_LIFT_PX;
+  const step = FACE_STEP[face];
+  const nb = elevNeighborForWall(c + step.dc, r + step.dr);
+  if (nb >= e) return null;
+  const drop = (e - nb) * TERRAIN_LIFT_PX;
+  const gx = c * cellW;
+  const gy = r * cellH - e * TERRAIN_LIFT_PX;
+  if (face === 's') return { e, x: gx, y: gy + cellH, w: cellW, h: drop, face };
+  if (face === 'n') return { e, x: gx, y: gy - drop, w: cellW, h: drop, face };
+  if (face === 'e') return { e, x: gx + cellW, y: gy, w: drop, h: cellH, face };
+  return { e, x: gx - drop, y: gy, w: drop, h: cellH, face };
+}
+
+/** Точка сортировки лицевой стены (внешний край, на пиксель ближе к камере)
+ *  или null — стены нет. Единый источник для ключа билборда и отрисовки. */
+export function terrainWallAnchor(
+  c: number,
+  r: number,
+  cellW: number,
+  cellH: number,
+  yaw: number,
+): { x: number; y: number } | null {
+  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw));
+  if (!g) return null;
+  if (g.face === 's') return { x: g.x + g.w / 2, y: g.y + g.h - 1 };
+  if (g.face === 'n') return { x: g.x + g.w / 2, y: g.y + 1 };
+  if (g.face === 'e') return { x: g.x + g.w - 1, y: g.y + g.h / 2 };
+  return { x: g.x + 1, y: g.y + g.h / 2 };
 }
 
 /**
- * Южная стена обрыва одной клетки плато (если сосед снизу ниже) — срез дёрна
- * с градиентом почвы. Рисуется ОТДЕЛЬНО от верха: у стены свой ключ глубинной
- * сортировки (низ стены) — она честно прячет котов позади себя и скрывается
- * за котами перед собой, не трогая тех, кто стоит на самом плато.
+ * Лицевая стена обрыва одной клетки: срез дёрна на грани, которая смотрит
+ * в камеру. Верх клетки остаётся в мировых осях (плато не рвётся), перестраивается
+ * только фасад. Рисуется ОТДЕЛЬНО от верха: свой ключ глубины — внешний край
+ * стены, поэтому кот перед фасадом рисуется поверх, а кот за ним — под стеной.
  */
 export function drawTerrainWall(
   ctx: CanvasRenderingContext2D,
@@ -992,33 +1047,56 @@ export function drawTerrainWall(
   cellH: number,
   c: number,
   r: number,
+  yaw = 0,
 ): void {
-  const e = elevLevelAt(c, r);
-  if (e <= 0) return;
-  const sNb = elevNeighborForWall(c, r + 1);
-  if (sNb >= e) return;
-  const lift = e * TERRAIN_LIFT_PX;
-  const x = c * cellW;
-  const y = r * cellH;
-  const yTop = y + cellH - lift;
-  const yBot = y + cellH - sNb * TERRAIN_LIFT_PX;
-  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
-  g.addColorStop(0, '#6d5438');
-  g.addColorStop(0.3, '#58412b');
-  g.addColorStop(1, '#382a1a');
-  ctx.fillStyle = g;
-  ctx.fillRect(x, yTop, cellW, yBot - yTop);
-  // нависшая трава: тонкая тёмная линия под верхом среза + светлый срез дёрна
+  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw));
+  if (!g) return;
+  const { x, y, w, h, face, e } = g;
+  // градиент от кромки травы к внешнему краю (к игроку)
+  const x0 = face === 'w' ? x + w : x;
+  const y0 = face === 'n' ? y + h : y;
+  const x1 = face === 'e' ? x + w : face === 'w' ? x : x;
+  const y1 = face === 's' ? y + h : face === 'n' ? y : y;
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  grad.addColorStop(0, '#6d5438');
+  grad.addColorStop(0.3, '#58412b');
+  grad.addColorStop(1, '#382a1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, w, h);
+  // нависшая трава: тёмная линия у кромки верха + светлый срез дёрна
   ctx.fillStyle = 'rgba(18, 13, 5, 0.5)';
-  ctx.fillRect(x, yTop, cellW, 2);
+  if (face === 's') ctx.fillRect(x, y, w, 2);
+  else if (face === 'n') ctx.fillRect(x, y + h - 2, w, 2);
+  else if (face === 'e') ctx.fillRect(x, y, 2, h);
+  else ctx.fillRect(x + w - 2, y, 2, h);
   ctx.fillStyle = 'rgba(214, 196, 140, 0.14)';
-  ctx.fillRect(x, yTop + 2, cellW, Math.min(3, yBot - yTop - 2));
+  const turf = Math.max(0, Math.min(3, (face === 's' || face === 'n' ? h : w) - 2));
+  if (turf > 0) {
+    if (face === 's') ctx.fillRect(x, y + 2, w, turf);
+    else if (face === 'n') ctx.fillRect(x, y + h - 2 - turf, w, turf);
+    else if (face === 'e') ctx.fillRect(x + 2, y, turf, h);
+    else ctx.fillRect(x + w - 2 - turf, y, turf, h);
+  }
   // детерминированные камешки на срезе (по клетке — у всех игроков одинаковые)
+  const along = face === 's' || face === 'n' ? w : h;
+  const across = face === 's' || face === 'n' ? h : w;
   const v = (c * 7 + r * 13 + e * 5) % 4;
   ctx.fillStyle = 'rgba(24, 18, 10, 0.35)';
   for (let i = 0; i <= v; i++) {
-    const px = x + cellW * (0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60);
-    const py = yTop + (yBot - yTop) * (0.35 + ((r * 23 + i * 29) % 10) / 22);
+    const alongT = 0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60;
+    const acrossT = 0.35 + ((r * 23 + i * 29) % 10) / 22;
+    const px =
+      face === 's' || face === 'n'
+        ? x + along * alongT
+        : face === 'e'
+          ? x + across * acrossT
+          : x + across * (1 - acrossT);
+    const py =
+      face === 's'
+        ? y + across * acrossT
+        : face === 'n'
+          ? y + across * (1 - acrossT)
+          : y + along * alongT;
     const rr2 = 1.6 + ((c + r + i) % 3);
     ctx.beginPath();
     ctx.arc(px, py, rr2, 0, Math.PI * 2);
@@ -1042,6 +1120,8 @@ export function drawTerrainTop(
   pat: CanvasPattern | null,
   /** Пиксельная отрисовка локации: верх плато поднимает кусок рисунка клетки. */
   paintSrc?: HTMLCanvasElement | null,
+  /** Угол камеры: боковые складки и дальняя кромка следуют за лицевой гранью. */
+  yaw = 0,
 ): void {
   const e = elevLevelAt(c, r);
   if (e <= 0) return;
@@ -1079,23 +1159,47 @@ export function drawTerrainTop(
     ctx.fillStyle = `rgba(255, 238, 176, ${(0.055 * (e - 1)).toFixed(3)})`;
     ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
   }
-  // Боковые грани: сосед сбоку ниже — коричневый срез на всю высоту перепада,
-  // чтобы обход сбоку упирался в видимую стену, а не в пустую траву.
-  const sideFace = (nx: number) => {
-    const nb = elevNeighborForWall(c + nx, r);
-    if (nb >= e) return;
+  // Складки по бокам лицевой грани и тёмная кромка с дальней стороны.
+  // При yaw 0 это прежние восточная/западная полоски и северная губа.
+  const face = terrainFaceOf(yaw);
+  const gy = y - lift;
+  const t = 7;
+  for (const side of sideFaces(face)) {
+    const step = FACE_STEP[side];
+    const nb = elevNeighborForWall(c + step.dc, r + step.dr);
+    if (nb >= e) continue;
     const drop = Math.min((e - nb) * TERRAIN_LIFT_PX, cellH);
     ctx.fillStyle = '#58412b';
-    const xFace = nx < 0 ? x : x + cellW - 7;
-    ctx.fillRect(xFace, y - lift, 7, cellH + drop);
+    let sx = x;
+    let sy = gy;
+    let sw = t;
+    let sh = cellH + drop;
+    if (side === 'e' || side === 'w') {
+      sx = side === 'w' ? x : x + cellW - t;
+      sy = face === 's' ? gy : gy - drop;
+      sw = t;
+      sh = cellH + drop;
+    } else {
+      sy = side === 'n' ? gy : gy + cellH - t;
+      sx = face === 'e' ? x : x - drop;
+      sw = cellW + drop;
+      sh = t;
+    }
+    ctx.fillRect(sx, sy, sw, sh);
     ctx.fillStyle = 'rgba(18, 13, 5, 0.45)';
-    ctx.fillRect(xFace, y - lift, 7, 2);
-  };
-  sideFace(-1);
-  sideFace(1);
-  if (elevNeighborForWall(c, r - 1) < e) {
+    if (face === 's') ctx.fillRect(sx, sy, sw, 2);
+    else if (face === 'n') ctx.fillRect(sx, sy + sh - 2, sw, 2);
+    else if (face === 'e') ctx.fillRect(sx, sy, 2, sh);
+    else ctx.fillRect(sx + sw - 2, sy, 2, sh);
+  }
+  const far = oppositeFace(face);
+  const farStep = FACE_STEP[far];
+  if (elevNeighborForWall(c + farStep.dc, r + farStep.dr) < e) {
     ctx.fillStyle = '#3a2a1c';
-    ctx.fillRect(x, y - lift, cellW, 6);
+    if (far === 'n') ctx.fillRect(x, gy, cellW, 6);
+    else if (far === 's') ctx.fillRect(x, gy + cellH - 6, cellW, 6);
+    else if (far === 'w') ctx.fillRect(x, gy, 6, cellH);
+    else ctx.fillRect(x + cellW - 6, gy, 6, cellH);
   }
 }
 
