@@ -139,7 +139,7 @@ ${https_jump}
         try_files \$uri =404;
     }
     location / {
-        try_files \$uri \$uri/ /index.html;
+        try_files \$uri \$uri.html \$uri/ /index.html;
     }
     location /_next/static/ {
         try_files \$uri =404;
