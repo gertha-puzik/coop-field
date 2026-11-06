@@ -143,7 +143,7 @@ import {
   setPaintOverride,
   setTestMap,
   TERRAIN_LIFT_PX,
-  terrainWallBottomY,
+  terrainWallAnchor,
   testBattleRouteBlocked,
   testClippedCells,
   testEntryAt,
@@ -3292,6 +3292,9 @@ export default function Simulator() {
           else flatsByCellT.set(kT, [oT]);
         }
         const mapElev = currentTestMap().elev ?? {};
+        // Лицо блока — ближайший прямой угол камеры. Один угол на кадр, чтобы
+        // ключ сортировки стены и сама стена смотрели в одну сторону.
+        const faceYaw = camYawRef.current;
         for (const key of Object.keys(mapElev)) {
           const lvT = mapElev[key];
           if (!lvT || lvT <= 0) continue;
@@ -3317,7 +3320,7 @@ export default function Simulator() {
               ctx.save();
               if (clipT) ctx.clip(clipT);
               // поднятая земля этой клетки
-              drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT);
+              drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT, faceYaw);
               // разметка клетки поверх поднятой земли
               if (flatsT) {
                 for (const oT of flatsT) {
@@ -3360,17 +3363,18 @@ export default function Simulator() {
               ctx.restore();
             },
           });
-          // СТЕНА: рисуем только там, где сосед снизу ниже; ключ — низ стены
-          // (минус пиксель, чтобы кот вплотную к обрыву спереди рисовался поверх).
-          const wallYT = terrainWallBottomY(cT, rT, chT);
-          if (wallYT != null) {
+          // СТЕНА: грань, которая смотрит в камеру, если сосед за ней ниже.
+          // Ключ — внешний край (на пиксель ближе к игроку), чтобы кот вплотную
+          // к фасаду рисовался поверх.
+          const wallA = terrainWallAnchor(cT, rT, cwT, chT, faceYaw);
+          if (wallA) {
             bills.push({
-              x: (cT + 0.5) * cwT,
-              y: wallYT - 1,
+              x: wallA.x,
+              y: wallA.y,
               fn: () => {
                 ctx.save();
                 if (clipT) ctx.clip(clipT);
-                drawTerrainWall(ctx, cwT, chT, cT, rT);
+                drawTerrainWall(ctx, cwT, chT, cT, rT, faceYaw);
                 ctx.restore();
               },
             });
