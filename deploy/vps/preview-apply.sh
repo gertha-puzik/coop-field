@@ -20,6 +20,7 @@ PORT="${PREVIEW_PORT:-}"
 ACTION="${PREVIEW_ACTION:-apply}"
 SHA="${PREVIEW_SHA:-unknown}"
 IN="${PREVIEW_IN:-$HOME/incoming-preview/$SLUG}"
+HOST="${PREVIEW_HOST:-$SLUG.abnocw.miew.ru}"
 
 fail() { echo "$*" >&2; exit 1; }
 
@@ -34,10 +35,19 @@ valid_slug() {
 
 valid_slug "$SLUG" || fail "slug не прошёл нормализацию: ${SLUG:-<пусто>}"
 
+valid_host() {
+  local h="$1"
+  local label="${h%.abnocw.miew.ru}"
+  [ "$h" = "$label.abnocw.miew.ru" ] || return 1
+  # Длинный server_name бьёт nginx server_names_hash_bucket_size 64.
+  [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,23}$ ]]
+}
+
+valid_host "$HOST" || fail "host не прошёл нормализацию: ${HOST:-<пусто>}"
+
 APP="$PREVIEW_ROOT/$SLUG"
 UNIT="coop-field-preview@${SLUG}"
 FRAG="$NGINX_D/preview-$SLUG.conf"
-HOST="$SLUG.abnocw.miew.ru"
 
 [[ "$APP" == "$PREVIEW_ROOT/$SLUG" ]] || fail "внутренний путь сломан"
 [[ "$APP" != "$PROD_ROOT" ]] || fail "отказ: путь совпал с продом"
@@ -275,8 +285,32 @@ else
   chown -R "$(id -u):$(id -g)" "$APP" 2>/dev/null || true
 fi
 
-write_nginx_fragment
-nginx_test_reload
+nginx_write_reload() {
+  local bak=""
+  if [ -f "$FRAG" ]; then
+    bak="$(mktemp)"
+    cp "$FRAG" "$bak"
+  fi
+  write_nginx_fragment
+  if [ "$SKIP_NGINX" = 1 ]; then
+    rm -f "$bak"
+    return 0
+  fi
+  if sudo /usr/sbin/nginx -t; then
+    sudo /usr/bin/systemctl reload nginx
+    rm -f "$bak"
+    return 0
+  fi
+  if [ -n "$bak" ]; then
+    cp "$bak" "$FRAG"
+  else
+    rm -f "$FRAG"
+  fi
+  rm -f "$bak"
+  fail "nginx -t не прошёл — фрагмент вернули, reload нет"
+}
+
+nginx_write_reload
 
 if [ "$SKIP_SYSTEMD" != 1 ]; then
   if [ -f "$HOME/incoming-preview/coop-field-preview@.service" ]; then

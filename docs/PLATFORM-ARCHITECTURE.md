@@ -231,8 +231,10 @@ v1 ничего не переписывает.
 ## 10. Preview (фаза 6) — встраивание в факт, не в Docker
 
 **Решение владелицы (2026-11-06):** тот же VPS, что прод, не отдельный хост.
-Изоляция каталогом `/opt/coop-field-preview/<slug>/`, своим портом и своими
-`data/`. Wildcard DNS `*.abnocw.miew.ru` уже на `89.232.184.77`.
+Изоляция каталогом `/opt/coop-field-preview/pr-<N>/`, своим портом и своими
+`data/`. Публичное имя — `http://<8 hex SHA>.abnocw.miew.ru` (короткий
+server_name: длинный slug ветки ломал nginx hash bucket). Wildcard DNS
+`*.abnocw.miew.ru` уже на `89.232.184.77`.
 
 Факт: GitHub Actions + rsync + systemd `coop-field` + nginx. Preview
 повторяет это рядом, не вместо.
@@ -240,15 +242,14 @@ v1 ничего не переписывает.
 ```
 PR opened/synchronize (не fork)
   → build front из SHA
-  → rsync /opt/coop-field-preview/<slug>/{www,server}
-  → systemd template coop-field-preview@<slug> (порт 41000+PR%1000)
-  → nginx: <slug>.abnocw.miew.ru → статика + /ws → этот порт
+  → rsync /opt/coop-field-preview/pr-<N>/{www,server}
+  → systemd template coop-field-preview@pr-<N> (порт 41000+PR%1000)
+  → nginx: <8 hex SHA>.abnocw.miew.ru → статика + /ws → этот порт
 PR closed/merged → stop unit, rm каталог, один обновляемый комментарий
 ```
 
-Slug: нижний регистр, `[^a-z0-9-]` → `-`, обрезка, без `--`. Сборка из
-`GITHUB_SHA`, не из имени ветки (имя только в DNS). Прод URL и
-`deploy-frontend.yml` / `deploy-backend.yml` не трогаем.
+Каталог стабилен по номеру PR. Имя сайта — 8 hex SHA коммита. Сборка из
+`GITHUB_SHA`. Прод URL и `deploy-frontend.yml` / `deploy-backend.yml` не трогаем.
 
 Форк: джоба смотрит `head.repo.full_name == github.repository` — чужой форк
 секрета и SSH не получает. На **приватном** репо то же условие: секреты есть

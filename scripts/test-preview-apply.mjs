@@ -70,6 +70,22 @@ for (const slug of deny) {
 const okVal = run({ PREVIEW_SLUG: "cursor-test", PREVIEW_ACTION: "validate" });
 eq("validate good slug", okVal.status, 0);
 eq("validate prints app", okVal.stdout.includes("/opt/coop-field-preview/cursor-test"), true);
+eq("validate default host", okVal.stdout.includes("host=cursor-test.abnocw.miew.ru"), true);
+
+const longHost = run({
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_HOST: "cursor-product-roadmap-and-platform-42e0.abnocw.miew.ru",
+  PREVIEW_ACTION: "validate",
+});
+eq("deny long server_name", longHost.status === 0 ? "ok" : "fail", "fail");
+
+const shaHostVal = run({
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_HOST: "b0f9fa41.abnocw.miew.ru",
+  PREVIEW_ACTION: "validate",
+});
+eq("validate sha host", shaHostVal.status, 0);
+eq("validate sha host printed", shaHostVal.stdout.includes("host=b0f9fa41.abnocw.miew.ru"), true);
 
 const t = staging();
 fillIncoming(t.incoming, "alpha");
@@ -99,6 +115,23 @@ eq(
   readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8").includes("ssl_certificate"),
   false,
 );
+fillIncoming(t.incoming, "pr-41");
+const hashed = run({
+  ...base,
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_IN: join(t.incoming, "pr-41"),
+  PREVIEW_PORT: "41041",
+  PREVIEW_HOST: "deadbeef.abnocw.miew.ru",
+  PREVIEW_SHA: "deadbeefcafebabe",
+});
+dump("sha host apply", hashed);
+eq("apply sha host", hashed.status, 0);
+eq(
+  "nginx server_name is short sha",
+  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name deadbeef.abnocw.miew.ru;"),
+  true,
+);
+eq("dir is pr-id not sha", existsSync(join(t.previewRoot, "pr-41/www/index.html")), true);
 
 const b = run({
   ...base,

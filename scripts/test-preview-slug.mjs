@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-import { previewHost, previewPort, previewRoot, previewSlug } from "./preview-slug.mjs";
+import {
+  previewHost,
+  previewId,
+  previewPort,
+  previewPublicHost,
+  previewRoot,
+  previewShaLabel,
+  previewSlug,
+} from "./preview-slug.mjs";
 
 let failed = 0;
 function eq(label, actual, expected) {
@@ -17,10 +25,17 @@ eq("empty", previewSlug(""), "pr");
 eq("unicode", previewSlug("ветка/Элизия"), "pr");
 eq("dots", previewSlug("..//Weird..Name!!"), "weird-name");
 eq("truncate", previewSlug("a".repeat(80)).length, 48);
-eq("host", previewHost("Fix/Room"), "fix-room.abnocw.miew.ru");
+eq("host-from-branch", previewHost("Fix/Room"), "fix-room.abnocw.miew.ru");
 eq("port pr 1", previewPort(1), 41001);
 eq("port wrap", previewPort(1001), 41001);
-eq("root", previewRoot("Ab/Cd"), "/opt/coop-field-preview/ab-cd");
+eq("root-branch", previewRoot("Ab/Cd"), "/opt/coop-field-preview/ab-cd");
+eq("id 41", previewId(41), "pr-41");
+eq("id string", previewId("41"), "pr-41");
+eq("root-id", previewRoot("pr-41"), "/opt/coop-field-preview/pr-41");
+eq("sha label 8", previewShaLabel("b0f9fa412af6670010e1e7251f88215682a5ef0c"), "b0f9fa41");
+eq("sha host", previewPublicHost("b0f9fa412af6670010e1e7251f88215682a5ef0c"), "b0f9fa41.abnocw.miew.ru");
+eq("sha short rejected", previewShaLabel("abc"), "");
+eq("sha mixed", previewShaLabel("B0F9FA41"), "b0f9fa41");
 
 if (failed) {
   console.error("preview slug: FAIL");

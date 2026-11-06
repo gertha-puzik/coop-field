@@ -1,4 +1,5 @@
-# Preview PR: https://<slug>.abnocw.miew.ru
+# Preview PR: http://<8 hex SHA>.abnocw.miew.ru
+# Каталог/юнит — pr-<номер>, имя сайта — короткий хэш коммита (nginx hash bucket).
 # Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
 # Тот же VPS, что прод: каталог /opt/coop-field-preview/, свои порты и data/.
@@ -41,12 +42,11 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          BRANCH="${{ github.event.pull_request.head.ref }}"
           SHA="${{ github.event.pull_request.head.sha }}"
           PR="${{ github.event.pull_request.number }}"
-          SLUG=$(node scripts/preview-slug.mjs "$BRANCH")
+          SLUG=$(node scripts/preview-slug.mjs id "$PR")
+          HOST=$(node scripts/preview-slug.mjs host "$SHA")
           PORT=$((41000 + PR % 1000))
-          HOST="${SLUG}.abnocw.miew.ru"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           echo "port=$PORT" >> "$GITHUB_OUTPUT"
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
@@ -68,6 +68,7 @@ jobs:
           SSH_HOST: 89.232.184.77
           SSH_USER: deploy-preview
           SLUG: ${{ steps.meta.outputs.slug }}
+          HOST: ${{ steps.meta.outputs.host }}
           PORT: ${{ steps.meta.outputs.port }}
           SHA: ${{ steps.meta.outputs.sha }}
           ACTION: ${{ github.event.action == 'closed' && 'destroy' || 'apply' }}
@@ -107,7 +108,7 @@ jobs:
           rsync -az --delete -e "$SSH" out/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
           rsync -az --delete -e "$SSH" scripts/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/scripts/"
           rsync -az -e "$SSH" package.json package-lock.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
-          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
+          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
           echo "status=live" >> "$GITHUB_OUTPUT"
 
       - name: Deployment и один комментарий

@@ -3,11 +3,14 @@
 Простыми словами: у каждой ветки свой маленький сайт и своя комната, чтобы
 пробовать игру **не на живой Элизии**. Пока нет wildcard TLS, адрес:
 
-`http://<имя-ветки-буквами>.abnocw.miew.ru`
+`http://<8 символов SHA коммита>.abnocw.miew.ru`
 
-Комната той же ветки: `ws://<имя>.abnocw.miew.ru/ws`. HTTPS появится после
-DNS-01 на `*.abnocw.miew.ru`. Сертификат апекса `abnocw.miew.ru` на поддомен
-не вешаем.
+Например `http://b0f9fa41.abnocw.miew.ru`. Каталог и systemd — `pr-<номер PR>`
+(не меняются с каждым пушем, снос при close знает номер). Имя сайта короткое:
+длинный slug ветки ломал nginx (`server_names_hash_bucket_size: 64`).
+
+Комната: `ws://<тот-же-хост>/ws`. HTTPS появится после DNS-01 на
+`*.abnocw.miew.ru`. Сертификат апекса `abnocw.miew.ru` на поддомен не вешаем.
 
 ## Решение владелицы (2026-11-06)
 
@@ -18,8 +21,9 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 | --- | --- | --- |
 | Когда | push в `main` | PR своего репо |
 | SSH | `deploy` + `VPS_SSH_KEY` | **`deploy-preview`** + `PREVIEW_SSH_KEY` |
-| Каталог | `/opt/coop-field` | `/opt/coop-field-preview/<slug>/` |
-| Юнит | `coop-field` | `coop-field-preview@<slug>` |
+| Каталог | `/opt/coop-field` | `/opt/coop-field-preview/pr-<N>/` |
+| Юнит | `coop-field` | `coop-field-preview@pr-<N>` |
+| Сайт | sslip.io / апекс | `http://<8 hex SHA>.abnocw.miew.ru` |
 | Порт | 8787 | `41000 + PR%1000` |
 | Данные | `data/` прода | пустой `…/<slug>/data` |
 | nginx | vhost sslip.io / `abnocw.miew.ru` | `/etc/nginx/preview.d/preview-<slug>.conf` |
@@ -78,9 +82,9 @@ sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
 include nginx, шаблон юнита. Новый SSH-ключ **не создаёт**, если
 `authorized_keys` уже есть — текущий `PREVIEW_SSH_KEY` не перезаписывать.
 
-После bootstrap агент или следующий push в PR выложит
-`http://cursor-product-roadmap-and-platform-42e0.abnocw.miew.ru`
-(порт `41041`). Форки не деплоим. Сборка из SHA коммита.
+Bootstrap **уже выполнен** (2026-11-07). Следующий push выкладывает
+`http://<8 hex SHA>.abnocw.miew.ru` (каталог `pr-<номер>`, порт `41000+PR%1000`).
+Форки не деплоим. Сборка из SHA коммита.
 
 TLS: HTTP-01 на звёздочку нельзя. DNS-01 на `*.abnocw.miew.ru` — отдельно.
 Существующие сертификаты sslip.io и апекса скрипт не трогает.
