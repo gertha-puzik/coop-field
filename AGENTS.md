@@ -150,6 +150,7 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 - `AGENTS.md` — this map + wire-contract tables (updated by the wave that changes the protocol).
 - `docs/ARCHITECTURE.md` — as-is map, data flows, mirrors, coordinates, target structure (W3–W5).
 - `docs/PRODUCT-ROADMAP.md` — product audit: what exists, what's missing, order of platform work.
+- `docs/PLATFORM-ARCHITECTURE.md` — accounts / modes / sessions / pages (on top of this map).
 - `README.md` — human overview in Russian: what the game is, quick start, prod, feature eras.
 - `scripts/` — npm runners: test:ws (against a running server or `WS_URL`), test:queue (self-spawn),
   test:unit, arch:check; manual probes with self-spawn carry a "how to run" header line.
