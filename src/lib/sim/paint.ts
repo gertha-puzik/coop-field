@@ -24,7 +24,7 @@ import {
   setPaintOverride,
   testFieldGeometry,
 } from './test-field';
-import { coverPattern } from './textures';
+import { coverPattern, grassPattern } from './textures';
 import type { EditorDraft } from './editor-model';
 
 /* ---------- кисть локации: материалы, штампы, отмена мазков ---------- */
@@ -214,10 +214,13 @@ export function ensureDraftPaint(d: EditorDraft): HTMLCanvasElement {
   if (src && paintReady()) {
     g.drawImage(src, 0, 0, src.width, src.height, 0, 0, cv.width, cv.height);
   } else {
-    // миграция: островок из зон травой (полигон — в канонических px), затем
-    // проталины и покрытия поверх
+    // миграция: островок из зон заливается травяным паттерном (полигон — в
+    // канонических px), затем проталины и покрытия поверх. Заливка —
+    // grassPattern (бесшовный тайл grass-ground с травинками и цветами),
+    // а НЕ плоский спрайт-покров grass-1: тот одноцветный, и вся локация
+    // после миграции становилась одним плоским пятном без текстуры.
     const geo = testFieldGeometry(PAINT_CELL_W, PAINT_CELL_H);
-    const pat = coverPattern(g, 'grass-1');
+    const pat = grassPattern(g);
     if (pat) {
       g.fillStyle = pat;
       g.fill(geo.path);
