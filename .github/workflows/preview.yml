@@ -97,6 +97,11 @@ jobs:
             deploy/vps/nginx-preview.conf \
             deploy/vps/nginx-preview-include.conf \
             "$SSH_USER@$SSH_HOST:incoming-preview/"
+          if ! $SSH "$SSH_USER@$SSH_HOST" "test -d /opt/coop-field-preview && test -w /opt/coop-field-preview"; then
+            echo "::warning::На VPS ещё нет bootstrap. От root: sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh"
+            echo "status=needs-bootstrap" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           rsync -az --delete -e "$SSH" server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
           rsync -az -e "$SSH" server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
           rsync -az --delete -e "$SSH" out/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
@@ -132,6 +137,14 @@ jobs:
             BODY="${MARKER}
           Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\`. Один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
           Будет: ${URL}"
+            STATE=""
+          elif [ "${STATUS:-}" = "needs-bootstrap" ]; then
+            BODY="${MARKER}
+          SSH есть, секрет работает. На VPS от root один раз:
+          \`\`\`
+          sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
+          \`\`\`
+          После этого следующий push в PR выложит ${URL}"
             STATE=""
           else
             BODY="${MARKER}
