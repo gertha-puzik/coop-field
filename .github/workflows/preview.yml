@@ -1,4 +1,6 @@
-# Preview PR: http://pr-<номер>.abnocw.miew.ru — URL стабилен между пушами.
+# Preview PR: https://pr-<номер>.abnocw.miew.ru — URL стабилен между пушами.
+# HTTPS: per-host сертификат выдаёт root-cron на VPS (HTTP-01 из webroot),
+# детали в deploy/vps/preview-cert-scan.sh и docs/PREVIEW-ENVIRONMENTS.md.
 # Каталог/юнит/имя сайта — pr-<номер>: короткое имя не бьёт nginx hash bucket
 # (длинный slug ветки ломал 64), читаемое и не меняется от коммита к коммиту.
 # Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
@@ -52,7 +54,7 @@ jobs:
           echo "port=$PORT" >> "$GITHUB_OUTPUT"
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "url=http://$HOST" >> "$GITHUB_OUTPUT"
+          echo "url=https://$HOST" >> "$GITHUB_OUTPUT"
 
       - name: Сборка статики
         if: github.event.action != 'closed'
@@ -133,7 +135,7 @@ jobs:
             BODY="${MARKER}
           Preview: ${URL}
           Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются.
-          HTTPS появится после DNS-01 на \`*.abnocw.miew.ru\` (сейчас сертификат только на апекс)."
+          HTTPS: per-host сертификат, VPS-хук coop-preview-cert выдаёт его в течение ~5 минут после деплоя."
             STATE=success
           elif [ "${STATUS:-}" = "needs-secret" ]; then
             BODY="${MARKER}

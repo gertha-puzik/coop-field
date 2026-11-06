@@ -1,17 +1,18 @@
 # Preview-окружения для пул-реквестов
 
 Простыми словами: у каждой ветки свой маленький сайт и своя комната, чтобы
-пробовать игру **не на живой Элизии**. Пока нет wildcard TLS, адрес:
+пробовать игру **не на живой Элизии**. Адрес:
 
-`http://pr-<номер PR>.abnocw.miew.ru`
+`https://pr-<номер PR>.abnocw.miew.ru`
 
-Например `http://pr-41.abnocw.miew.ru`. Каталог, systemd и имя сайта — `pr-<номер PR>`:
+Например `https://pr-41.abnocw.miew.ru`. Каталог, systemd и имя сайта — `pr-<номер PR>`:
 не меняется от пуша к пушу, короткий (длинный slug ветки ломал nginx
 `server_names_hash_bucket_size: 64`). Ранний вариант имени из 8 hex SHA
 отменён 2026-11-07 — URL менялся с каждым коммитом.
 
-Комната: `ws://<тот-же-хост>/ws`. HTTPS появится после DNS-01 на
-`*.abnocw.miew.ru`. Сертификат апекса `abnocw.miew.ru` на поддомен не вешаем.
+Комната: `wss://<тот-же-хост>/ws` (браузер сам повышает `ws://` до `wss://`
+на https-страницах). Сертификат per-host: первые минуты после деплоя может
+отвечать http — до `~5 минут`, пока корневой cron на VPS выпустит сертификат.
 
 ## Решение владелицы (2026-11-06)
 
@@ -84,11 +85,31 @@ include nginx, шаблон юнита. Новый SSH-ключ **не созд�
 `authorized_keys` уже есть — текущий `PREVIEW_SSH_KEY` не перезаписывать.
 
 Bootstrap **уже выполнен** (2026-11-07). Следующий push выложит
-`http://pr-<номер>.abnocw.miew.ru` (порт `41000+PR%1000`).
+`https://pr-<номер>.abnocw.miew.ru` (порт `41000+PR%1000`).
 Форки не деплоим. Сборка из SHA коммита.
 
-TLS: HTTP-01 на звёздочку нельзя. DNS-01 на `*.abnocw.miew.ru` — отдельно.
-Существующие сертификаты sslip.io и апекса скрипт не трогает.
+## TLS: per-host HTTP-01 (без DNS-API)
+
+Wildcard нельзя выпустить без ключа к DNS-зоне, поэтому у каждого preview
+свой сертификат, автоматически:
+
+- `/etc/cron.d/coop-preview-cert` (каждые 5 минут, root) гоняет
+  `/usr/local/sbin/coop-preview-cert` (= `deploy/vps/preview-cert-scan.sh`):
+  находит новые хосты по nginx-фрагментам и делает
+  `certbot certonly --webroot` из `www/` превью — location
+  `/.well-known/acme-challenge/` уже есть в каждом фрагменте.
+- Renew — штатный `certbot.timer` (webroot и deploy-hook сохранены в
+  renewal-conf линии). Сироты (PR закрыт, фрагмент снесён) — та же cron-джоба
+  подчищает: `certbot delete` + зеркало.
+- Certbot-хук `/usr/local/sbin/coop-preview-tls-sync` (= `deploy/vps/preview-tls-sync.sh`)
+  зеркалит пару в `/opt/coop-field-preview/tls/<host>/` (live/letsencrypt
+  читает только root, а `preview-apply.sh` проверяет SAN от deploy-preview),
+  добавляет 443 + http→https в существующий фрагмент (idempotent, с откатом
+  по `nginx -t`) и перезагружает nginx. Следующий apply уже сам пишет ssl.
+- Первый apply нового PR бывает на http: фрагмент написан до выпуска
+  сертификата. Через ≤5 минут cron выдаёт серт, хук поднимает 443; но до
+  следующего re-apply (следующий push в PR) ssl-строки пишет сам apply.
+- Существующие сертификаты sslip.io и апекса скрипт не трогает.
 
 Не копировать в preview `ADMIN_PASS` и `data/` прода.
 

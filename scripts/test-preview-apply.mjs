@@ -249,6 +249,11 @@ eq(
   readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8").includes("ssl_certificate"),
   false,
 );
+eq(
+  "no cert — no https jump",
+  readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8").includes("return 301 https://"),
+  false,
+);
 fillIncoming(t.incoming, "tlswild");
 const wildTls = run({
   ...base,
@@ -262,6 +267,40 @@ eq("apply with wildcard cert", wildTls.status, 0);
 eq(
   "wildcard cert used",
   readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("ssl_certificate"),
+  true,
+);
+eq(
+  "wildcard adds https redirect",
+  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("return 301 https://"),
+  true,
+);
+eq(
+  "wildcard keeps acme path open",
+  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("acme-challenge"),
+  true,
+);
+
+// per-host линия (HTTP-01 coop-preview-cert): зеркало tls/<host> подхватывается
+// дефолтом PREVIEW_TLS_PER.
+makeCert(join(certDir, "perhost"), "DNS:tlsper.abnocw.miew.ru");
+fillIncoming(t.incoming, "tlsper");
+const perTls = run({
+  ...base,
+  PREVIEW_SLUG: "tlsper",
+  PREVIEW_IN: join(t.incoming, "tlsper"),
+  PREVIEW_PORT: "41013",
+  PREVIEW_TLS_PER: join(certDir, "perhost"),
+});
+dump("perhost tls", perTls);
+eq("apply with per-host cert", perTls.status, 0);
+eq(
+  "per-host cert used",
+  readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8").includes("ssl_certificate"),
+  true,
+);
+eq(
+  "per-host adds https redirect",
+  readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8").includes("return 301 https://"),
   true,
 );
 

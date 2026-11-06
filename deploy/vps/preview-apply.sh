@@ -84,23 +84,26 @@ nginx_test_reload() {
   fi
 }
 
-# Apex abnocw.miew.ru без DNS:\*.abnocw.miew.ru на поддомен не вешаем:
-# браузер получит чужой CN (сейчас sslip.io) или имя апекса.
 cert_covers_host() {
   local dir="$1"
   local pem="$dir/fullchain.pem"
   local sans
   [ -f "$pem" ] && [ -f "$dir/privkey.pem" ] || return 1
-  sans="$(openssl x509 -in "$pem" -noout -ext subjectAltName 2>/dev/null || true)"
-  printf '%s' "$sans" | grep -q "DNS:\\*\\.abnocw\\.miew\\.ru" && return 0
+  # -text работает и на GNU openssl, и на BSD/LibreSSL (-ext — только openssl 3).
+  sans="$(openssl x509 -in "$pem" -noout -text 2>/dev/null || true)"
+  printf '%s' "$sans" | grep -q "DNS:\*\.abnocw\.miew\.ru" && return 0
   printf '%s' "$sans" | grep -q "DNS:${HOST}" && return 0
   return 1
 }
 
+# Зеркала сертификатов (/opt/.../tls/<host>) обновляет root-скрипт
+# coop-preview-tls-sync (certbot deploy-hook): /etc/letsencrypt/live читает
+# только root, а cert_covers_host здесь гоняется от deploy-preview.
+# Per-host линии выпускает coop-preview-cert (cron, HTTP-01 из webroot www/).
 write_nginx_fragment() {
-  local ssl_listen="" ssl_certs="" cert=""
-  local wild="${PREVIEW_TLS_WILD:-/etc/letsencrypt/live/abnocw.miew.ru}"
-  local per="${PREVIEW_TLS_PER:-/etc/letsencrypt/live/$HOST}"
+  local ssl_listen="" ssl_certs="" cert="" https_jump=""
+  local wild="${PREVIEW_TLS_WILD:-$PREVIEW_ROOT/tls/wild}"
+  local per="${PREVIEW_TLS_PER:-$PREVIEW_ROOT/tls/$HOST}"
   if cert_covers_host "$wild"; then
     cert="$wild"
   elif cert_covers_host "$per"; then
@@ -110,6 +113,12 @@ write_nginx_fragment() {
     ssl_listen="    listen 443 ssl;"
     ssl_certs="    ssl_certificate $cert/fullchain.pem;
     ssl_certificate_key $cert/privkey.pem;"
+    # http -> https включаетcя только вместе с сертификатом (есть куда вести).
+    # ACME-path исключён, на случай per-host HTTP-01; wildcard идёт DNS-01.
+    https_jump="    set \$cf_r 0;
+    if (\$scheme = http) { set \$cf_r 1; }
+    if (\$request_uri ~ \"^/\\.well-known/acme-challenge/\") { set \$cf_r 0; }
+    if (\$cf_r = 1) { return 301 https://\$host\$request_uri; }"
   fi
   mkdir -p "$NGINX_D"
   cat > "$FRAG" <<EOF
@@ -122,6 +131,7 @@ ${ssl_certs}
     index index.html;
     charset utf-8;
 
+${https_jump}
     location /.well-known/acme-challenge/ {
         try_files \$uri =404;
     }
@@ -265,8 +275,8 @@ EOF
 fi
 # Порт и Origin-allowlist обновляем на каждый apply: хост приходит снаружи и
 # может смениться (формат URL, ручной re-apply), а Origin сокета из
-# server/config.js (allowlist) обязан идти за ним. Оба scheme — http сейчас,
-# https после wildcard DNS-01.
+# server/config.js (allowlist) обязан идти за ним. Оба scheme — чтобы http
+# жил до выпуска сертификата и не отваливался после перехода на https.
 # grep -v + mv вместо sed -i: одинаково работает на GNU (VPS/CI) и BSD sed
 # (локальный запуск тестов на mac), как уже делает PREVIEW_SHA ниже.
 AO="http://$HOST,https://$HOST"
