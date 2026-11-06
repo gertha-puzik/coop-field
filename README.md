@@ -50,6 +50,7 @@ npm run dev
 
 - Протокол комнаты `[event, payload]`, лимиты и refuse-коды — [AGENTS.md](AGENTS.md).
 - Слои модулей, зеркала-константы клиент↔сервер, план разреза god-файлов — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- Что уже есть в продукте и что наращиваем (аккаунты, режимы, админка) — [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md).
 
 ## Работа с ИИ
 
