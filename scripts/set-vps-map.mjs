@@ -37,7 +37,10 @@ ws.on('open', () => {
 });
 ws.on('message', (raw) => {
   const [event, payload] = JSON.parse(String(raw));
-  if (event !== 'field' && event !== 'info' && event !== 'you' && event !== 'noplace') return;
+  // Успех — широковещательный «map» (рассылается ТОЛЬКО после применённого setmap;
+  // начальное состояние комнаты приходит событием «field» — его пропускаем,
+  // иначе скрипт уходит с первой же картинкой ДО применения карты).
+  if (event !== 'map' && event !== 'info' && event !== 'you' && event !== 'noplace') return;
   if (event === 'you' || event === 'noplace') {
     if (event === 'noplace') {
       console.error('noplace:', JSON.stringify(payload));
@@ -53,7 +56,7 @@ ws.on('message', (raw) => {
   }
   const m = payload.map;
   console.log(
-    `ПРИНЯТО: ${m.cols}x${m.rows} seed=${JSON.stringify(m.seed)} zones=${m.zones.length} objects=${(m.objects || []).length}`,
+    `ПРИНЯТО (map после setmap): ${m.cols}x${m.rows} seed=${JSON.stringify(m.seed)} zones=${m.zones.length} objects=${(m.objects || []).length}`,
   );
   ws.close();
   process.exit(0);
