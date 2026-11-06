@@ -70,9 +70,12 @@ export interface PointerToolsDeps {
   paintEditorCellObject: (kind: 'dirt' | 'ground', c: number, r: number) => boolean;
   placeBattleCell: (c: number, r: number) => void;
   placeEditorEntry: (c: number, r: number) => boolean;
-  pushEditorUndo: () => void;
+  pushEditorUndo: (withPaint?: boolean) => void;
   toggleEditorSpawn: (c: number, r: number) => boolean;
   editorPlacementClick: (mx: number, my: number) => void;
+  pickEditorSelection: (c: number, r: number) => void;
+  dragEditorSelection: (c: number, r: number) => void;
+  dropEditorSelection: () => void;
 }
 
 export function buildPointerTools(deps: PointerToolsDeps) {
@@ -117,6 +120,9 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     pushEditorUndo,
     toggleEditorSpawn,
     editorPlacementClick,
+    pickEditorSelection,
+    dragEditorSelection,
+    dropEditorSelection,
   } = deps;
   const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const cv = canvasRef.current!;
@@ -197,6 +203,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
           ed.drag.c1 = c;
           ed.drag.r1 = r;
         }
+        // «Перенести»: плавающий кусок следует за курсором после вырезания
+        if (ed.selFloat && ed.tool === 'select') dragEditorSelection(c, r);
         if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground') && ev.buttons & 1) {
           paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
         }
@@ -366,6 +374,20 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         ev.preventDefault();
         return;
       }
+      if (ev.button === 0 && ed.tool === 'select') {
+        // «Перенести»: клик внутри выделения — вырезать кусок и повести его за
+        // курсором (поставится на отпускании); клик мимо — рисуем новое выделение.
+        const inside =
+          ed.selRect && c >= ed.selRect.c0 && c <= ed.selRect.c1 && r >= ed.selRect.r0 && r <= ed.selRect.r1;
+        if (ed.selFloat) dropEditorSelection();
+        if (inside) {
+          pickEditorSelection(c, r);
+          ev.currentTarget.setPointerCapture(ev.pointerId);
+          ev.currentTarget.style.cursor = 'move';
+          ev.preventDefault();
+          return;
+        }
+      }
       ed.drag = { c0: c, r0: r, c1: c, r1: r, erase: ev.button === 2 };
       ev.currentTarget.setPointerCapture(ev.pointerId);
       ev.currentTarget.style.cursor = 'crosshair';
@@ -500,6 +522,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       } catch {
         /* захват мог уже сняться */
       }
+      // «Перенести»: отпускание кнопки ставит плавающий кусок на место.
+      if (ed.selFloat) dropEditorSelection();
       commitEditorDrag();
       const cvE = canvasRef.current;
       if (cvE) cvE.style.cursor = 'crosshair';

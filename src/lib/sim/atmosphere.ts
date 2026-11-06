@@ -1,28 +1,30 @@
 /**
- * Атмосфера поля: PixiJS-слой поверх игрового холста.
+ * Атмосфера поля: тени облаков и дождь — PixiJS-слой поверх игрового холста,
+ * цветокоррекция времени суток — композиторный фильтр на самом мировом холсте.
  *
  * Как устроено. Игровой цикл по-прежнему рисует весь мир (и HUD, и редактор)
- * на обычном 2D-канвасе. Этот холст каждый кадр загружается в PixiJS как
- * текстура и выводится на экран уже через WebGL — вместе со слоями атмосферы:
- *  - цветокоррекция времени суток (утро/день/вечер/ночь) — матрица ColorMatrix
- *    поверх мира;
- *  - плывущие тени облаков — мягкие пятна, скорость и плотность зависят от погоды;
- *  - дождь — косые капли-штрихи, сила и плотность зависят от погоды.
+ * на обычном 2D-канвасе. Канвас остаётся на экране как есть, а поверх него
+ * живёт прозрачный Pixi-слой с облаками и дождём. Цветокоррекция (утро/день/
+ * вечер/ночь — та же матрица 5×4, что раньше гонялась через ColorMatrixFilter)
+ * применяется к мировому холству через CSS `filter: url(#feColorMatrix)` —
+ * её считает композитор на GPU, без единого байта копирования.
+ *
+ * Почему мир больше не заливается в Pixi текстурой: прежняя схема каждый кадр
+ * делала texImage2D всего холста (на ретине — десятки мегабайт за кадр) плюс
+ * полноэкранный проход фильтра — на слабых машинах это и было «сильным лагом».
+ * Теперь пересылаемого ноль: мир рисуется один раз обычным канвасом, тонировка
+ * и частицы — дешёвые надстройки. Вид картинки не меняется: матрица та же.
  *
  * Время суток и погода комнаты — общие для всех игроков (состояние комнаты,
  * событие «atmo»), но сам этот модуль про сеть ничего не знает: ему говорят
  * setDaypart/setWeather, а дальше он плавно едет к нужной картинке.
  *
- * Отрисовка мира остаётся на 2D-канвасе осознанно: это нулевой риск для игровой
- * логики и редактора, а вся «магия» (фильтры, частицы, blend-режимы) живёт в
- * WebGL-композитинге. Перенос отдельных элементов мира в нативные спрайты Pixi
- * можно продолжать поэтапно, не трогая поведение игры.
- *
  * Если WebGL недоступен, Atmosphere.create отклонится — игра просто останется
- * на прежнем 2D-канвасе, без атмосферы и без ошибок.
+ * на прежнем 2D-канвасе: без облаков и дождя, но цветокоррекция (CSS-фильтр)
+ * продолжит работать — она WebGL не требует.
  */
 
-import { Application, ColorMatrixFilter, Container, Sprite, Texture } from 'pixi.js';
+import { Application, Container, Sprite, Texture } from 'pixi.js';
 import type { ColorMatrix } from 'pixi.js';
 import type { DayPart, WeatherKind } from './settings';
 
@@ -116,7 +118,9 @@ function mixProfiles(a: AtmoProfile, b: AtmoProfile, k: number): AtmoProfile {
   };
 }
 
-/** Матрица ColorMatrix: насыщенность × усиления каналов × яркость. */
+/** Матрица ColorMatrix: насыщенность × усиления каналов × яркость.
+ *  Формат 5×4 один в один с feColorMatrix (SVG) — та же математика, что была
+ *  у ColorMatrixFilter Pixi. */
 function gradeToMatrix(g: AtmoState): ColorMatrix {
   const L = [0.213, 0.715, 0.072];
   const s = Math.max(0, Math.min(2, g.sat));
@@ -188,9 +192,6 @@ interface RainDrop {
 
 export class Atmosphere {
   private app: Application | null = null;
-  private worldTex: Texture | null = null;
-  private worldSpr: Sprite | null = null;
-  private filter: ColorMatrixFilter | null = null;
   private cloudC: Container | null = null;
   private rainC: Container | null = null;
   private clouds: CloudBlob[] = [];
@@ -210,11 +211,14 @@ export class Atmosphere {
   private w = 0;
   private h = 0;
   private dpr = 1;
-  /** Буфер мир-канваса, под который собран спрайт (см. frame(): пересбор при изменении). */
-  private texBufW = 0;
-  private texBufH = 0;
   /** Видимость слоя: выключается дебаг-тумблером — слой прячется и не рендерится. */
   private visible = true;
+
+  /** CSS-фильтр цветокоррекции мирового холста (feColorMatrix в скрытом SVG). */
+  private filterId = `catwar-atmo-${Math.random().toString(36).slice(2, 8)}`;
+  private svgEl: SVGSVGElement | null = null;
+  private feNode: SVGFEColorMatrixElement | null = null;
+  private lastMatrix = '';
 
   private constructor(private view: HTMLCanvasElement, private world: HTMLCanvasElement) {}
 
@@ -246,14 +250,6 @@ export class Atmosphere {
       clearBeforeRender: true,
     });
     this.app = app;
-
-    // Мир — текстура из 2D-холста; каждый кадр обновляем содержимое.
-    const tex = Texture.from(this.world);
-    this.worldTex = tex;
-    const spr = new Sprite(tex);
-    spr.filters = [new ColorMatrixFilter()];
-    this.filter = spr.filters[0] as ColorMatrixFilter;
-    this.worldSpr = spr;
 
     // Тени облаков.
     this.cloudC = new Container();
@@ -287,40 +283,48 @@ export class Atmosphere {
     }
     this.rainC.visible = false;
 
-    app.stage.addChild(spr, this.cloudC, this.rainC);
+    app.stage.addChild(this.cloudC, this.rainC);
     this.w = 0;
     this.h = 0;
-    // Спрайт собран под текущий буфер мир-канваса (при create он может быть ещё
-    // дефолтным 300×150 — frame() пересоберёт спрайт на первом валидном кадре).
-    this.texBufW = this.world.width;
-    this.texBufH = this.world.height;
+    this.ensureGradeFilter();
   }
 
   /**
-   * Полный пересбор спрайта мир-текстуры. Pixi не инвалидирует батч-квад спрайта,
-   * когда у CanvasSource меняется размер (ресайз окна, перетаскивание колонок
-   * чата/лога, смена dpr): спрайт продолжает рисовать кусок старого квада, а за
-   * его правой/нижней кромкой из-под тонировки выглядитывает сырое поле — тот
-   * самый «сдвинутый дубль атмосферы». Свежий спрайт собирается уже под новый
-   * буфер, и слой снова покрывает поле целиком.
+   * Цветокоррекция мирового холста: скрытый SVG с feColorMatrix + CSS-фильтр
+   * url(#…) на элементе канваса. Матрица та же, что раньше считал
+   * ColorMatrixFilter Pixi поверх залитой в GPU текстуры мира, — только теперь
+   * её применяет композитор, без копирования холста в видеокарту каждый кадр.
    */
-  private rebuildWorldSprite(): void {
-    const app = this.app;
-    if (!app || !this.worldTex || !this.filter) return;
-    const old = this.worldSpr;
-    const fresh = new Sprite(this.worldTex);
-    fresh.filters = [this.filter];
-    if (old) {
-      const idx = app.stage.getChildIndex(old);
-      app.stage.removeChild(old);
-      old.destroy(); // текстура и фильтр общие — убиваем только спрайт
-      app.stage.addChildAt(fresh, idx);
-    } else {
-      app.stage.addChildAt(fresh, 0);
+  private ensureGradeFilter(): void {
+    if (this.svgEl || typeof document === 'undefined') return;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.style.position = 'absolute';
+    const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+    filter.setAttribute('id', this.filterId);
+    filter.setAttribute('color-interpolation-filters', 'sRGB');
+    const fe = document.createElementNS('http://www.w3.org/2000/svg', 'feColorMatrix');
+    fe.setAttribute('type', 'matrix');
+    fe.setAttribute('values', '');
+    filter.appendChild(fe);
+    svg.appendChild(filter);
+    document.body.appendChild(svg);
+    this.svgEl = svg;
+    this.feNode = fe;
+    this.world.style.filter = `url(#${this.filterId})`;
+  }
+
+  /** Текущая матрица строкой (с квантованием) — чтобы не дёргать DOM каждый кадр. */
+  private applyGradeMatrix(m: ColorMatrix): void {
+    if (!this.feNode) return;
+    let out = '';
+    for (let i = 0; i < 20; i++) out += `${Math.round((m[i] ?? 0) * 10000) / 10000} `;
+    if (out !== this.lastMatrix) {
+      this.lastMatrix = out;
+      this.feNode.setAttribute('values', out);
     }
-    this.worldSpr = fresh;
-    this.texBufW = this.world.width;
-    this.texBufH = this.world.height;
   }
 
   /**
@@ -331,6 +335,7 @@ export class Atmosphere {
   setVisible(on: boolean): void {
     this.visible = on;
     this.view.style.display = on ? '' : 'none';
+    this.world.style.filter = on ? `url(#${this.filterId})` : 'none';
   }
 
   /**
@@ -364,12 +369,13 @@ export class Atmosphere {
   }
 
   /**
-   * Кадр атмосферы: обновление текстуры мира, сглаживание к целевому состоянию,
-   * облака и дождь, затем рендер Pixi. Вызывается из игрового цикла.
+   * Кадр атмосферы: сглаживание к целевому состоянию, облака и дождь, затем
+   * рендер Pixi (только частицы — мир под ними уже нарисован канвасом).
+   * Вызывается из игрового цикла.
    */
   frame(_now: number, dtMs: number, camDx: number, camDy: number): void {
     const app = this.app;
-    if (!app || !this.worldTex || !this.worldSpr || !this.filter || !this.cloudC || !this.rainC) return;
+    if (!app || !this.cloudC || !this.rainC) return;
 
     // Размер вьюпорта — с мирового холста, НЕ с Pixi-канваса: autoDensity ставит
     // на него инлайн-стиль width/height, после чего его clientWidth застревает на
@@ -380,12 +386,8 @@ export class Atmosphere {
     const ch = this.world.clientHeight;
     // dpr живёт в зуме браузера: перечитываем независимо от мира — Ctrl+/- и
     // перетаскивание окна на монитор с другой плотностью меняют devicePixelRatio
-    // на лету. Мир и HUD перечитывают его каждый кадр, а Pixi-слой получал
-    // resolution один раз в init(): при живой смене зума буфер мира обновляется,
-    // а backing-разрешение Пикси остаётся старым — тонировка расфокусируется
-    // (зум 1→2 — мыло, 2→1 — перерасход буфера). Сверяем каждый кадр и при
-    // смене отдаём новое разрешение третьим аргументом resize: в pixi 8.22 он
-    // поддержан (AbstractRenderer.resize пересоздаёт буфер и пересчитывает screen).
+    // на лету. Сверяем каждый кадр и при смене отдаём новое разрешение третьим
+    // аргументом resize: в pixi 8.22 он поддержан.
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (cw > 0 && ch > 0 && (cw !== this.w || ch !== this.h || dpr !== this.dpr)) {
       this.w = cw;
@@ -395,14 +397,9 @@ export class Atmosphere {
     }
     if (this.w <= 0 || this.h <= 0) return;
 
-    // Буфер мир-канваса изменился (ресайз окна/колонок, смена карты, dpr) —
-    // спрайт собран под старый буфер и рисует лишь его кусок (см.
-    // rebuildWorldSprite). Сверяем каждый кадр, пересбор дешёвый и редкий.
-    if (this.world.width !== this.texBufW || this.world.height !== this.texBufH) {
-      this.rebuildWorldSprite();
-    }
-    // Слой выключен дебаг-тумблером: ничего не рендерим, но размеры и спрайт
-    // держим актуальными — чтобы после включения не показать устаревший кадр.
+    // Слой выключен дебаг-тумблером: частицы не рендерим, но цветокоррекцию
+    // держим включённой (она живёт на мировом холсте) — гаснет вместе со слоем
+    // через setVisible.
     if (!this.visible) return;
 
     const dt = Math.min(50, Math.max(1, dtMs)) / 1000;
@@ -435,17 +432,9 @@ export class Atmosphere {
       c.cloudCount = 0;
     }
 
-    // Мир: свежая текстура 2D-холста + текущая цветокоррекция. update() сам
-    // подхватывает изменение размера холста (ресайз окна, перетаскивание колонок
-    // чата/лога), поэтому масштаб спрайта считаем ПОСЛЕ него и каждый кадр:
-    // если посчитать один раз в момент ресайза вьюпорта, текстура там ещё старая,
-    // и навсегда останется меньше вьюпорта — из-под тонировки будет выглядывать
-    // сырой холст (полоса без вечернего/ночного цвета у правого/нижнего края).
-    this.worldTex.source.update();
-    const texW = this.worldTex.width || 1;
-    const texH = this.worldTex.height || 1;
-    this.worldSpr.scale.set(cw / texW, ch / texH);
-    this.filter.matrix = gradeToMatrix(c);
+    // Цветокоррекция — композиторный фильтр мирового холста (тот же вид, что
+    // раньше давал ColorMatrixFilter поверх залитой в GPU текстуры мира).
+    this.applyGradeMatrix(gradeToMatrix(c));
 
     // Облака: плывут по ветру, чуть сдвигаются против камеры (глубина).
     const count = c.cloudCount;
@@ -457,8 +446,8 @@ export class Atmosphere {
       const on = Math.max(0, Math.min(1, count - i));
       b.x += (c.cloudSpeed * 0.92 * b.speedJ * dt) / spanX;
       b.y += (c.cloudSpeed * 0.4 * b.speedJ * dt) / spanY;
-      b.x -= camDx * 0.25 / spanX;
-      b.y -= camDy * 0.25 / spanY;
+      b.x -= (camDx * 0.25) / spanX;
+      b.y -= (camDy * 0.25) / spanY;
       if (b.x > 1.5) b.x -= 2;
       if (b.x < -0.5) b.x += 2;
       if (b.y > 1.5) b.y -= 2;
@@ -510,15 +499,17 @@ export class Atmosphere {
       const w = window as unknown as { __atmo?: Atmosphere };
       if (w.__atmo === this) delete w.__atmo;
     }
+    // Фильтр и его SVG — свои: снимаем с холста, чтобы тонировка не пережила слой.
+    this.world.style.filter = 'none';
+    this.svgEl?.remove();
+    this.svgEl = null;
+    this.feNode = null;
     try {
       this.app?.destroy(false, { children: true, texture: false });
     } catch {
       /* пиксель-в-пиксель не важно: приложение уже мертво */
     }
     this.app = null;
-    this.worldTex = null;
-    this.worldSpr = null;
-    this.filter = null;
     this.cloudC = null;
     this.rainC = null;
     this.clouds = [];

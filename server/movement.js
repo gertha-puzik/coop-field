@@ -156,6 +156,19 @@ function freeMove(ws, payload = {}) {
   // угол может чуть выходить за полигон при полностью легальной ходьбе — поэтому
   // достаточно, чтобы внутри была хотя бы одна из двух точек (угол и середина).
   if (!pointInPolygon(TEST_ISLAND, nx, ny) && !pointInPolygon(TEST_ISLAND, nx + 0.45, ny + 0.45)) return;
+  // Обрыв в свободной ходьбе: перепад уровней рельефа больше 1 пешком не
+  // проходится (зеркало клиентского elevWalkBlocked). Пакет прыжка (jp=1 во
+  // время дуги) открывает окно — дуга несёт кота через обрыв, и финальные
+  // пакеты посадки идут сразу за ним: они проходят, пока окно не закрылось.
+  const nowGuard = Date.now();
+  const jumping = payload.jp === 1 || payload.jp === true;
+  if (jumping) {
+    cat.freeJumpUntil = nowGuard + 2000;
+  } else if (nowGuard >= (cat.freeJumpUntil || 0)) {
+    const fromX = Number.isFinite(cat.fx) ? Math.floor(cat.fx) : cat.x - 1;
+    const fromY = Number.isFinite(cat.fy) ? Math.floor(cat.fy) : cat.y - 1;
+    if (cliffBetween(fromX + 1, fromY + 1, Math.floor(nx) + 1, Math.floor(ny) + 1)) return;
+  }
   cat.fm = 1;
   cat.fx = Math.round(nx * 100) / 100;
   cat.fy = Math.round(ny * 100) / 100;

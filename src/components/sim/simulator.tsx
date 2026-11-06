@@ -220,7 +220,7 @@ import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } fro
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
 import { FieldStage } from './simulator/components/field-stage';
-import { buildEditorOps } from './simulator/editor-ops';
+import { buildEditorOps, type EditorSaveState, type EditorSelState } from './simulator/editor-ops';
 import { buildPointerTools } from './simulator/pointer-tools';
 import { useStrike } from './simulator/hooks/use-strike';
 import { useSimKeyboard } from './simulator/hooks/use-keyboard';
@@ -335,6 +335,17 @@ export default function Simulator() {
    *  меняется каждым движением мыши), state — зеркало для панели редактора. */
   const [editorPlace, setEditorPlace] = useState<EditorPlace | null>(null);
   const editorPlaceRef = useRef<EditorPlace | null>(null);
+  /** Прогресс сохранения локации (фазы кодирования/отправки/подтверждения). */
+  const [editorSave, setEditorSave] = useState<EditorSaveState | null>(null);
+  /** Вырезанный кусок инструмента «Перенести» (холст + уехавшие данные). */
+  const editorSelRef = useRef<EditorSelState | null>(null);
+  /** Размеры поля настроек едут вместе с черновиком редактора: отрисовка тянет
+   *  рисунок локации на px мира именно по settings.field, поэтому рассинхрон
+   *  после смены размера мира растягивал текстуры (баг «съехавших текстур»). */
+  const patchField = useCallback(
+    (p: Partial<SimSettings['field']>) => setSettings((s) => ({ ...s, field: { ...s.field, ...p } })),
+    [],
+  );
   /** Правка и зеркалирование ставящегося объекта: одним входом, чтобы ref и state не разъехались. */
   const patchEditorPlace = (p: Partial<EditorPlace>) => {
     const next = { ...(editorPlaceRef.current ?? { kind: 'tree', spr: 'tree-1', s: 1, rot: 0, mir: 0, x: 0, y: 0, anchored: false, pickId: null }), ...p } as EditorPlace;
@@ -871,6 +882,9 @@ export default function Simulator() {
     undoEditor,
     resetEditor,
     saveEditorMap,
+    pickEditorSelection,
+    dragEditorSelection,
+    dropEditorSelection,
   } = buildEditorOps({
     editorRef,
     camRef,
@@ -891,6 +905,9 @@ export default function Simulator() {
     setEditorMsg,
     setEditorPass,
     setEditorPlace,
+    setEditorSave,
+    patchField,
+    editorSelRef,
     editorPass,
   });
 
@@ -1037,6 +1054,7 @@ export default function Simulator() {
     applyRab,
     applyTestMap,
     closeEditor,
+    clearEditorSave: () => setEditorSave(null),
     showMapLoading,
     wantedRoomIds,
   });
@@ -1270,6 +1288,21 @@ export default function Simulator() {
   // pixi.js не попадает в основной бандл, а без WebGL игра просто остаётся
   // на чистом 2D-канвасе — без атмосферы, но без ошибок.
   useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef: atmoLayerOnRef });
+
+  // ВРЕМЕННО (отладка бага рельефа): живое состояние сима в консоли.
+  useEffect(() => {
+    (window as unknown as { __sim?: unknown }).__sim = {
+      engine: () => engineRef.current,
+      settings: () => settingsRef.current,
+      editor: () => editorRef.current,
+      elevLevelAt,
+      testPeacePointFree,
+      net: () => netRef.current,
+    };
+    return () => {
+      delete (window as unknown as { __sim?: unknown }).__sim;
+    };
+  });
 
   /* ---------- игровой цикл ---------- */
 
@@ -2982,6 +3015,44 @@ export default function Simulator() {
             ctx.lineWidth = 1.6;
             ctx.strokeRect(dx0 + 0.5, dy0 + 0.5, dw - 1, dh - 1);
           }
+          // выделение «Перенести»: пунктирный контур области; в «плавающем»
+          // состоянии — призрак вырезанной отрисовки и зон на новом месте
+          const selR = ed.selRect;
+          if (selR && ed.tool === 'select') {
+            const sxC = ed.selFloat?.dc ?? 0;
+            const syR = ed.selFloat?.dr ?? 0;
+            const sx0 = (selR.c0 + sxC) * s.field.cellW;
+            const sy0 = (selR.r0 + syR) * s.field.cellH;
+            const sw2 = (selR.c1 - selR.c0 + 1) * s.field.cellW;
+            const sh2 = (selR.r1 - selR.r0 + 1) * s.field.cellH;
+            const bufSel = editorSelRef.current;
+            if (ed.selFloat && bufSel?.cv) {
+              ctx.save();
+              ctx.globalAlpha = 0.62;
+              ctx.imageSmoothingEnabled = false;
+              ctx.drawImage(bufSel.cv, sx0, sy0, sw2, sh2);
+              ctx.restore();
+              ctx.save();
+              ctx.setLineDash([5, 4]);
+              ctx.strokeStyle = 'rgba(255, 236, 150, 0.7)';
+              ctx.lineWidth = 1.2;
+              for (const z of bufSel.zones) {
+                ctx.strokeRect(
+                  (z.c0 - selR.c0) * s.field.cellW + sx0 + 0.5,
+                  (z.r0 - selR.r0) * s.field.cellH + sy0 + 0.5,
+                  (z.c1 - z.c0 + 1) * s.field.cellW - 1,
+                  (z.r1 - z.r0 + 1) * s.field.cellH - 1,
+                );
+              }
+              ctx.restore();
+            }
+            ctx.save();
+            ctx.setLineDash([7, 5]);
+            ctx.strokeStyle = ed.selFloat ? 'rgba(255, 236, 150, 0.95)' : 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sx0 + 1, sy0 + 1, sw2 - 2, sh2 - 2);
+            ctx.restore();
+          }
         }
         ctx.restore();
         // трава и цветы — билборды: стоят вертикально, основание следует за сжатой
@@ -4054,6 +4125,20 @@ export default function Simulator() {
     leapRequestRef,
     editorSizeStepRef,
     closeEditor,
+    editorEsc: () => {
+      const d = editorRef.current;
+      if (!d) return false;
+      if (d.selFloat) {
+        dropEditorSelection();
+        return true;
+      }
+      if (d.selRect && d.tool === 'select') {
+        d.selRect = null;
+        syncEditorView();
+        return true;
+      }
+      return false;
+    },
   });
 
   /* ---------- мышь ---------- */
@@ -4099,6 +4184,9 @@ export default function Simulator() {
     pushEditorUndo,
     toggleEditorSpawn,
     editorPlacementClick,
+    pickEditorSelection,
+    dragEditorSelection,
+    dropEditorSelection,
   });
 
   useStrike({
@@ -4120,10 +4208,6 @@ export default function Simulator() {
 
   /* ---------- патчи настроек ---------- */
 
-  const patchField = useCallback(
-    (p: Partial<SimSettings['field']>) => setSettings((s) => ({ ...s, field: { ...s.field, ...p } })),
-    [],
-  );
   const patchCharacter = useCallback(
     (p: Partial<SimSettings['character']>) => setSettings((s) => ({ ...s, character: { ...s.character, ...p } })),
     [],
@@ -4430,6 +4514,7 @@ export default function Simulator() {
                 syncEditorView={syncEditorView}
                 editorView={editorView}
                 setEditorTool={setEditorTool}
+                editorSave={editorSave}
                 editorEntryDir={editorEntryDir}
                 setEditorEntryDir={setEditorEntryDir}
                 editorPlace={editorPlace}
