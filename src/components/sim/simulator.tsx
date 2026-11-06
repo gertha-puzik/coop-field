@@ -299,8 +299,13 @@ export default function Simulator() {
    *  dp — сила перспективы (масштаб спрайтов по глубине: 0 — бой, 1 — мирный режим). */
   const camFxRef = useRef({ z: 1, sq: 1, dp: 0 });
   /** Зум колесом мыши — множитель поверх базового зума вида (1 — как задано режимом).
-   *  Меняется колесом над полем «теста», сам плавно догоняется камерой (kz). */
+   *  Меняется колесом над полем «теста» (в том числе в редакторе локации), сам
+   *  плавно догоняется камерой (kz). */
   const camUserZoomRef = useRef(1);
+  /** Якорь «зума к курсору» в редакторе: мировая точка под курсором и её экранная
+   *  позиция на момент щелчка колеса. Пока зум колеса > 1, кадр держит эту точку
+   *  под тем же местом экрана; ≤1 — обзор всей карты без панорамирования. */
+  const editorPanRef = useRef<{ px: number; py: number; sx: number; sy: number } | null>(null);
   /** Shift зажат — спринт мирного режима: скорость ×2 и частицы из-под лап. */
   const sprintRef = useRef(false);
   /** Копилка темпа спавна частиц спринта (мс бега с прошлого комочка). */
@@ -889,6 +894,28 @@ export default function Simulator() {
     editorPass,
   });
 
+  /** Размер инструмента редактора одним шагом (Alt+колесо над полем, клавиши [ ]):
+   *  в кисти «Земля/Покрытие» — диаметр круглой кисти (1–200 px, шаг ~10%),
+   *  при поставленном объекте — масштаб (+/− 0.1). Ref-колбэк для клавиатурного
+   *  хука; эффект без зависимостей держит свежие замыкания после каждого рендера. */
+  const editorSizeStepRef = useRef<((dir: 1 | -1) => void) | null>(null);
+  useEffect(() => {
+    editorSizeStepRef.current = (dir) => {
+      const d = editorRef.current;
+      if (d && d.tool === 'paint') {
+        const k = dir > 0 ? 1.12 : 1 / 1.12;
+        d.psize = Math.min(200, Math.max(1, Math.round(d.psize * k)));
+        syncEditorView();
+        return;
+      }
+      const p = editorPlaceRef.current;
+      if (p) {
+        const step = dir > 0 ? 0.1 : -0.1;
+        patchEditorPlace({ s: Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round((p.s + step) * 100) / 100)) });
+      }
+    };
+  });
+
   /**
    * Применить якорь атмосферы с сервера (снапшот, эхо нажатия или рассылка смены):
    * часы цикла, погода, кнопки панели и — если темп комнаты расходится с локальными
@@ -1256,29 +1283,32 @@ export default function Simulator() {
 
     // Колесо мыши над полем «теста» — зум вида: вверх — приблизить, вниз — отдалить.
     // Множитель живёт в camUserZoomRef, камера сама плавно доезжает до нового зума.
-    // В редакторе колесо меняет размер ставящегося объекта (+/− по 0.1), если он есть.
+    // Зум работает и в редакторе локации; размер инструмента переехал на
+    // Alt+колесо и клавиши [ ] (editorSizeStepRef): диаметр круглой кисти
+    // «Земли/Покрытия» (1–200 px, шаг ~10%) или масштаб ставящегося объекта (+/− 0.1).
+    // Зум к курсору: на щелчок колеса запоминаем мировую точку под курсором и её
+    // экранную позицию (editorPanRef) — кадр держит точку под этим местом экрана.
     const onWheelZoom = (ev: WheelEvent) => {
       if (fieldFormatRef.current !== 'test') return;
-      if (editorOpenRef.current) {
-        const d = editorRef.current;
-        // Кисть локации: колесо меняет диаметр круглой кисти (2–200 px, шаг ~10%).
-        if (d && d.tool === 'paint') {
-          ev.preventDefault();
-          const k = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-          d.psize = Math.min(200, Math.max(1, Math.round(d.psize * k)));
-          syncEditorView();
-          return;
-        }
-        const p = editorPlaceRef.current;
-        if (p) {
-          ev.preventDefault();
-          const step = ev.deltaY < 0 ? 0.1 : -0.1;
-          patchEditorPlace({ s: Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round((p.s + step) * 100) / 100)) });
-        }
+      if (ev.ctrlKey) return; // пинч-жест оставляем браузеру
+      if (ev.altKey && editorOpenRef.current) {
+        ev.preventDefault();
+        editorSizeStepRef.current?.(ev.deltaY < 0 ? 1 : -1);
         return;
       }
-      if (ev.ctrlKey) return; // пинч-жест оставляем браузеру
       ev.preventDefault();
+      if (editorOpenRef.current) {
+        const rect = cv.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const fxE = camFxRef.current;
+        editorPanRef.current = {
+          px: (sx - cv.clientWidth / 2) / fxE.z + camRef.current.x,
+          py: (sy - cv.clientHeight / 2) / (fxE.z * fxE.sq) + camRef.current.y,
+          sx,
+          sy,
+        };
+      }
       const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
       const next = Math.min(CAM_USER_ZOOM_MAX, Math.max(CAM_USER_ZOOM_MIN, camUserZoomRef.current * dir));
       camUserZoomRef.current = next;
@@ -2045,15 +2075,31 @@ export default function Simulator() {
         const cellH = s.field.cellH;
         const kz = 1 - Math.exp(-dt / CAMZOOM_TAU_MS);
         if (editorOn) {
-          // Редактор: камера отъезжает, чтобы весь мир был виден целиком, вид — сверху.
+          // Редактор: базовый зум — весь мир целиком (авто-подгонка, вид сверху).
+          // Поверх работает зум колесом (camUserZoomRef — общий с полем): >1 —
+          // приближение с якорем под курсором (editorPanRef, зум к курсору),
+          // ≤1 — обзор всей карты, как раньше.
           const bbE = testFieldGeometry(cellW, cellH).bboxPx;
           const pad = 90;
-          const zT = Math.max(0.1, Math.min(1.15, Math.min(vw / (bbE.x1 - bbE.x0 + pad), vh / (bbE.y1 - bbE.y0 + pad))));
+          const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw / (bbE.x1 - bbE.x0 + pad), vh / (bbE.y1 - bbE.y0 + pad))));
+          const zT = Math.max(0.1, Math.min(1.15 * CAM_USER_ZOOM_MAX, fitZ * camUserZoomRef.current));
           camFxRef.current.z += (zT - camFxRef.current.z) * kz;
           camFxRef.current.sq += (1 - camFxRef.current.sq) * kz;
           camFxRef.current.dp += (0 - camFxRef.current.dp) * kz;
-          const cxT = (bbE.x0 + bbE.x1) / 2;
-          const cyT = (bbE.y0 + bbE.y1) / 2;
+          let cxT = (bbE.x0 + bbE.x1) / 2;
+          let cyT = (bbE.y0 + bbE.y1) / 2;
+          // Якорь зума к курсору: центр = мировая точка − смещение курсора от
+          // центра экрана в мире (при целевом зуме).
+          const panE = camUserZoomRef.current > 1.001 ? editorPanRef.current : null;
+          if (panE) {
+            cxT = panE.px - (panE.sx - vw / 2) / zT;
+            cyT = panE.py - (panE.sy - vh / 2) / zT;
+          }
+          // Центр не выпускаем за кромку мира при окне видимости целевого зума.
+          const vwG = vw / zT;
+          const vhG = vh / zT;
+          cxT = bbE.x1 - bbE.x0 >= vwG ? Math.min(Math.max(cxT, bbE.x0 + vwG / 2), bbE.x1 - vwG / 2) : (bbE.x0 + bbE.x1) / 2;
+          cyT = bbE.y1 - bbE.y0 >= vhG ? Math.min(Math.max(cyT, bbE.y0 + vhG / 2), bbE.y1 - vhG / 2) : (bbE.y0 + bbE.y1) / 2;
           if (!camRef.current.init) {
             camRef.current.x = cxT;
             camRef.current.y = cyT;
@@ -4006,6 +4052,7 @@ export default function Simulator() {
     doStrikeRef,
     startStepRef,
     leapRequestRef,
+    editorSizeStepRef,
     closeEditor,
   });
 

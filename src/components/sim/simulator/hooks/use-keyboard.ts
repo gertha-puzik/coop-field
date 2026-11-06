@@ -4,7 +4,8 @@
  * `useSimKeyboard(deps)` attaches exactly one window keydown/keyup/blur
  * listener set (deps array stays `[]`) and owns the semantics of every
  * gameplay key: WASD/QEZX steps, J/L arrow rotation, K block, I strike,
- * Space jelly/leap charge, B battle toggle, Enter chat focus, Escape editor.
+ * Space jelly/leap charge, B battle toggle, Enter chat focus, Escape editor,
+ * [ ] editor tool size (same as Alt+wheel).
  * All mutable state stays in the caller's refs (SimKeyboardDeps); the effect
  * closes over the first-render `closeEditor`, one-to-one with the inline form.
  */
@@ -28,6 +29,7 @@ export interface SimKeyboardDeps {
   doStrikeRef: RefObject<(() => void) | null>;
   startStepRef: RefObject<((dir: number) => void) | null>;
   leapRequestRef: RefObject<number | null>;
+  editorSizeStepRef: RefObject<((dir: 1 | -1) => void) | null>;
   closeEditor: () => void;
 }
 
@@ -45,6 +47,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     doStrikeRef,
     startStepRef,
     leapRequestRef,
+    editorSizeStepRef,
     closeEditor,
   } = deps;
   useEffect(() => {
@@ -59,10 +62,15 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       if (!enteredRef.current) return;
       if (isForm(ev.target)) return;
       // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
+      // [ ] — размер инструмента (кисть/объект), как Alt+колесо; ловим по code,
+      // чтобы скобки работали на любой раскладке.
       if (editorOpenRef.current) {
         if (ev.key === 'Escape') {
           ev.preventDefault();
           closeEditor();
+        } else if (ev.code === 'BracketLeft' || ev.code === 'BracketRight') {
+          ev.preventDefault();
+          editorSizeStepRef.current?.(ev.code === 'BracketRight' ? 1 : -1);
         }
         return;
       }
