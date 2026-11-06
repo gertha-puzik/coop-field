@@ -605,6 +605,7 @@ export function EntryScreen({
             ready={roomsReady}
             stale={roomsStale}
             embedded
+            signedIn={!!accountName}
             onPick={(id) => {
               const gate = namedRoom(id);
               if (gate?.access === 'registered' && !(whoami?.ok && whoami.accountId)) {
