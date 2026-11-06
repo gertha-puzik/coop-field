@@ -59,6 +59,8 @@ export function setTestMap(map: TestMap): void {
   currentMap = map;
   islandPoly = null;
   islandLoopsCache = undefined;
+  cellClipCache.clear();
+  cellClipFull = null;
   peaceCache = null;
   geoCache = null;
   objCache = null;
@@ -161,6 +163,8 @@ export function ensurePaintDecoded(): Promise<boolean> {
       paintH = h;
       islandPoly = null;
       geoCache = null;
+      cellClipCache.clear();
+      cellClipFull = null;
       resolve(true);
     };
     img.onerror = () => {
@@ -200,7 +204,194 @@ export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean)
     islandPoly = null;
     islandLoopsCache = undefined;
     geoCache = null;
+    cellClipCache.clear();
+    cellClipFull = null;
   }
+}
+
+/* ---------- клипы клеток рельефа: дешёвая замена полного контура ---------- */
+
+/**
+ * Клип-пути клеток плато. Раньше каждая клетка рельефа (верх и стена) вырезала
+ * себя полным контуром локации (Path2D на десятки тысяч вершин, марширующие
+ * квадраты + сглаживание): на локации с рельефом это ~180 клипов за кадр —
+ * на слабых машинах именно это «сильно тормозило», а в программном рендере
+ * подвешивало вкладку намертво. Теперь: клетка целиком внутри кромки — клип не
+ * нужен вовсе; клетка на кромке — маленький путь по маске рисунка (граница
+ * следует самому пикселю кисти, без сглаживания); без рисунка — полный контур,
+ * как раньше.
+ */
+
+/** Кэш клип-путей клеток; ключ «c,r@cellWxcellH». */
+const cellClipCache = new Map<string, Path2D | null>();
+/** Полный контур локации для клипов (случай без рисунка кисти). */
+let cellClipFull: Path2D | null = null;
+
+/** Сетка клипа клетки: шаг 2 px канонического мира — как PAINT_GRID у контура. */
+const CELL_CLIP_STEP = 2;
+
+/** Закрашен ли пиксель маски (без выхода за границы — false). */
+function maskAt(x: number, y: number): boolean {
+  if (!paintMask) return true;
+  if (x < 0 || y < 0 || x >= paintW || y >= paintH) return false;
+  return paintMask[y * paintW + x] === 1;
+}
+
+/** Ячейка сетки клипа закрашена, если под ней есть хоть один непрозрачный пиксель
+ *  (клип разрешающий: режет только то, что и так за пределами кисти). */
+function clipCellOn(px: number, py: number): boolean {
+  for (let dy = 0; dy < CELL_CLIP_STEP; dy++) {
+    for (let dx = 0; dx < CELL_CLIP_STEP; dx++) {
+      if (maskAt(px + dx, py + dy)) return true;
+    }
+  }
+  return false;
+}
+
+/** Полный контур локации как Path2D (клеточные доли × размер клетки). */
+function fullClipPath(cellW: number, cellH: number): Path2D {
+  if (cellClipFull) return cellClipFull;
+  const path = new Path2D();
+  const loops = islandLoops();
+  const build = (l: Pt[]) => {
+    l.forEach((p, i) => {
+      const px = p.x * cellW;
+      const py = p.y * cellH;
+      if (i === 0) path.moveTo(px, py);
+      else path.lineTo(px, py);
+    });
+    path.closePath();
+  };
+  if (loops) {
+    for (const l of loops) build(l);
+  } else {
+    build(islandPolygon());
+  }
+  cellClipFull = path;
+  return path;
+}
+
+/**
+ * Клип-путь клетки рельефа (в px мира, как рисуется плато): null — клип не
+ * нужен (клетка с запасом на подъём целиком внутри кромки). Регион проверки и
+ * резки — клетка, поднятая на максимальный уровень рельефа: верх плато
+ * рисуется со сдвигом вверх, и именно он мог вылезти за кромку.
+ */
+export function terrainCellClipPath(c: number, r: number, cellW: number, cellH: number): Path2D | null {
+  const key = `${c},${r}@${cellW}x${cellH}`;
+  const hit = cellClipCache.get(key);
+  if (hit !== undefined) return hit;
+  let out: Path2D | null = null;
+  if (!paintReady()) {
+    // Локация без рисунка: форма по зонам — режем полным контуром, как раньше.
+    out = fullClipPath(cellW, cellH);
+  } else {
+    // Регион клетки с запасом вверх на максимальный подъём (и пара пикселей
+    // на стыки): верх плато уезжает вверх, стена остаётся в клетке.
+    const y0px = r * PAINT_CELL_H - TERRAIN_MAX_LEVEL * TERRAIN_LIFT_PX - 2;
+    const y1px = (r + 1) * PAINT_CELL_H + 2;
+    const x0px = c * PAINT_CELL_W - 2;
+    const x1px = (c + 1) * PAINT_CELL_W + 2;
+    const gx0 = Math.floor(x0px / CELL_CLIP_STEP);
+    const gy0 = Math.floor(y0px / CELL_CLIP_STEP);
+    const gx1 = Math.ceil(x1px / CELL_CLIP_STEP);
+    const gy1 = Math.ceil(y1px / CELL_CLIP_STEP);
+    // Быстрый тест «клетка целиком на земле»: если вся область региона закрашена
+    // — клип не нужен; если вся пуста — рисовать нечего (пустой путь).
+    let any = false;
+    let all = true;
+    for (let gy = gy0; gy < gy1 && (all || !any); gy++) {
+      for (let gx = gx0; gx < gx1; gx++) {
+        if (clipCellOn(gx * CELL_CLIP_STEP, gy * CELL_CLIP_STEP)) any = true;
+        else all = false;
+        if (any && !all) break;
+      }
+    }
+    if (all) {
+      out = null; // целиком над закрашенной землёй — режется только за кромкой мира
+    } else {
+      // Кромка пересекает регион: маленький путь по маске (граничные рёбра
+      // ячеек сетки сцепляются в замкнутые петли — как у большого контура).
+      out = buildCellClipLoops(gx0, gy0, gx1, gy1, cellW, cellH);
+    }
+  }
+  cellClipCache.set(key, out);
+  return out;
+}
+
+/** Петли маски внутри региона → Path2D в px мира. */
+function buildCellClipLoops(gx0: number, gy0: number, gx1: number, gy1: number, cellW: number, cellH: number): Path2D {
+  const path = new Path2D();
+  const on = (gx: number, gy: number): boolean => {
+    if (gx < gx0 || gy < gy0 || gx >= gx1 || gy >= gy1) return false;
+    return clipCellOn(gx * CELL_CLIP_STEP, gy * CELL_CLIP_STEP);
+  };
+  // горизонтальные рёбра: (gx,gy)-(gx+1,gy) — граница между «on» сверху и снизу
+  const hKey = (gx: number, gy: number) => `${gx},${gy}h`;
+  const vKey = (gx: number, gy: number) => `${gx},${gy}v`;
+  const hEdges = new Map<string, [number, number, number, number]>(); // ключ → px мира
+  const vEdges = new Map<string, [number, number, number, number]>();
+  const byVertex = new Map<string, string[]>();
+  const link = (vk: string, ek: string) => {
+    const arr = byVertex.get(vk);
+    if (arr) arr.push(ek);
+    else byVertex.set(vk, [ek]);
+  };
+  for (let gy = gy0; gy <= gy1; gy++) {
+    for (let gx = gx0; gx <= gx1; gx++) {
+      const cur = on(gx, gy);
+      const up = gy > gy0 ? on(gx, gy - 1) : false;
+      const left = gx > gx0 ? on(gx - 1, gy) : false;
+      if (cur !== up) {
+        // горизонтальное ребро на y = gy*step
+        const x0 = gx * CELL_CLIP_STEP;
+        const x1 = (gx + 1) * CELL_CLIP_STEP;
+        const y = gy * CELL_CLIP_STEP;
+        const k = hKey(gx, gy);
+        hEdges.set(k, [x0, y, x1, y]);
+        link(`${gx},${gy}`, k);
+        link(`${gx + 1},${gy}`, k);
+      }
+      if (cur !== left) {
+        const y0 = gy * CELL_CLIP_STEP;
+        const y1 = (gy + 1) * CELL_CLIP_STEP;
+        const x = gx * CELL_CLIP_STEP;
+        const k = vKey(gx, gy);
+        vEdges.set(k, [x, y0, x, y1]);
+        link(`${gx},${gy}`, k);
+        link(`${gx},${gy + 1}`, k);
+      }
+    }
+  }
+  const used = new Set<string>();
+  for (const startKey of [...hEdges.keys(), ...vEdges.keys()]) {
+    if (used.has(startKey)) continue;
+    used.add(startKey);
+    const e0 = hEdges.get(startKey) ?? vEdges.get(startKey)!;
+    const loop: [number, number][] = [[e0[0], e0[1]], [e0[2], e0[3]]];
+    let guard = 0;
+    while (guard++ <= hEdges.size + vEdges.size) {
+      const [tx, ty] = loop[loop.length - 1];
+      const cands = (byVertex.get(`${Math.round(tx / CELL_CLIP_STEP)},${Math.round(ty / CELL_CLIP_STEP)}`) ?? []).filter((k) => !used.has(k));
+      if (cands.length === 0) break;
+      const nk = cands[0];
+      used.add(nk);
+      const e = hEdges.get(nk) ?? vEdges.get(nk)!;
+      const next: [number, number] = e[0] === tx && e[1] === ty ? [e[2], e[3]] : [e[0], e[1]];
+      if (next[0] === loop[0][0] && next[1] === loop[0][1]) break;
+      loop.push(next);
+    }
+    if (loop.length >= 4) {
+      loop.forEach(([px, py], i) => {
+        const wx = (px / PAINT_CELL_W) * cellW;
+        const wy = (py / PAINT_CELL_H) * cellH;
+        if (i === 0) path.moveTo(wx, wy);
+        else path.lineTo(wx, wy);
+      });
+      path.closePath();
+    }
+  }
+  return path;
 }
 
 /** Пиксель маски (канонические px мира): закрашен ли. Вне рисунка — true,
@@ -711,8 +902,8 @@ export function testPeacePointFree(x: number, y: number): boolean {
 export const TERRAIN_LIFT_PX = 26;
 
 /** Уровень рельефа клетки (0-based) текущей локации: 0 — базовая земля.
- *  Правила общие с сервером (testElev): шаг проходится при перепаде ≤ 1,
- *  перепад 2+ — только прыжком с зарядом. */
+ *  Правила общие с сервером (testElev): ЛЮБОЙ перепад уровней — стенка,
+ *  шагом не проходится — только прыжком с зарядом (см. elevWalkBlocked). */
 export function elevLevelAt(c: number, r: number): number {
   return mapElevOf(currentMap, c, r);
 }

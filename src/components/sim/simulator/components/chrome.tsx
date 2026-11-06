@@ -73,6 +73,12 @@ export interface SimulatorHeaderProps {
   patchCharacter: (p: Partial<SimSettings['character']>) => void;
   toggleBattleMode: () => void;
   patchArrow: (p: Partial<SimSettings['arrow']>) => void;
+  /** Локальные тумблеры атмосферы (только поле «теста»): погода — частицы,
+   *  сутки — цветовая вуаль. По сети не едут, у каждого игрока свои. */
+  weatherFxOn: boolean;
+  toggleWeatherFx: (on: boolean) => void;
+  dayTintOn: boolean;
+  toggleDayTint: (on: boolean) => void;
   settingsOpen: boolean;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   setRoomsStale: Dispatch<SetStateAction<boolean>>;
@@ -95,6 +101,10 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     patchCharacter,
     toggleBattleMode,
     patchArrow,
+    weatherFxOn,
+    toggleWeatherFx,
+    dayTintOn,
+    toggleDayTint,
     settingsOpen,
     setSettingsOpen,
     setRoomsStale,
@@ -183,6 +193,32 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
             onClick={() => patchCharacter({ peaceView: !settings.character.peaceView })}
           >
             Перспектива: {settings.character.peaceView ? 'ВКЛ' : 'ВЫКЛ'}
+          </Button>
+          <Button
+            size="sm"
+            variant={weatherFxOn ? 'default' : 'outline'}
+            className={
+              weatherFxOn
+                ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
+                : 'btn-neutral h-8 text-xs'
+            }
+            title="Облака и дождь на поле. Выключение — только у вас: комнатную погоду это не меняет, у остальных остаётся своя картинка."
+            onClick={() => toggleWeatherFx(!weatherFxOn)}
+          >
+            Погода: {weatherFxOn ? 'ВКЛ' : 'ВЫКЛ'}
+          </Button>
+          <Button
+            size="sm"
+            variant={dayTintOn ? 'default' : 'outline'}
+            className={
+              dayTintOn
+                ? 'h-8 bg-[var(--sim-accent)] text-xs text-white hover:bg-[var(--sim-accent-hover)]'
+                : 'btn-neutral h-8 text-xs'
+            }
+            title="Подкраска времени суток (утро/день/вечер/ночь). Выключение — только у вас: цикл суток продолжается, часы на HUD остаются."
+            onClick={() => toggleDayTint(!dayTintOn)}
+          >
+            Сутки: {dayTintOn ? 'ВКЛ' : 'ВЫКЛ'}
           </Button>
           <Button
             size="sm"

@@ -20,6 +20,10 @@ export interface AtmosphereLike {
   setDaypart(dp: DayPart): void;
   setWeather(w: WeatherKind): void;
   setVisible(on: boolean): void;
+  /** Погодные частицы локально: кнопка «Погода». */
+  setWeatherFx(on: boolean): void;
+  /** Вуаль суток локально: кнопка «Сутки». */
+  setDayTint(on: boolean): void;
   frame(now: number, dtMs: number, camDx: number, camDy: number): void;
   destroy(): void;
 }
