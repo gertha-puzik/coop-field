@@ -18,6 +18,7 @@
     "arch:check": "node scripts/check-architecture.mjs",
     "typecheck": "tsc --noEmit",
     "map:restore": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06.json",
+    "map:restore-2": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06-2.json",
     "map:dump": "node scripts/dump-vps-map.mjs data/fresh-map.json"
   },
   "engines": {
