@@ -35,7 +35,7 @@ import {
   DUMMY_SCALE,
   FIELD_MAX_UPSCALE,
   FREE_EMIT_MS,
-  CAM_YAW_SPEED,
+  CAM_YAW_TAU_MS,
   OCCLUDE_ALPHA,
   OCCLUDE_COVER,
   PEACE_SPEED_DEFAULT,
@@ -305,8 +305,8 @@ export default function Simulator() {
   const camFxRef = useRef({ z: 1 });
   /** Поворот обзора, радианы. Положительный — карта крутится по часовой (] ). */
   const camYawRef = useRef(0);
-  /** Удержание [ (−1) и ] (+1). В редакторе эти клавиши меняют размер кисти. */
-  const camYawDirRef = useRef(0);
+  /** Куда доворачивать обзор: кратно π/2. [ и ] шагают на один прямой угол. */
+  const camYawTargetRef = useRef(0);
   /** Зум колесом мыши — множитель поверх базового зума вида (1 — как задано режимом).
    *  Меняется колесом над полем «теста» (в том числе в редакторе локации), сам
    *  плавно догоняется камерой (kz). */
@@ -1725,7 +1725,11 @@ export default function Simulator() {
           dy = dv.dy;
           deg = dv.dx === 1 ? 0 : dv.dx === -1 ? 180 : dv.dy === 1 ? 90 : 270;
         } else {
-          const d = dirByDeg(dir);
+          // Клавиша — направление экрана. Сетка шагает в ту сторону мира,
+          // которая сейчас смотрит в эту сторону кадра.
+          const yawDeg = (camYawRef.current * 180) / Math.PI;
+          const worldDir = (Math.round(wrap360(dir - yawDeg) / 45) * 45) % 360;
+          const d = dirByDeg(worldDir);
           dx = d.dx;
           dy = d.dy;
           deg = d.deg;
@@ -1860,7 +1864,18 @@ export default function Simulator() {
           vx += d.dx;
           vy += d.dy;
         }
-        if (vx !== 0 || vy !== 0) e.ptarget = null; // клавиши перебивают клик-цель
+        if (vx !== 0 || vy !== 0) {
+          e.ptarget = null; // клавиши перебивают клик-цель
+          // Клавиши — направления экрана: W всегда вверх кадра, как в Don't Starve.
+          // Клик-цель уже в координатах мира (screenToWorld) и здесь не крутится.
+          const yaw = camYawRef.current;
+          const c = Math.cos(yaw);
+          const s = Math.sin(yaw);
+          const sx = vx;
+          const sy = vy;
+          vx = sx * c + sy * s;
+          vy = -sx * s + sy * c;
+        }
         if ((vx === 0 && vy === 0) && e.ptarget) {
           const dx = e.ptarget.x - e.fx;
           const dy = e.ptarget.y - e.fy;
@@ -1950,30 +1965,22 @@ export default function Simulator() {
           // правило отключено: дуга несёт кота через обрыв. Выталкивание ходит
           // через тот же blocked, поэтому не закинет кота на скалу.
           // Столкновение по нарисованному верху, не по логической клетке: спина
-          // высокого плато рисуется севернее клетки и иначе проходится пешком,
-          // а бок логической клетки держит кота в траве, где стены не видно.
-          // Проверяем лапы и центр модельки — корпус не заходит на верх раньше лап.
+          // высокого плато рисуется севернее клетки и иначе проходится пешком.
+          // Точка опоры — лапы (низ спрайта). Центр холста у малышей пустой и
+          // торчит над головой: он цеплял кромку локации и верх плато там, где
+          // кот уже стоит в траве, и справа от него вырастала невидимая стена.
+          const stand = (fx: number, fy: number): [number, number] => [fx + hb.dx, fy + hb.dy * 2];
           const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
-            const probe = (fx: number, fy: number): [number, number][] => [
-              [fx + hb.dx, fy + hb.dy * 2],
-              [fx + hb.dx, fy + hb.dy],
-            ];
-            const from = probe(e.fx, e.fy);
-            const to = probe(fxT, fyT);
-            for (let i = 0; i < from.length; i++) {
-              const [x0, y0] = from[i];
-              const [x1, y1] = to[i];
-              if (pointInSouthWall(x1, y1)) return true;
-              if (!elevStepOk(surfaceLevelAt(x0, y0), surfaceLevelAt(x1, y1))) return true;
-            }
-            return false;
+            const [x0, y0] = stand(e.fx, e.fy);
+            const [x1, y1] = stand(fxT, fyT);
+            if (pointInSouthWall(x1, y1)) return true;
+            return !elevStepOk(surfaceLevelAt(x0, y0), surfaceLevelAt(x1, y1));
           };
           // Стенка боевых зон для мирной ходьбы — на кромке по обеим осям.
           const battleWall = (fxT: number, fyT: number, axis: 'x' | 'y') =>
             strictEntries && testPeaceBattleDepth(fxT, fyT, axis) > 0;
           const blocked = (fxT: number, fyT: number, axis: 'x' | 'y') => {
-            const px = fxT + hb.dx;
-            const py = fyT + hb.dy;
+            const [px, py] = stand(fxT, fyT);
             if (!testPeacePointFree(px, py)) return true;
             if (battleWall(px, py, axis)) return true;
             if (elevWalkBlocked(fxT, fyT)) return true;
@@ -2149,9 +2156,12 @@ export default function Simulator() {
       }
 
       // Плавная камера «теста»: догоняет своего кота, упирается в кромку локации.
-      // Поворот обзора — удержание [ ] (camYawDirRef), зум — колесо.
+      // Поворот обзора — шаг [ ] на 90° (camYawTargetRef), зум — колесо.
       if (testMode) {
-        camYawRef.current += camYawDirRef.current * CAM_YAW_SPEED * (dt / 1000);
+        const yawT = camYawTargetRef.current;
+        const yawK = 1 - Math.exp(-dt / CAM_YAW_TAU_MS);
+        camYawRef.current += (yawT - camYawRef.current) * yawK;
+        if (Math.abs(yawT - camYawRef.current) < 0.004) camYawRef.current = yawT;
         const vw = cv.clientWidth || 1;
         const vh = cv.clientHeight || 1;
         const cellW = s.field.cellW;
@@ -4182,7 +4192,7 @@ export default function Simulator() {
     startStepRef,
     leapRequestRef,
     editorSizeStepRef,
-    camYawDirRef,
+    camYawTargetRef,
     closeEditor,
     editorEsc: () => {
       const d = editorRef.current;

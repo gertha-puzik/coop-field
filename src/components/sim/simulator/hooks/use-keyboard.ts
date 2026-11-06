@@ -5,7 +5,8 @@
  * listener set (deps array stays `[]`) and owns the semantics of every
  * gameplay key: WASD/QEZX steps, J/L arrow rotation, K block, I strike,
  * Space jelly/leap charge, B battle toggle, Enter chat focus, Escape editor,
- * [ ] editor tool size (same as Alt+wheel); outside the editor [ ] spins the camera.
+ * [ ] editor tool size (same as Alt+wheel); outside the editor [ ] snaps the
+ * camera by a quarter turn (ignore key repeat).
  * All mutable state stays in the caller's refs (SimKeyboardDeps); the effect
  * closes over the first-render `closeEditor`, one-to-one with the inline form.
  */
@@ -30,8 +31,8 @@ export interface SimKeyboardDeps {
   startStepRef: RefObject<((dir: number) => void) | null>;
   leapRequestRef: RefObject<number | null>;
   editorSizeStepRef: RefObject<((dir: 1 | -1) => void) | null>;
-  /** −1 — [, +1 — ], 0 — клавиши отпущены. В редакторе не используется. */
-  camYawDirRef: RefObject<number>;
+  /** Цель поворота обзора, радианы, кратно π/2. [ вычитает четверть, ] прибавляет. */
+  camYawTargetRef: RefObject<number>;
   closeEditor: () => void;
   /** Esc в редакторе: гасит «плавающий» кусок/выделение инструмента «Перенести»
    *  (true — обработано, редактор не закрывать); false — закрывать редактор. */
@@ -53,7 +54,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     startStepRef,
     leapRequestRef,
     editorSizeStepRef,
-    camYawDirRef,
+    camYawTargetRef,
     closeEditor,
     editorEsc,
   } = deps;
@@ -82,11 +83,14 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
         }
         return;
       }
-      // [ ] крутят обзор: [ против часовой, ] по часовой. Удержание крутит,
-      // пока клавиша зажата (camYawDirRef читает кадр). code — на любой раскладке.
+      // [ ] поворачивают обзор на 90°: [ против часовой, ] по часовой.
+      // Одно нажатие — один квадрант, автоповтор не копит обороты.
+      // code — на любой раскладке. В редакторе эти клавиши уже ушли в размер кисти.
       if (ev.code === 'BracketLeft' || ev.code === 'BracketRight') {
         ev.preventDefault();
-        camYawDirRef.current = ev.code === 'BracketRight' ? 1 : -1;
+        if (!ev.repeat) {
+          camYawTargetRef.current += ev.code === 'BracketRight' ? Math.PI / 2 : -Math.PI / 2;
+        }
         return;
       }
       // Пробел — «приседание-желе» своего кота: удержание приплющивает модельку
@@ -180,8 +184,6 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     };
     const up = (ev: KeyboardEvent) => {
       if (ev.key === 'Shift') sprintRef.current = false;
-      if (ev.code === 'BracketLeft' && camYawDirRef.current < 0) camYawDirRef.current = 0;
-      if (ev.code === 'BracketRight' && camYawDirRef.current > 0) camYawDirRef.current = 0;
       // Отпускание пробела — желейный «выстрел» вверх из приплющенного состояния
       // и прыжок через обрыв: заряд (длительность удержания) определяет максимальный
       // перепад. Сам прыжок запускает игровой цикл — забирает запрос из leapRequestRef.
@@ -226,7 +228,6 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       e.rot = 0;
       e.strikeHeld = false;
       sprintRef.current = false; // Shift при потере фокуса уже не поймаем
-      camYawDirRef.current = 0;
       // Пробел при потере фокуса: keyup не придёт — тихо снимаем присед без
       // «выстрела», иначе кот застыл бы приплющенным навсегда.
       const sp = spaceHoldRef.current;

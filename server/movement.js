@@ -151,13 +151,14 @@ function freeMove(ws, payload = {}) {
   const x = Number(payload.x);
   const y = Number(payload.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-  const nx = Math.min(TEST_WIDTH + 0.6, Math.max(-0.6, x));
-  const ny = Math.min(TEST_HEIGHT + 0.6, Math.max(-0.6, y));
-  // Точка обязана лежать на локации: клиент зажимает ходьбу нарисованной кромкой,
-  // сервер перепроверяет по тому же полигону. Спрайт крупнее клетки, у кромки его
-  // угол может чуть выходить за полигон при полностью легальной ходьбе — поэтому
-  // достаточно, чтобы внутри была хотя бы одна из двух точек (угол и середина).
-  if (!pointInPolygon(TEST_ISLAND, nx, ny) && !pointInPolygon(TEST_ISLAND, nx + 0.45, ny + 0.45)) return;
+  const nx = Math.min(TEST_WIDTH + 1.2, Math.max(-1.2, x));
+  const ny = Math.min(TEST_HEIGHT + 1.2, Math.max(-1.2, y));
+  // Точка обязана лежать на локации: клиент зажимает ходьбу нарисованной кромкой
+  // по лапам. Угол спрайта (то, что приходит в пакете) у кромки и у малышей
+  // торчит за полигон, хотя лапы стоят на траве — достаточно, чтобы внутри
+  // была хотя бы одна из трёх точек (угол, середина, лапы).
+  const onIsland = (px, py) => pointInPolygon(TEST_ISLAND, px, py);
+  if (!onIsland(nx, ny) && !onIsland(nx + 0.45, ny + 0.45) && !onIsland(nx + 0.45, ny + 0.95)) return;
   // Обрыв в свободной ходьбе: перепад больше одного уровня пешком не
   // проходится (зеркало клиентского elevWalkBlocked). Пакет прыжка (jp=1 во
   // время дуги) открывает окно — дуга несёт кота через обрыв, и финальные
