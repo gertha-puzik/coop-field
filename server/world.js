@@ -542,6 +542,48 @@ function testElev(x, y) {
  *  прыжком (elevJumpOk). Зеркало клиентского elevWalkBlocked.
  *  Переходы через клетку захода перепадом не считаются: заход — переход между
  *  мирами. */
+/** Доля клетки на один уровень: 26px / 150px, зеркало TERRAIN_LIFT_CELLS. */
+const TERRAIN_LIFT_CELLS = 26 / 150;
+
+/** Уровень нарисованного верха под точкой в долях клетки. Зеркало surfaceLevelOf. */
+function surfaceLevel(x, y) {
+  const c = Math.floor(x);
+  if (c < 0 || c >= TEST_WIDTH) return 0;
+  const r0 = Math.floor(y);
+  let best = -1;
+  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
+    const r = r0 + k;
+    if (r < 0 || r >= TEST_HEIGHT) break;
+    const e = testElev(c + 1, r + 1);
+    const top = r - e * TERRAIN_LIFT_CELLS;
+    if (y < top || y >= top + 1) continue;
+    if (e > best) best = e;
+  }
+  if (best >= 0) return best;
+  if (r0 < 0 || r0 >= TEST_HEIGHT) return 0;
+  return testElev(c + 1, r0 + 1);
+}
+
+/** Точка в южной стене обрыва. Зеркало pointInSouthWallOf. */
+function inSouthWall(x, y) {
+  const c = Math.floor(x);
+  if (c < 0 || c >= TEST_WIDTH) return false;
+  const rBase = Math.floor(y);
+  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
+    const r = rBase - k;
+    if (r < 0 || r >= TEST_HEIGHT) continue;
+    const e = testElev(c + 1, r + 1);
+    if (e <= 0) continue;
+    const southR = r + 1;
+    const south = southR < 0 || southR >= TEST_HEIGHT ? 0 : testElev(c + 1, southR + 1);
+    if (e - south <= ELEV_STEP_MAX) continue;
+    const yTop = r + 1 - e * TERRAIN_LIFT_CELLS;
+    const yBot = r + 1 - south * TERRAIN_LIFT_CELLS;
+    if (y >= yTop && y < yBot) return true;
+  }
+  return false;
+}
+
 function cliffBetween(x0, y0, x1, y1) {
   if (testEntryCell(x0 - 1, y0 - 1) || testEntryCell(x1 - 1, y1 - 1)) return false;
   return Math.abs(testElev(x1, y1) - testElev(x0, y0)) > ELEV_STEP_MAX;
@@ -615,7 +657,7 @@ export {
   decodePaintPng, paintPxOn, paintCellCoverage, tracePaintLoops, traceMaskOutline,
   buildIsland, testCellInIsland, buildCells, obstacleBodiesOf, obstacleBlockedCells,
   pointInPolygon, objectBase, objectSprite, objectScale, objectRotDeg, obstacleBodyPx,
-  testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, nearestTestCell, testEntryCell,
+  testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
   paintPxMask, paintCellCoverageMask,
   hashStr, mulberry32, chaikin,
 };

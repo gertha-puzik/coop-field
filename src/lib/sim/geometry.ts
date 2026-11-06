@@ -101,6 +101,30 @@ export function anchorAtPx(s: SimSettings, aspect: number, x: number, y: number,
   };
 }
 
+/** Экранные CSS-пиксели канваса → px мира. Камера: translate(центр); scale(z);
+ *  rotate(yaw); translate(−cam). yaw = 0 — вид сверху без поворота. */
+export function screenToWorld(
+  sx: number,
+  sy: number,
+  vw: number,
+  vh: number,
+  camX: number,
+  camY: number,
+  z: number,
+  yaw: number,
+): { x: number; y: number } {
+  const dx = (sx - vw / 2) / Math.max(0.05, z);
+  const dy = (sy - vh / 2) / Math.max(0.05, z);
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return { x: dx * c + dy * s + camX, y: -dx * s + dy * c + camY };
+}
+
+/** Глубина для сортировки билбордов: больше — ближе к нижнему краю экрана. */
+export function viewDepth(x: number, y: number, camX: number, camY: number, yaw: number): number {
+  return -Math.sin(yaw) * (x - camX) + Math.cos(yaw) * (y - camY);
+}
+
 /** Какая половина тела поражена при входе луча через данный край прямоугольника. */
 export function entrySide(hit: { edge: 'left' | 'right' | 'top' | 'bottom'; nx: number }): 'left' | 'right' {
   if (hit.edge === 'left') return 'left';
