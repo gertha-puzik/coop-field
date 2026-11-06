@@ -2,8 +2,8 @@
 # Сборка из SHA коммита PR, не из имени ветки. Форки не деплоим.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
 # Тот же VPS, что прод: каталог /opt/coop-field-preview/, свои порты и data/.
-# Секрет PREVIEW_SSH_KEY — отдельный ключ только на preview; пока его нет,
-# джоба выходит 0 с предупреждением (DNS wildcard уже в зоне).
+# Секрет PREVIEW_SSH_KEY — отдельный ключ только на preview. Однострочный PEM
+# (переносы склеены в пробелы) собираем скриптом write-openssh-key.sh.
 # Приватный репо: PR своего репо видит secrets; форк отсекается if ниже.
 # GITHUB_TOKEN (deployments/pull-requests: write) пишет комментарий и Deployment.
 name: Preview PR
@@ -51,7 +51,7 @@ jobs:
           echo "port=$PORT" >> "$GITHUB_OUTPUT"
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "url=https://$HOST" >> "$GITHUB_OUTPUT"
+          echo "url=http://$HOST" >> "$GITHUB_OUTPUT"
 
       - name: Сборка статики
         if: github.event.action != 'closed'
@@ -79,10 +79,9 @@ jobs:
             exit 0
           fi
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          bash scripts/write-openssh-key.sh ~/.ssh/id_ed25519
           printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
-          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes"
           if [ "$ACTION" = "destroy" ]; then
             rsync -az -e "$SSH" deploy/vps/preview-apply.sh "$SSH_USER@$SSH_HOST:incoming-preview/preview-apply.sh"
             $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_ACTION=destroy bash incoming-preview/preview-apply.sh"
@@ -92,6 +91,8 @@ jobs:
           $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www incoming-preview/$SLUG/server"
           rsync -az -e "$SSH" \
             deploy/vps/preview-apply.sh \
+            deploy/vps/preview-bootstrap.sh \
+            deploy/vps/sudoers-coop-field-preview \
             deploy/vps/coop-field-preview@.service \
             deploy/vps/nginx-preview.conf \
             deploy/vps/nginx-preview-include.conf \
@@ -124,11 +125,18 @@ jobs:
           elif [ "${STATUS:-}" = "live" ]; then
             BODY="${MARKER}
           Preview: ${URL}
-          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются."
+          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются.
+          HTTPS появится после DNS-01 на \`*.abnocw.miew.ru\` (сейчас сертификат только на апекс)."
             STATE=success
-          else
+          elif [ "${STATUS:-}" = "needs-secret" ]; then
             BODY="${MARKER}
           Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\`. Один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
+          Будет: ${URL}"
+            STATE=""
+          else
+            BODY="${MARKER}
+          Preview не выложен (ошибка джобы). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
+          \`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\`
           Будет: ${URL}"
             STATE=""
           fi

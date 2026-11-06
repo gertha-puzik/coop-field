@@ -51,6 +51,8 @@ So **nobody ever pushes to `main` directly** — that would ship to production u
 
 PR preview (same VPS, `/opt/coop-field-preview/`, host `*.abnocw.miew.ru`) is a fourth
 workflow on pull_request, not on `main`. It does not replace the prod pipeline.
+Until DNS-01 wildcard TLS exists, previews are HTTP. Remaining owner step:
+`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh`.
 
 ## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-06)
 

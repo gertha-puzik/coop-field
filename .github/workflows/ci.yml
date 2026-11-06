@@ -75,3 +75,5 @@ jobs:
         run: npm run test:preview-slug
       - name: Preview apply/destroy guards
         run: npm run test:preview-apply
+      - name: OpenSSH PEM из однострочного секрета
+        run: npm run test:write-openssh-key

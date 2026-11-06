@@ -1,9 +1,13 @@
 # Preview-окружения для пул-реквестов
 
 Простыми словами: у каждой ветки свой маленький сайт и своя комната, чтобы
-пробовать игру **не на живой Элизии**. Адрес:
+пробовать игру **не на живой Элизии**. Пока нет wildcard TLS, адрес:
 
-`https://<имя-ветки-буквами>.abnocw.miew.ru` (или `http://…`, пока нет TLS)
+`http://<имя-ветки-буквами>.abnocw.miew.ru`
+
+Комната той же ветки: `ws://<имя>.abnocw.miew.ru/ws`. HTTPS появится после
+DNS-01 на `*.abnocw.miew.ru`. Сертификат апекса `abnocw.miew.ru` на поддомен
+не вешаем.
 
 ## Решение владелицы (2026-11-06)
 
@@ -18,7 +22,7 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 | Юнит | `coop-field` | `coop-field-preview@<slug>` |
 | Порт | 8787 | `41000 + PR%1000` |
 | Данные | `data/` прода | пустой `…/<slug>/data` |
-| nginx | vhost sslip.io | `/etc/nginx/preview.d/preview-<slug>.conf` |
+| nginx | vhost sslip.io / `abnocw.miew.ru` | `/etc/nginx/preview.d/preview-<slug>.conf` |
 | Секреты | `ADMIN_PASS` юнита прода | случайный пароль, **не** копия прода |
 
 Лимит: **не больше 8** живых preview. Девятый PR получит отказ, пока не
@@ -37,60 +41,49 @@ Workflow `.github/workflows/preview.yml` на событие `closed` (это и
 
 Чужой slug (`../`, слэш, имя юнита прода) скрипт отвергает до любых `rm`.
 
-## SSH для уже запущенного агента
+## Что уже сделано (2026-11-06, Europe/Samara)
 
-Секрет Cursor Environment `PREVIEW_SSH_KEY` **не появляется** в VM, которая
-уже работала до добавления секрета. В таком запуске нет переменных
-`PREVIEW_SSH_KEY` / `VPS_SSH_KEY` / `SSH_PRIVATE_KEY`, в `~/.ssh` только
-`known_hosts`, и `deploy-preview@89.232.184.77` отвечает
-`Permission denied (publickey)`. Правок на сервере нет.
+Ключ `PREVIEW_SSH_KEY` в Cursor Secrets **работает**: вход
+`deploy-preview@89.232.184.77` есть. Пользователь `deploy-preview` создан.
+Прод и `root` этим ключом не открываются.
 
-Нужен **новый** агент/чат с текстом:
+На сервере ещё нет bootstrap:
 
-«ключ PREVIEW_SSH_KEY уже в Secrets, настрой preview»
+- нет `/opt/coop-field-preview`
+- нет sudoers `coop-field-preview`
+- нет юнита `coop-field-preview@.service`
+- нет `/etc/nginx/preview.d` и include в sites-enabled
 
-Отдельно от Cursor Secrets: GitHub Actions secret с тем же именем — для
-workflow, его `gh` агенту не отдаёт.
+Файлы bootstrap лежат в `/home/deploy-preview/incoming-preview/` (агент
+залил, ждать клон репо не нужно).
 
-## Что сделано в репо (агент на VPS не попал)
+GitHub Actions на прогоне 22:10 UTC секрет ещё не видел (`SSH_KEY` пуст).
+Если секрет уже добавлен — следующий synchronize PR его подхватит.
+Однострочный PEM (переносы склеены) скрипт `scripts/write-openssh-key.sh`
+собирает обратно; иначе ssh пишет `error in libcrypto`.
 
-Ключа в этой VM нет. Хост-ключ приняли (`StrictHostKeyChecking=accept-new`).
+Публичный ключ на сервере:
 
-В репо готово к одному запуску от root:
+`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP3lCRPoSMCGUI+QwAH/QXRseJaEtmjQTnBReETsztsA coop-field-preview`
 
-- `deploy/vps/preview-bootstrap.sh` — пользователь `deploy-preview`, каталоги,
-  sudoers только на preview-юнит и `nginx -t`/`reload`, include nginx,
-  юнит, ключ SSH;
-- `deploy/vps/preview-apply.sh` — apply/destroy/validate, лимит 8, защита slug;
-- `deploy/vps/sudoers-coop-field-preview`;
-- `deploy/vps/nginx-preview-include.conf` + шаблон vhost;
-- тесты `npm run test:preview-slug` и `npm run test:preview-apply`.
+## Один шаг Сырь (нужен root)
 
-## Один шаг Сырь
-
-На VPS, из клона этой ветки, **от root**:
+На VPS **от root**, без клона:
 
 ```bash
-sudo bash deploy/vps/preview-bootstrap.sh
+sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
 ```
 
-Скрипт сам создаст ключ `/home/deploy-preview/.ssh/coop-field-preview` и
-допишет публичную часть в `authorized_keys`. Затем:
+Скрипт: каталоги, узкий sudoers (только preview-юнит и `nginx -t`/`reload`),
+include nginx, шаблон юнита. Новый SSH-ключ **не создаёт**, если
+`authorized_keys` уже есть — текущий `PREVIEW_SSH_KEY` не перезаписывать.
 
-**GitHub → Settings → Secrets and variables → Actions → New repository secret**
+После bootstrap агент или следующий push в PR выложит
+`http://cursor-product-roadmap-and-platform-42e0.abnocw.miew.ru`
+(порт `41041`). Форки не деплоим. Сборка из SHA коммита.
 
-- имя ровно `PREVIEW_SSH_KEY`
-- значение — **содержимое приватного файла** `/home/deploy-preview/.ssh/coop-field-preview`
-  (открыть на сервере, вставить в GitHub, **не слать в чат**)
-
-После секрета следующий push/synchronize в PR выложит preview. Форки не
-деплоим. Сборка из SHA коммита.
-
-TLS: bootstrap напишет, есть ли уже сертификат
-`/etc/letsencrypt/live/abnocw.miew.ru`. Если есть — apply подставит его в
-vhost. Если нет — preview слушает `:80` (HTTP-01 на звёздочку нельзя; DNS-01
-на `*.abnocw.miew.ru` — отдельно, когда будет DNS API). Существующие
-сертификаты sslip.io скрипт не трогает.
+TLS: HTTP-01 на звёздочку нельзя. DNS-01 на `*.abnocw.miew.ru` — отдельно.
+Существующие сертификаты sslip.io и апекса скрипт не трогает.
 
 Не копировать в preview `ADMIN_PASS` и `data/` прода.
 

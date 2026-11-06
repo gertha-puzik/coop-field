@@ -74,13 +74,26 @@ nginx_test_reload() {
   fi
 }
 
+# Apex abnocw.miew.ru без DNS:\*.abnocw.miew.ru на поддомен не вешаем:
+# браузер получит чужой CN (сейчас sslip.io) или имя апекса.
+cert_covers_host() {
+  local dir="$1"
+  local pem="$dir/fullchain.pem"
+  local sans
+  [ -f "$pem" ] && [ -f "$dir/privkey.pem" ] || return 1
+  sans="$(openssl x509 -in "$pem" -noout -ext subjectAltName 2>/dev/null || true)"
+  printf '%s' "$sans" | grep -q "DNS:\\*\\.abnocw\\.miew\\.ru" && return 0
+  printf '%s' "$sans" | grep -q "DNS:${HOST}" && return 0
+  return 1
+}
+
 write_nginx_fragment() {
   local ssl_listen="" ssl_certs="" cert=""
-  local wild="/etc/letsencrypt/live/abnocw.miew.ru"
-  local per="/etc/letsencrypt/live/$HOST"
-  if [ -f "$wild/fullchain.pem" ] && [ -f "$wild/privkey.pem" ]; then
+  local wild="${PREVIEW_TLS_WILD:-/etc/letsencrypt/live/abnocw.miew.ru}"
+  local per="${PREVIEW_TLS_PER:-/etc/letsencrypt/live/$HOST}"
+  if cert_covers_host "$wild"; then
     cert="$wild"
-  elif [ -f "$per/fullchain.pem" ] && [ -f "$per/privkey.pem" ]; then
+  elif cert_covers_host "$per"; then
     cert="$per"
   fi
   if [ -n "$cert" ]; then
@@ -179,6 +192,10 @@ fi
 
 if [ "$ACTION" != "apply" ]; then
   fail "неизвестное действие $ACTION"
+fi
+
+if [ ! -d "$PREVIEW_ROOT" ] || [ ! -w "$PREVIEW_ROOT" ]; then
+  fail "нет записи в $PREVIEW_ROOT — от root на VPS: sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh"
 fi
 
 if [ -z "$PORT" ]; then

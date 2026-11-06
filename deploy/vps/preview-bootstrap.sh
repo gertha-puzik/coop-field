@@ -44,15 +44,20 @@ chmod 755 "$ROOT" "$NGINX_D"
 chmod 700 "$IN_HOME/.ssh"
 
 KEY="$IN_HOME/.ssh/coop-field-preview"
-if [ ! -f "$KEY" ]; then
+AUTH="$IN_HOME/.ssh/authorized_keys"
+# Если ключ уже лежит в authorized_keys (Cursor/GitHub PREVIEW_SSH_KEY),
+# новый не создаём — иначе секрет в чате и в Actions перестанет совпадать.
+if [ -s "$AUTH" ]; then
+  echo "authorized_keys уже есть — новый ключ не создаём, PREVIEW_SSH_KEY не меняйте."
+elif [ ! -f "$KEY" ]; then
   sudo -u "$USER_NAME" ssh-keygen -t ed25519 -f "$KEY" -C "coop-field-preview-github" -N ""
 fi
 PUB="$KEY.pub"
 if [ -f "$PUB" ]; then
-  touch "$IN_HOME/.ssh/authorized_keys"
-  grep -qxF "$(cat "$PUB")" "$IN_HOME/.ssh/authorized_keys" || cat "$PUB" >> "$IN_HOME/.ssh/authorized_keys"
-  chown "$USER_NAME:$USER_NAME" "$IN_HOME/.ssh/authorized_keys"
-  chmod 600 "$IN_HOME/.ssh/authorized_keys"
+  touch "$AUTH"
+  grep -qxF "$(cat "$PUB")" "$AUTH" || cat "$PUB" >> "$AUTH"
+  chown "$USER_NAME:$USER_NAME" "$AUTH"
+  chmod 600 "$AUTH"
 fi
 
 if [ -f "$HERE/coop-field-preview@.service" ]; then
@@ -101,16 +106,22 @@ systemctl is-active coop-field || true
 
 echo
 echo "bootstrap готов."
-echo "Секрет GitHub PREVIEW_SSH_KEY: значение — приватный ключ"
-echo "  $KEY"
-echo "Не печатать ключ в чат. Кнопка: GitHub → Settings → Secrets and variables"
-echo "  → Actions → New repository secret → имя PREVIEW_SSH_KEY."
-echo "Публичный ключ (можно в чат):"
-cat "$PUB"
-echo
-echo "wildcard cert /etc/letsencrypt/live/abnocw.miew.ru:"
-if [ -f /etc/letsencrypt/live/abnocw.miew.ru/fullchain.pem ]; then
-  echo "  есть — preview-apply подставит в vhost"
+if [ -s "$AUTH" ]; then
+  echo "Публичные ключи deploy-preview (можно в чат):"
+  awk '{print $1, $2, $3}' "$AUTH"
+fi
+if [ -f "$KEY" ]; then
+  echo "Приватный файл на сервере: $KEY"
+  echo "Если PREVIEW_SSH_KEY в Cursor/GitHub уже задан и authorized_keys совпадает — не перезаписывайте секрет."
 else
-  echo "  нет — preview будет на :80, пока Сырь не выпустит DNS-01 на *.abnocw.miew.ru"
+  echo "Приватный ключ на сервере не создавали: вход идёт ключом из Secrets."
+fi
+echo
+echo "TLS /etc/letsencrypt/live/abnocw.miew.ru:"
+WILD_PEM="/etc/letsencrypt/live/abnocw.miew.ru/fullchain.pem"
+if [ -f "$WILD_PEM" ] && openssl x509 -in "$WILD_PEM" -noout -ext subjectAltName 2>/dev/null | grep -q 'DNS:\*\.abnocw\.miew\.ru'; then
+  echo "  wildcard SAN есть — preview-apply повесит :443"
+else
+  echo "  wildcard SAN нет (апекс abnocw.miew.ru на поддомен не ставим)."
+  echo "  preview слушает :80, пока не будет DNS-01 на *.abnocw.miew.ru"
 fi

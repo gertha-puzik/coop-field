@@ -94,6 +94,11 @@ eq("alpha dir", existsSync(join(t.previewRoot, "alpha/www/index.html")), true);
 eq("alpha nginx", existsSync(join(t.nginxD, "preview-alpha.conf")), true);
 eq("alpha env not prod data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes("/opt/coop-field/data"), false);
 eq("alpha env preview data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes(join(t.previewRoot, "alpha/data")), true);
+eq(
+  "apex cert without wildcard is not hung on preview vhost",
+  readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8").includes("ssl_certificate"),
+  false,
+);
 
 const b = run({
   ...base,
@@ -129,6 +134,74 @@ const ninth = run({
 });
 eq("refuse 9th preview", ninth.status === 0 ? "ok" : "fail", "fail");
 eq("ninth not created", existsSync(join(t.previewRoot, "ninth")), false);
+for (let i = 0; i < 8; i += 1) {
+  rmSync(join(t.previewRoot, `slot${i}`), { recursive: true, force: true });
+}
+
+const certDir = join(t.root, "certs");
+mkdirSync(certDir, { recursive: true });
+function makeCert(dir, san) {
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "ec",
+      "-pkeyopt",
+      "ec_paramgen_curve:P-256",
+      "-keyout",
+      join(dir, "privkey.pem"),
+      "-out",
+      join(dir, "fullchain.pem"),
+      "-days",
+      "1",
+      "-nodes",
+      "-subj",
+      "/CN=abnocw.miew.ru",
+      "-addext",
+      `subjectAltName=${san}`,
+    ],
+    { encoding: "utf8" },
+  );
+  if (r.status !== 0) {
+    console.error("openssl cert", r.stderr);
+    process.exit(1);
+  }
+}
+makeCert(join(certDir, "apex"), "DNS:abnocw.miew.ru");
+makeCert(join(certDir, "wild"), "DNS:*.abnocw.miew.ru,DNS:abnocw.miew.ru");
+fillIncoming(t.incoming, "tlsapex");
+const apexTls = run({
+  ...base,
+  PREVIEW_SLUG: "tlsapex",
+  PREVIEW_IN: join(t.incoming, "tlsapex"),
+  PREVIEW_PORT: "41011",
+  PREVIEW_TLS_WILD: join(certDir, "apex"),
+});
+dump("apex tls", apexTls);
+eq("apply with apex-only cert", apexTls.status, 0);
+eq(
+  "apex-only cert skipped",
+  readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8").includes("ssl_certificate"),
+  false,
+);
+fillIncoming(t.incoming, "tlswild");
+const wildTls = run({
+  ...base,
+  PREVIEW_SLUG: "tlswild",
+  PREVIEW_IN: join(t.incoming, "tlswild"),
+  PREVIEW_PORT: "41012",
+  PREVIEW_TLS_WILD: join(certDir, "wild"),
+});
+dump("wild tls", wildTls);
+eq("apply with wildcard cert", wildTls.status, 0);
+eq(
+  "wildcard cert used",
+  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("ssl_certificate"),
+  true,
+);
 
 rmSync(t.root, { recursive: true, force: true });
 
