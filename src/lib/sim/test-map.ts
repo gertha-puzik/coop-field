@@ -222,11 +222,53 @@ export type TestMapZone = {
 export type TestMapSpawn = { c: number; r: number };
 
 /** Предел высоты рельефа (уровней над базовой землёй). 0 — обычная земля,
- *  3 — самый высокий уступ. ЛЮБОЙ перепад уровней между соседними клетками —
- *  стенка: шагом не проходится, только прыжком (заряд пробела определяет
- *  максимальный перепад). Значения хранятся разреженно: ключ «c,r» (0-based) →
- *  уровень 1..3; отсутствие клетки и явный 0 — одно и то же (обычная земля). */
-export const TERRAIN_MAX_LEVEL = 3;
+ *  10 — самый высокий уступ: десять ступеней высоты и столько же глубины
+ *  относительно соседа. Значения хранятся разреженно: ключ «c,r» (0-based) →
+ *  уровень 1..10; отсутствие клетки и явный 0 — одно и то же (обычная земля).
+ *  Ходьба и прыжок — elevStepOk / elevJumpOk; серверное зеркало чисел —
+ *  server/protocol.js, функции — server/world.js. */
+export const TERRAIN_MAX_LEVEL = 10;
+
+/** Перепад, который берётся шагом без прыжка (вверх и вниз). */
+export const ELEV_STEP_MAX = 1;
+
+/** Доля шкалы прыжка (0 — тап, 1 — Пробел удержан все 4 с). Половина шкалы
+ *  берёт перепад в 2 уровня, полная — в 3. Зеркало JUMP_CHARGE_* сервера. */
+export const JUMP_CHARGE_HALF = 0.5;
+export const JUMP_CHARGE_FULL = 1;
+
+/** Выше этого вверх не запрыгнуть никаким зарядом. Вниз ограничение мягче:
+ *  перепад 4+ берётся полным зарядом (до TERRAIN_MAX_LEVEL). */
+export const JUMP_MAX_UP = 3;
+
+/** Доля шкалы 0..1 из канонического заряда приседа (0.15 тап … 1 за 4 с). */
+export function jumpFillOf(charge: number): number {
+  if (!Number.isFinite(charge)) return 0;
+  return Math.min(1, Math.max(0, (charge - 0.15) / 0.85));
+}
+
+/** Шаг без прыжка: |перепад| не больше одного уровня. */
+export function elevStepOk(from: number, to: number): boolean {
+  return Math.abs(to - from) <= ELEV_STEP_MAX;
+}
+
+/**
+ * Прыжок с уровня from на to при доле заряда fill (0..1).
+ * |Δ| ≤ 1 — можно и шагом. |Δ| = 2 — шкала хотя бы наполовину.
+ * |Δ| = 3 — только полная шкала. Вверх на 4+ — нельзя.
+ * Вниз на 4+ — полная шкала (спуститься можно, забраться нет).
+ * Зеркало server/world.js elevJumpOk — числа только из констант выше.
+ */
+export function elevJumpOk(from: number, to: number, fill: number): boolean {
+  const d = to - from;
+  const ad = Math.abs(d);
+  if (ad <= ELEV_STEP_MAX) return true;
+  const f = Number.isFinite(fill) ? Math.min(1, Math.max(0, fill)) : 0;
+  if (d > JUMP_MAX_UP) return false;
+  if (ad === 2) return f >= JUMP_CHARGE_HALF;
+  if (ad === 3 || d < 0) return f >= JUMP_CHARGE_FULL;
+  return false;
+}
 
 /* ---------- пиксельная отрисовка локации (кисть редактора) ---------- */
 

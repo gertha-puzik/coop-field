@@ -20,6 +20,7 @@ const TESTS = [
   "scripts/test-keys.mts",
   "scripts/test-remote-aim.mts",
   "scripts/test-move-book.ts",
+  "scripts/test-elev-rules.mts",
 ];
 
 if (!supportsStripTypes) {

@@ -32,7 +32,16 @@ import {
 // which does not resolve extensionless specifiers. Allowed by tsconfig's
 // allowImportingTsExtensions (noEmit build); bundlers resolve explicit files.
 } from "../sim/settings.ts";
-import { GROUND_COVER_OPTS, TEST_MAP_LIMITS, TERRAIN_MAX_LEVEL, type TestMap } from "../sim/test-map.ts";
+import {
+  ELEV_STEP_MAX,
+  GROUND_COVER_OPTS,
+  JUMP_CHARGE_FULL,
+  JUMP_CHARGE_HALF,
+  JUMP_MAX_UP,
+  TEST_MAP_LIMITS,
+  TERRAIN_MAX_LEVEL,
+  type TestMap,
+} from "../sim/test-map.ts";
 
 /* ---------- имена событий ---------- */
 
@@ -261,7 +270,7 @@ export type { TestMap };
 
 /** Лимиты редактора локации — единственный источник на клиенте: server/protocol.js
  *  держит то же самое (паритет в CI). Сервер отвергает конфиг за этими границами. */
-export { TEST_MAP_LIMITS, TERRAIN_MAX_LEVEL };
+export { ELEV_STEP_MAX, JUMP_CHARGE_FULL, JUMP_CHARGE_HALF, JUMP_MAX_UP, TEST_MAP_LIMITS, TERRAIN_MAX_LEVEL };
 
 /** id покрытий земли пака (12): выводим из полной модели редатора, а не дублируем. */
 export const GROUND_COVER_IDS: readonly string[] = GROUND_COVER_OPTS.map((o) => o.id);
@@ -325,5 +334,5 @@ export const JUMP_COOLDOWN_MS = 450;
 /** Дальность прыжка: 1..3 клетки, строго вдоль 8 направлений. */
 export const JUMP_MAX_CELLS = 3;
 export const JUMP_DIRECTIONS = 8;
-/** Максимальный перепад высот прыжка (равен TERRAIN_MAX_LEVEL). */
-export const JUMP_MAX_DROP = 3;
+/** Максимальный перепад вниз (равен TERRAIN_MAX_LEVEL). Вверх — JUMP_MAX_UP. */
+export const JUMP_MAX_DROP = TERRAIN_MAX_LEVEL;
