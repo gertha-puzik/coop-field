@@ -4,23 +4,33 @@ You are an external chat AI: the user pastes files into the chat, and you cannot
 repo, run gates, or push branches. This file is the whole project brief — what exists,
 where things live, and which rules are hard. Ask for files by exact path (see "Files to
 ask for, by task"). In-repo maps for agents WITH file access: `AGENTS.md` (routes + wire
-contract), `docs/ARCHITECTURE.md` (depth). All sizes below are `wc -l` as of 2026-11-06;
-the CI gate `npm run check:landmarks` keeps them honest — line numbers drift, `grep` wins.
+contract), `docs/ARCHITECTURE.md` (engine depth), `docs/PLATFORM-ARCHITECTURE.md` (accounts,
+two sites, config registry). All sizes below are `wc -l` as of 2026-11-08 (platform branch
+`feature/elyria-platform-admin-profiles`); the CI gate `npm run check:landmarks` keeps them
+honest — line numbers drift, `grep` wins.
 
 ## What this project is
 
 **coop-field** — a browser co-op game: cats battle on a shared canvas field (WASD walking
 that survives the Russian keyboard layout, aimed strikes with zones and block, skins,
-chat, day/night + weather, a drawn location with an in-game editor). Two independent apps
-live in one GitHub repo (`gertha-puzik/coop-field`; owner decision: **private** —
-if it is still public, GitHub → Settings → General → Danger Zone → Change
-repository visibility → Private):
+chat, day/night + weather, a drawn location with an in-game editor). One GitHub repo
+(`gertha-puzik/coop-field`), two apps:
 
 - **Frontend** — Next.js static export (`output: "export"`): canvas engine, HUD, panels. `src/`.
 - **Room server** — plain Node process (`ws` WebSocket library): rooms, cell authority,
-  combat, chat, atmosphere. `server.js` (thin entry) + 12 modules in `server/`.
+  combat, chat, atmosphere + the HTTP surface for accounts/sessions, profiles and admin
+  config. `server.js` (thin entry) + 19 modules in `server/`.
 
-They share **no code**. The only link is the wire protocol: JSON frames `[event, payload]`.
+**One engine, two public sites** (platform work, branch above):
+
+- **Beer Grottoes** (grotto site, `abnocw.miew.ru`) — public, guest-only, `/combat/` grotto
+  rooms and a `/hunger/` placeholder. No accounts, no Elision traces in UI, bundle or server
+  answers (the API zones are 404 on that host class).
+- **Elysiae / Elision** (elyria site, `elisium.miew.ru`) — registration/login (HttpOnly
+  cookie), the closed drawn location `/elision/`, player catalog `/players`, admin dashboard
+  `/admin`. Preview PRs get BOTH: `pr-<N>.abnocw.miew.ru` + `pr-<N>.elisium.miew.ru`.
+
+The two loops share **no code**. The only link is the wire protocol: JSON frames `[event, payload]`.
 The server is the cell authority — two cats never share a cell; every step gets exactly
 one reply (an `update cat` echo or `refuse {code}`); clients predict one step ahead and
 roll back on `refuse`. Vercel cannot host WebSocket, so the room server runs on the
@@ -28,50 +38,63 @@ owner's VPS behind nginx.
 
 ## Stack
 
-- Frontend: Next.js 16, React 19, TypeScript, Tailwind 4, pixi.js 8 (weather overlay, lazy).
+- Frontend: Next.js 16 (static export), React 19, TypeScript, Tailwind 4, pixi.js 8 (weather
+  overlay, lazy); Babylon WebGL view only for the `/elision/` page (dynamic import).
 - Room server: Node ESM JavaScript, no build step; `ws@8`; data in `data/*.json`.
 - Protocol: 23 client→server + 23 server→client events, mirrored by hand in
   `server/protocol.js` and `src/lib/net/protocol.ts` (constants like ARMOR_CURVE are
-  re-exported per side); CI gates pin the mirror.
+  re-exported per side); CI gates pin the mirror. The platform wave did NOT touch the wire.
 - CI: GitHub Actions on every PR (node 22) — see gates below.
 
 ## Deploy pipeline — why branch + PR is MANDATORY
 
-A push to `main` IS a production deploy. Three workflows start on `main`:
+A push to `main` IS a production deploy (merge only by PR; branch protection is on). Workflows on `main`:
 
 1. **«Проверки»** (`.github/workflows/ci.yml`) — typecheck, architecture gate (no new file
-   over 800 lines, `lib` must not import `components`), protocol sync + parity, unit tests.
-2. **«Фронтенд на VPS»** (`deploy-frontend.yml`) — rsync of the static
-   `out/` to the VPS web root (the former Vercel mirror step was removed).
-3. **«Сервер комнаты на VPS»** (`deploy-backend.yml`) — rsync of `server/` + restart of
-   the systemd unit `coop-field` (port 8787 behind nginx) with a health check.
+   over 800 lines, `lib` must not import `components`), protocol sync + parity, doc landmarks,
+   unit tests, server-modules smoke, queue tests, auth tests, preview gates.
+2. **«Фронтенд на VPS»** (`deploy-frontend.yml`) — builds BOTH site variants
+   (`npm run build:variants`: `NEXT_PUBLIC_SITE=grotto|elyria` + `scripts/prune-export.mjs`
+   cuts the other variant's routes), then TWO rsyncs: `www-grotto/` → `/opt/coop-field/www`
+   (the public grottoes site) and `www-elyria/` → `/opt/coop-field/www-elyria` (Elysiae;
+   the directory must exist and be writable once — an owner step, see the workflow's own
+   error text). The former Vercel mirror step is gone.
+3. **«Сервер комнаты на VPS»** (`deploy-backend.yml`) — rsync of `server/` + restart of the
+   systemd unit `coop-field` (port 8787 behind nginx) with a health check.
 
-So **nobody ever pushes to `main` directly** — that would ship to production unreviewed
-(the live game AND the room server). The workflow is always: branch → PR → green CI → merge.
+PR preview (same VPS, `/opt/coop-field-preview/`) is TWO more workflows: `preview-build.yml`
+(on `pull_request`, no secrets, artifact carries both `www-grotto/` and `www-elyria/`) and
+`preview-deploy.yml` (on `workflow_run`, executed from `main`, holds `PREVIEW_SSH_KEY`).
+Deploy of a PR serves both hosts `pr-<N>.abnocw.miew.ru` (grottoes) and
+`pr-<N>.elisium.miew.ru` (Elysiae) from one room instance; TLS per-host by a root cron
+(~5 min). See `docs/PREVIEW-ENVIRONMENTS.md`.
 
-PR preview (same VPS, `/opt/coop-field-preview/`, host `*.abnocw.miew.ru`) is a fourth
-workflow on pull_request, not on `main`. It does not replace the prod pipeline.
-Until DNS-01 wildcard TLS exists, previews are HTTP. Remaining owner step:
-`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh`.
-
-## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-06)
+## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-08)
 
 | Path | Lines | What is inside |
 | --- | ---: | --- |
-| `src/components/sim/simulator.tsx` | 4477 | Canvas engine. Legacy monolith, deliberately kept (W5a/W5b moved out what could be moved): state/refs belt 233–868, `buildEditorOps` call :869, effects ~1014–1248, main rAF 1249–3978 (`const loop` :3947, one `useEffect` `[stage]`), pointer handlers 3979–4075, settings patches 4076–~4210, JSX 4324–4477 |
-| `src/components/sim/simulator/` | 11 files | Stage-2 carve of the engine: hooks — use-network 624, use-canvas-layers 181, use-keyboard 230, use-strike 277; factories — editor-ops 785, pointer-tools 619; hud-canvas 241, sim-model 174, chrome 373, editor-overlay 621, field-stage 146 |
-| `src/components/sim/settings-panel.tsx` | 1299 | Settings/HUD panel (25 props). The admin-tab password gate is UX-only — the real arbiter is the server (`setmap`) |
-| `src/lib/sim/settings.ts` | 1138 | Combat model: ARMOR_CURVE (:572), DAMAGE_LEVELS (:527), strike zones, sprites, slowdown |
-| `src/lib/sim/test-map.ts` | 634 | Location config v1/v2 + client-side editor limits (mirror of server sanitize) |
-| `src/lib/sim/test-field.ts` | 1822 | The drawn «Elision» field: walkability, routes, edge render, paint mask. Mutable singletons — ONE Simulator mount per process |
-| `src/lib/sim/atmosphere.ts` | 527 | pixi.js day/night + weather overlay |
-| `src/lib/net/coop.ts` | 537 | Transport: socket choice, reconnect backoff, inbound dispatch |
-| `src/lib/net/protocol.ts` | 329 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
+| `src/components/sim/simulator.tsx` | 4933 | Canvas engine. Deliberate legacy remainder: state/refs belt from :253, `buildEditorOps` call :938, main rAF (`const loop` :4220, one `useEffect` `[stage]`), `buildPointerTools` call :4364. Platform hooks inline: `IS_ELYRIA` :117 gates the auth panel/callbacks (:4548–:4744). localStorage: :710/:725 (saved SP), :1201 (combat log), :4490-4491 (reset), :4503 (rotation) |
+| `src/components/sim/simulator/` | 15 files | Stage-2 carve + PR #48: hooks — use-network 641, use-canvas-layers 186, use-keyboard 257, use-strike 277, use-elision-view 47; factories — editor-ops 734, pointer-tools 670, editor-cells 196, editor-select 197; hud-canvas 225, sim-model 178, elision-present 287; JSX — chrome 408, editor-overlay 692, field-stage 159 |
+| `src/components/sim/settings-panel.tsx` | 1240 | Settings/HUD panel (30 props). Admin tabs render ONLY for `role === 'admin'` from the session `whoami` — the old local "tab password" is gone (P3); the server stays the arbiter |
+| `src/lib/sim/settings.ts` | 1131 | Combat model: ARMOR_CURVE (:567), DAMAGE_LEVELS (:522), strike zones, sprites (31), slowdown |
+| `src/lib/sim/test-map.ts` | 736 | Location config v1/v2 + client-side editor limits (mirror of server sanitize) |
+| `src/lib/sim/test-field.ts` | 2155 | The drawn «Elision» field: walkability, routes, edge render, paint mask. Mutable singletons — ONE Simulator mount per process |
+| `src/lib/sim/elision-babylon.ts` (+ elision-scene.ts 156) | 307 | WebGL view of `/elision/` only: dynamic Babylon import; `worldPxToScene` — the single px→scene step |
+| `src/lib/site.ts` | 28 | Site variant canon: `NEXT_PUBLIC_SITE=grotto\|elyria`, default grotto (fail-safe). Variant-dependent modules check env INLINE (`const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria'`) — imports from site.ts do NOT fold, inline checks do |
+| `src/lib/net/coop.ts` | 576 | Transport: socket choice by host (elisium → same-origin `/ws`, preview → own `/ws`, legacy → room socket, localhost → :3780), `httpOrigin()` for the HTTP flows, reconnect backoff, inbound dispatcher. No `?t=` in URLs |
+| `src/lib/net/protocol.ts` | 367 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
+| `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 367 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — the whole HTTP client: `/auth/register|login|logout|me`, `/profiles` catalog/card/`PATCH /profiles/me`, `/cfg` admin (apply/reset/restore/export/import) |
+| `src/lib/net/cfg-live.ts` + `src/lib/cfg-registry.ts` | 122 + 139 | Live universes from public `GET /cfg` (one fetch per tab; registry defaults on failure; a dropped saved value snaps to DEFAULT); client mirror of the 5-key config registry (parity gate) |
+| `src/lib/net/modes.ts` | 155 | Client room catalogue mirroring `server/modes.js`; the grotto build contains no Elision room at all. PlayMode: hub/beer/elision/hunger — the standalone "combat" mode is retired (server aliases room code `combat` → `grot-1`) |
 | `src/lib/net/move-book.ts` | 89 | Step prediction (≤1 unconfirmed). **The reference module — copy its style for new files** |
-| `server.js` + `server/*.js` | 10 + 12 | Room server: config 137, protocol 272 (canon), testmap 493, world 598, sanitize 95, room 412, movement 268, combat 271, dummy-rab 133, atmo 114, persist 131, net 199 |
+| `src/components/players/players-catalog.tsx` | 458 | `/players` catalog (elyria build only): public cards, `?id=` deep links, inline edit of your own card |
+| `src/components/admin/cfg-dashboard.tsx` | 444 | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies, reset, restore by history name, export/import JSON |
+| `server.js` + `server/*.js` | 10 + 19 | Room server: config 228 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`), protocol 284 (canon), net 264 (HTTP host gate + CSRF), room 438 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 118, persist 134, sanitize 95, testmap 494, world 663, modes 45, accounts 347, auth 510 (sessions/cookies/token matrix), profiles 310, runtime-config 357, cfg-registry 295 (5-key whitelist), hunger 11 (skeleton) |
 
 Docs: `docs/ARCHITECTURE.md` — data flows, client↔server mirrors, THREE coordinate
 systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singleton contract.
+`docs/PLATFORM-ARCHITECTURE.md` — as-implemented platform: session/token matrix per host
+class, config registry (5 keys, apply policies), profiles, RETIRED_ROOMS.
 
 ## The 5 hard rules (violating one = PR rework)
 
@@ -80,7 +103,7 @@ systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singlet
 2. **Protocol events via `EV.*` names only.** `server/protocol.js` (server side) and
    `src/lib/net/protocol.ts` (client side) are the only registries. Never write a new
    string literal for an event name; never add an event on one side only. CI gates:
-   `check:protocol`, `test:protocol-parity`.
+   `check:protocol`, `test:protocol-parity` (the parity also pins the 5-key config registry).
 3. **Docs updated in the same PR.** Changed protocol, module boundaries or sizes →
    update the tables in `AGENTS.md` and `docs/ARCHITECTURE.md` (§2) in the same PR;
    drifted size numbers fail CI (`check:landmarks`).
@@ -90,6 +113,16 @@ systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singlet
    decision done via the systemd unit env.
 5. **Production/VPS is owner-only.** An agent needing prod operations writes the exact
    commands for the owner and waits — it never improvises server work itself.
+
+Plus two platform rules:
+6. **Site-variant code stays folded.** New variant-dependent UI checks
+   `NEXT_PUBLIC_SITE` INLINE in its own file (imports from `src/lib/site.ts` do not fold);
+   the grotto artifact must contain zero Elision strings/routes. Server-side, the Host
+   class (`hostClassOf`) gates whole API zones — never mark a hidden route "deprecated but
+   working" on the public site.
+7. **The config registry is a whitelist.** `server/cfg-registry.js` (5 keys) is the only
+   way admin-tunable values exist; protocol constants, events, auth or frame limits are
+   NOT admin-editable — do not "just add one more key" without the owner's say-so.
 
 ## Publishing & self-merge
 
@@ -112,34 +145,54 @@ npm run arch:check           # files <= 800 lines + layer boundaries
 npm run check:protocol       # doc tables == protocol registries
 npm run test:protocol-parity # client == server == golden values
 npm run check:landmarks      # doc sizes == wc -l
+npm run test:auth            # accounts, cookies/CSRF, host gate
+npm run test:cfg             # config registry (49 checks)
+npm run test:profiles        # HTTP profiles (catalog/patch)
 ```
 
-- Browser checks: start the server (`npm start`, port 3780) + `npm run dev`
-  (http://localhost:3000). The root is the Wanderpaws menu; grottos are `/combat/?name=<имя>`. If a change is visually
-  verifiable — give her the exact click path instead of trusting it "looks right".
+- Browser checks: start the room (`npm start`, port 3780) + `npm run dev`
+  (http://localhost:3000; the plain dev build is the GROTTO variant — the Elision UI needs
+  `NEXT_PUBLIC_SITE=elyria npm run dev`). Grotto rooms live on `/combat/`,
+  Elision on `/elision/` (register/login first — the room refuses guests), the catalog on
+  `/players/`, the admin dashboard on `/admin/` (only with an admin session). If a change
+  is visually verifiable — give her the exact click path instead of trusting it "looks right".
 - A task that needs MANY files changed at once is usually a job for a repo agent WITH
   file-system access (Cursor-like) — say so honestly instead of juggling a dozen pastes.
 
 ## Files to ask for, by task
 
 - **Change/add an event (anything on the wire):** `src/lib/net/protocol.ts`,
-  `server/protocol.js`, `AGENTS.md` (the 23+23 tables), `src/lib/net/coop.ts` (client)
+  `server/protocol.js`, `AGENTS.md` (the 23+23 tables), `src/lib/net/coop.ts` (client
   dispatch), the `server/*.js` domain module, `scripts/test-ws.mjs`. Always ALL sides
   of the registry in one change — single-sided edits are guaranteed rework.
 - **Combat/damage/armor:** `src/lib/sim/settings.ts` (single client source) ↔
   `server/protocol.js` (mirror) + `src/lib/sim/targeting.ts` pickStrikeTarget ↔
-  `server/combat.js` aimedNeighbor (:76) — the same strike rule on both sides.
+  `server/combat.js` aimedNeighbor — the same strike rule on both sides; the clamps
+  (max damage by allowed level, armor snap to allowed tenths) live in
+  `server/cfg-registry.js` + consumed in `server/combat.js`.
 - **Field/map/editor:** `src/lib/sim/test-map.ts` (client limits) + `server/testmap.js`
   (server sanitize, same limits) + `src/components/sim/simulator/editor-ops.ts`.
-- **Settings/HUD:** `src/components/sim/settings-panel.tsx` + ARCHITECTURE §2.
+- **Settings/HUD:** `src/components/sim/settings-panel.tsx` + ARCHITECTURE §2. Role-gated
+  tabs read `whoami.role` — no client password anymore.
 - **Accounts/limits/auth:** `server/accounts.js` (`BOOTSTRAP_ADMIN` = comma-separated
   preset admin logins, each on its own first registration; `MAX_ACCOUNTS` cap → `full`),
-  `server/auth.js` (session store + rate envs `AUTH_REGISTER_GAP_MS`,
+  `server/auth.js` (sessions; cookie `coop_session` HttpOnly, SameSite=Lax (+Secure on https;
+  `COOKIE_LOOSE=1` → legacy None); token matrix per host class — elyria is cookie-only,
+  `AUTH_LEGACY_TOKEN=1` brings back `?t=`; rate envs `AUTH_REGISTER_GAP_MS`,
   `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`, `AUTH_LOGIN_FAIL_MAX`,
   `AUTH_LOGIN_FAIL_WINDOW_MS`; XFF trusted only from the last hop behind our own nginx),
-  `server/room.js` (guests get `roomsinfo` about closed rooms as if they did not exist).
+  `server/config.js` (`hostClassOf`, env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; unknown host → public),
+  `server/room.js` (join `auth_required` for `test`; roomsinfo ghost: guests get count 0 / no
+  logins for registered-only rooms, as if they did not exist),
+  `server/profiles.js` (catalog/card/`PATCH /profiles/me`).
+- **Admin config:** `server/cfg-registry.js` + `server/runtime-config.js` (routes:
+  `GET /cfg` public values, `GET /cfg/admin`, `POST /cfg` (patch/reset),
+  `POST /cfg/restore` (name from history), `GET /cfg/export`, `POST /cfg/import`;
+  all admin ones need the admin session + Origin check) + `src/components/admin/cfg-dashboard.tsx`.
 - Known hand-synced mirrors WITHOUT CI coverage (check both in one PR):
-  sprite whitelist — `server/config.js:86` ↔ `src/lib/sim/settings.ts:96` (31 entries
-  each side); client localStorage routes — `simulator.tsx` :659 (read), :674/:1089
-  (writes), :4140–4141 (reset), :4153 (log rotation); `editor-ops.ts` :144/:769
-  (editor password). Storage keys are named constants in `src/lib/sim/engine-consts.ts`.
+  sprite whitelist — `server/config.js:175` ↔ `src/lib/sim/settings.ts:96` (31 entries
+  each side); room catalogue — `server/modes.js` ↔ `src/lib/net/modes.ts` (grotto build
+  folds the Elision branch away); client localStorage routes — `simulator.tsx` :710
+  (read SP), :725 (write SP), :1201 (combat log), :4490–4491 (reset), :4503 (log rotation);
+  `editor-ops.ts` :195/:696 (editor password). Storage keys are named constants in
+  `src/lib/sim/engine-consts.ts`.
