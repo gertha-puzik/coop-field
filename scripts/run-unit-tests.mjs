@@ -22,6 +22,7 @@ const TESTS = [
   "scripts/test-move-book.ts",
   "scripts/test-elev-rules.mts",
   "scripts/test-handbook.mts",
+  "scripts/test-elision-scene.mts",
 ];
 
 if (!supportsStripTypes) {
