@@ -536,7 +536,7 @@ export function useSimNet(deps: SimNetDeps) {
       onNoplace: (payload) =>
         setNetStatus(
           payload?.reason === 'auth_required'
-            ? 'Элизия только для зарегистрированных. Войдите в аккаунт.'
+            ? 'Эта комната только для зарегистрированных. Войдите в аккаунт.'
             : payload?.reason || 'Комната полная (макс. 30). Смените ?room=',
         ),
       onDummyState: (state) => {

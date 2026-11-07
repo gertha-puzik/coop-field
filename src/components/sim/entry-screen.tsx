@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import {
-  DAMAGE_LEVELS,
   GAME_CREDITS,
   SPRITES,
   SPRITE_GROUPS,
@@ -21,9 +20,21 @@ import { RoomPicker, type RoomRow } from './room-picker';
 import { AuthPanel } from './auth-panel';
 import type { CoopWhoami } from '@/lib/net/protocol';
 import { MODE_COPY, namedRoom, type PlayMode } from '@/lib/net/modes';
+import type { Universes } from '@/lib/net/cfg-live';
 
-/** Готовые значения периода оборота стрелы — те же, что в настройках («Стрела»). */
-const SPEED_PRESETS = [1.8, 2.5, 3.5, 4, 4.5, 5];
+/**
+ * Compile-time вариант сайта (P3, спек §2A): сворачивается сборщиком —
+ * блок аккаунта и панели входа в grotto-бандл не попадают, как и их тексты.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
+/**
+ * Хинт имени для вошедшего аккаунта. Строка с «Элизией» — только elyria-ветка
+ * тернарника: в grotto-бандле её нет (спек §2A).
+ */
+const NAME_HINT_ACCOUNT = IS_ELYRIA
+  ? 'Имя взято из аккаунта — так вас увидят на поле и в книге позиций Элизии.'
+  : '';
 
 const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
 
@@ -130,7 +141,9 @@ export function EntryScreen({
   roomsStale,
   whoami,
   authMessage,
+  authBusy,
   playMode = 'hub',
+  universes,
   onPickRoom,
   onApplySpeed,
   onApplyDamage,
@@ -156,7 +169,11 @@ export function EntryScreen({
   onApplyArmor: (level: number) => void;
   whoami?: CoopWhoami | null;
   authMessage?: string | null;
+  /** Запрос входа в процессе — кнопки входа/регистрации выключены. */
+  authBusy?: boolean;
   playMode?: PlayMode;
+  /** Разрешённые значения СП из GET /cfg (P3): ползунок и чипы предлагают только их. */
+  universes: Universes;
   onLogin?: (login: string, pass: string) => void;
   onRegister?: (login: string, pass: string) => void;
   onLogout?: () => void;
@@ -190,7 +207,9 @@ export function EntryScreen({
     setArmorOk(p.armor);
   };
 
-  const accountName = whoami?.ok && whoami.accountId ? whoami.login : '';
+  /** Имя аккаунта — только Элизия (P3): в гротах аккаунтных сессий не бывает,
+   *  панель входа туда не монтируется вовсе. */
+  const accountName = IS_ELYRIA && whoami?.ok && whoami.accountId ? whoami.login || '' : '';
   const trimmed = (accountName || name).trim();
   const speedDone = speedOk !== null && Math.abs(speedOk - speedVal) < 0.05;
   const damageDone = damageOk !== null && damageOk === damageVal;
@@ -288,9 +307,7 @@ export function EntryScreen({
               className="h-10 border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
             />
             <span id="entry-name-hint" className="text-xs text-[var(--sim-text-faint)]">
-              {accountName
-                ? 'Имя взято из аккаунта — так вас увидят на поле и в книге позиций Элизии.'
-                : 'Обязательное поле. Пустое имя на поле не пускает.'}
+              {accountName ? NAME_HINT_ACCOUNT : 'Обязательное поле. Пустое имя на поле не пускает.'}
             </span>
           </label>
 
@@ -505,8 +522,8 @@ export function EntryScreen({
               <div className="flex items-center gap-3">
                 <Slider
                   value={[speedVal]}
-                  min={1.8}
-                  max={5}
+                  min={universes.arrowPeriods[0] ?? 1.8}
+                  max={universes.arrowPeriods[universes.arrowPeriods.length - 1] ?? 5}
                   step={0.1}
                   aria-label="Период оборота стрелы"
                   onValueChange={(vals) => {
@@ -518,7 +535,7 @@ export function EntryScreen({
                 <span className="w-16 text-right text-sm tabular-nums text-[var(--sim-text-soft)]">{fmtSec(speedVal)}</span>
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
-                {SPEED_PRESETS.map((v) => (
+                {universes.arrowPeriods.map((v) => (
                   <Chip key={v} active={Math.abs(speedVal - v) < 0.05} onClick={() => setSpeedVal(v)}>
                     {String(v).replace('.', ',')} сек
                   </Chip>
@@ -539,7 +556,7 @@ export function EntryScreen({
               }}
             >
               <div className="flex flex-wrap gap-1">
-                {DAMAGE_LEVELS.map((k) => (
+                {universes.damage.map((k) => (
                   <Chip key={k} active={damageVal === k} onClick={() => setDamageVal(k)}>
                     {damageLevelLabel(k)}
                   </Chip>
@@ -561,7 +578,7 @@ export function EntryScreen({
               }}
             >
               <div className="flex flex-wrap gap-1">
-                {DAMAGE_LEVELS.map((k) => (
+                {universes.armor.map((k) => (
                   <Chip key={k} active={armorVal === k} onClick={() => setArmorVal(k)}>
                     {damageLevelLabel(k)}
                   </Chip>
@@ -576,11 +593,12 @@ export function EntryScreen({
         </section>
       </div>
 
-      {onLogin && onRegister && onLogout ? (
+      {IS_ELYRIA && onLogin && onRegister && onLogout ? (
         <section aria-label="Аккаунт" className="mt-4">
           <AuthPanel
             whoami={whoami ?? null}
             message={authMessage}
+            busy={authBusy}
             onLogin={onLogin}
             onRegister={onRegister}
             onLogout={onLogout}

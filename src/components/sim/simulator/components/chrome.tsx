@@ -288,6 +288,8 @@ export interface SettingsPanelOverlayProps {
   onImport: PanelProps['onImport'];
   getEngineAngle: PanelProps['getAngle'];
   setEngineAngle: PanelProps['onManualAngle'];
+  /** Роль сессии (whoami): админ-вкладки настроек рендерит только админу. */
+  role?: PanelProps['role'];
 }
 
 export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
@@ -321,6 +323,7 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
     onImport,
     getEngineAngle,
     setEngineAngle,
+    role,
   } = props;
   return (
         <>
@@ -368,6 +371,7 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
                 onImport={onImport}
                 getAngle={getEngineAngle}
                 onManualAngle={setEngineAngle}
+                role={role}
               />
             </div>
           </aside>

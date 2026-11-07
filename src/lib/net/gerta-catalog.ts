@@ -21,7 +21,7 @@ import {
   TEST_MAP_LIMITS,
 } from "./protocol.ts";
 
-export type CatalogMode = "all" | "beer" | "elision" | "combat" | "hunger";
+export type CatalogMode = "all" | "beer" | "elision" | "hunger";
 export type SyncKind = "client" | "room" | "server" | "protocol";
 export type ApplyKind = "now" | "new-room" | "restart" | "never";
 
@@ -54,7 +54,14 @@ export type MechanicCard = {
 
 const min = (ms: number) => String(Math.round(ms / 60_000));
 
-export const CONSTANT_CARDS: readonly ConstantCard[] = [
+/**
+ * Compile-time вариант сайта (P3, спек §2A): карточки Элизии (размеры карты,
+ * мирная ходьба, редактор) держим литералами в elyria-ветке тернарника —
+ * сборка grotto их не содержит вовсе, ни в UI, ни в бандле.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
+
+const CONSTANT_CARDS_BASE: readonly ConstantCard[] = [
   {
     id: "max-players",
     name: "MAX_PLAYERS",
@@ -167,7 +174,9 @@ export const CONSTANT_CARDS: readonly ConstantCard[] = [
     name: "JUMP_COOLDOWN_MS",
     title: "Пауза прыжка",
     file: "server/protocol.js",
-    mode: "elision",
+    // Прыжки — общая боевая механика всех клеточных комнат (гроты и Элизия):
+    // сервер считает кулдаун одинаково (server/movement.js).
+    mode: "all",
     value: String(JUMP_COOLDOWN_MS),
     unit: "мс",
     editable: false,
@@ -204,32 +213,6 @@ export const CONSTANT_CARDS: readonly ConstantCard[] = [
     note: "Тоже atmoset. Солнце / облака / дождь выбираются сами, когда срок вышел.",
   },
   {
-    id: "map-cols",
-    name: "TEST_MAP_LIMITS.cols",
-    title: "Ширина Элизии",
-    file: "src/lib/sim/test-map.ts",
-    mode: "elision",
-    value: `${TEST_MAP_LIMITS.colsMin}–${TEST_MAP_LIMITS.colsMax}`,
-    unit: "клеток",
-    editable: true,
-    sync: "server",
-    apply: "now",
-    note: "Правка — редактор локации и setmap. Не второй редактор.",
-  },
-  {
-    id: "map-rows",
-    name: "TEST_MAP_LIMITS.rows",
-    title: "Высота Элизии",
-    file: "src/lib/sim/test-map.ts",
-    mode: "elision",
-    value: `${TEST_MAP_LIMITS.rowsMin}–${TEST_MAP_LIMITS.rowsMax}`,
-    unit: "клеток",
-    editable: true,
-    sync: "server",
-    apply: "now",
-    note: "Сервер отвергнет конфиг за этими границами.",
-  },
-  {
     id: "armor-curve",
     name: "ARMOR_CURVE",
     title: "Кривая брони",
@@ -256,11 +239,48 @@ export const CONSTANT_CARDS: readonly ConstantCard[] = [
   },
 ];
 
-export const MECHANIC_CARDS: readonly MechanicCard[] = [
+/**
+ * Каталог констант варианта (P3, спек §2A): карточки «Ширина/Высота Элизии»
+ * добавляются только в elyria-сборке — литералы живут в тернарнике, сборка
+ * grotto мёртвую ветку не содержит.
+ */
+export const CONSTANT_CARDS: readonly ConstantCard[] = IS_ELYRIA
+  ? [
+      ...CONSTANT_CARDS_BASE,
+      {
+        id: "map-cols",
+        name: "TEST_MAP_LIMITS.cols",
+        title: "Ширина Элизии",
+        file: "src/lib/sim/test-map.ts",
+        mode: "elision",
+        value: `${TEST_MAP_LIMITS.colsMin}–${TEST_MAP_LIMITS.colsMax}`,
+        unit: "клеток",
+        editable: true,
+        sync: "server",
+        apply: "now",
+        note: "Правка — редактор локации и setmap. Не второй редактор.",
+      },
+      {
+        id: "map-rows",
+        name: "TEST_MAP_LIMITS.rows",
+        title: "Высота Элизии",
+        file: "src/lib/sim/test-map.ts",
+        mode: "elision",
+        value: `${TEST_MAP_LIMITS.rowsMin}–${TEST_MAP_LIMITS.rowsMax}`,
+        unit: "клеток",
+        editable: true,
+        sync: "server",
+        apply: "now",
+        note: "Сервер отвергнет конфиг за этими границами.",
+      },
+    ]
+  : CONSTANT_CARDS_BASE;
+
+const MECHANIC_CARDS_BASE: readonly MechanicCard[] = [
   {
     id: "join",
     title: "Вход в комнату",
-    does: "Ставит кота в свободную клетку и присылает снимок поля. В Элизии без аккаунта сервер отказывает.",
+    does: "Ставит кота в свободную клетку и присылает снимок поля. В закрытых комнатах без аккаунта сервер отказывает.",
     mode: "all",
     files: ["server/room.js", "src/lib/net/coop.ts", "src/components/sim/entry-screen.tsx"],
     functions: ["join", "requiresAccount", "createCoopClient"],
@@ -271,7 +291,7 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = [
   {
     id: "auth",
     title: "Аккаунт и сессия",
-    does: "Регистрация, вход, выход. Пароль считается scrypt. Токен сессии — правда на сервере, в браузере только ключ переподключения.",
+    does: "Регистрация, вход, выход. Пароль считается scrypt. Сессия — HttpOnly-cookie: токен клиенту не виден и в URL не ездит.",
     mode: "all",
     files: ["server/auth.js", "server/accounts.js", "src/lib/net/auth.ts", "src/components/sim/auth-panel.tsx"],
     functions: ["createAccount", "handleAuthFrame", "handshake", "applyWhoami"],
@@ -302,26 +322,15 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = [
     deps: ["protocol STRIKE_ZONES", "блок на К"],
   },
   {
-    id: "elision-walk",
-    title: "Мирная ходьба Элизии",
-    does: "Пока кот не в бою — доли клетки (freemove). В бой — cellsync на проходимую клетку.",
-    mode: "elision",
-    files: ["server/movement.js", "src/lib/sim/test-field.ts", "server/world.js"],
-    functions: ["freeMove", "cellsync", "testWalkable", "pointInPolygon"],
-    params: ["x", "y", "fx", "fy"],
-    breaks: "Ходьба сквозь остров; cellsync на чужую клетку без кольца поиска.",
-    deps: ["test-map", "persist test-cats.json"],
-  },
-  {
-    id: "editor",
-    title: "Редактор локации",
-    does: "Кисть, зоны, спавны, высоты. Сохранение — setmap. Пароль проверяет сервер, не панель.",
-    mode: "elision",
-    files: ["src/components/sim/simulator/editor-ops.ts", "server/testmap.js", "src/lib/sim/test-map.ts"],
-    functions: ["setMap", "sanitizeTestMap", "buildEditorOps"],
-    params: ["pass", "map"],
-    breaks: "Карта за лимитами; запись без бэкапа; клиентский «пароль вкладок» как защита.",
-    deps: ["ADMIN_PASS или роль admin", "backups/"],
+    id: "jump",
+    title: "Прыжок",
+    does: "Прыжок на 1–3 клетки в 8 направлениях. Сервер пускает только на свободную проходимую клетку и держит кулдаун.",
+    mode: "all",
+    files: ["server/movement.js", "src/components/sim/simulator.tsx"],
+    functions: ["jump", "jumpFill"],
+    params: ["x", "y"],
+    breaks: "Прыжок на занятую клетку; спам прыжками без кулдауна.",
+    deps: ["JUMP_COOLDOWN_MS", "JUMP_MAX_CELLS"],
   },
   {
     id: "atmo",
@@ -337,12 +346,12 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = [
   {
     id: "dummy-rab",
     title: "Манекен и мишень РАБ",
-    does: "Только не-test комнаты. В Элизии сервер отказывает.",
+    does: "Только боевые комнаты гротов. В закрытых мирах сервер отказывает.",
     mode: "beer",
     files: ["server/dummy-rab.js"],
     functions: ["dummyToggle", "rabToggle", "dummyGrab"],
     params: ["on", "sprite", "x", "y"],
-    breaks: "Включить манекен в Элизии; два держателя grab.",
+    breaks: "Включить манекен там, где сервер отказывает; два держателя grab.",
     deps: ["grid-комнаты grot/combat/hunger/demo"],
   },
   {
@@ -357,6 +366,38 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = [
     deps: ["server/modes.js id=hunger"],
   },
 ];
+
+/**
+ * Механики Элизии (мирная ходьба, редактор) — только в elyria-сборке:
+ * литералы в тернарнике, grotto-бандл мёртвую ветку не содержит (P3, §2A).
+ */
+export const MECHANIC_CARDS: readonly MechanicCard[] = IS_ELYRIA
+  ? [
+      ...MECHANIC_CARDS_BASE,
+      {
+        id: "elision-walk",
+        title: "Мирная ходьба Элизии",
+        does: "Пока кот не в бою — доли клетки (freemove). В бой — cellsync на проходимую клетку.",
+        mode: "elision",
+        files: ["server/movement.js", "src/lib/sim/test-field.ts", "server/world.js"],
+        functions: ["freeMove", "cellsync", "testWalkable", "pointInPolygon"],
+        params: ["x", "y", "fx", "fy"],
+        breaks: "Ходьба сквозь остров; cellsync на чужую клетку без кольца поиска.",
+        deps: ["test-map", "persist test-cats.json"],
+      },
+      {
+        id: "editor",
+        title: "Редактор локации",
+        does: "Кисть, зоны, спавны, высоты. Сохранение — setmap. Пароль проверяет сервер, не панель.",
+        mode: "elision",
+        files: ["src/components/sim/simulator/editor-ops.ts", "server/testmap.js", "src/lib/sim/test-map.ts"],
+        functions: ["setMap", "sanitizeTestMap", "buildEditorOps"],
+        params: ["pass", "map"],
+        breaks: "Карта за лимитами; запись без бэкапа; клиентский «пароль вкладок» как защита.",
+        deps: ["ADMIN_PASS или роль admin", "backups/"],
+      },
+    ]
+  : MECHANIC_CARDS_BASE;
 
 export const HANDBOOK_FILES: readonly string[] = [
   ...new Set([

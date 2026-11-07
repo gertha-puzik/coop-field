@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import type { CoopWhoami } from '@/lib/net/protocol';
 
 /**
- * Вход и регистрация на русском. Пароль не показывается. Гость гротов
- * эту панель может пропустить; Элизия без сессии на сервере не откроется.
+ * Вход и регистрация на русском. Пароль не показывается. Панель монтируется
+ * только в elyria-варианте (гейт — в entry-screen): в гротах входа нет.
  */
 export function AuthPanel({
   whoami,
@@ -70,8 +70,7 @@ export function AuthPanel({
     >
       <h2 className="text-base font-bold text-[var(--sim-text)]">Аккаунт</h2>
       <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
-        Для Элизии нужен вход. Пивные гроты, бой и голодные игры открыты гостям — регистрироваться
-        не обязательно.
+        Закрытый мир: чтобы войти, нужен аккаунт. Пароль — от 8 символов.
       </p>
       <label className="mt-3 block text-[11px] text-[var(--sim-text-faint)]">
         Имя

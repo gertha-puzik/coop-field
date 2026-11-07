@@ -7,6 +7,13 @@ import { playersLabel } from '@/components/sim/room-picker';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
 
+/**
+ * Compile-time вариант сайта (P3): сравнение инлайном, а не через хелпер из
+ * site.ts — сборщик сворачивает его в false/true, и мёртвая ветка (в grotto —
+ * карточки и коды Элизии с их текстами) не попадает в бандл вовсе (спек §2A).
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
 /** Детерминированные звёзды: сервер и клиент рисуют одни и те же точки. */
 const rnd = (seed: number) => {
   const x = Math.sin(seed * 12.9898) * 43758.5453;
@@ -22,18 +29,28 @@ const STARS = Array.from({ length: 72 }, (_, i) => ({
   spark: rnd(i + 310) > 0.82,
 }));
 
-const ROOM_IDS = ['grot-1', 'grot-2', 'grot-3', 'test', 'hunger'] as const;
+/**
+ * Состав комнат для живого счётчика — только миры этого варианта (P3):
+ * grotto спрашивает гроты и голодные игры, elyria — комнату Элизии.
+ * Код закрытой комнаты (test) в grotto на сервер не уходит вовсе.
+ */
+const ROOM_IDS = IS_ELYRIA
+  ? (['test'] as const)
+  : (['grot-1', 'grot-2', 'grot-3', 'hunger'] as const);
 
 type Preview = 'combat' | 'hunger' | 'elision';
 
-const WORLDS: readonly {
+type WorldCard = {
   href: string;
   name: string;
   blurb: string;
   italic: boolean;
   ids: readonly string[];
   preview: Preview;
-}[] = [
+};
+
+/** Мировые карточки меню. В grotto-варианте Элизии нет — ни кода, ни ссылки. */
+const GROTTO_WORLDS: readonly WorldCard[] = [
   {
     href: '/combat/',
     name: 'abnocw',
@@ -50,6 +67,10 @@ const WORLDS: readonly {
     ids: ['hunger'],
     preview: 'hunger',
   },
+];
+
+/** Элизия: меню — мир Элизии. Карточки гротов сюда не показываем. */
+const ELYRIA_WORLDS: readonly WorldCard[] = [
   {
     href: '/elision/',
     name: 'Wanderpaws: Elysiae',
@@ -60,14 +81,35 @@ const WORLDS: readonly {
   },
 ];
 
-/** Старые ссылки с `?room=` вели на корень. Корень теперь меню — уводим в свой мир. */
+const WORLDS: readonly WorldCard[] = IS_ELYRIA ? ELYRIA_WORLDS : GROTTO_WORLDS;
+
+/**
+ * Превью мира Элизии (луна) — JSX живёт в elyria-ветке тернарника: сборка
+ * grotto не содержит ни разметки, ни ссылки на маршрут (спек §2A).
+ */
+const ELISION_PREVIEW = IS_ELYRIA ? (
+  <div className="wander-preview wander-preview-elision" aria-hidden>
+    <span className="wander-moon" />
+  </div>
+) : null;
+
+/**
+ * Старые ссылки с `?room=` вели на корень. Корень теперь меню — уводим в свой
+ * мир, но только если этот мир есть в варианте сайта: grotto не редиректит на
+ * вырезанный маршрут Элизии (404 и утечка маршрута), elyria — на гроты.
+ */
 function legacyRoomHref(): string | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
   const room = (params.get('room') || '').trim();
   if (!room) return null;
   const q = window.location.search;
-  if (room === 'test') return `/elision/${q}`;
+  if (IS_ELYRIA) {
+    // Только комната Элизии; чужие коды в этом варианте каталожным мирам
+    // не соответствуют — остаёмся на меню, без редиректа в 404.
+    return room === 'test' ? `/elision/${q}` : null;
+  }
+  if (room === 'test') return null; // закрытая комната в grotto не открывается
   if (room === 'hunger') return `/hunger/${q}`;
   return `/combat/${q}`;
 }
@@ -253,11 +295,7 @@ function WorldPreview({ kind }: { kind: Preview }) {
       </div>
     );
   }
-  return (
-    <div className="wander-preview wander-preview-elision" aria-hidden>
-      <span className="wander-moon" />
-    </div>
-  );
+  return ELISION_PREVIEW;
 }
 
 /** Главное меню: небо, трава, три окна миров и живой счётчик. */
