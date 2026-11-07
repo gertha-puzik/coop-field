@@ -143,6 +143,8 @@ import {
   setPaintOverride,
   setTestMap,
   TERRAIN_LIFT_PX,
+  terrainLiftShift,
+  terrainTopAnchor,
   terrainWallAnchor,
   testBattleRouteBlocked,
   testClippedCells,
@@ -2404,6 +2406,13 @@ export default function Simulator() {
       ctx2.restore();
     };
 
+    /** Подъём земли на экране: вверх кадра, не всегда на север. yaw 0 совпадает
+     *  с прежним вычитанием из y, после поворота ряд плато не уезжает вкось. */
+    const raised = (x: number, y: number, lift: number): { x: number; y: number } => {
+      const s = terrainLiftShift(lift, camYawRef.current);
+      return { x: x + s.dx, y: y + s.dy };
+    };
+
     /** Стрела того, кем сейчас управляем: сидит на его спрайте с его ростом,
      *  следует за перетаскиванием и показывает остаток ЕГО энергии. */
     const drawArrow = (s: SimSettings, e: Engine) => {
@@ -2423,13 +2432,22 @@ export default function Simulator() {
         const lpA = e.leap;
         if (lpA && lpA.battle) {
           const tA = Math.min(1, Math.max(0, (performance.now() - lpA.t0) / lpA.dur));
-          px = lpA.x0 + (lpA.x1 - lpA.x0) * tA;
-          py = lpA.y0 + (lpA.y1 - lpA.y0) * tA - (lpA.l0 + (lpA.l1 - lpA.l0) * tA) - e.leapZ;
+          const upA = raised(
+            lpA.x0 + (lpA.x1 - lpA.x0) * tA,
+            lpA.y0 + (lpA.y1 - lpA.y0) * tA,
+            lpA.l0 + (lpA.l1 - lpA.l0) * tA + e.leapZ,
+          );
+          px = upA.x;
+          py = upA.y;
         } else {
-          py -= e.liftV + e.leapZ;
+          const upA = raised(px, py, e.liftV + e.leapZ);
+          px = upA.x;
+          py = upA.y;
         }
       } else if (testModeA) {
-        py -= elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX;
+        const upA = raised(px, py, elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX);
+        px = upA.x;
+        py = upA.y;
       }
       const { ax, ay, k } = anchorAtPx(s, sprA ? sprA.width / sprA.height : 2 / 3, px, py, scalePct);
       const r2 = s.arrow.radius * k + s.arrow.length * k;
@@ -2738,7 +2756,8 @@ export default function Simulator() {
             const pulse = 0.75 + 0.25 * Math.sin(now * 0.012);
             const rrM = 9 * pulse;
             ctx.save();
-            ctx.translate(mx, my - mlift);
+            const ringM = raised(mx, my, mlift);
+            ctx.translate(ringM.x, ringM.y);
             ctx.fillStyle = shortM ? 'rgba(255, 178, 126, 0.22)' : 'rgba(126, 247, 156, 0.2)';
             ctx.beginPath();
             ctx.arc(0, 0, rrM, 0, Math.PI * 2);
@@ -2853,7 +2872,8 @@ export default function Simulator() {
           ctx.fillStyle = 'rgba(214, 69, 65, 0.16)';
           for (const k of testClippedCells()) {
             const liftK = hasElev ? elevLevelAt(k.c, k.r) * TERRAIN_LIFT_PX : 0;
-            ctx.fillRect(k.c * s.field.cellW, k.r * s.field.cellH - liftK, s.field.cellW, s.field.cellH);
+            const clipK = raised(k.c * s.field.cellW, k.r * s.field.cellH, liftK);
+            ctx.fillRect(clipK.x, clipK.y, s.field.cellW, s.field.cellH);
           }
         }
         const partsD = sprintPartsRef.current;
@@ -3192,38 +3212,36 @@ export default function Simulator() {
       const posOfChar = (id: string, col: number, row: number): { x: number; y: number } => {
         if (drag && drag.key === id) {
           const liftDrag = testMode ? elevLiftAtPoint(drag.x / s.field.cellW, (drag.y + drag.h * 0.75) / s.field.cellH) : 0;
-          return { x: drag.x, y: drag.y - liftDrag };
+          return raised(drag.x, drag.y, liftDrag);
         }
         if (id === s.controlled) {
           // «Тест», мирный режим: свой кот стоит в свободной позиции
           if (testMode && !s.arrow.battleMode) {
-            return { x: e.fx * s.field.cellW, y: e.fy * s.field.cellH - e.liftV - e.leapZ };
+            return raised(e.fx * s.field.cellW, e.fy * s.field.cellH, e.liftV + e.leapZ);
           }
           // боевой прыжок: моделька летит от старой клетки к новой по дуге
           const lp = e.leap;
           if (lp && lp.battle) {
             const t = Math.min(1, Math.max(0, (now - lp.t0) / lp.dur));
-            return {
-              x: lp.x0 + (lp.x1 - lp.x0) * t,
-              y: lp.y0 + (lp.y1 - lp.y0) * t - (lp.l0 + (lp.l1 - lp.l0) * t) - e.leapZ,
-            };
+            return raised(
+              lp.x0 + (lp.x1 - lp.x0) * t,
+              lp.y0 + (lp.y1 - lp.y0) * t,
+              lp.l0 + (lp.l1 - lp.l0) * t + e.leapZ,
+            );
           }
-          return { x: e.col * s.field.cellW, y: e.row * s.field.cellH - e.liftV };
+          return raised(e.col * s.field.cellW, e.row * s.field.cellH, e.liftV);
         }
         // чужой кот в свободной ходьбе («тест») — плавная доведённая позиция;
         // высота — по его логической клетке (серверной), прыжок — дугой
         const free = id.startsWith('p') ? remoteFreeRef.current.get(id) : undefined;
         if (free) {
-          return {
-            x: free.x * s.field.cellW,
-            y: free.y * s.field.cellH - liftOfCell(col, row) - remoteHopZ(id),
-          };
+          return raised(free.x * s.field.cellW, free.y * s.field.cellH, liftOfCell(col, row) + remoteHopZ(id));
         }
         const vis = id.startsWith('p') ? remoteDrawRef.current.get(id) : undefined;
         if (vis) {
-          return { x: vis.col * s.field.cellW, y: vis.row * s.field.cellH - liftOfCell(vis.col, vis.row) };
+          return raised(vis.col * s.field.cellW, vis.row * s.field.cellH, liftOfCell(vis.col, vis.row));
         }
-        return { x: col * s.field.cellW, y: row * s.field.cellH - liftOfCell(col, row) };
+        return raised(col * s.field.cellW, row * s.field.cellH, liftOfCell(col, row));
       };
       const dummies = dummiesOf(s, liveRemotesRef.current).filter(
         (d) => d.col >= 0 && d.col < s.field.cols && d.row >= 0 && d.row < s.field.rows,
@@ -3248,10 +3266,17 @@ export default function Simulator() {
           const lpT = e.leap;
           if (lpT && lpT.battle) {
             const tT = Math.min(1, Math.max(0, (performance.now() - lpT.t0) / lpT.dur));
-            cx = lpT.x0 + (lpT.x1 - lpT.x0) * tT;
-            cy = lpT.y0 + (lpT.y1 - lpT.y0) * tT - (lpT.l0 + (lpT.l1 - lpT.l0) * tT) - e.leapZ;
+            const upT = raised(
+              lpT.x0 + (lpT.x1 - lpT.x0) * tT,
+              lpT.y0 + (lpT.y1 - lpT.y0) * tT,
+              lpT.l0 + (lpT.l1 - lpT.l0) * tT + e.leapZ,
+            );
+            cx = upT.x;
+            cy = upT.y;
           } else {
-            cy -= e.liftV + e.leapZ;
+            const upT = raised(cx, cy, e.liftV + e.leapZ);
+            cx = upT.x;
+            cy = upT.y;
           }
         }
         const scaleT =
@@ -3311,11 +3336,13 @@ export default function Simulator() {
           // слабые машины. Теперь клетка без кромки не режется вовсе, у клетки на
           // кромке — маленький путь по маске рисунка (terrainCellClipPath).
           const clipT = terrainCellClipPath(cT, rT, cwT, chT);
-          // ВЕРХ: ключ — поднятая верхняя грань клетки; всё, что стоит на этой
-          // земле (лапы строго ниже верхней грани), рисуется поверх.
+          const shiftT = terrainLiftShift(liftT, faceYaw);
+          const topA = terrainTopAnchor(cT, rT, cwT, chT, liftT, faceYaw);
+          // ВЕРХ: ключ — дальняя грань поднятой клетки; всё, что стоит на этой
+          // земле (лапы строго ближе к камере), рисуется поверх.
           bills.push({
-            x: (cT + 0.5) * cwT,
-            y: rT * chT - liftT,
+            x: topA.x,
+            y: topA.y,
             fn: () => {
               ctx.save();
               if (clipT) ctx.clip(clipT);
@@ -3326,17 +3353,17 @@ export default function Simulator() {
                 for (const oT of flatsT) {
                   if (oT.kind === 'dirt') {
                     const poT = objectPosOffset(oT);
-                    drawDirtPatch(ctx, cwT, chT, (oT.c + 0.5 + poT.dx) * cwT, (oT.r + 0.5 + poT.dy) * chT - liftT, hashStr(oT.id) & 7);
+                    drawDirtPatch(ctx, cwT, chT, (oT.c + 0.5 + poT.dx) * cwT + shiftT.dx, (oT.r + 0.5 + poT.dy) * chT + shiftT.dy, hashStr(oT.id) & 7);
                   } else if (oT.kind === 'ground') {
-                    drawGroundCover(ctx, oT, cwT, chT, -liftT);
+                    drawGroundCover(ctx, oT, cwT, chT, shiftT.dy, shiftT.dx);
                   } else if (oT.kind === 'entry' && oT.dir) {
-                    drawEntryMark(ctx, cwT, chT, (oT.c + 0.5) * cwT, (oT.r + 0.5) * chT - liftT, oT.dir, false);
+                    drawEntryMark(ctx, cwT, chT, (oT.c + 0.5) * cwT + shiftT.dx, (oT.r + 0.5) * chT + shiftT.dy, oT.dir, false);
                   }
                 }
               }
               if (battleT) {
-                const xT = cT * cwT;
-                const yT = rT * chT - liftT;
+                const xT = cT * cwT + shiftT.dx;
+                const yT = rT * chT + shiftT.dy;
                 ctx.fillStyle = 'rgba(250, 214, 80, 0.1)';
                 ctx.fillRect(xT, yT, cwT, chT);
                 ctx.strokeStyle = 'rgba(233, 196, 61, 0.8)';
@@ -3471,7 +3498,7 @@ export default function Simulator() {
         if (sprR) {
           // мишень на плато стоит на поднятой земле
           const liftR = testMode ? elevLevelAt(RAB_POS.col, RAB_POS.row) * TERRAIN_LIFT_PX : 0;
-          const tr = { x: RAB_POS.col * s.field.cellW, y: RAB_POS.row * s.field.cellH - liftR };
+          const tr = raised(RAB_POS.col * s.field.cellW, RAB_POS.row * s.field.cellH, liftR);
           drawChar(sprR, tr, RAB_SCALE, RAB_ID, false, whiteSpritesRef.current[RAB_SPRITE.id] ?? null, false);
           const thR = (s.field.cellH - 10) * (RAB_SCALE / 100);
           const nameX = tr.x + (sprR.width / sprR.height) * thR * 0.5;
@@ -3502,8 +3529,8 @@ export default function Simulator() {
           const liftP = testMode ? elevLiftAtPoint(dummyPosRef.current.x, dummyPosRef.current.y) : 0;
           const tp =
             drag && drag.key === DUMMY_ID
-              ? { x: drag.x, y: drag.y - liftP }
-              : { x: dummyPosRef.current.x * s.field.cellW, y: dummyPosRef.current.y * s.field.cellH - liftP };
+              ? raised(drag.x, drag.y, liftP)
+              : raised(dummyPosRef.current.x * s.field.cellW, dummyPosRef.current.y * s.field.cellH, liftP);
           drawChar(sprP, tp, DUMMY_SCALE, DUMMY_ID, false, whiteSpritesRef.current[dummySpriteRef.current] ?? null, false);
           const thP = (s.field.cellH - 10) * (DUMMY_SCALE / 100);
           const nameX = tp.x + (sprP.width / sprP.height) * thP * 0.5;
@@ -3754,9 +3781,10 @@ export default function Simulator() {
           // сортировка считает по ней же, деревья у края перекрывают корректно.
           // Рельеф: объект на плато стоит на поднятой земле своей клетки.
           const bO = objectBase(o);
-          const objX = bO.x * s.field.cellW;
           const liftO = elevLiftAtPoint(bO.x, bO.y);
-          const by = bO.y * s.field.cellH - liftO - 2;
+          const objP = raised(bO.x * s.field.cellW, bO.y * s.field.cellH, liftO);
+          const objX = objP.x;
+          const by = objP.y - 2;
           const byKey = Math.max(by, Math.floor(bO.y) * s.field.cellH + 3.5);
           const vO = hashStr(o.id) & 7;
           const covered =
@@ -3793,8 +3821,9 @@ export default function Simulator() {
             r: Math.min(Math.max(0, Math.floor(pend.y - 0.01)), currentTestMap().rows - 1),
             pos: 'center',
           };
-          const gX = pend.x * s.field.cellW;
-          const gY = pend.y * s.field.cellH - elevLiftAtPoint(pend.x, pend.y) - 2;
+          const ghostP = raised(pend.x * s.field.cellW, pend.y * s.field.cellH, elevLiftAtPoint(pend.x, pend.y));
+          const gX = ghostP.x;
+          const gY = ghostP.y - 2;
           bills.push({
             x: gX,
             y: Math.max(gY, Math.floor(pend.y) * s.field.cellH + 3.5),
@@ -3842,8 +3871,9 @@ export default function Simulator() {
             const [cB, rB] = keyB.split(',').map(Number);
             if (!Number.isFinite(cB) || !Number.isFinite(rB)) continue;
             if (cB < 0 || rB < 0 || cB >= ed.cols || rB >= ed.rows) continue;
-            const xB = (cB + 0.5) * s.field.cellW;
-            const yB = (rB + 0.5) * s.field.cellH - lvB * TERRAIN_LIFT_PX;
+            const labB = raised((cB + 0.5) * s.field.cellW, (rB + 0.5) * s.field.cellH, lvB * TERRAIN_LIFT_PX);
+            const xB = labB.x;
+            const yB = labB.y;
             ctx.save();
             ctx.translate(xB, yB);
             ctx.rotate(-camYawRef.current);
