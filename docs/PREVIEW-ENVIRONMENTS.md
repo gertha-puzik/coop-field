@@ -34,10 +34,54 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 Лимит: **не больше 8** живых preview. Девятый PR получит отказ, пока не
 закроют старый.
 
+## Два workflow и секреты (после security-фикса PR #41)
+
+Раньше один `.github/workflows/preview.yml` на `pull_request` и собирал
+PR, и ходил на VPS с секретом `PREVIEW_SSH_KEY`. Это была дыра: автор ветки
+может править workflow-файл в своём PR (GitHub исполняет его из merge-рефа
+PR) и вывести секрет в лог. Теперь конвейер разрезан надвое:
+
+- **`preview-build.yml`** — событие `pull_request opened/synchronize/
+  reopened/closed`. Секретов НЕ видит вообще (ни `PREVIEW_SSH_KEY`, ни
+  чего-либо ещё из Secrets). Чекаутит head-SHA PR, собирает статику
+  (`next build`), гоняет preview-гейты (`test:preview-slug`,
+  `test:preview-apply`, `test:preview-pr-link`, `test:write-openssh-key`) и
+  пакует **артефакт `preview-dist`**: ровно то, что раньше уезжало на VPS
+  (server-код, собранный `out/` как `www/`, рантайм-скрипты, пакеты).
+  Если сборка упала — оставляет один комментарий о провале с ссылкой на
+  лог (без секретов). На `closed` ничего не собирает (быстрый пустой ранн).
+- **`preview-deploy.yml`** — событие `workflow_run` (завершился
+  `Preview PR (build)`). Файл живёт **на `main`**: для `workflow_run`
+  GitHub исполняет его всегда из дефолт-ветки, PR его не подменяет. Секрет
+  `PREVIEW_SSH_KEY` доступен ТОЛЬКО этой джобе. Она выкачивает артефакт
+  того ранна сборки, заливает его на VPS и запускает apply.
+
+Правила доверия в deploy-джобе:
+
+- деплой-скрипты (`deploy/vps/preview-apply.sh`, юнит, sudoers,
+  nginx-фрагменты) и утилиты (`preview-slug.mjs`, `preview-pr-link.mjs`,
+  `write-openssh-key.sh`) чекаутятся **из `main`** — автор PR их не меняет
+  до мерджа;
+- из артефакта PR на VPS едет только код комнаты/статика/пакеты — их код и
+  раньше работал на VPS под пользователем `deploy-preview` в своём
+  каталоге; прод и root для него недостижимы;
+- номер и состояние PR берутся из GitHub API по SHA, а не из данных PR;
+- **форки не деплоятся**: у build-джобы guard `head.repo.full_name`, у
+  deploy — `workflow_run.head_repository.full_name`;
+- юнит и sudoерс ставит **только `preview-bootstrap.sh` от root**:
+  `preview-apply.sh` юниты не копирует и `daemon-reload` не зовёт —
+  раньше это позволяло PR положить в `/etc/systemd/system` юнит с
+  `User=root` (второй блокер обзора, вместе с утечкой секрета).
+
+Комментарий с ссылкой, Deployment и шапка PR обновляются как раньше: один
+маркер-комментарий `<!-- coop-field-preview -->` на PR и блок в описании
+между `<!-- coop-field-preview-link -->` маркерами.
+
 ## Снос после merge/close
 
-Workflow `.github/workflows/preview.yml` на событие `closed` (это и закрытие,
-и merge) вызывает `PREVIEW_ACTION=destroy`. Скрипт:
+Merge и закрытие — одно событие `closed`; для закрытых PR артефакт не
+собирается (быстрый ранн). Deploy-джоба видит по API, что PR закрыт, и
+вызывает `PREVIEW_ACTION=destroy`. Скрипт:
 
 - останавливает **только** `coop-field-preview@<этот-slug>`;
 - удаляет **только** `/opt/coop-field-preview/<slug>/`;
@@ -115,6 +159,10 @@ Wildcard нельзя выпустить без ключа к DNS-зоне, по
 
 ## Форки и приватный репозиторий
 
-Джоба: `head.repo.full_name == github.repository`. На приватном репо секреты
-есть у PR из этого репозитория. Кнопка Private: Settings → General →
-Danger Zone → Change repository visibility → Private.
+Оба guard'а: у build-джобы `head.repo.full_name == github.repository`, у
+deploy-джобы `workflow_run.head_repository.full_name == github.repository`.
+На приватном репо форков практически нет, но belt-and-suspenders остаются.
+Секреты из PR-триггернутых джоб больше недоступны ВООБЩЕ (их видит только
+`preview-deploy.yml`, который PR не модифицирует, потому что исполняется с
+`main`). Кнопка Private: Settings → General → Danger Zone → Change
+repository visibility → Private.
