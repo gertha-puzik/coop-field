@@ -10,7 +10,8 @@ name: Preview PR (deploy)
 #   nginx-фрагменты) и все утилиты Джобы (scripts/preview-slug.mjs,
 #   preview-pr-link.mjs, write-openssh-key.sh) чекаутятся из МЕЙНА;
 # - из артефакта сборки PR на VPS уезжает только код/статика/пакеты
-#   (server.js, server/, www/, scripts/, package*.json) — доверие то же,
+#   (server.js, server/, www-grotto/, www-elyria/ — dual-host P5: два
+#   статических корня, scripts/, package*.json) — доверие то же,
 #   что и раньше: PR-код работает на VPS только юзером deploy-preview
 #   в /opt/coop-field-preview/<slug>, прод и root недостижимы;
 # - форки не деплоим: head_repository обязан совпадать с этим репо;
@@ -101,16 +102,20 @@ jobs:
           fi
           SLUG="$(node scripts/preview-slug.mjs id "$PR")"
           HOST="$(node scripts/preview-slug.mjs site-host "$PR")"
+          HOST2="$(node scripts/preview-slug.mjs site-host-elyria "$PR")"
           PORT=$((41000 + PR % 1000))
           URL="https://$HOST"
+          URL2="https://$HOST2"
           {
             echo "pr=$PR"
             echo "state=$STATE"
             echo "slug=$SLUG"
             echo "host=$HOST"
+            echo "host2=$HOST2"
             echo "port=$PORT"
             echo "sha=$SHA"
             echo "url=$URL"
+            echo "url2=$URL2"
           } >> "$GITHUB_OUTPUT"
 
       - name: Артефакт сборки
@@ -131,6 +136,7 @@ jobs:
           SSH_USER: deploy-preview
           SLUG: ${{ steps.meta.outputs.slug }}
           HOST: ${{ steps.meta.outputs.host }}
+          HOST2: ${{ steps.meta.outputs.host2 }}
           PORT: ${{ steps.meta.outputs.port }}
           SHA: ${{ steps.meta.outputs.sha }}
           STATE: ${{ steps.meta.outputs.state }}
@@ -153,19 +159,21 @@ jobs:
             echo "status=destroyed" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www incoming-preview/$SLUG/server"
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www-grotto incoming-preview/$SLUG/www-elyria incoming-preview/$SLUG/server"
           rsync -az -e "$SSH" deploy/vps/preview-apply.sh deploy/vps/preview-bootstrap.sh deploy/vps/sudoers-coop-field-preview deploy/vps/coop-field-preview@.service deploy/vps/nginx-preview.conf deploy/vps/nginx-preview-include.conf "$SSH_USER@$SSH_HOST:incoming-preview/"
           if ! $SSH "$SSH_USER@$SSH_HOST" "test -d /opt/coop-field-preview && test -w /opt/coop-field-preview"; then
             echo "::warning::На VPS ещё нет bootstrap. От root: sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh"
             echo "status=needs-bootstrap" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Артефакт dual-host: оба корня (www-grotto + www-elyria) от того же SHA.
           rsync -az --delete -e "$SSH" preview-dist/server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
           rsync -az -e "$SSH" preview-dist/server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
-          rsync -az --delete -e "$SSH" preview-dist/www/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
+          rsync -az --delete -e "$SSH" preview-dist/www-grotto/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-grotto/"
+          rsync -az --delete -e "$SSH" preview-dist/www-elyria/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-elyria/"
           rsync -az --delete -e "$SSH" preview-dist/scripts/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/scripts/"
           rsync -az -e "$SSH" preview-dist/package.json preview-dist/package-lock.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
-          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
+          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_HOST2=$HOST2 PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
           echo "status=live" >> "$GITHUB_OUTPUT"
 
       - name: Deployment и один комментарий
@@ -176,6 +184,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           URL: ${{ steps.meta.outputs.url }}
+          URL2: ${{ steps.meta.outputs.url2 }}
           SHA: ${{ steps.meta.outputs.sha }}
           SLUG: ${{ steps.meta.outputs.slug }}
           STATUS: ${{ steps.ship.outputs.status }}
@@ -185,45 +194,51 @@ jobs:
           set -euo pipefail
           MARKER="<!-- coop-field-preview -->"
           NOW="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          # Статусы построчно для КАЖДОГО хоста: статус один на PR (один apply
+          # покрывает оба сайта), но две строки читаются легче.
           if [ "${STATUS:-}" = "destroyed" ]; then
             BODY="${MARKER}
-          Preview этой ветки снесён."
+          Гроты (\`pr-${PR}\`): ${URL} — снесён.
+          Элизия (\`pr-${PR}\`): ${URL2} — снесена."
             STATE=inactive
           elif [ "${STATUS:-}" = "live" ]; then
             BODY="${MARKER}
-          Preview: ${URL}
-          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются.
+          Гроты «Пивные гроты»: ${URL} — live.
+          Элизия «Elyria Eides»: ${URL2} — live.
+          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Оба сайта и комната — из этого SHA, данные прода не используются.
           Выложено: ${NOW}.
-          HTTPS: per-host сертификат, VPS-хук coop-preview-cert выдаёт его в течение ~5 минут после деплоя."
+          HTTPS: per-host сертификат на КАЖДЫЙ из двух хостов — root-cron на VPS выдаёт их в течение ~5 минут; до этого первый прогон открывается по чистому http (это ожидаемо, не поломка)."
             STATE=success
           elif [ "${STATUS:-}" = "needs-secret" ]; then
             BODY="${MARKER}
-          Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\`. Один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
-          Будет: ${URL}"
+          Гроты: ${URL} — не выложен: нет секрета \`PREVIEW_SSH_KEY\`.
+          Элизия: ${URL2} — не выложен: тот же секрет, один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md)."
             STATE=""
           elif [ "${STATUS:-}" = "needs-bootstrap" ]; then
             BODY="${MARKER}
-          SSH есть, секрет работает. На VPS от root один раз:
+          Гроты: ${URL} — SSH есть, на VPS ещё нет bootstrap.
+          Элизия: ${URL2} — то же окружение. От root один раз:
           \`\`\`
           sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
           \`\`\`
-          После этого следующий push в PR выложит ${URL}"
+          После этого следующий push в PR выложит оба сайта."
             STATE=""
           else
             BODY="${MARKER}
-          Preview не выложен (ошибка джобы). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
-          \`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\`
-          Будет: ${URL}"
+          Гроты: ${URL} — не выложен (ошибка джобы).
+          Элизия: ${URL2} — не выложен (то же окружение). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
+          \`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\`"
             STATE=""
           fi
           if [ -n "$STATE" ] && [ "$STATE" != "inactive" ]; then
             DEP=$(gh api -X POST "repos/${{ github.repository }}/deployments" \
-              -f ref="$SHA" -f environment="$ENV_NAME" -F auto_merge=false -f description="preview $SLUG" \
+              -f ref="$SHA" -f environment="$ENV_NAME" -F auto_merge=false \
+              -f description="preview $SLUG: гроты ${URL}, Элизия ${URL2}" \
               --jq .id || true)
             if [ -n "$DEP" ]; then
               gh api -X POST "repos/${{ github.repository }}/deployments/$DEP/statuses" \
                 -f state="$STATE" -f environment_url="$URL" \
-                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true)
             fi
           fi
           CID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
@@ -237,15 +252,19 @@ jobs:
           # перезапись идемпотентной — комментарий в треде так не может (тонет).
           case "${STATUS:-}" in
             live)
-              HDR="> 🚀 **Preview:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`. Данные прода не используются; HTTPS: per-host сертификат от root-cron на VPS (до ~5 минут после деплоя)." ;;
+              HDR="> 🚀 **Гроты:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`, данные прода не используются.
+          > 🚀 **Элизия:** [${URL2}](${URL2}) — тот же коммит и та же комната. HTTPS: per-host сертификат от root-cron на VPS (до ~5 минут после деплоя)." ;;
             destroyed)
-              HDR="> 🚀 **Preview:** снесён — PR закрыт, окружение убрано с VPS." ;;
+              HDR="> 🚀 **Preview:** снесён — PR закрыт, оба сайта (${URL} и ${URL2}) и окружение убраны с VPS." ;;
             needs-secret)
-              HDR="> 🚀 **Preview:** ещё не выложен — не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md). Будет: ${URL}" ;;
+              HDR="> 🚀 **Гроты:** ${URL} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md).
+          > 🚀 **Элизия:** ${URL2} — появится тем же шагом вместе с гротами." ;;
             needs-bootstrap)
-              HDR="> 🚀 **Preview:** ждёт один bootstrap на VPS от root. Будет: ${URL}" ;;
+              HDR="> 🚀 **Гроты:** ${URL} — ждёт один bootstrap на VPS от root.
+          > 🚀 **Элизия:** ${URL2} — появится тем же bootstrap'ом." ;;
             *)
-              HDR="> 🚀 **Preview:** не выложен (ошибка джобы). Будет: ${URL}" ;;
+              HDR="> 🚀 **Гроты:** ${URL} — не выложен (ошибка джобы).
+          > 🚀 **Элизия:** ${URL2} — не выложен (то же окружение)." ;;
           esac
           printf '%s\n' "$HDR" > /tmp/preview-header.md
           node scripts/preview-pr-link.mjs apply --repo "${{ github.repository }}" --pr "$PR" --file /tmp/preview-header.md \

@@ -5,6 +5,14 @@
 # preview-bootstrap.sh от root; apply только включает/перезапускает УЖЕ
 # установленный юнит. Раньше cp юнита из incoming + daemon-reload позволяли
 # PR-коду исполнить произвольный юнит от root.
+#
+# Dual-host (P5): одно окружение = ДВА сайта и ДВА веб-корня:
+#   pr-<номер>.abnocw.miew.ru  -> $APP/www-grotto  (публичные «Пивные гротты»)
+#   pr-<номер>.elisium.miew.ru -> $APP/www-elyria  (Элизия Эйдес)
+# Инстанс комнаты на PR остаётся один (один порт): оба server-блока nginx
+# проксируют на один и тот же 127.0.0.1:$PORT; что именно разрешено на
+# каждом хосте, решает сервер по env PUBLIC_HOSTS/ELYRIA_HOSTS (фаза P1) —
+# nginx маршруты у блоков одинаковые намеренно.
 # apply:  PREVIEW_SLUG=… PREVIEW_PORT=… bash preview-apply.sh
 # destroy: PREVIEW_SLUG=… PREVIEW_ACTION=destroy bash preview-apply.sh
 # validate: PREVIEW_SLUG=… PREVIEW_ACTION=validate bash preview-apply.sh
@@ -29,6 +37,7 @@ ACTION="${PREVIEW_ACTION:-apply}"
 SHA="${PREVIEW_SHA:-unknown}"
 IN="${PREVIEW_IN:-$HOME/incoming-preview/$SLUG}"
 HOST="${PREVIEW_HOST:-$SLUG.abnocw.miew.ru}"
+HOST2="${PREVIEW_HOST2:-$SLUG.elisium.miew.ru}"
 
 fail() { echo "$*" >&2; exit 1; }
 
@@ -44,14 +53,50 @@ valid_slug() {
 valid_slug "$SLUG" || fail "slug не прошёл нормализацию: ${SLUG:-<пусто>}"
 
 valid_host() {
+  # Оба preview-суффикса, правила метки одинаковые: строчные a-z0-9-,
+  # начинается с буквы/цифры, до 24 символов.
   local h="$1"
-  local label="${h%.abnocw.miew.ru}"
-  [ "$h" = "$label.abnocw.miew.ru" ] || return 1
+  local label=""
+  case "$h" in
+    *.abnocw.miew.ru)
+      label="${h%.abnocw.miew.ru}"
+      [ "$h" = "$label.abnocw.miew.ru" ] || return 1
+      ;;
+    *.elisium.miew.ru)
+      label="${h%.elisium.miew.ru}"
+      [ "$h" = "$label.elisium.miew.ru" ] || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
   # Длинный server_name бьёт nginx server_names_hash_bucket_size 64.
   [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,23}$ ]]
 }
 
 valid_host "$HOST" || fail "host не прошёл нормализацию: ${HOST:-<пусто>}"
+valid_host "$HOST2" || fail "второй host не прошёл нормализацию: ${HOST2:-<пусто>}"
+
+# Зонное распределение: ровно ОДИН хост на суффикс — abnocw отдаёт www-grotto
+# (гроты), elisium — www-elyria (Элизия). Хосты приходят снаружи (deploy
+# считает их из номера PR через preview-slug.mjs); перепутанные или
+# дублирующие зоны — отказ, фрагмент с 443-хостами не собираем.
+GROTTO_HOST=""
+ELYRIA_HOST=""
+for h in "$HOST" "$HOST2"; do
+  case "$h" in
+    *.abnocw.miew.ru)
+      [ -z "$GROTTO_HOST" ] || fail "два abnocw-хоста: нужен ровно один (${HOST} + ${HOST2})"
+      GROTTO_HOST="$h"
+      ;;
+    *.elisium.miew.ru)
+      [ -z "$ELYRIA_HOST" ] || fail "два elisium-хоста: нужен ровно один (${HOST} + ${HOST2})"
+      ELYRIA_HOST="$h"
+      ;;
+  esac
+done
+[ -n "$GROTTO_HOST" ] || fail "не передан abnocw-хост (гроты): нужен PREVIEW_HOST или PREVIEW_HOST2"
+[ -n "$ELYRIA_HOST" ] || fail "не передан elisium-хост (Элизия): нужен PREVIEW_HOST или PREVIEW_HOST2"
 
 APP="$PREVIEW_ROOT/$SLUG"
 UNIT="coop-field-preview@${SLUG}"
@@ -69,7 +114,7 @@ if [[ "$APP" == "$PROD_ROOT"/* ]]; then
 fi
 
 if [ "$ACTION" = "validate" ]; then
-  echo "ok slug=$SLUG app=$APP unit=$UNIT frag=$FRAG host=$HOST"
+  echo "ok slug=$SLUG app=$APP unit=$UNIT frag=$FRAG host=$GROTTO_HOST host2=$ELYRIA_HOST roots=$APP/www-grotto,$APP/www-elyria"
   exit 0
 fi
 
@@ -93,52 +138,77 @@ nginx_test_reload() {
 }
 
 cert_covers_host() {
-  local dir="$1"
-  local pem="$dir/fullchain.pem"
-  local sans
+  # $1 — хост, $2 — каталог с fullchain/privkey. SAN-текст читаем -text
+  # (-ext только у openssl 3, -text работает и на BSD/LibreSSL).
+  local host="$1" dir="$2" pem="" sans="" wild=""
+  pem="$dir/fullchain.pem"
   [ -f "$pem" ] && [ -f "$dir/privkey.pem" ] || return 1
-  # -text работает и на GNU openssl, и на BSD/LibreSSL (-ext — только openssl 3).
+  case "$host" in
+    *.abnocw.miew.ru) wild="DNS:\\*\\.abnocw\\.miew\\.ru" ;;
+    *.elisium.miew.ru) wild="DNS:\\*\\.elisium\\.miew\\.ru" ;;
+    *) return 1 ;;
+  esac
   sans="$(openssl x509 -in "$pem" -noout -text 2>/dev/null || true)"
-  printf '%s' "$sans" | grep -q "DNS:\*\.abnocw\.miew\.ru" && return 0
-  printf '%s' "$sans" | grep -q "DNS:${HOST}" && return 0
+  printf '%s' "$sans" | grep -q "$wild" && return 0
+  printf '%s' "$sans" | grep -q "DNS:${host}"
+}
+
+cert_dir_for_host() {
+  # Печатает первый каталог с сертификатом, покрывающим $1, либо пусто.
+  # Приоритет: per-host зеркало (${PREVIEW_TLS_PER:-tls/<host>} — штатный
+  # HTTP-01 поток coop-preview-cert) — потом зеркало зоны
+  # tls/abnocw.miew.ru|tls/elisium.miew.ru (wildcard DNS-01) — в конце
+  # легаси-слот PREVIEW_TLS_WILD (один SAN-набор теоретически мог бы покрыть
+  # обе зоны сразу).
+  local host="$1"
+  local wild="${PREVIEW_TLS_WILD:-$PREVIEW_ROOT/tls/wild}"
+  local per="${PREVIEW_TLS_PER:-$PREVIEW_ROOT/tls/$host}"
+  local zone=""
+  case "$host" in
+    *.abnocw.miew.ru) zone="abnocw" ;;
+    *.elisium.miew.ru) zone="elisium" ;;
+    *) return 1 ;;
+  esac
+  local d=""
+  for d in "$per" "$PREVIEW_ROOT/tls/${zone}.miew.ru" "$wild"; do
+    if cert_covers_host "$host" "$d"; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
   return 1
 }
 
 # Зеркала сертификатов (/opt/.../tls/<host>) обновляет root-скрипт
 # coop-preview-tls-sync (certbot deploy-hook): /etc/letsencrypt/live читает
 # только root, а cert_covers_host здесь гоняется от deploy-preview.
-# Per-host линии выпускает coop-preview-cert (cron, HTTP-01 из webroot www/).
-write_nginx_fragment() {
-  local ssl_listen="" ssl_certs="" cert="" https_jump=""
-  local wild="${PREVIEW_TLS_WILD:-$PREVIEW_ROOT/tls/wild}"
-  local per="${PREVIEW_TLS_PER:-$PREVIEW_ROOT/tls/$HOST}"
-  if cert_covers_host "$wild"; then
-    cert="$wild"
-  elif cert_covers_host "$per"; then
-    cert="$per"
-  fi
+# Per-host линии выпускает coop-preview-cert (cron, HTTP-01 из webroot
+# www-grotto / www-elyria — по суффиксу хоста).
+write_block() (
+  # $1 — server_name, $2 — root (абсолютный путь веб-корня), $3 — порт.
+  # Subshell: ssl-переменные не утекают между блоками.
+  local host="$1" root="$2" port="$3"
+  local cert=""
+  cert="$(cert_dir_for_host "$host")" || cert=""
+  local ssl_listen="" ssl_certs="" https_jump=""
   if [ -n "$cert" ]; then
     ssl_listen="    listen 443 ssl;"
     ssl_certs="    ssl_certificate $cert/fullchain.pem;
     ssl_certificate_key $cert/privkey.pem;"
-    # http -> https включаетcя только вместе с сертификатом (есть куда вести).
+    # http -> https включается только вместе с сертификатом (есть куда вести).
     # ACME-path исключён, на случай per-host HTTP-01; wildcard идёт DNS-01.
     https_jump="    set \$cf_r 0;
     if (\$scheme = http) { set \$cf_r 1; }
     if (\$request_uri ~ \"^/\\.well-known/acme-challenge/\") { set \$cf_r 0; }
     if (\$cf_r = 1) { return 301 https://\$host\$request_uri; }"
   fi
-  mkdir -p "$NGINX_D"
-  # Certbot/root-cron может оставить фрагмент от root. Каталог наш —
-  # unlink чужого файла можно, перезаписать через cat > нельзя.
-  rm -f "$FRAG"
-  cat > "$FRAG" <<EOF
+  cat <<EOF
 server {
     listen 80;
 ${ssl_listen}
-    server_name $HOST;
+    server_name $host;
 ${ssl_certs}
-    root $APP/www;
+    root $root;
     index index.html;
     charset utf-8;
 
@@ -154,25 +224,41 @@ ${https_jump}
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
     location /health {
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
     }
     location /auth {
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     location /cfg {
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Cookie \$http_cookie;
     }
+    location /profiles {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    location /admin {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
     location /ws {
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -184,6 +270,15 @@ ${https_jump}
     }
 }
 EOF
+)
+
+write_nginx_fragment() {
+  mkdir -p "$NGINX_D"
+  # Certbot/root-cron может оставить фрагмент от root. Каталог наш —
+  # unlink чужого файла можно, перезаписать через cat > нельзя.
+  rm -f "$FRAG"
+  write_block "$GROTTO_HOST" "$APP/www-grotto" "$PORT" >> "$FRAG"
+  write_block "$ELYRIA_HOST" "$APP/www-elyria" "$PORT" >> "$FRAG"
 }
 
 destroy_nginx_fragment() {
@@ -219,7 +314,7 @@ if [ "$ACTION" = "destroy" ]; then
     rm -rf -- "$APP"
   fi
   destroy_nginx_fragment
-  echo "preview $SLUG удалён (unit, каталог, nginx). прод не трогали."
+  echo "preview $SLUG удалён (unit, каталог с обоими корнями, nginx-фрагмент с обоими server-блоками). прод не трогали."
   exit 0
 fi
 
@@ -254,9 +349,10 @@ need() {
 }
 need server.js
 need server/protocol.js
-need www/index.html
+need www-grotto/index.html
+need www-elyria/index.html
 
-mkdir -p "$APP/data" "$APP/www"
+mkdir -p "$APP/data" "$APP/www-grotto" "$APP/www-elyria"
 cp -a "$IN/server.js" "$APP/server.js"
 rm -rf "$APP/server"
 cp -a "$IN/server" "$APP/server"
@@ -269,11 +365,13 @@ if [ -f "$IN/package.json" ]; then
   cp -a "$IN/package-lock.json" "$APP/package-lock.json" 2>/dev/null || true
 fi
 if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete "$IN/www/" "$APP/www/"
+  rsync -a --delete "$IN/www-grotto/" "$APP/www-grotto/"
+  rsync -a --delete "$IN/www-elyria/" "$APP/www-elyria/"
 else
-  rm -rf "$APP/www"
-  mkdir -p "$APP/www"
-  cp -a "$IN/www/." "$APP/www/"
+  rm -rf "$APP/www-grotto" "$APP/www-elyria"
+  mkdir -p "$APP/www-grotto" "$APP/www-elyria"
+  cp -a "$IN/www-grotto/." "$APP/www-grotto/"
+  cp -a "$IN/www-elyria/." "$APP/www-elyria/"
 fi
 
 if [ ! -f "$APP/env" ]; then
@@ -286,15 +384,17 @@ ADMIN_PASS=$PASS
 REQUIRE_ORIGIN=0
 EOF
 fi
-# Порт и Origin-allowlist обновляем на каждый apply: хост приходит снаружи и
-# может смениться (формат URL, ручной re-apply), а Origin сокета из
-# server/config.js (allowlist) обязан идти за ним. Оба scheme — чтобы http
-# жил до выпуска сертификата и не отваливался после перехода на https.
-# grep -v + mv вместо sed -i: одинаково работает на GNU (VPS/CI) и BSD sed
-# (локальный запуск тестов на mac), как уже делает PREVIEW_SHA ниже.
-AO="http://$HOST,https://$HOST"
-grep -v -E '^(PORT|ALLOWED_ORIGINS|PREVIEW_SHA)=' "$APP/env" > "$APP/env.n" || true
-printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPREVIEW_SHA=%s\n' "$PORT" "$AO" "$SHA" >> "$APP/env.n"
+# Порт, Origin-allowlist и оба хоста обновляем на каждый apply: хосты приходят
+# снаружи и могут смениться (формат URL, ручной re-apply), а Origin сокета из
+# server/config.js (allowlist по ALLOWED_ORIGINS) и Host-политика сервера
+# (PUBLIC_HOSTS/ELYRIA_HOSTS, фаза P1) обязаны идти за ними. Все scheme —
+# чтобы http жил до выпуска сертификата и не отваливался после перехода
+# на https. grep -v + mv вместо sed -i: одинаково работает на GNU (VPS/CI) и
+# BSD sed (локальный запуск тестов на mac).
+AO="http://$GROTTO_HOST,https://$GROTTO_HOST,http://$ELYRIA_HOST,https://$ELYRIA_HOST"
+grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA)=' "$APP/env" > "$APP/env.n" || true
+printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nELYRIA_HOSTS=%s\nPREVIEW_SHA=%s\n' \
+  "$PORT" "$AO" "$GROTTO_HOST" "$ELYRIA_HOST" "$SHA" >> "$APP/env.n"
 mv "$APP/env.n" "$APP/env"
 if grep -Eq "^DATA_DIR=$PROD_ROOT(/|$)" "$APP/env"; then
   fail "отказ: DATA_DIR указывает на прод"

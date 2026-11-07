@@ -5,6 +5,7 @@ import {
   previewPort,
   previewRoot,
   previewSiteHost,
+  previewSiteHosts,
   previewSlug,
 } from "./preview-slug.mjs";
 
@@ -34,6 +35,23 @@ eq("root-id", previewRoot("pr-41"), "/opt/coop-field-preview/pr-41");
 eq("site host pr 41", previewSiteHost(41), "pr-41.abnocw.miew.ru");
 eq("site host pr string", previewSiteHost("999"), "pr-999.abnocw.miew.ru");
 eq("site host bad input", previewSiteHost("не-число"), "pr-0.abnocw.miew.ru");
+
+// Dual-host (P5): массив из двух хостов, без дублей, форматы строгое.
+const hosts41 = previewSiteHosts(41);
+eq("site hosts len 2", hosts41.length, 2);
+eq(
+  "site hosts pr 41",
+  hosts41.join(";"),
+  "pr-41.abnocw.miew.ru;pr-41.elisium.miew.ru",
+);
+eq("site hosts element 0 = previewSiteHost (compat)", hosts41[0], previewSiteHost(41));
+eq("site hosts abnocw format", /^[a-z0-9][a-z0-9-]{0,23}\.abnocw\.miew\.ru$/.test(hosts41[0]), true);
+eq("site hosts elisium format", /^[a-z0-9][a-z0-9-]{0,23}\.elisium\.miew\.ru$/.test(hosts41[1]), true);
+eq("site hosts no dup", new Set(previewSiteHosts(1042)).size, 2);
+eq("site hosts pr string", previewSiteHosts("999").join(";"), "pr-999.abnocw.miew.ru;pr-999.elisium.miew.ru");
+eq("site hosts bad input", previewSiteHosts("не-число").join(";"), "pr-0.abnocw.miew.ru;pr-0.elisium.miew.ru");
+// Один инстанс на PR: оба хоста деривируются из одного номера → порт общий.
+eq("same port for both hosts", previewPort(hosts41[1].match(/^pr-(\d+)\./)[1]), previewPort(41));
 
 if (failed) {
   console.error("preview slug: FAIL");

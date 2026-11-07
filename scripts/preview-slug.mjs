@@ -1,9 +1,15 @@
 /**
- * Preview identity vs public host.
+ * Preview identity vs public hosts.
  * Directory/unit/public site: pr-<number> — stable across pushes, known at
  * destroy time, short enough for nginx server_names_hash_bucket_size 64
  * (the old branch slug was not). The interim 8-hex-SHA site name is retired:
  * readable beats per-commit URL churn (owner decision, 2026-11-07).
+ *
+ * Dual-host preview (P5): каждый PR получает ДВА сайта — публичные «Пивные
+ * гротты» pr-<number>.abnocw.miew.ru (root www-grotto) и Элизия
+ * pr-<number>.elisium.miew.ru (root www-elyria). Инстанс комнаты на PR
+ * остаётся один: оба хоста ходят в один и тот же порт, разделение
+ * возможностей — по Host-политике на сервере (env PUBLIC_HOSTS/ELYRIA_HOSTS).
  */
 export function previewSlug(input) {
   const raw = String(input || "")
@@ -25,9 +31,18 @@ export function previewId(prNumber) {
   return `pr-${n}`;
 }
 
-export function previewSiteHost(prNumber) {
+/** Оба сайта PR: [pr-N.abnocw.miew.ru, pr-N.elisium.miew.ru]. Порядок
+ * фиксирован: элемент 0 — гроты (главный хост), элемент 1 — Элизия. */
+export function previewSiteHosts(prNumber) {
   const label = previewId(prNumber);
-  return `${label}.abnocw.miew.ru`;
+  return [`${label}.abnocw.miew.ru`, `${label}.elisium.miew.ru`];
+}
+
+/** @deprecated Со времён single-host. Возвращает только ПЕРВЫЙ хост (гроты);
+ * для dual-host используй previewSiteHosts(). Оставлен для совместимости
+ * (main до мерджа P5 зовёт CLI site-host для единственного URL). */
+export function previewSiteHost(prNumber) {
+  return previewSiteHosts(prNumber)[0];
 }
 
 export function previewHost(slug) {
@@ -51,5 +66,7 @@ if (invoked && process.argv[2]) {
   const arg = process.argv[3];
   if (cmd === "id") process.stdout.write(previewId(arg) + "\n");
   else if (cmd === "site-host") process.stdout.write(previewSiteHost(arg) + "\n");
+  else if (cmd === "site-hosts") process.stdout.write(previewSiteHosts(arg).join("\n") + "\n");
+  else if (cmd === "site-host-elyria") process.stdout.write(previewSiteHosts(arg)[1] + "\n");
   else process.stdout.write(previewSlug(cmd) + "\n");
 }
