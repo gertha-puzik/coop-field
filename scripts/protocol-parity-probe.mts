@@ -6,6 +6,7 @@
 // ничего кроме JSON, чтобы вывод парсился однозначно).
 // Запуск вручную: node --experimental-strip-types scripts/protocol-parity-probe.mts
 import * as protocol from "../src/lib/net/protocol.ts";
+import * as cfgRegistry from "../src/lib/cfg-registry.ts";
 
 const dump = {
   CLIENT_TO_SERVER: [...protocol.CLIENT_TO_SERVER],
@@ -44,6 +45,9 @@ const dump = {
   JUMP_MAX_CELLS: protocol.JUMP_MAX_CELLS,
   JUMP_DIRECTIONS: protocol.JUMP_DIRECTIONS,
   JUMP_MAX_DROP: protocol.JUMP_MAX_DROP,
+  // P2: зеркало реестра параметров (src/lib/cfg-registry.ts ↔ server/cfg-registry.js).
+  CFG_REGISTRY: cfgRegistry.CFG_REGISTRY,
+  CFG_DEFAULTS: cfgRegistry.cfgDefaults(),
 };
 
 console.log(JSON.stringify(dump));

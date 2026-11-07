@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+/**
+ * Reестр параметров P2 (спек §6): whitelist-модель end-to-end.
+ *
+ *  Юнит (без сети, чистый import server/cfg-registry.js):
+ *   - ключи/дефолты реестра, клэмпы диапазонов, unknown_keys с перечислением,
+ *     invalid-списки (мусор/пусто/дефолт мимо списка), формулы клэмпов урона
+ *     (golden) и снап брони к разрешённым десятым.
+ *  HTTP (sandbox server.js, локальный класс хоста):
+ *   - GET /cfg публичен: v+atmo+universes+apply-hint БЕЗ history (утечка P2);
+ *   - read-time миграция: старый atmo-only файл читается, universes — дефолты,
+ *     файл не переписывается до первого admin-POST;
+ *   - роли: гость/юзер → 403 на POST /cfg и GET /cfg/admin, админ → 200;
+ *   - POST /cfg: патч по ключам реестра, unknown → 400 + перечисление;
+ *   - POST /cfg/restore: только имя из listHistory (path-guard), иначе 404;
+ *   - GET /cfg/export + POST /cfg/import: roundtrip и отказ без частичного
+ *     применения;
+ *   - reset → дефолты реестра.
+ *
+ * Запуск: node scripts/test-cfg-registry.mjs (npm-раннер: npm run test:cfg).
+ */
+import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { WebSocket } from "ws";
+
+const ROOT = new URL("..", import.meta.url).pathname;
+const DATA = mkdtempSync(path.join(tmpdir(), "coop-cfg-"));
+const FILE = path.join(DATA, "runtime-config.json");
+const PORT = 4180 + Math.floor(Math.random() * 60);
+const HOST = "127.0.0.1";
+const HTTP = `http://${HOST}:${PORT}`;
+const WS = `ws://${HOST}:${PORT}`;
+
+process.env.BOOTSTRAP_ADMIN = "Герта";
+
+const reg = await import("../server/cfg-registry.js");
+
+let failures = 0;
+const check = (cond, label) => {
+  console.log(`${cond ? "ok  " : "FAIL"} ${label}`);
+  if (!cond) failures += 1;
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* ---------- Юнит: реестр (без сети) ---------- */
+check(
+  JSON.stringify(reg.KEYS) ===
+    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
+  "unit: 5 ключей реестра в каноническом порядке",
+);
+const defs = reg.defaultsFor();
+check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12, "unit: дефолтальные длительности 7/12");
+check(defs.universes.arrowSpeed.periods.length === 6 && defs.universes.arrowSpeed.default === 5, "unit: пресеты стрелы 6 шт, дефолт 5");
+const clamped = reg.sanitizeValues({ atmo: { phaseMin: 999, weatherMin: 0 } }).values;
+check(clamped.atmo.phaseMin === 120 && clamped.atmo.weatherMin === 2, "unit: диапазон клэмпится 999→120, 0→2 (толерантность прежняя)");
+const unknown = reg.sanitizeValues({ marja: 1, atmo: { marja: 2, phaseMin: 8 } });
+check(
+  unknown.error?.reason === "unknown_keys" && JSON.stringify(unknown.error.unknown) === JSON.stringify(["marja", "atmo.marja"]),
+  "unit: неизвестная секция/поле → unknown_keys",
+);
+check(unknown.error?.allowed?.length === 5, "unit: отказ перечисляет разрешённые ключи (whitelist)");
+const badLevel = reg.sanitizeValues({ universes: { strikeDamage: { levels: [0, 27], default: 0 } } });
+check(badLevel.error?.reason === "invalid" && badLevel.error.invalid[0].key === "universes.strikeDamage", "unit: уровень вне движкового юниверса → invalid");
+const emptyList = reg.sanitizeValues({ universes: { armor: { tenths: [], default: 0 } } });
+check(emptyList.error?.reason === "invalid", "unit: пустой список брони → invalid");
+const badDefault = reg.sanitizeValues({ universes: { armor: { tenths: [0.3], default: 0.9 } } });
+check(badDefault.error?.reason === "invalid", "unit: дефолт не из списка → invalid");
+const goodList = reg.sanitizeValues({ universes: { strikeDamage: { levels: [1, 0, 1], default: 1 } } }).values;
+check(JSON.stringify(goodList.universes.strikeDamage.levels) === "[0,1]", "unit: дубликаты уровней снимаются, список сортируется");
+const halfFields = reg.universesForPublic(goodList);
+check(JSON.stringify(halfFields.strikeDamage) === '{"levels":[0,1],"default":1}', "unit: universesForPublic отдаёт только списки+дефолты");
+check(
+  reg.maxStrikeDamage("throat", 0) === 42 && reg.maxStrikeDamage("throat", 9) === 75 &&
+    reg.maxStrikeDamage("muzzle", 9) === 32 && reg.maxStrikeDamage("paws", 4) === 8,
+  "unit: maxStrikeDamage — формульные golden (42/75/32/8)",
+);
+check(
+  reg.snapArmorToUniverse(0.55, [0.3, 0.9]) === 0.3 && reg.snapArmorToUniverse(0.2, [0.3]) === 0 &&
+    reg.snapArmorToUniverse("мусор", [0, 0.9]) === 0 && reg.snapArmorToUniverse(-1, [0, 0.9]) === 0,
+  "unit: снап брони вниз к разрешённым (0,55→0,3; ниже списка → 0)",
+);
+check(
+  reg.snapArmorToUniverse(0.55, reg.defaultsFor().universes.armor.tenths) === 0.5 &&
+    reg.snapArmorToUniverse(0.56, reg.defaultsFor().universes.armor.tenths) === 0.5 &&
+    reg.snapArmorToUniverse(0.30000000000004, reg.defaultsFor().universes.armor.tenths) === 0.3,
+  "unit: снап не квантует вверх по полному списку (0,55/0,56→0,5; float-пыль→0,3)",
+);
+
+/* ---------- HTTP: sandbox со старым atmo-only файлом ---------- */
+mkdirSync(DATA, { recursive: true });
+writeFileSync(FILE, JSON.stringify({ v: 1, atmo: { phaseMin: 5, weatherMin: 12 } }, null, 2));
+
+const server = spawn(process.execPath, ["server.js"], {
+  cwd: ROOT,
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+server.stderr.on("data", (d) => process.stderr.write(d));
+
+async function waitReady() {
+  for (let i = 0; i < 100; i += 1) {
+    const ok = await new Promise((resolve) => {
+      const probe = new WebSocket(WS);
+      probe.once("open", () => {
+        probe.terminate();
+        resolve(true);
+      });
+      probe.once("error", () => resolve(false));
+    });
+    if (ok) return;
+    await sleep(80);
+  }
+  throw new Error(`server not ready: ${WS}`);
+}
+
+const httpJson = async (pathname, { method = "GET", body, token, origin } = {}) => {
+  const headers = { "content-type": "application/json" };
+  if (token) headers.cookie = `coop_session=${token}`;
+  if (origin) headers.origin = origin;
+  const url = token && !headers.cookie ? `${HTTP}${pathname}?t=${token}` : `${HTTP}${pathname}`;
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {
+    /* not json */
+  }
+  return { status: res.status, json };
+};
+
+try {
+  await waitReady();
+
+  // (а) Публичный GET /cfg: миграция старого файла + universes дефолтами,
+  //     НИКАКОЙ истории (утечка админ-мета закрыта в P2).
+  const pub0 = await httpJson("/cfg");
+  check(pub0.status === 200 && pub0.json?.ok === true && pub0.json?.atmo?.phaseMin === 5, "cfg: GET /cfg читает старый atmo-only файл (миграция на лету)");
+  check(pub0.json?.universes?.strikeDamage?.levels?.length === 10, "cfg: universes добирается дефолтами реестра");
+  check(!("history" in (pub0.json || {})), "cfg: публичный GET /cfg больше НЕ отдаёт history (имён бэкапов игрокам не видно)");
+  check(
+    JSON.stringify(Object.keys(pub0.json.universes.strikeDamage)) === JSON.stringify(["levels", "default"]),
+    "cfg: публичный блок universes — только списки и дефолты",
+  );
+  check(pub0.json?.apply?.["atmo.phaseMin"] === "new-room" && pub0.json?.apply?.["universes.strikeDamage"] === "on-next-event", "cfg: apply-политики приходят по ключам реестра");
+  check(readFileSync(FILE, "utf8").includes('"phaseMin": 5') && !readFileSync(FILE, "utf8").includes('"universes"'), "cfg: файл на диске НЕ переписан до первого admin-POST");
+
+  // (б) Роли: гость и юзер не пишут и не видят админ-данные.
+  const guestPost = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 3 } } });
+  check(guestPost.status === 403 && guestPost.json?.reason === "auth_required", "cfg: POST /cfg гость → 403");
+  const guestAdmin = await httpJson("/cfg/admin");
+  check(guestAdmin.status === 403 && guestAdmin.json?.reason === "auth_required", "cfg: GET /cfg/admin гость → 403");
+
+  const regRes = await httpJson("/auth/register", { method: "POST", body: { login: "Обычный", pass: "password1" } });
+  const userTok = regRes.json?.token;
+  check(!!userTok, "cfg: регистрация обычного юзера");
+  const userPost = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 3 } }, token: userTok });
+  check(userPost.status === 403, "cfg: POST /cfg юзер (не админ) → 403");
+  const userAdmin = await httpJson("/cfg/admin", { token: userTok });
+  check(userAdmin.status === 403, "cfg: GET /cfg/admin юзер (не админ) → 403");
+  const userExport = await httpJson("/cfg/export", { token: userTok });
+  check(userExport.status === 403, "cfg: GET /cfg/export юзер (не админ) → 403");
+
+  const adminRes = await httpJson("/auth/register", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const adminTok = adminRes.json?.token;
+  check(!!adminTok, "cfg: регистрация админа (BOOTSTRAP_ADMIN)");
+  const adminWho = await httpJson("/auth/me", { token: adminTok });
+  check(adminWho.json?.role === "admin", "cfg: роль админа на сессии");
+
+  // (в) POST /cfg: whitelist-патч.
+  const saved = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 9 } }, token: adminTok });
+  check(saved.status === 200 && saved.json?.atmo?.phaseMin === 9 && saved.json?.atmo?.weatherMin === 12, "cfg: админ-патч применён (условные клэмпы), второе поле не потеряно");
+  check(readFileSync(FILE, "utf8").includes('"universes"'), "cfg: первый admin-POST переписал файл расширенной схемой (v:1 + universes)");
+  check(!("history" in (saved.json || {})), "cfg: ответ POST /cfg без history");
+
+  const unknownKeys = await httpJson("/cfg", { method: "POST", body: { marja: { x: 1 }, atmo: { phaseMin: 8, marja: 2 } }, token: adminTok });
+  check(unknownKeys.status === 400 && unknownKeys.json?.reason === "unknown_keys" && unknownKeys.json?.unknown?.includes("marja"), "cfg: POST /cfg с чужими ключами → 400 + перечисление");
+  const still9 = await httpJson("/cfg");
+  check(still9.json?.atmo?.phaseMin === 9, "cfg: после отказа значения НЕ изменились (всё или ничего)");
+
+  const badNum = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: "мусор" } }, token: adminTok });
+  check(badNum.status === 400 && badNum.json?.reason === "invalid", "cfg: нечисловое значение → 400 invalid");
+  const level27 = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 27], default: 0 } } }, token: adminTok });
+  check(level27.status === 400 && level27.json?.reason === "invalid", "cfg: уровень 27 вне движкового юниверса → 400");
+
+  // (г) Сужение юниверса брони + экспорт/импорт roundtrip.
+  const armorPatch = await httpJson("/cfg", { method: "POST", body: { universes: { armor: { tenths: [0.3, 0.5], default: 0.5 } } }, token: adminTok });
+  check(armorPatch.status === 200 && JSON.stringify(armorPatch.json?.universes?.armor) === '{"tenths":[0.3,0.5],"default":0.5}', "cfg: сужение брони до [0.3,0.5]");
+
+  const exportRes = await httpJson("/cfg/export", { token: adminTok });
+  check(exportRes.status === 200 && exportRes.json?.atmo?.phaseMin === 9 && exportRes.json?.universes?.armor?.tenths?.length === 2 && !("apply" in (exportRes.json || {})), "cfg: GET /cfg/export — значения одним JSON");
+
+  const mutate = structuredClone(exportRes.json);
+  mutate.ok = true;
+  mutate.v = 1;
+  mutate.atmo.phaseMin = 11;
+  const importOk = await httpJson("/cfg/import", { method: "POST", body: mutate, token: adminTok });
+  check(importOk.status === 200 && importOk.json?.atmo?.phaseMin === 11, "cfg: POST /cfg/import принимает экспорт (roundtrip)");
+  const badImport = await httpJson("/cfg/import", { method: "POST", body: { ok: true, atmo: { phaseMin: "му" }, universes: {} }, token: adminTok });
+  check(badImport.status === 400, "cfg: битый импорт → 400");
+  const afterBad = await httpJson("/cfg");
+  check(afterBad.json?.atmo?.phaseMin === 11, "cfg: после битого импорта применяется прежний конфиг (без частичного)");
+
+  // (д) Restore: path-guard и восстановление.
+  const restoreEscape = await httpJson("/cfg/restore", { method: "POST", body: { name: "../../etc/passwd" }, token: adminTok });
+  check(restoreEscape.status === 404 && restoreEscape.json?.reason === "unknown_backup", "cfg: restore по пути наружу → отказ (path-guard)");
+  const restoreGhost = await httpJson("/cfg/restore", { method: "POST", body: { name: "zzz-несуществует.json" }, token: adminTok });
+  check(restoreGhost.status === 404, "cfg: restore по незнакомому имени → отказ");
+
+  const adminCfg = await httpJson("/cfg/admin", { token: adminTok });
+  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 5, "cfg: GET /cfg/admin отдаёт метаданные реестра (5 параметров)");
+  check(Array.isArray(adminCfg.json?.history) && adminCfg.json.history.length >= 1, "cfg: админ видит историю бэкапов");
+  const hist = adminCfg.json.history;
+  // Самый старый бэкап — снимок засеянного старого файла ( rotated at first POST).
+  const oldest = hist[hist.length - 1];
+  const oldestText = readFileSync(path.join(DATA, "cfg-backups", oldest), "utf8");
+  check(oldestText.includes('"phaseMin": 5'), "cfg: старейший бэкап — исходный atmo-only файл");
+  const restored = await httpJson("/cfg/restore", { method: "POST", body: { name: oldest }, token: adminTok });
+  check(restored.status === 200 && restored.json?.restored === oldest && restored.json?.atmo?.phaseMin === 5, "cfg: restore по имени из истории вернул phaseMin 5");
+  check(restored.json?.universes?.armor?.tenths?.length === 10, "cfg: restore старого формата восстанавливает universes дефолтами (миграция)");
+
+  // (е) Reset.
+  const resetRes = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
+  check(resetRes.status === 200 && resetRes.json?.atmo?.phaseMin === 7 && resetRes.json?.universes?.armor?.tenths?.length === 10, "cfg: reset возвращает дефолты реестра");
+  check(JSON.stringify(resetRes.json?.universes?.armor?.tenths) === JSON.stringify(defs.universes.armor.tenths), "cfg: reset совпадает с defaultsFor()");
+} catch (e) {
+  failures += 1;
+  console.error("FAIL exception", e);
+} finally {
+  server.kill("SIGTERM");
+}
+
+if (failures) {
+  console.error(`cfg-registry tests: FAIL (${failures})`);
+  process.exit(1);
+}
+console.log("cfg-registry tests: зелёный");

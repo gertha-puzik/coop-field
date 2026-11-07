@@ -19,7 +19,9 @@
  *     Origin (чужой → 403 csrf, белый → доходит до логина), матрица токенов
  *     на elyria (тела без token, приём ?t= выключен, cookie работает),
  *     https-cookie SameSite=Lax+Secure; join по коду combat → поле room
- *     grot-1 (снятая комната алиасится в RETIRED_ROOMS).
+ *     grot-1 (снятая комната алиасится в RETIRED_ROOMS);
+ *  9. (P2) там же: admin-маршруты конфига — /cfg/admin и /cfg/export на
+ *     public-хосте 404, гость/не-админ на elyria 403, админ 200 с registry.
  *
  * Запуск: node scripts/test-auth.mjs (сам спавнит server.js в песочнице DATA_DIR).
  */
@@ -658,6 +660,38 @@ try {
   check(
     csrfOk.status === 401 && csrfOk.json?.reason === "bad",
     "csrf: Origin из ALLOWED_ORIGINS доводит до проверки пароля (401 bad, не 403)",
+  );
+
+  // (P2) Новые admin-маршруты /cfg: на public-хосте их «не существует»,
+  // гость/юзер на elyria получают 403, админ — 200 с метаданными реестра.
+  const gateCfgAdmin = await probe3({ method: "GET", path: "/cfg/admin", host: "pub.example" });
+  const gateCfgExport = await probe3({ method: "GET", path: "/cfg/export", host: "pub.example" });
+  check(
+    gateCfgAdmin.status === 404 && gateCfgAdmin.json?.reason === "not_found" &&
+      gateCfgExport.status === 404 && gateCfgExport.json?.reason === "not_found",
+    "host-gate: GET /cfg/admin и /cfg/export на public → 404 (админ-зоны конфига скрыты)",
+  );
+  const cfgAdminGuest = await probe3({ method: "GET", path: "/cfg/admin", host: "ely.example" });
+  const cfgAdminUser = await probe3({
+    method: "GET", path: "/cfg/admin", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    cfgAdminGuest.status === 403 && cfgAdminGuest.json?.reason === "auth_required" &&
+      cfgAdminUser.status === 403 && cfgAdminUser?.json?.reason === "auth_required",
+    "cfg-admin: гость и не-админ на /cfg/admin → 403 auth_required",
+  );
+  const adminReg = await probe3({
+    method: "POST", path: "/auth/register", host: "ely.example", body: { login: "Герта", pass: "password1" },
+  });
+  const adminTok3 = (String(adminReg.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
+  check(adminReg.json?.role === "admin" && !!adminTok3, "cfg-admin: bootstrap-админ зарегистрирован (роль в ответе)");
+  const cfgAdminOk = await probe3({
+    method: "GET", path: "/cfg/admin", host: "ely.example", cookie: `coop_session=${adminTok3}`,
+  });
+  check(
+    cfgAdminOk.status === 200 && cfgAdminOk.json?.ok === true &&
+      Object.keys(cfgAdminOk.json?.registry || {}).length === 5 && Array.isArray(cfgAdminOk.json?.history),
+    "cfg-admin: админ на /cfg/admin → 200 + registry (5 параметров) + history",
   );
 
   // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;

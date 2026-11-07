@@ -21,6 +21,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import * as serverProtocol from "../server/protocol.js";
+import * as cfgReg from "../server/cfg-registry.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROBE = path.join(ROOT, "scripts", "protocol-parity-probe.mts");
@@ -189,6 +190,64 @@ checkGolden("STRIKE_ZONES", serverProtocol.STRIKE_ZONES, GOLDEN.STRIKE_ZONES);
 // Спрайт дефолта манекена — серверный факт (клиент его не зеркалит), фиксируем и его.
 checkGolden("DUMMY_DEFAULT.sprite", serverProtocol.DUMMY_DEFAULT.sprite, "puhlyashik");
 
+/* 4. Golden-пины P2: whitelist-реестр параметров server/cfg-registry.js ↔
+ *    зеркало src/lib/cfg-registry.ts. Общего кода у сторон нет, поэтому пиним
+ *    по-полю: ключи, подписи/описания, юниверсы значений, дефолты, apply-
+ *    политики; плюс снапшот дефолтных значений и формульные числа клэмпа
+ *    урона (защита от «обе стороны уехали вместе»). ARMOR_CURVE и STRIKE_ZONES
+ *    как константы движка уже запинены выше — реестр лежит ПОВЕРХ них. */
+const CFG_KEYS_EXPECTED = [
+  "atmo.phaseMin", "atmo.weatherMin",
+  "universes.strikeDamage", "universes.armor", "universes.arrowSpeed",
+];
+if (!deepEq([...cfgReg.KEYS], CFG_KEYS_EXPECTED)) {
+  fail.push(`FAIL cfg-registry: набор ключей сервера = ${fmt([...cfgReg.KEYS])}, ожидается ${fmt(CFG_KEYS_EXPECTED)}.`);
+}
+const clientCfgKeys = Object.keys(client.CFG_REGISTRY || {});
+if (!deepEq(clientCfgKeys, CFG_KEYS_EXPECTED)) {
+  fail.push(`FAIL cfg-registry: набор ключей зеркала = ${fmt(clientCfgKeys)}, ожидается ${fmt(CFG_KEYS_EXPECTED)}.`);
+}
+const CFG_PIN_FIELDS = [
+  "key", "label", "description", "unit", "kind", "values", "default",
+  "engineCap", "applyPolicy", "applyHint", "visibility", "scope",
+];
+for (const key of cfgReg.KEYS) {
+  const s = cfgReg.REGISTRY[key];
+  const c = (client.CFG_REGISTRY || {})[key];
+  if (!c) {
+    fail.push(`FAIL cfg-registry: ключ ${key} есть на сервере, в зеркале его нет.`);
+    continue;
+  }
+  for (const field of CFG_PIN_FIELDS) {
+    if (!deepEq(s[field], c[field])) {
+      fail.push(`FAIL cfg-registry ${key}.${field}: server/cfg-registry.js = ${fmt(s[field])}, зеркало (src/lib/cfg-registry.ts) = ${fmt(c[field])} — правь обе стороны одним PR.`);
+    }
+  }
+}
+const GOLDEN_CFG_DEFAULTS = {
+  v: 1,
+  atmo: { phaseMin: 7, weatherMin: 12 },
+  universes: {
+    strikeDamage: { levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], default: 0 },
+    armor: { tenths: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], default: 0 },
+    arrowSpeed: { periods: [1.8, 2.5, 3.5, 4, 4.5, 5], default: 5 },
+  },
+};
+if (!deepEq(cfgReg.defaultsFor(), GOLDEN_CFG_DEFAULTS)) {
+  fail.push(`FAIL cfg-registry defaults: server/cfg-registry.js = ${fmt(cfgReg.defaultsFor())}, ожидается ${fmt(GOLDEN_CFG_DEFAULTS)}.`);
+}
+if (!deepEq(client.CFG_DEFAULTS, GOLDEN_CFG_DEFAULTS)) {
+  fail.push(`FAIL cfg-registry defaults зеркала: src/lib/cfg-registry.ts = ${fmt(client.CFG_DEFAULTS)}, ожидается ${fmt(GOLDEN_CFG_DEFAULTS)}.`);
+}
+const GOLDEN_DAMAGE_CLAMPS = [
+  ["throat", 0, 42], ["throat", 9, 75], ["muzzle", 9, 32], ["paws", 4, 8], ["tail", 9, 4],
+];
+for (const [zone, level, want] of GOLDEN_DAMAGE_CLAMPS) {
+  if (cfgReg.maxStrikeDamage(zone, level) !== want) {
+    fail.push(`FAIL cfg-registry maxStrikeDamage(${zone}, ${level}) = ${cfgReg.maxStrikeDamage(zone, level)}, ожидается ${want} (формула зон: горло 42 + 3,67·уровень, остальные — база зоны × рост горла).`);
+  }
+}
+
 if (fail.length) {
   console.error(`Протокольный паритет: расхождений — ${fail.length}.`);
   for (const line of fail) console.error("  " + line);
@@ -197,5 +256,6 @@ if (fail.length) {
 
 console.log(
   `protocol parity — зелёный: событий 23+23, зеркал-констант 25, EV-имён ${Object.keys(serverProtocol.EV).length}; ` +
-    `server/protocol.js == src/lib/net/protocol.ts == golden.`
+    `server/protocol.js == src/lib/net/protocol.ts == golden; ` +
+    `cfg-registry: ключей ${cfgReg.KEYS.length}, сервер == зеркало == golden.`
 );
