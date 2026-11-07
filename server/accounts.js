@@ -227,15 +227,23 @@ function publicAccount(acc) {
 }
 
 /**
- * Публичный DTO профиля (P1, HTTP /profiles/* — server/profiles.js; полный
- * каталог и правка едут в P4): как игрок виден другим игрокам. Единый
- * источник DTO: БЕЗ login, без role и без парольных полей.
+ * Публичный DTO профиля (P1 HTTP /profiles/* → P4 каталог/правка): как игрок
+ * виден другим игрокам. Единый источник DTO: БЕЗ login, без role и без парольных
+ * полей. P4-слоты: bio (строка, пустая по умолчанию) и avatarCharacterId
+ * (id персонажа-аватара ИЗ СВОЕГО списка characters либо null; сторонний id
+ * сюда не попадает — экспонируем только если он есть в characters аккаунта).
  */
 function publicProfile(acc) {
   if (!acc) return null;
+  const chars = Array.isArray(acc.characters) ? acc.characters : [];
+  const wanted = acc.profile?.avatarCharacterId;
+  const avatar =
+    typeof wanted === "string" && chars.some((c) => c && c.id === wanted) ? wanted : null;
   return {
     displayName: acc.profile?.displayName || acc.login,
-    characters: (Array.isArray(acc.characters) ? acc.characters : []).map((c) => ({
+    bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
+    avatarCharacterId: avatar,
+    characters: chars.map((c) => ({
       id: c.id,
       name: c.name,
       sprite: c.sprite,
