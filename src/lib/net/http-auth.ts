@@ -15,7 +15,11 @@
  *   GET   /profiles/me   → 200 {ok, ...publicProfile} | гость 401 auth_required
  *   PATCH /profiles/me   → 200 {ok, ...publicProfile} | 400 unknown_keys/invalid/
  *                          empty_patch/invalid_body | 401 | 403 csrf
- *   GET   /profiles      → 200 {ok, items:[карточки], total} — публичный каталог
+ *   GET   /profiles      → 200 {ok, items:[карточки], nextCursor, total(legacy)} —
+ *                          каталог с серверной пагинацией (?limit, ?cursor) и
+ *                          поиском (?q); nextCursor:null — страница последняя;
+ *                          total — legacy-поле, НЕ контракт: не полагаться;
+ *                          мусорный limit/cursor → 400 invalid_limit/invalid_cursor
  *   GET   /profiles/:id  → 200 {ok, accountId, ...publicProfile} | 404 unknown
  *
  * Конфиг (server/runtime-config.js): GET /cfg/admin, POST /cfg (PATCH/reset),
@@ -160,18 +164,53 @@ function toProfileResult(status: number, row: ApiRow | null, text: string): Prof
   return { ok: false, reason, details: text || JSON.stringify(row) || "" };
 }
 
-/** Каталог публичных карточек: {ok, items, total} | ошибка. */
-export async function httpProfileCatalog(): Promise<
-  { ok: true; items: ProfileCard[]; total: number } | { ok: false; reason: string }
+/** Параметры страницы каталога: все опциональны. Без них — первая страница с
+ *  серверным дефолтом limit=24 (обратная совместимость старых вызовов). */
+export type ProfileCatalogPage = {
+  limit?: number;
+  cursor?: string;
+  q?: string;
+};
+
+/** Каталог публичных карточек: {ok, items, nextCursor} | ошибка.
+ *  nextCursor — курсор следующей страницы (null — страница последняя);
+ *  серверный invalid_limit/invalid_cursor проходит в reason для человеко-
+ *  читаемого показа. total — legacy-поле ответа, НЕ контракт: не полагаться. */
+export async function httpProfileCatalog(
+  page: ProfileCatalogPage = {},
+): Promise<
+  | { ok: true; items: ProfileCard[]; nextCursor: string | null; total?: number }
+  | { ok: false; reason: string; details?: string }
 > {
-  const { status, row } = await apiFetch("/profiles");
+  const params = new URLSearchParams();
+  if (typeof page.limit === "number" && Number.isFinite(page.limit) && page.limit > 0) {
+    params.set("limit", String(Math.floor(page.limit)));
+  }
+  if (typeof page.cursor === "string" && page.cursor) params.set("cursor", page.cursor);
+  if (typeof page.q === "string" && page.q.trim()) params.set("q", page.q);
+  const qs = params.toString();
+  const { status, row, text } = await apiFetch(qs ? `/profiles?${qs}` : "/profiles");
   if (status === 200 && row?.ok === true && Array.isArray(row.items)) {
     const items = (row.items as unknown[])
       .filter((it): it is ApiRow => !!it && typeof it === "object")
       .map((it) => ({ accountId: asText(it.accountId), ...parseProfile(it) }));
-    return { ok: true, items, total: Number.isFinite(Number(row.total)) ? Number(row.total) : items.length };
+    return {
+      ok: true,
+      items,
+      nextCursor: typeof row.nextCursor === "string" && row.nextCursor ? row.nextCursor : null,
+      total: Number.isFinite(Number(row.total)) ? Number(row.total) : undefined,
+    };
   }
-  return { ok: false, reason: status === 0 ? "offline" : "error" };
+  return { ok: false, reason: catalogErrorReason(status, row), details: text || undefined };
+}
+
+/** Причина сбоя каталога: сеть → offline; серверные reason (в т.ч. 400-е
+ *  invalid_cursor/invalid_limit) проходят насквозь для человекочитаемого
+ *  показа в UI; прочее — общий error. */
+function catalogErrorReason(status: number, row: ApiRow | null): string {
+  if (status === 0) return "offline";
+  if (typeof row?.reason === "string" && row.reason) return row.reason;
+  return "error";
 }
 
 /** Карточка по accountId (deep-link): DTO или 404/ошибка. */

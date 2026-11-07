@@ -6,14 +6,16 @@
  * инлайном (const IS_ELYRIA — спек §2A: свёртка ветки сборщиком).
  *
  * Данные — публичные HTTP-профили (server/profiles.js):
- *   GET /profiles — карточки каталога; deep-link /players?id=<accountId>
- *   открывает карточку напрямую (GET /profiles/:id, если её нет в списке).
+ *   GET /profiles — серверная пагинация (?limit, ?cursor — кнопка «Ещё») и
+ *   поиск по имени (?q, debounce 300 мс либо Enter/«Найти»); клиент НЕ тянет
+ *   весь список и НЕ фильтрует его у себя. Deep-link /players?id=<accountId>
+ *   открывает карточку напрямую (GET /profiles/:id) независимо от списка.
  * Своя карточка при активной сессии — инлайн-редактирование displayName/bio/
  * avatarCharacterId через PATCH /profiles/me с перечиткой GET /profiles/me;
  * ошибки сервера показываются целиком, без молчаливых no-op.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +49,10 @@ function humanError(reason: string | undefined, fallback: string): string {
       return 'Запрос не читается как корректный JSON.';
     case 'empty_patch':
       return 'Нет полей для сохранения.';
+    case 'invalid_limit':
+      return 'Передан некорректный размер страницы каталога.';
+    case 'invalid_cursor':
+      return 'Продолжение списка устарело — открываем каталог заново.';
     case 'offline':
       return 'Сервер недоступен.';
     default:
@@ -304,16 +310,68 @@ function FocusCardView({
 
 /* ================================ страница ================================ */
 
+const PAGE_SIZE = 24;
+const SEARCH_DEBOUNCE_MS = 300;
+
 export default function PlayersCatalog() {
   const [session, setSession] = useState<CoopWhoami | null>(null);
   const [cards, setCards] = useState<ProfileCard[] | null>(null);
-  const [cardsError, setCardsError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingFirst, setLoadingFirst] = useState(IS_ELYRIA);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listFail, setListFail] = useState<{
+    reason: string;
+    message: string;
+    details?: string;
+    retryCursor: string | null;
+  } | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [query, setQuery] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
+  /** Счётчик ходов за списком: ответ с устаревшим номером молча отбрасывается. */
+  const seqRef = useRef(0);
 
-  /** Глубокая ссылка ?id=<accountId>: карточку ищем в каталоге, иначе тянем
-   *  поштучно GET /profiles/:id (в т.ч. когда каталог не догрузился). */
+  /** Поиск: debounce 300 мс; применённый запрос живёт отдельно от поля. */
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  /** Первая страница каталога: монтирование, смена запроса, повтор. Никакой
+   *  клиентской фильтрации — фильтрует сервер (q), и он же режет страницы. */
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    let dead = false;
+    const seq = ++seqRef.current;
+    setLoadingFirst(true);
+    setListFail(null);
+    (async () => {
+      const res = await httpProfileCatalog({ q: query || undefined, limit: PAGE_SIZE });
+      if (dead || seq !== seqRef.current) return;
+      setLoadingFirst(false);
+      if (res.ok) {
+        setCards(res.items);
+        setNextCursor(res.nextCursor);
+        return;
+      }
+      setCards(null);
+      setListFail({
+        reason: res.reason ?? 'error',
+        message: humanError(res.reason, 'Каталог не загрузился.'),
+        details: res.details,
+        retryCursor: null,
+      });
+    })();
+    return () => {
+      dead = true;
+    };
+  }, [query, reloadTick]);
+
+  /** Сессия + своя карточка + deep-link ?id= — поток ОТДЕЛЬНЫЙ от пагинации:
+   *  карточка открывается по GET /profiles/:id, даже если списка ещё нет. */
   useEffect(() => {
     if (!IS_ELYRIA) return;
     let dead = false;
@@ -324,24 +382,6 @@ export default function PlayersCatalog() {
       } catch {
         wantId = null;
       }
-      const list = await httpProfileCatalog();
-      if (dead) return;
-      if (!list.ok) {
-        setCardsError(humanError(list.reason, 'Каталог не загрузился.'));
-      } else {
-        setCards(list.items);
-        const hit = wantId ? list.items.find((c) => c.accountId === wantId) : null;
-        if (wantId) {
-          if (hit) {
-            setFocused(hit);
-          } else {
-            const one = await httpProfileById(wantId);
-            if (dead) return;
-            if (one.ok && one.card) setFocused(one.card);
-            else setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
-          }
-        }
-      }
       const me = await httpMe();
       if (dead) return;
       setSession(me);
@@ -350,10 +390,68 @@ export default function PlayersCatalog() {
         if (dead) return;
         if (mine.ok && mine.profile) setMyProfile(mine.profile);
       }
+      if (wantId) {
+        const one = await httpProfileById(wantId);
+        if (dead) return;
+        if (one.ok && one.card) setFocused(one.card);
+        else setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
+      }
     })();
     return () => {
       dead = true;
     };
+  }, []);
+
+  /** Следующая страница по nextCursor: append к уже показанным, дубликаты
+   *  по accountId отбрасываются (страховка от гонки с правками профилей). */
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    const seq = ++seqRef.current;
+    setLoadingMore(true);
+    setListFail(null);
+    const res = await httpProfileCatalog({ q: query || undefined, cursor: nextCursor, limit: PAGE_SIZE });
+    if (seq !== seqRef.current) {
+      // Параллельно сменился поиск/перезагрузка — ответ устарел; флаг снимаем,
+      // иначе «Ещё» навсегда остался бы задизейбленным.
+      if (loadingMore) setLoadingMore(false);
+      return;
+    }
+    setLoadingMore(false);
+    if (res.ok) {
+      setNextCursor(res.nextCursor);
+      setCards((prev) => {
+        if (!prev) return res.items;
+        const seen = new Set(prev.map((c) => c.accountId));
+        const add = res.items.filter((c) => !seen.has(c.accountId));
+        return add.length ? [...prev, ...add] : prev;
+      });
+      return;
+    }
+    setListFail({
+      reason: res.reason ?? 'error',
+      message: humanError(res.reason, 'Не получилось подгрузить продолжение списка.'),
+      details: res.details,
+      // Битый курсор — постоянная ошибка: повтор с ним лишь повторил бы её,
+      // поэтому откатываемся к перезагрузке первой страницы.
+      retryCursor: res.reason === 'invalid_cursor' ? null : nextCursor,
+    });
+  }, [nextCursor, loadingMore, query]);
+
+  /** Повтор неудачного хода: тот же курсор (сетевая/серверная ошибка),
+   *  либо первая страница заново (сбой первой страницы и битый курсор). */
+  const retryLoad = useCallback(() => {
+    if (!listFail) return;
+    if (listFail.retryCursor) {
+      void loadMore();
+      return;
+    }
+    setReloadTick((t) => t + 1);
+  }, [listFail, loadMore]);
+
+  /** Стереть поиск: и поле, и применённый запрос — сразу, без debounce. */
+  const clearSearch = useCallback(() => {
+    setSearchInput('');
+    setQuery('');
   }, []);
 
   const openCard = useCallback((card: ProfileCard) => {
@@ -410,6 +508,7 @@ export default function PlayersCatalog() {
 
   const me = session?.ok ? session : null;
   const focusedMine = !!(me?.accountId && focused?.accountId === me.accountId);
+  const appliedQuery = query.trim();
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
@@ -420,8 +519,45 @@ export default function PlayersCatalog() {
         </a>
       </header>
 
-      {cardsError ? <ServerError title={cardsError} /> : null}
-      {focusMissing ? <ServerError title={focusMissing} /> : null}
+      <form
+        className="flex w-full max-w-md flex-col gap-1"
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          setQuery(searchInput);
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Input
+            className="h-9 min-w-0 flex-1 text-sm"
+            type="text"
+            inputMode="search"
+            aria-label="Поиск игрока по имени"
+            maxLength={64}
+            value={searchInput}
+            placeholder="Поиск по имени"
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+          {searchInput ? (
+            <button
+              type="button"
+              aria-label="Очистить поиск"
+              title="Очистить поиск"
+              onClick={clearSearch}
+              className="h-9 shrink-0 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-base leading-none text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)]"
+            >
+              ×
+            </button>
+          ) : null}
+          <Button
+            type="submit"
+            size="sm"
+            className="h-9 shrink-0 text-xs"
+            variant="outline"
+          >
+            Найти
+          </Button>
+        </div>
+      </form>
 
       {focused ? (
         <FocusCardView
@@ -432,15 +568,37 @@ export default function PlayersCatalog() {
           onClose={closeCard}
         />
       ) : null}
+      {focusMissing ? <ServerError title={focusMissing} /> : null}
 
-      {cards === null && !cardsError ? (
+      {listFail ? (
+        <div className="space-y-2">
+          <ServerError title={listFail.message} details={listFail.details} />
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+            onClick={retryLoad}
+          >
+            Повторить
+          </Button>
+        </div>
+      ) : null}
+
+      {loadingFirst && cards === null ? (
         <p className="text-sm text-[var(--sim-text-soft)]">Загружаем каталог…</p>
       ) : null}
-      {cards && cards.length === 0 && !cardsError ? (
+      {loadingFirst && cards !== null ? (
+        <p className="text-xs text-[var(--sim-text-faint)]">Обновляем список…</p>
+      ) : null}
+
+      {!loadingFirst && cards !== null && cards.length === 0 ? (
         <p className="text-sm text-[var(--sim-text-soft)]">
-          Пока ни одной публичной карточки. Зарегистрируйся и расскажи о себе — карточка появится здесь.
+          {appliedQuery
+            ? `По запросу «${appliedQuery}» никто не нашёлся.`
+            : 'Пока ни одной публичной карточки. Зарегистрируйся и расскажи о себе — карточка появится здесь.'}
         </p>
       ) : null}
+
       {cards && cards.length ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {cards.map((card) => (
@@ -452,6 +610,18 @@ export default function PlayersCatalog() {
             />
           ))}
         </div>
+      ) : null}
+
+      {nextCursor && cards && cards.length ? (
+        <Button
+          type="button"
+          size="sm"
+          disabled={loadingMore}
+          onClick={() => void loadMore()}
+          className="h-9 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+        >
+          {loadingMore ? 'Загружаем…' : 'Ещё'}
+        </Button>
       ) : null}
     </main>
   );

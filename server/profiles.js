@@ -6,8 +6,19 @@
  *                          только своей записи; правятся profile.displayName,
  *                          profile.bio и avatarCharacterId; никакой
  *                          идентификации из body (id/логин/роль — unknown_keys)
- *   GET    /profiles       200 { ok:true, items:[карточки], total } — каталог
- *                          публичных карточек, стабильный порядок, без пагинации
+ *   GET    /profiles       200 { ok:true, items, total, nextCursor } — каталог
+ *                          публичных карточек с серверной пагинацией/поиском:
+ *                          ?limit (default 24; выше 48 — клэмп, НЕ 400;
+ *                          мусор/0 → 400 invalid_limit), ?cursor (base64[64]
+ *                          «<createdAt>:<accountId>» последнего элемента
+ *                          страницы; мусор → 400 invalid_cursor — НЕ молчаливая
+ *                          первая страница; ссылка на удалённый элемент — не
+ *                          ошибка: keyset-продолжение с ближайшей позиции),
+ *                          ?q (поиск по displayName: NFC+trim+lowercase,
+ *                          длиннее 64 код-поинтов — обрезка префиксом, не 400;
+ *                          пустой после чистки — без фильтра); total — дёшево:
+ *                          длина уже собранного отфильтрованного набора
+ *                          (legacy, НЕ контрактное поле — не полагаться).
  *   GET    /profiles/:id   200 { ok, accountId, ...publicProfile } | 404 unknown
  *   прочие суб-пути/методы 404 not_found — статике ничего не проваливается.
  *
@@ -33,6 +44,13 @@ const NAME_MAX = 24;
 const BIO_MAX = 280;
 const ID_MAX = 128;
 const BODY_LIMIT = 16 * 1024;
+
+/* ------------- B3: пагинация и поиск каталога GET /profiles ------------- */
+
+const PAGE_DEFAULT = 24;
+const PAGE_MAX = 48; // выше — клэмп (списку не вредит), НЕ 400
+const QUERY_MAX = 64; // код-поинты: длиннее — обрезка префиксом, НЕ 400
+const CURSOR_MAX = 256; // символов сырого курсора: длиннее — invalid_cursor
 
 /** Тот же класс невидимых/bidi-символов, что в sanitize.js: без него «Сы\u200Bрь»
  * визуально неотличимо от «Сырь» и подменяет показное имя. */
@@ -114,6 +132,81 @@ function hasPublicProfile(row) {
   return (
     !!p && typeof p === "object" && typeof p.displayName === "string" && p.displayName.trim().length > 0
   );
+}
+
+/* ------------- B3: разбор limit/cursor/q и keyset-навигация --------------- */
+
+/** Нормализация поискового текста: NFC → вырезаны невидимые → пробелы
+ *  схлопнуты, края тримиты → нижний регистр. Одна и та же функция для q и
+ *  displayName — сравнение подстрокой по обеим нормализованным сторонам. */
+function normText(raw) {
+  return String(raw ?? "")
+    .normalize("NFC")
+    .replace(INVISIBLE_RE, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/** LIMIT: default 24; выше 48 — клэмп. Мусор — не-цифры, 0, дроби —
+ *  400 invalid_limit; «?limit=» (значение пусто) трактуется как дефолт.
+ *  Порядок разбора параметров фиксирован: limit → cursor → q. */
+function parseLimit(raw) {
+  if (raw === null || raw === undefined || raw === "") return PAGE_DEFAULT;
+  const s = String(raw).trim();
+  if (!/^\d+$/.test(s)) throw new Error("invalid_limit");
+  const n = Number(s);
+  if (n < 1) throw new Error("invalid_limit");
+  return Math.min(n, PAGE_MAX);
+}
+
+/** Курсор: base64(«<createdAt>:<accountId>») последнего элемента предыдущей
+ *  страницы. Допускается base64url (- _ вместо + /) и пробел как не-закоди-
+ *  рованный «+». Битое — 400 invalid_cursor: сломанная навигация должна быть
+ *  видимой ошибкой, а не молчаливой первой страницей. Безопасно: длина
+ *  ограничена, декодированный формат строго /^\d+:строка$/. */
+function parseCursor(raw) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  let s = String(raw);
+  if (s.length > CURSOR_MAX) throw new Error("invalid_cursor");
+  s = s.replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/");
+  const text = Buffer.from(s, "base64").toString("utf8");
+  const m = text.match(/^(\d+):([\s\S]{1,128})$/);
+  if (!m) throw new Error("invalid_cursor");
+  return { createdAt: Number(m[1]), accountId: m[2] };
+}
+
+function encodeCursor(item) {
+  return Buffer.from(`${item.createdAt}:${item.accountId}`, "utf8").toString("base64");
+}
+
+/** Позиция продолжения: индекс первого элемента СТРОГО после
+ *  (createdAt, accountId) по порядку bySeniority — бинарный поиск по тому
+ *  же правилу, которым список отсортирован. Элемент курсора может быть уже
+ *  удалён — позиция всё равно осмысленна (keyset, не индекс: продолжение
+ *  с ближайшей следующей позиции, без ошибки и без пропусков). */
+function afterCursor(cards, cur) {
+  let lo = 0;
+  let hi = cards.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const c = cards[mid];
+    if (c.createdAt < cur.createdAt || (c.createdAt === cur.createdAt && c.accountId <= cur.accountId)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/** Q: нормализуется; пустой после чистки → без фильтра. Длиннее QUERY_MAX
+ *  код-поинтов — обрезка до префикса, НЕ 400 (зафиксировано тестом: длинный
+ *  поисковый запрос всё ещё «ищется», а не отбивается). */
+function parseQuery(raw) {
+  const norm = normText(raw);
+  if (!norm) return "";
+  return Array.from(norm).slice(0, QUERY_MAX).join("");
 }
 
 /* ------------------------- PATCH: валидация тела ------------------------- */
@@ -270,18 +363,45 @@ export async function handleProfilesHttp(req, res) {
   }
 
   if (p === "/profiles" && req.method === "GET") {
-    // Каталог: перечисление без пагинации, стабильный порядок. store перечитывается
-    // с диска (loadStore): все мутации аккаунтов пишут файл синхронно (markDirty →
-    // flushAccounts), так что диск согласован с памятью; перечисление store
-    // без расширения accounts.js недоступно.
+    // Параметры каталога разбираются ДО перечисления: мусорный limit/cursor
+    // отбивается 400 без чтения стора. Порядок разборов limit → cursor → q
+    // фиксирован: при нескольких ошибках отвечает первая по порядку.
+    let limit;
+    let cursor;
+    let q;
+    try {
+      limit = parseLimit(url.searchParams.get("limit"));
+      cursor = parseCursor(url.searchParams.get("cursor"));
+      q = parseQuery(url.searchParams.get("q"));
+    } catch (e) {
+      const reason = e && e.message === "invalid_limit" ? "invalid_limit" : "invalid_cursor";
+      json(res, 400, { ok: false, reason });
+      return true;
+    }
+    // Каталог: keyset-пагинация поверх стабильного порядка bySeniority.
+    // store перечитывается с диска (loadStore): все мутации аккаунтов пишут
+    // файл синхронно (markDirty → flushAccounts), так что диск согласован с
+    // памятью; перечисление store без расширения accounts.js недоступно.
     let rows = [];
     try {
       rows = Object.values(loadStore().accounts || {});
     } catch {
       rows = [];
     }
-    const items = rows.filter(hasPublicProfile).map(card).sort(bySeniority);
-    json(res, 200, { ok: true, items, total: items.length });
+    let items = rows.filter(hasPublicProfile).map(card).sort(bySeniority);
+    if (q) {
+      // Подстрока по нормализованным displayName: разница регистра,
+      // декомпозиции и пробелов не влияет на результат (NFC+trim+lower —
+      // одна и та же нормализация у q и у имени).
+      items = items.filter((c) => normText(c.displayName).includes(q));
+    }
+    const start = cursor ? afterCursor(items, cursor) : 0;
+    // total — дёшево (длина уже собранного набора), не контракт: клиент
+    // страницы не запрашивает и на total не полагается; поле осталось
+    // legacy-совместимости ради старых потребителей ответа.
+    const page = items.slice(start, start + limit);
+    const nextCursor = start + limit < items.length && page.length ? encodeCursor(page[page.length - 1]) : null;
+    json(res, 200, { ok: true, items: page, total: items.length, nextCursor });
     return true;
   }
 
