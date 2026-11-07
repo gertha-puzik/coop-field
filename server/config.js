@@ -49,6 +49,95 @@ function isAllowedOrigin(origin) {
 }
 const WIDTH = 10;
 const HEIGHT = 6;
+
+/* ---------- Хост-политика (P1 сплит доменов) ----------
+ * Один room-сервер обслуживает оба публичных фронтенда (пивные гроты и Элизию),
+ * поэтому класс запроса определяется по заголовку Host: public | elyria | local.
+ * Класс решает доступность API-зон: на public сетевой гейт (net.js) закрывает
+ * /auth/*, /profiles/*, /admin/* и пишущий /cfg; elyria и local работают как
+ * раньше. Хост сравнивается точным именем или суффиксом через точку (метка
+ * зоны), поэтому превью-поддомены pr-<N>.abnocw.miew.ru наследуют класс.
+ * env PUBLIC_HOSTS / ELYRIA_HOSTS (имена через запятую) ДОПОЛНЯЮТ дефолты.
+ * Неизвестный хост → public: класс по умолчанию — самый закрытый.
+ */
+const PUBLIC_DEFAULT_HOSTS = [
+  "abnocw.miew.ru",
+  "coop.89-232-184-77.sslip.io",
+  "abnocw.89-232-184-77.sslip.io",
+];
+/** Суффиксы, которых нет в точных дефолтах: *.abnocw и *.sslip-зона. */
+const PUBLIC_SUFFIX_HOSTS = [".89-232-184-77.sslip.io"];
+const ELYRIA_DEFAULT_HOSTS = ["elisium.miew.ru"];
+const LOCAL_HOST_ALIASES = new Set(["ip6-localhost", "ip6-loopback"]);
+
+/** Host из req.headers.host: trim + lower, порт отрезан, IPv6-литерал в скобках цел. */
+function bareHost(raw) {
+  const host = String(raw || "").trim().toLowerCase();
+  if (!host) return "";
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(":");
+  if (colon === -1) return host;
+  // Больше одного двоеточия — это IPv6-литерал без скобок (::1): двоеточия
+  // и есть адрес, отрезать по ним порт нельзя.
+  if (host.indexOf(":", colon + 1) !== -1) return host;
+  return host.slice(0, colon);
+}
+
+/** Точное имя ИЛИ суб-домен зоны через точку-метку (host = entry | *.entry). */
+function hostMatches(host, entry) {
+  return host === entry || host.endsWith("." + entry);
+}
+
+function envHostList(name) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isLocalHostName(host) {
+  if (!host) return false;
+  if (host === "localhost" || LOCAL_HOST_ALIASES.has(host)) return true;
+  if (host.endsWith(".localhost")) return true;
+  if (host === "::1" || host === "[::1]") return true;
+  if (/^127(\.\d+){1,3}$/.test(host)) return true;
+  return false;
+}
+
+/** Локальные имена — петлевые IP, *.localhost и алиасы; env-списки дополняют дефолты. */
+function hostSets() {
+  return {
+    public: [...PUBLIC_DEFAULT_HOSTS, ...envHostList("PUBLIC_HOSTS"), ...PUBLIC_SUFFIX_HOSTS],
+    elyria: [...ELYRIA_DEFAULT_HOSTS, ...envHostList("ELYRIA_HOSTS")],
+  };
+}
+
+/** Класс хоста: public | elyria | local. Порядок: local → elyria → public (дефолт). */
+function hostClassOf(rawHost) {
+  const host = bareHost(rawHost);
+  if (isLocalHostName(host)) return "local";
+  const sets = hostSets();
+  for (const entry of sets.elyria) if (hostMatches(host, entry)) return "elyria";
+  for (const entry of sets.public) if (hostMatches(host, entry)) return "public";
+  return "public";
+}
+
+/** Класс запроса по req.headers.host (хендшейки WS и HTTP видят один и тот же Host). */
+function hostClassOfRequest(req) {
+  return hostClassOf(req?.headers?.host);
+}
+
+function isPublicHost(req) {
+  return hostClassOfRequest(req) === "public";
+}
+
+function isElyriaHost(req) {
+  return hostClassOfRequest(req) === "elyria";
+}
+
 /** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
 const HEARTBEAT_MS = 30_000;
 /** Потолок входящего кадра: протокол состоит из коротких JSON-строк,
@@ -128,6 +217,8 @@ export {
   // net/transport
   __dirname, PUBLIC, HOST, PORT, HEARTBEAT_MS, MAX_PAYLOAD, FRAME_LIMIT,
   isAllowedOrigin,
+  // хост-политика (P1): классы public | elyria | local
+  hostClassOf, isPublicHost, isElyriaHost,
   // field/rooms
   WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM,
   STRIKE_COOLDOWN_MS,

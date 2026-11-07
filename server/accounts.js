@@ -226,6 +226,26 @@ function publicAccount(acc) {
   };
 }
 
+/**
+ * Публичный DTO профиля (P1, HTTP /profiles/* — server/profiles.js; полный
+ * каталог и правка едут в P4): как игрок виден другим игрокам. Единый
+ * источник DTO: БЕЗ login, без role и без парольных полей.
+ */
+function publicProfile(acc) {
+  if (!acc) return null;
+  return {
+    displayName: acc.profile?.displayName || acc.login,
+    characters: (Array.isArray(acc.characters) ? acc.characters : []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      sprite: c.sprite,
+      size: c.size,
+    })),
+    activeCharacterId: acc.activeCharacterId,
+    createdAt: Number(acc.createdAt) || 0,
+  };
+}
+
 function activeCharacter(acc) {
   if (!acc) return null;
   return acc.characters.find((c) => c.id === acc.activeCharacterId) || acc.characters[0] || null;
@@ -308,6 +328,7 @@ export {
   findByLogin,
   findById,
   publicAccount,
+  publicProfile,
   activeCharacter,
   createAccount,
   loginAccount,

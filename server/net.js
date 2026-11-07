@@ -14,7 +14,7 @@ import path from "node:path";
 import { WebSocketServer } from "ws";
 import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
 import {
-  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS, isAllowedOrigin,
+  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS, isAllowedOrigin, isPublicHost,
 } from "./config.js";
 import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
@@ -26,6 +26,7 @@ import { setMap, testMap, MAP_FILE, saveTestMap } from "./testmap.js";
 import { flushCatBook } from "./persist.js";
 import { handleAuthHttp, handleAuthFrame, handshake, flushAuth } from "./auth.js";
 import { handleCfgHttp } from "./runtime-config.js";
+import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
   // Длина кадра в байтах: ws отдаёт Buffer (length уже октеты), byteLength —
@@ -112,6 +113,12 @@ export function startServer() {
     });
   }
 
+  /** 404 «зоны не существует» (P1): единый ответ host-гейта и скрытых маршрутов. */
+  function notFoundJson(res) {
+    res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, reason: "not_found" }));
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     if (url.pathname === "/health") {
@@ -119,11 +126,43 @@ export function startServer() {
       res.end(JSON.stringify({ ok: true, rooms: rooms.size, maxPlayers: MAX_PLAYERS }));
       return;
     }
+    // Хост-гейт P1 (класс — config.hostClassOf по req.headers.host): public-фронт
+    // (пивные гроты) не должен знать про зоны Элизии — auth, profiles и admin
+    // отвечают «не существует», конфиг на нём читается, но не пишется (спек §11).
+    const p = url.pathname;
+    if (isPublicHost(req)) {
+      const hidden =
+        p === "/auth" ||
+        p.startsWith("/auth/") ||
+        p === "/profiles" ||
+        p.startsWith("/profiles/") ||
+        p === "/admin" ||
+        p.startsWith("/admin/") ||
+        (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
+      if (hidden) {
+        notFoundJson(res);
+        return;
+      }
+    }
+    // CSRF Origin для пишущего /cfg-POST (cookie-аутентификация админа): чужой
+    // браузерный Origin → 403. Пустой/отсутствующий Origin не блокируем.
+    // Пишущие auth-POST проверяются тем же правилом в server/auth.js.
+    if (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/"))) {
+      const origin = String(req.headers.origin || "");
+      if (origin && !isAllowedOrigin(origin)) {
+        res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, reason: "csrf" }));
+        return;
+      }
+    }
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
       return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
         if (cfgHit) return;
-        serveStatic(req, res, url);
+        return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
+          if (profHit) return;
+          serveStatic(req, res, url);
+        });
       });
     }).catch(() => {
       res.writeHead(500);

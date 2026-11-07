@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { EV } from "./protocol.js";
-import { DATA_DIR, isAllowedOrigin } from "./config.js";
+import { DATA_DIR, isAllowedOrigin, hostClassOf } from "./config.js";
 import { send } from "./room.js";
 import {
   PASS_MIN,
@@ -220,7 +220,20 @@ function queryToken(req) {
 }
 
 function tokenFromRequest(req) {
+  // Матрица токенов P1. Класс local — прежнее поведение (?t= работает, токен
+  // в телах и whoami — на нём стоят тесты). Класс elyria уходит от токенов в
+  // URL: принимает только cookie; AUTH_LEGACY_TOKEN=1 возвращает приём ?t=
+  // на переходный период. Класс public ?t= пока принимает (гейт net.js всё
+  // равно закрывает его HTTP-зоны; старые клиенты снимают ?t= в соседней фазе).
+  if (hostClassOf(req?.headers?.host) === "elyria" && process.env.AUTH_LEGACY_TOKEN !== "1") {
+    return cookieToken(req);
+  }
   return queryToken(req) || cookieToken(req);
+}
+
+/** Сессия запроса (cookie/заголовки) — HTTP-потребителям профилей и др. */
+function sessionFromRequest(req) {
+  return readSession(tokenFromRequest(req));
 }
 
 function bindAccount(ws, account, token) {
@@ -257,8 +270,13 @@ function reasonText(code) {
 function cookieHeader(token, secure) {
   const maxAge = Math.floor(TTL_MS / 1000);
   const parts = [`${COOKIE}=${token}`, "HttpOnly", "Path=/", `Max-Age=${maxAge}`];
-  if (secure) parts.push("Secure", "SameSite=None");
-  else parts.push("SameSite=Lax");
+  // P1: https-кука — Secure + SameSite=Lax (браузерный ход Элизии был
+  // same-origin, None туда не нужен). COOKIE_LOOSE=1 возвращает легаси None
+  // для переходного периода старых кросс-доменных клиентов.
+  if (secure) {
+    const samesite = process.env.COOKIE_LOOSE === "1" ? "SameSite=None" : "SameSite=Lax";
+    parts.push("Secure", samesite);
+  } else parts.push("SameSite=Lax");
   return parts.join("; ");
 }
 
@@ -304,6 +322,14 @@ function sendWhoami(ws, body) {
 
 async function handleAuthFrame(ws, payload = {}, ip = "0") {
   const action = String(payload.action || "").trim();
+  // Хост-гейт P1: на public-хосте регистрации и входа нет вовсе — спокойный
+  // отказ без деталей (ни «нет такой комнаты», ни подсказок о причине). Гость
+  // в гротах по-прежнему получает hello/logout как обычно, а аккаунт на
+  // elyria/local — прежний вход (см. матрицу токенов в tokenFromRequest).
+  if ((action === "register" || action === "login") && ws.hostClass === "public") {
+    sendWhoami(ws, { ok: false, reason: "error" });
+    return;
+  }
   if (action === "hello") {
     const token = String(payload.token || ws.sessionToken || "");
     if (token) bindToken(ws, token);
@@ -377,6 +403,18 @@ async function handleAuthHttp(req, res) {
   }
   const ip = clientIp(req);
   const secure = req.headers["x-forwarded-proto"] === "https" || url.protocol === "https:";
+  // Класс хоста запроса — матрица тел-токенов (cookie-only на elyria).
+  const hostClass = hostClassOf(req.headers.host);
+  // CSRF-щит cookie-аутентификации (P1): браузерный Origin пишущих POST-ов
+  // обязан проходить белый список; пустой или отсутствующий Origin не
+  // блокируем (curl, сервер-сервер, локальные тесты и dev).
+  if (req.method !== "GET" && req.method !== "OPTIONS") {
+    const origin = String(req.headers.origin || "");
+    if (origin && !isAllowedOrigin(origin)) {
+      json(res, 403, { ok: false, reason: "csrf" });
+      return true;
+    }
+  }
   try {
     if (url.pathname === "/auth/me" && req.method === "GET") {
       const hit = readSession(tokenFromRequest(req));
@@ -404,7 +442,11 @@ async function handleAuthHttp(req, res) {
         return true;
       }
       const token = createSession(out.account.id);
-      json(res, 200, { ok: true, token, ...publicAccount(out.account) }, { "Set-Cookie": cookieHeader(token, secure) });
+      // Элизия — cookie-only: токен в теле HTTP-ответа не выдаётся (кука та же).
+      // local — прежнее поведение, тесты и dev завязаны на токен в теле.
+      const resp = { ok: true, ...publicAccount(out.account) };
+      if (hostClass !== "elyria") resp.token = token;
+      json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
     if (url.pathname === "/auth/login" && req.method === "POST") {
@@ -425,7 +467,10 @@ async function handleAuthHttp(req, res) {
       }
       clearLoginFails(body.login);
       const token = createSession(out.account.id);
-      json(res, 200, { ok: true, token, ...publicAccount(out.account) }, { "Set-Cookie": cookieHeader(token, secure) });
+      // Матрица тел-токенов P1: elyria — cookie-only, local — токен в теле.
+      const resp = { ok: true, ...publicAccount(out.account) };
+      if (hostClass !== "elyria") resp.token = token;
+      json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
   } catch {
@@ -437,6 +482,9 @@ async function handleAuthHttp(req, res) {
 }
 
 function handshake(ws, req) {
+  // Класс хоста хендшейка (config.hostClassOf): WS-кадры auth гейтятся по нему
+  // в handleAuthFrame — register/login не работают на public-хосте.
+  ws.hostClass = hostClassOf(req?.headers?.host);
   const token = tokenFromRequest(req);
   if (token) bindToken(ws, token);
   ws.clientIp = clientIp(req);
@@ -455,6 +503,7 @@ export {
   bindToken,
   whoamiBody,
   tokenFromRequest,
+  sessionFromRequest,
   flushAuth,
   COOKIE,
   TTL_MS,
