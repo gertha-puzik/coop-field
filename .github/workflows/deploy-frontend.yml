@@ -12,6 +12,7 @@ on:
       - "vercel.json"
       - "package.json"
       - "package-lock.json"
+      - "scripts/prune-export.mjs"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
 
@@ -32,11 +33,27 @@ jobs:
           node-version: 22
           cache: npm
       - name: Сборка статического экспорта
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           set -euo pipefail
           npm ci
           npm run build
           test -f out/index.html
+      - name: Сборка вариантов сайта (гроты + Элизия)
+        # Контракт preview-build.yml («Сборка обоих вариантов сайта»): скрипт
+        # build:variants оставляет в корне репо www-grotto/ и www-elyria/
+        # с index.html в каждом и обрезкой чужих для варианта маршрутов.
+        # Ванильный out/ собран и проверен шагом выше; build:variants дважды
+        # пересобирает out/ (NEXT_PUBLIC_SITE=grotto, затем elyria) — на VPS
+        # уезжает пара вариантных корней вместо одного полного out/.
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          npm run build:variants
+          test -f www-grotto/index.html
+          test -f www-elyria/index.html
       - name: Заливка каталога www
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -58,8 +75,43 @@ jobs:
             exit 1
           fi
           # --delete только внутри www. Код комнаты в /opt/coop-field этим rsync не затрагивается.
+          # P6: источник — вариантный корень www-grotto/ (публичные «Пивные
+          # гроты», обрезанный вариант сборки), а не полный ванильный out/.
           rsync -az --delete -e "$SSH" \
-            out/ \
+            www-grotto/ \
             "$SSH_USER@$SSH_HOST:/opt/coop-field/www/"
           $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www"
           echo "статика в /opt/coop-field/www. сайт abnocw.89-232-184-77.sslip.io отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."
+
+      - name: Заливка каталога www-elyria
+        # ВНИМАНИЕ ВЛАДЕЛЬЦУ VPS: до мерджа этого PR создайте каталог ОДИН раз
+        # от root: install -d -o deploy -g deploy /opt/coop-field/www-elyria
+        # (шаг ниже пытается mkdir -p сам, но без прав у deploy упадёт).
+        # Если шаг красный — заливка www (гроты, главный сайт) к этому моменту
+        # УЖЕ выполнена и прод не затронут: создайте каталог и перезапустите workflow.
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KEY" ]; then
+            echo "секрет VPS_SSH_KEY пуст" >&2
+            exit 1
+          fi
+          # Подготовка ssh самодостаточна: этот шаг не зависит от порядка шагов.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnKcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www-elyria && test -w /opt/coop-field/www-elyria"; then
+            echo "не удалось создать/записать /opt/coop-field/www-elyria (нет прав у deploy). Один раз от root: install -d -o deploy -g deploy /opt/coop-field/www-elyria. ВАЖНО: главный сайт (www, «Пивные гроты») уже синхронизирован этим же запуском и НЕ пострадал; после mkdir перезапустите workflow — Элизия выкатится." >&2
+            exit 1
+          fi
+          # --delete только внутри www-elyria. Код комнаты не затрагивается.
+          rsync -az --delete -e "$SSH" \
+            www-elyria/ \
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www-elyria/"
+          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www-elyria"
+          echo "вариант Элизии выложен в /opt/coop-field/www-elyria; vhost для него — отдельная одноразовая вставка (как nginx-www.conf для www)."
