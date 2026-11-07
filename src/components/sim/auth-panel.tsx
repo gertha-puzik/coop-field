@@ -36,13 +36,15 @@ export function AuthPanel({
         ? 'Пароль слишком короткий (минимум 8 символов).'
         : !whoami?.ok && whoami?.reason === 'short'
           ? 'Имя слишком короткое.'
-          : !whoami?.ok && whoami?.reason === 'rate'
-            ? 'Слишком часто. Подождите немного.'
-            : !whoami?.ok && whoami?.reason === 'bad'
-              ? 'Неверный логин или пароль.'
-              : !whoami?.ok && whoami?.reason
-                ? 'Не получилось войти.'
-                : null);
+          : !whoami?.ok && whoami?.reason === 'full'
+            ? 'Регистрация закрыта: места для новых аккаунтов закончились.'
+            : !whoami?.ok && whoami?.reason === 'rate'
+              ? 'Слишком часто. Подождите немного.'
+              : !whoami?.ok && whoami?.reason === 'bad'
+                ? 'Неверный логин или пароль.'
+                : !whoami?.ok && whoami?.reason
+                  ? 'Не получилось войти.'
+                  : null);
 
   if (inAccount) {
     return (

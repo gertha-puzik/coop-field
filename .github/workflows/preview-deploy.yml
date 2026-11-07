@@ -1,0 +1,230 @@
+name: Preview PR (deploy)
+
+# Привилегированная половина preview-пайплайна (блокер-2 security-обзора
+# PR #41). Запускается по workflow_run после «Preview PR (build)». Для
+# workflow_run GitHub исполняет ЭТОТ файл всегда с дефолт-ветки (main) —
+# автор PR подменить его не может; секрет PREVIEW_SSH_KEY живёт только тут.
+#
+# Правила доверия:
+# - всё, что исполняется на VPS (deploy/vps/preview-apply.sh, юнит, sudoers,
+#   nginx-фрагменты) и все утилиты Джобы (scripts/preview-slug.mjs,
+#   preview-pr-link.mjs, write-openssh-key.sh) чекаутятся из МЕЙНА;
+# - из артефакта сборки PR на VPS уезжает только код/статика/пакеты
+#   (server.js, server/, www/, scripts/, package*.json) — доверие то же,
+#   что и раньше: PR-код работает на VPS только юзером deploy-preview
+#   в /opt/coop-field-preview/<slug>, прод и root недостижимы;
+# - форки не деплоим: head_repository обязан совпадать с этим репо;
+# - PR-номер/состояние берём из GitHub API (не из PR-контролируемых данных);
+# - юнит и sudoers apply не ставит: их ставит preview-bootstrap.sh от root,
+#   apply только включает/перезапускает установленный юнит.
+
+on:
+  workflow_run:
+    workflows: ["Preview PR (build)"]
+    types: [completed]
+
+concurrency:
+  group: preview-deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    name: Выкладка или снос preview
+    # success: cancel-in-progress сборки (устаревший пуш) не деплоим;
+    # провалившиеся тоже — их комментирует сама build-джоба.
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # workflow_run и так чекаутит main, но фиксируем явно: деплой-скрипты
+          # и утилиты — ТОЛЬКО из доверенного дефолт-бранча.
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: PR и метаданные
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          # PR-номер — из GitHub API по ветке+SHA, не из PR-контролируемых
+          # данных: SHA дизамбигуирует повторные PR одной ветки.
+          JSON="$(gh api "repos/$REPO/pulls?head=$REPO:$BRANCH&state=all")"
+          PR="$(printf '%s' "$JSON" | jq -r --arg sha "$SHA" 'first(.[] | select((.head.sha // "") == $sha) | .number) // ""')"
+          if [ -z "$PR" ]; then
+            echo "::error::для SHA $SHA (ветка $BRANCH) не найден PR — деплоить нечего"
+            exit 1
+          fi
+          STATE="$(gh api "repos/$REPO/pulls/$PR" --jq .state)"
+          if [ "$STATE" != "open" ] && [ "$STATE" != "closed" ]; then
+            echo "::error::неожиданное состояние PR: $STATE"
+            exit 1
+          fi
+          SLUG="$(node scripts/preview-slug.mjs id "$PR")"
+          HOST="$(node scripts/preview-slug.mjs site-host "$PR")"
+          PORT=$((41000 + PR % 1000))
+          URL="https://$HOST"
+          {
+            echo "pr=$PR"
+            echo "state=$STATE"
+            echo "slug=$SLUG"
+            echo "host=$HOST"
+            echo "port=$PORT"
+            echo "sha=$SHA"
+            echo "url=$URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Артефакт сборки
+        if: steps.meta.outputs.state == 'open'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: preview-dist
+          path: preview-dist
+          run-id: ${{ github.event.workflow_run.id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Выкладка или снос на VPS
+        id: ship
+        env:
+          SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy-preview
+          SLUG: ${{ steps.meta.outputs.slug }}
+          HOST: ${{ steps.meta.outputs.host }}
+          PORT: ${{ steps.meta.outputs.port }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          STATE: ${{ steps.meta.outputs.state }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::warning::Секрет PREVIEW_SSH_KEY ещё не задан. Один шаг Сырь: docs/PREVIEW-ENVIRONMENTS.md (bootstrap + секрет)."
+            echo "status=needs-secret" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          bash scripts/write-openssh-key.sh ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes"
+          if [ "$STATE" = "closed" ]; then
+            # Снос: обновляем deploy-файлы на VPS (чтобы root мог актуализиро-
+            # вать bootstrap/sudoers единственной командой) и сносим окружение.
+            rsync -az -e "$SSH" deploy/vps/preview-apply.sh deploy/vps/preview-bootstrap.sh deploy/vps/sudoers-coop-field-preview deploy/vps/coop-field-preview@.service deploy/vps/nginx-preview.conf deploy/vps/nginx-preview-include.conf "$SSH_USER@$SSH_HOST:incoming-preview/"
+            $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_ACTION=destroy bash incoming-preview/preview-apply.sh"
+            echo "status=destroyed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www incoming-preview/$SLUG/server"
+          rsync -az -e "$SSH" deploy/vps/preview-apply.sh deploy/vps/preview-bootstrap.sh deploy/vps/sudoers-coop-field-preview deploy/vps/coop-field-preview@.service deploy/vps/nginx-preview.conf deploy/vps/nginx-preview-include.conf "$SSH_USER@$SSH_HOST:incoming-preview/"
+          if ! $SSH "$SSH_USER@$SSH_HOST" "test -d /opt/coop-field-preview && test -w /opt/coop-field-preview"; then
+            echo "::warning::На VPS ещё нет bootstrap. От root: sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh"
+            echo "status=needs-bootstrap" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rsync -az --delete -e "$SSH" preview-dist/server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
+          rsync -az -e "$SSH" preview-dist/server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
+          rsync -az --delete -e "$SSH" preview-dist/www/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
+          rsync -az --delete -e "$SSH" preview-dist/scripts/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/scripts/"
+          rsync -az -e "$SSH" preview-dist/package.json preview-dist/package-lock.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
+          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
+          echo "status=live" >> "$GITHUB_OUTPUT"
+
+      - name: Deployment и один комментарий
+        # Маркер-комментарий ОДИН на PR (обновляется, не плодится; провал
+        # сборки маркерит preview-build.yml той же меткой). Statuses — только
+        # для live; шапка PR — preview-pr-link.mjs с маркерами-обёртками.
+        if: ${{ always() && steps.meta.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.meta.outputs.url }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          SLUG: ${{ steps.meta.outputs.slug }}
+          STATUS: ${{ steps.ship.outputs.status }}
+          PR: ${{ steps.meta.outputs.pr }}
+          ENV_NAME: preview-pr-${{ steps.meta.outputs.pr }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- coop-field-preview -->"
+          NOW="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          if [ "${STATUS:-}" = "destroyed" ]; then
+            BODY="${MARKER}
+          Preview этой ветки снесён."
+            STATE=inactive
+          elif [ "${STATUS:-}" = "live" ]; then
+            BODY="${MARKER}
+          Preview: ${URL}
+          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Комната и фронт из этого SHA, данные прода не используются.
+          Выложено: ${NOW}.
+          HTTPS: per-host сертификат, VPS-хук coop-preview-cert выдаёт его в течение ~5 минут после деплоя."
+            STATE=success
+          elif [ "${STATUS:-}" = "needs-secret" ]; then
+            BODY="${MARKER}
+          Preview ещё не выложен: нет секрета \`PREVIEW_SSH_KEY\`. Один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md).
+          Будет: ${URL}"
+            STATE=""
+          elif [ "${STATUS:-}" = "needs-bootstrap" ]; then
+            BODY="${MARKER}
+          SSH есть, секрет работает. На VPS от root один раз:
+          \`\`\`
+          sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
+          \`\`\`
+          После этого следующий push в PR выложит ${URL}"
+            STATE=""
+          else
+            BODY="${MARKER}
+          Preview не выложен (ошибка джобы). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
+          \`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\`
+          Будет: ${URL}"
+            STATE=""
+          fi
+          if [ -n "$STATE" ] && [ "$STATE" != "inactive" ]; then
+            DEP=$(gh api -X POST "repos/${{ github.repository }}/deployments" \
+              -f ref="$SHA" -f environment="$ENV_NAME" -F auto_merge=false -f description="preview $SLUG" \
+              --jq .id || true)
+            if [ -n "$DEP" ]; then
+              gh api -X POST "repos/${{ github.repository }}/deployments/$DEP/statuses" \
+                -f state="$STATE" -f environment_url="$URL" \
+                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+            fi
+          fi
+          CID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$CID" -f body="$BODY"
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -f body="$BODY"
+          fi
+
+          # Шапка PR: живая ссылка первым блоком описания. Маркеры делают
+          # перезапись идемпотентной — комментарий в треде так не может (тонет).
+          case "${STATUS:-}" in
+            live)
+              HDR="> 🚀 **Preview:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`. Данные прода не используются; HTTPS: per-host сертификат от root-cron на VPS (до ~5 минут после деплоя)." ;;
+            destroyed)
+              HDR="> 🚀 **Preview:** снесён — PR закрыт, окружение убрано с VPS." ;;
+            needs-secret)
+              HDR="> 🚀 **Preview:** ещё не выложен — не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md). Будет: ${URL}" ;;
+            needs-bootstrap)
+              HDR="> 🚀 **Preview:** ждёт один bootstrap на VPS от root. Будет: ${URL}" ;;
+            *)
+              HDR="> 🚀 **Preview:** не выложен (ошибка джобы). Будет: ${URL}" ;;
+          esac
+          printf '%s\n' "$HDR" > /tmp/preview-header.md
+          node scripts/preview-pr-link.mjs apply --repo "${{ github.repository }}" --pr "$PR" --file /tmp/preview-header.md \
+            || echo "::warning::шапка PR не обновилась — ссылка осталась в комментарии"

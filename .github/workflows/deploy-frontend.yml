@@ -1,4 +1,4 @@
-name: Фронтенд на Vercel и VPS
+name: Фронтенд на VPS
 
 on:
   push:
@@ -19,22 +19,6 @@ permissions:
   contents: read
 
 jobs:
-  vercel:
-    name: Публикация на Vercel
-    runs-on: ubuntu-latest
-    concurrency:
-      group: coop-field-frontend-vercel
-      cancel-in-progress: true
-    env:
-      VERCEL_ORG_ID: team_WFMW7Ya5MxMk0LeorKy5SjYL
-      VERCEL_PROJECT_ID: prj_gPVkczSciohffXtx1PGonYM4q1hh
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-    steps:
-      # SHA-пины вместо плавающих тегов v4 (цепочка поставки)
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Публикация production на Vercel
-        run: npx --yes vercel@65.9.0 deploy --prod --yes --non-interactive
-
   vps:
     name: Статика на VPS
     runs-on: ubuntu-latest

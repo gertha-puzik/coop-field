@@ -1,6 +1,10 @@
 #!/bin/bash
 # Ставит или сносит ОДНО preview-окружение.
 # Прод (/opt/coop-field, юнит coop-field, порт 8787, data/ прода) не трогает.
+# Юнит-файл НЕ ставит и НЕ обновляет (фикс root-RCE): юнит один раз ставит
+# preview-bootstrap.sh от root; apply только включает/перезапускает УЖЕ
+# установленный юнит. Раньше cp юнита из incoming + daemon-reload позволяли
+# PR-коду исполнить произвольный юнит от root.
 # apply:  PREVIEW_SLUG=… PREVIEW_PORT=… bash preview-apply.sh
 # destroy: PREVIEW_SLUG=… PREVIEW_ACTION=destroy bash preview-apply.sh
 # validate: PREVIEW_SLUG=… PREVIEW_ACTION=validate bash preview-apply.sh
@@ -14,6 +18,10 @@ SKIP_SYSTEMD="${PREVIEW_SKIP_SYSTEMD:-0}"
 SKIP_NGINX="${PREVIEW_SKIP_NGINX:-0}"
 NODE="${PREVIEW_NODE:-$PROD_ROOT/.node/bin/node}"
 NPM="${PREVIEW_NPM:-$PROD_ROOT/.node/bin/npm}"
+# Швы для локальных тестов: на VPS — sudo и настоящий /etc/systemd/system
+# (sudoers-набор совпадает побайтово с тем, что вызывает скрипт).
+SUDO="${PREVIEW_SUDO:-sudo}"
+SYSTEMD_DIR="${PREVIEW_SYSTEMD_DIR:-/etc/systemd/system}"
 
 SLUG="${PREVIEW_SLUG:-}"
 PORT="${PREVIEW_PORT:-}"
@@ -77,8 +85,8 @@ nginx_test_reload() {
   if [ "$SKIP_NGINX" = 1 ]; then
     return 0
   fi
-  if sudo /usr/sbin/nginx -t; then
-    sudo /usr/bin/systemctl reload nginx
+  if "$SUDO" /usr/sbin/nginx -t; then
+    "$SUDO" /usr/bin/systemctl reload nginx
   else
     fail "nginx -t не прошёл — reload не делали"
   fi
@@ -170,6 +178,8 @@ ${https_jump}
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_set_header Origin \$http_origin;
+        # X-Forwarded-For нужен серверу для auth rate-limit по IP клиента.
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
     }
 }
@@ -187,8 +197,8 @@ destroy_nginx_fragment() {
     rm -f "$bak"
     return 0
   fi
-  if sudo /usr/sbin/nginx -t; then
-    sudo /usr/bin/systemctl reload nginx
+  if "$SUDO" /usr/sbin/nginx -t; then
+    "$SUDO" /usr/bin/systemctl reload nginx
     rm -f "$bak"
   else
     if [ -n "$bak" ]; then
@@ -201,9 +211,9 @@ destroy_nginx_fragment() {
 
 if [ "$ACTION" = "destroy" ]; then
   if [ "$SKIP_SYSTEMD" != 1 ]; then
-    sudo /usr/bin/systemctl stop "$UNIT" 2>/dev/null || true
-    sudo /usr/bin/systemctl disable "$UNIT" 2>/dev/null || true
-    sudo /usr/bin/systemctl reset-failed "$UNIT" 2>/dev/null || true
+    "$SUDO" /usr/bin/systemctl stop "$UNIT" 2>/dev/null || true
+    "$SUDO" /usr/bin/systemctl disable "$UNIT" 2>/dev/null || true
+    "$SUDO" /usr/bin/systemctl reset-failed "$UNIT" 2>/dev/null || true
   fi
   if [ -e "$APP" ]; then
     rm -rf -- "$APP"
@@ -315,8 +325,8 @@ nginx_write_reload() {
     rm -f "$bak"
     return 0
   fi
-  if sudo /usr/sbin/nginx -t; then
-    sudo /usr/bin/systemctl reload nginx
+  if "$SUDO" /usr/sbin/nginx -t; then
+    "$SUDO" /usr/bin/systemctl reload nginx
     rm -f "$bak"
     return 0
   fi
@@ -332,12 +342,13 @@ nginx_write_reload() {
 nginx_write_reload
 
 if [ "$SKIP_SYSTEMD" != 1 ]; then
-  if [ -f "$HOME/incoming-preview/coop-field-preview@.service" ]; then
-    sudo /usr/bin/cp "$HOME/incoming-preview/coop-field-preview@.service" /etc/systemd/system/coop-field-preview@.service
-    sudo /usr/bin/systemctl daemon-reload
+  # Юнит обязан уже стоять (ставится только bootstrap'ом от root).
+  # Никакого cp юнита и daemon-reload здесь быть не должно.
+  if [ ! -f "$SYSTEMD_DIR/coop-field-preview@.service" ]; then
+    fail "юнит coop-field-preview@.service не установлен в $SYSTEMD_DIR — один раз от root: bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh (apply юниты не ставит)"
   fi
-  sudo /usr/bin/systemctl enable --now "$UNIT"
-  sudo /usr/bin/systemctl restart "$UNIT"
+  "$SUDO" /usr/bin/systemctl enable --now "$UNIT"
+  "$SUDO" /usr/bin/systemctl restart "$UNIT"
   ok=0
   for _ in $(seq 1 60); do
     if curl -fsS "http://127.0.0.1:$PORT/health" >/tmp/coop-preview-health.json; then
@@ -348,7 +359,7 @@ if [ "$SKIP_SYSTEMD" != 1 ]; then
   done
   if [ "$ok" -ne 1 ]; then
     echo "preview /health не отвечает на $PORT" >&2
-    sudo /usr/bin/systemctl --no-pager status "$UNIT" >&2 || true
+    "$SUDO" /usr/bin/systemctl --no-pager status "$UNIT" >&2 || true
     exit 1
   fi
   echo "preview $SLUG sha=$SHA port=$PORT health ok"

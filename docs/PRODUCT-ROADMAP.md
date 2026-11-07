@@ -101,12 +101,12 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 | --- | --- |
 | Фронт | Next.js 16, `output: "export"`. **API Routes недоступны.** |
 | Комната | `node server.js` → `server/net.js`: HTTP (`/health` + статика `public/`) + WebSocket |
-| Прод-фронт | Vercel `coop-field.vercel.app` **и** rsync `out/` → `/opt/coop-field/www` (nginx, `abnocw.89-232-184-77.sslip.io`) |
+| Прод-фронт | rsync `out/` → `/opt/coop-field/www` (nginx, `abnocw.89-232-184-77.sslip.io`); зеркало на Vercel удалено |
 | Прод-сокет | VPS 89.232.184.77, systemd `coop-field`, порт **8787** за nginx, `wss://coop.89-232-184-77.sslip.io` |
 | CI | `.github/workflows/ci.yml` на PR: typecheck, arch, protocol, unit, queue, landmarks |
 | Деплой | только `push` в `main`: `deploy-frontend.yml`, `deploy-backend.yml`. **Preview PR нет** |
 | Изоляция data | `apply.sh` не копирует `data/`; карта и позиции на VPS переживают выкладку |
-| Секреты GitHub | `VERCEL_TOKEN`, `VPS_SSH_KEY`. Админ-пароль карты — env юнита, не в репо |
+| Секреты GitHub | `VPS_SSH_KEY` (+ `PREVIEW_SSH_KEY` — только `preview-deploy.yml` на `main`). Админ-пароль карты — env юнита, не в репо |
 
 Нет Docker, нет k8s, нет wildcard-preview. Nginx-конфиг фронта — одноразовый
 фрагмент `deploy/vps/nginx-www.conf` (его deploy-пользователь сам не вставляет).
@@ -309,7 +309,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 | Контент локаций и скинов | Редактор + whitelist скинов | Расширять их, не второй редактор | `editor-ops.ts`, `settings.ts` SPRITES |
 | Справочник «как устроена игра» | Документы для агентов (`AGENTS.md`, `ARCHITECTURE.md`, `AI-CONTEXT.md`) | Внутриадминные карточки на простом русском из метаданных | `src/lib/handbook/*`, вкладка панели |
 | ИИ-помощник в игре | Нет, и **не делать** | Cursor + справочник + AGENTS.md | этот документ §10 |
-| Preview PR `*.abnocw.miew.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
+| Preview PR `*.abnocw.miew.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview-build.yml` + `preview-deploy.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
 | Не грузить все режимы сразу | Next code-split по маршрутам сам | Не импортировать hunger-каркас в грот без нужды | `src/app/*/page.tsx` |
 | Не три копии движка | Один `Simulator` | Проп `mode` / стартовая комната | `simulator.tsx` (тонкий проп, без роста логики) |
 
