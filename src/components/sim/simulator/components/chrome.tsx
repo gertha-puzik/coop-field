@@ -83,6 +83,8 @@ export interface SimulatorHeaderProps {
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   setRoomsStale: Dispatch<SetStateAction<boolean>>;
   setSwitchOpen: Dispatch<SetStateAction<boolean>>;
+  /** Несколько комнат на этой странице — иначе кнопка перехода не нужна. */
+  canSwitch?: boolean;
 }
 
 export function SimulatorHeader(props: SimulatorHeaderProps) {
@@ -109,6 +111,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     setSettingsOpen,
     setRoomsStale,
     setSwitchOpen,
+    canSwitch = true,
   } = props;
   return (
   <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
@@ -137,17 +140,22 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
       </span>
     </div>
     <div className="flex flex-wrap items-center gap-2 text-[11px]">
-      <Button
-        size="sm"
-        variant="outline"
-        className="btn-neutral h-8 text-xs"
-        onClick={() => {
-          setRoomsStale(false);
-          setSwitchOpen(true);
-        }}
-      >
-        Перейти в другую комнату
+      <Button asChild size="sm" variant="outline" className="btn-neutral h-8 text-xs">
+        <a href="/">Главное меню</a>
       </Button>
+      {canSwitch ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="btn-neutral h-8 text-xs"
+          onClick={() => {
+            setRoomsStale(false);
+            setSwitchOpen(true);
+          }}
+        >
+          Перейти в другую комнату
+        </Button>
+      ) : null}
       <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
     </div>
     <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">

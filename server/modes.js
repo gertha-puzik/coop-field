@@ -14,7 +14,7 @@ const MODE_ROOMS = Object.freeze([
   Object.freeze({ id: "grot-2", title: "Пивной грот №2", mode: "beer", access: OPEN, format: "grid" }),
   Object.freeze({ id: "grot-3", title: "Пивной грот №3", mode: "beer", access: OPEN, format: "grid" }),
   Object.freeze({ id: "demo", title: "Демо", mode: "beer", access: OPEN, format: "grid" }),
-  Object.freeze({ id: "combat", title: "Активный бой", mode: "combat", access: OPEN, format: "grid" }),
+  Object.freeze({ id: "combat", title: "abnocw", mode: "combat", access: OPEN, format: "grid" }),
   Object.freeze({ id: "hunger", title: "Голодные игры", mode: "hunger", access: OPEN, format: "grid" }),
   Object.freeze({ id: TEST_ROOM, title: "Элизия Эйдес", mode: "elision", access: REGISTERED, format: "test" }),
 ]);

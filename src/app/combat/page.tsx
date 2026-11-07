@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Simulator from "@/components/sim/simulator";
 
 export const metadata: Metadata = {
-  title: "Активный бой — abnocw",
-  description: "Открытая комната с клеточным боем Coop Field. Гости заходят без аккаунта.",
+  title: "abnocw",
+  description: "Симуляция активного боя из игры Catwar. Пивные гроты, гости заходят без аккаунта.",
 };
 
 export default function CombatPage() {

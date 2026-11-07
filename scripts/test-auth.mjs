@@ -412,20 +412,22 @@ try {
   check(!!unlocked && unlocked[1]?.login === "лИзА", "per-login: окно отпустило — верный пароль входит");
   lk.close();
 
-  // (а) rooms-lie: сидящего в закрытой комнате гость не видит — ответ про
-  // закрытую комнату совпадает с ответом про несуществующую байт-в-байт.
+  // Счётчик закрытой комнаты гостю виден (меню миров), имена — нет.
   const sitter = await client2();
   let sMark = sitter.inbox.length;
   loginFrame(sitter, "лИзА", "password1");
   const sLogin = await waitForFrom(sitter, registeredOk, sMark);
-  check(!!sLogin, "rooms-lie: сиделка вошла в аккаунт");
+  check(!!sLogin, "rooms-count: сиделка вошла в аккаунт");
   sitter.send(JSON.stringify(["join", { room: "test" }]));
   const sitYou = await waitForFrom(sitter, (m) => m[0] === "you", 0);
-  check(!!sitYou, "rooms-lie: сиделка внутри «test»");
+  check(!!sitYou, "rooms-count: сиделка внутри «test»");
   sitter.send(JSON.stringify(["rooms", { ids: ["test"] }]));
   const ownView = await waitForFrom(sitter, (m) => m[0] === "roomsinfo", 0);
-  check(ownView[1]?.[0]?.id === "test" && ownView[1]?.[0]?.count >= 1, "rooms-lie: сокет с аккаунтом видит occupancy");
-  sitter.close();
+  check(ownView[1]?.[0]?.id === "test" && ownView[1]?.[0]?.count >= 1, "rooms-count: сокет с аккаунтом видит occupancy");
+  check(
+    Array.isArray(ownView[1]?.[0]?.logins) && ownView[1][0].logins.length >= 1,
+    "rooms-count: сокет с аккаунтом видит имена",
+  );
 
   const spy = await client2();
   await waitForFrom(spy, (m) => m[0] === "whoami" && m[1]?.role === "guest", 0);
@@ -434,14 +436,15 @@ try {
   const lieTest = lie[1]?.[0];
   const lieGhost = lie[1]?.[1];
   check(
-    lieTest?.id === "test" && lieTest?.count === 0 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
-    "rooms-lie: гость видит закрытую комнату «пустой» (count 0, logins [])",
+    lieTest?.id === "test" && lieTest?.count >= 1 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
+    "rooms-count: гость видит число в закрытой комнате, но не имена",
   );
   check(
-    lieTest?.count === lieGhost?.count && JSON.stringify(lieTest?.logins) === JSON.stringify(lieGhost?.logins),
-    "rooms-lie: данные точно как про несуществующую комнату (count/logins идентичны)",
+    lieGhost?.count === 0 && Array.isArray(lieGhost?.logins) && lieGhost.logins.length === 0,
+    "rooms-count: несуществующая комната по-прежнему пустая",
   );
   spy.close();
+  sitter.close();
 } catch (e) {
   failures += 1;
   console.error("FAIL exception (hardening sandbox)", e);

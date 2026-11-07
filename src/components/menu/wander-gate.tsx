@@ -1,0 +1,315 @@
+'use client';
+
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Lilita_One } from 'next/font/google';
+import { wsUrl } from '@/lib/net/coop';
+import { playersLabel } from '@/components/sim/room-picker';
+
+const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
+
+/** Детерминированные звёзды: сервер и клиент рисуют одни и те же точки. */
+const rnd = (seed: number) => {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+const STARS = Array.from({ length: 72 }, (_, i) => ({
+  left: rnd(i + 11) * 100,
+  top: rnd(i + 90) * 78,
+  size: 1.2 + rnd(i + 140) * 2.4,
+  dur: 1.8 + rnd(i + 200) * 3.6,
+  delay: -rnd(i + 260) * 6,
+  spark: rnd(i + 310) > 0.82,
+}));
+
+const ROOM_IDS = ['grot-1', 'grot-2', 'grot-3', 'test', 'hunger'] as const;
+
+type Preview = 'combat' | 'hunger' | 'elision';
+
+const WORLDS: readonly {
+  href: string;
+  name: string;
+  blurb: string;
+  italic: boolean;
+  ids: readonly string[];
+  preview: Preview;
+}[] = [
+  {
+    href: '/combat/',
+    name: 'abnocw',
+    blurb: 'Симуляция активного боя из игры Catwar',
+    italic: true,
+    ids: ['grot-1', 'grot-2', 'grot-3'],
+    preview: 'combat',
+  },
+  {
+    href: '/hunger/',
+    name: 'Wanderpaws: Hunger Games',
+    blurb: 'Великие игры Пузорящиков, находятся в разработке...',
+    italic: false,
+    ids: ['hunger'],
+    preview: 'hunger',
+  },
+  {
+    href: '/elision/',
+    name: 'Wanderpaws: Elysiae',
+    blurb: 'Твой путь начинается здесь',
+    italic: true,
+    ids: ['test'],
+    preview: 'elision',
+  },
+];
+
+/** Старые ссылки с `?room=` вели на корень. Корень теперь меню — уводим в свой мир. */
+function legacyRoomHref(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const room = (params.get('room') || '').trim();
+  if (!room) return null;
+  const q = window.location.search;
+  if (room === 'test') return `/elision/${q}`;
+  if (room === 'hunger') return `/hunger/${q}`;
+  return `/combat/${q}`;
+}
+
+function useLiveCounts() {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [online, setOnline] = useState(false);
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let poll = 0;
+    let retry = 0;
+    let dead = false;
+    const ask = () => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(['rooms', { ids: ROOM_IDS }]));
+      }
+    };
+    const open = () => {
+      if (dead) return;
+      ws = new WebSocket(wsUrl());
+      ws.onopen = () => {
+        setOnline(true);
+        ask();
+        poll = window.setInterval(ask, 2000);
+      };
+      ws.onmessage = (ev) => {
+        let msg: unknown;
+        try {
+          msg = JSON.parse(String(ev.data));
+        } catch {
+          return;
+        }
+        if (!Array.isArray(msg) || msg[0] !== 'roomsinfo' || !Array.isArray(msg[1])) return;
+        const next: Record<string, number> = {};
+        for (const raw of msg[1] as { id?: unknown; count?: unknown }[]) {
+          if (!raw || typeof raw.id !== 'string') continue;
+          next[raw.id] = Math.max(0, Math.round(Number(raw.count) || 0));
+        }
+        setCounts(next);
+      };
+      ws.onclose = () => {
+        setOnline(false);
+        window.clearInterval(poll);
+        if (!dead) retry = window.setTimeout(open, 1500);
+      };
+      ws.onerror = () => {
+        /* onclose закроет и поднимет снова */
+      };
+    };
+    open();
+    return () => {
+      dead = true;
+      window.clearInterval(poll);
+      window.clearTimeout(retry);
+      try {
+        ws?.close();
+      } catch {
+        /* сокет уже закрыт */
+      }
+    };
+  }, []);
+  return { counts, online };
+}
+
+function sumCounts(counts: Record<string, number>, ids: readonly string[], online: boolean): number | null {
+  if (!online || ids.some((id) => counts[id] == null)) return null;
+  return ids.reduce((sum, id) => sum + (counts[id] ?? 0), 0);
+}
+
+type Paw = { id: number; x: number; y: number; rot: number };
+
+/** Следы лап за курсором: левая и правая по очереди, гаснут сами. */
+function PawTrail() {
+  const [paws, setPaws] = useState<Paw[]>([]);
+  const seq = useRef(0);
+  const last = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const drop = (ev: PointerEvent) => {
+      if (ev.pointerType === 'touch') return;
+      const prev = last.current;
+      const x = ev.clientX;
+      const y = ev.clientY;
+      last.current = { x, y };
+      if (!prev) return;
+      const dx = x - prev.x;
+      const dy = y - prev.y;
+      if (Math.hypot(dx, dy) < 34) return;
+      const angle = Math.atan2(dy, dx);
+      const side = seq.current % 2 === 0 ? 1 : -1;
+      seq.current += 1;
+      const id = seq.current;
+      const ox = Math.cos(angle + Math.PI / 2) * 11 * side;
+      const oy = Math.sin(angle + Math.PI / 2) * 11 * side;
+      const paw: Paw = {
+        id,
+        x: x + ox,
+        y: y + oy,
+        rot: (angle * 180) / Math.PI + 70 + side * 16,
+      };
+      setPaws((list) => [...list.slice(-18), paw]);
+      window.setTimeout(() => setPaws((list) => list.filter((item) => item.id !== id)), 2200);
+    };
+    window.addEventListener('pointermove', drop);
+    return () => window.removeEventListener('pointermove', drop);
+  }, []);
+  return (
+    <div className="pointer-events-none fixed inset-0 z-30" aria-hidden>
+      {paws.map((paw) => (
+        <img
+          key={paw.id}
+          src="/paw-cursor.svg"
+          alt=""
+          className="wander-paw"
+          style={{ left: paw.x, top: paw.y, ['--rot' as string]: `${paw.rot}deg` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Grass() {
+  const blades = Array.from({ length: 56 }, (_, i) => {
+    const x = (i / 55) * 1200;
+    const h = 26 + ((i * 19) % 40);
+    const lean = i % 2 === 0 ? -10 : 9;
+    return (
+      <path
+        key={i}
+        d={`M${x.toFixed(1)} 86 Q ${(x + lean).toFixed(1)} ${(86 - h * 0.55).toFixed(1)} ${(x + lean * 0.35).toFixed(1)} ${(86 - h).toFixed(1)}`}
+        fill="none"
+        stroke={i % 3 === 0 ? '#07140c' : '#0c2216'}
+        strokeWidth={2.4 + (i % 3)}
+        strokeLinecap="round"
+      />
+    );
+  });
+  return (
+    <svg className="wander-grass" viewBox="0 0 1200 86" preserveAspectRatio="none" aria-hidden>
+      <path d="M0 46 Q 180 18 360 48 T 740 40 T 1200 50 V 86 H 0 Z" fill="#07140e" />
+      <path d="M0 62 Q 200 44 420 66 T 860 58 T 1200 68 V 86 H 0 Z" fill="#040c09" />
+      {blades}
+    </svg>
+  );
+}
+
+function NightSky({ children }: { children: ReactNode }) {
+  // Звёзды только после гидрации: сервер округляет style иначе, чем клиент.
+  const [starsOn, setStarsOn] = useState(false);
+  useEffect(() => setStarsOn(true), []);
+  return (
+    <div className="wander-sky">
+      <div className="wander-drift" aria-hidden />
+      {starsOn
+        ? STARS.map((star, i) => (
+            <span
+              key={i}
+              className={star.spark ? 'wander-star wander-spark' : 'wander-star'}
+              style={{
+                left: `${star.left}%`,
+                top: `${star.top}%`,
+                width: star.size,
+                height: star.size,
+                animationDuration: `${star.dur}s`,
+                animationDelay: `${star.delay}s`,
+              }}
+            />
+          ))
+        : null}
+      <PawTrail />
+      <div className="wander-stage">{children}</div>
+      <Grass />
+    </div>
+  );
+}
+
+function WorldPreview({ kind }: { kind: Preview }) {
+  if (kind === 'combat') return <div className="wander-preview wander-preview-combat" aria-hidden />;
+  if (kind === 'hunger') {
+    return (
+      <div className="wander-preview wander-preview-hunger" aria-hidden>
+        <span>в разработке</span>
+      </div>
+    );
+  }
+  return (
+    <div className="wander-preview wander-preview-elision" aria-hidden>
+      <span className="wander-moon" />
+    </div>
+  );
+}
+
+/** Главное меню: небо, трава, три окна миров и живой счётчик. */
+export function WanderMenu() {
+  const { counts, online } = useLiveCounts();
+  useEffect(() => {
+    const href = legacyRoomHref();
+    if (href) window.location.replace(href);
+  }, []);
+  return (
+    <NightSky>
+      <header className="wander-hero">
+        <h1 className={`${display.className} wander-title`}>Wanderpaws</h1>
+        <p className="wander-lead">Твой путь начинается здесь</p>
+      </header>
+      <div className="wander-worlds">
+        {WORLDS.map((world) => {
+          const n = sumCounts(counts, world.ids, online);
+          return (
+            <a key={world.href} className="wander-window" href={world.href}>
+              <span className="wander-dots" aria-hidden>
+                <i />
+                <i />
+                <i />
+              </span>
+              <WorldPreview kind={world.preview} />
+              <span className="wander-name">{world.name}</span>
+              <span className={world.italic ? 'wander-blurb wander-blurb-italic' : 'wander-blurb'}>{world.blurb}</span>
+              <span className="wander-count" aria-live="polite">
+                <i className={online ? 'wander-dot wander-dot-on' : 'wander-dot'} />
+                {n == null ? 'считаем…' : playersLabel(n)}
+              </span>
+            </a>
+          );
+        })}
+      </div>
+    </NightSky>
+  );
+}
+
+/** Голодные игры пока не играются: та же ночь, без поля. */
+export function HungerGate() {
+  return (
+    <NightSky>
+      <a className="wander-back" href="/">
+        ← Главное меню
+      </a>
+      <header className="wander-hero">
+        <h1 className={`${display.className} wander-title wander-title-small`}>Wanderpaws: Hunger Games</h1>
+        <p className="wander-lead">Великие игры Пузорящиков, находятся в разработке...</p>
+      </header>
+      <p className="wander-note">Эта страница пока в разработке. Поле откроется позже — вернуться можно в главное меню.</p>
+    </NightSky>
+  );
+}

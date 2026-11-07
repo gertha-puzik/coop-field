@@ -34,14 +34,15 @@ All eight must be green. If `arch:check` fails on a new file — do not grow the
 | Task leads to | File | What is inside |
 | --- | --- | --- |
 | Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
-| Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 284 (W3 canon + auth/whoami), testmap 493, world 663, sanitize 95, room 425, movement 295, combat 271, dummy-rab 133, atmo 114, persist 131, net 221, modes, accounts, auth, hunger, runtime-config — domain map with details in ARCHITECTURE.md §2 |
-| Canvas engine | `src/components/sim/simulator.tsx` (4757) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 257, use-network 641, use-canvas-layers 186, use-strike 277), hookless factories (editor-ops 734, editor-cells 196, editor-select 197, pointer-tools 670), HUD day panel (hud-canvas 225), sim-model 178 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 396 — кнопки «Погода»/«Сутки», editor-overlay 692, field-stage 147). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3993 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–873) + buildEditorOps call :888, effects ~1041–1274, pointer-tools call :4146, JSX assembly 4371–4609. targeting.pickStrikeTarget mirrors `server/combat.js` aimedNeighbor (:76) -> ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
+| Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 284 (W3 canon + auth/whoami), testmap 493, world 663, sanitize 95, room 431, movement 295, combat 271, dummy-rab 133, atmo 114, persist 131, net 221, modes, accounts, auth, hunger, runtime-config — domain map with details in ARCHITECTURE.md §2 |
+| Canvas engine | `src/components/sim/simulator.tsx` (4763) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 257, use-network 641, use-canvas-layers 186, use-strike 277), hookless factories (editor-ops 734, editor-cells 196, editor-select 197, pointer-tools 670), HUD day panel (hud-canvas 225), sim-model 178 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 404 — кнопки «Погода»/«Сутки», editor-overlay 692, field-stage 147). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3993 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–873) + buildEditorOps call :888, effects ~1041–1274, pointer-tools call :4146, JSX assembly 4371–4609. targeting.pickStrikeTarget mirrors `server/combat.js` aimedNeighbor (:76) -> ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
 | Combat model, sprites, armor | `src/lib/sim/settings.ts` (1131) | ARMOR_CURVE (:572), strike zones, damage levels; 54 exports |
 | «Elision» location | `src/lib/sim/test-field.ts` (2155) | walkability, route graph, edge render, paint, cheap terrain-cell clips, camera-facing cliff faces; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
 | Location config | `src/lib/sim/test-map.ts` (736) | v1/v2 + editor limits (mirror of server-side sanitize) |
 | Transport, inbound dispatch | `src/lib/net/coop.ts` (537) | socket choice, reconnect backoff, dispatcher 367+ |
 | Step prediction | `src/lib/net/move-book.ts` (89) | **the reference module** — copy its style for new files |
 | Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; setmap/admin-role is the real arbiter. Handbook tab «Справочник Герты»; server tunables `/cfg` |
+| Main menu | `src/components/menu/wander-gate.tsx` (315) | `/` Wanderpaws: sky, paw trail, three world windows, live `rooms` counts. `/combat/` grottos, `/hunger/` placeholder, `/elision/` Elision. «Главное меню» on every game page |
 
 Where to start common tasks:
 - **"Add/change an event"** → both registries first (`server/protocol.js` + `src/lib/net/protocol.ts`; they must stay mirrored) → `server/net.js` onMessage dispatcher and the domain handler in `server/*.js` →
@@ -113,7 +114,7 @@ Invariants (violating one = a bug):
 | `block` / `space` | `{id, on}` / `{id, on, hold?}` | except the sender |
 | `atmo` | anchor `{t, cs, pl, wl, w, ws, dp}` | to ALL on atmo/atmoset + 5 s ticker on dp/w change; on rejoin it rides inside `field` |
 | `freemove` | `{id, x, y, cx, cy, sp, jp}` | to others, ≤1/50 ms |
-| `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s |
+| `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s; у закрытой комнаты гость видит count, но не logins |
 | `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}` |
 
 ## Server env

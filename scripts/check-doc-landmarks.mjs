@@ -43,6 +43,7 @@ const LANDMARKS = [
   ["AGENTS.md", "src/components/sim/simulator/sim-model.ts", "sim-model"],
   ["AGENTS.md", "src/components/sim/simulator/components/chrome.tsx", "chrome"],
   ["AGENTS.md", "src/components/sim/simulator/components/field-stage.tsx", "field-stage"],
+  ["AGENTS.md", "src/components/menu/wander-gate.tsx", "src/components/menu/wander-gate.tsx"],
   // docs/ARCHITECTURE.md §2 «Карта модулей as-is»
   ["docs/ARCHITECTURE.md", "src/components/sim/simulator.tsx", "src/components/sim/simulator.tsx"],
   ["docs/ARCHITECTURE.md", "src/components/sim/simulator/hooks/use-network.ts", "hooks/use-network.ts"],

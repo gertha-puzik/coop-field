@@ -4627,6 +4627,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
         setSettingsOpen={setSettingsOpen}
         setRoomsStale={setRoomsStale}
         setSwitchOpen={setSwitchOpen}
+        canSwitch={roomsForMode(mode).length > 1}
       />
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
