@@ -41,8 +41,8 @@ A push to `main` IS a production deploy. Three workflows start on `main`:
 
 1. **«Проверки»** (`.github/workflows/ci.yml`) — typecheck, architecture gate (no new file
    over 800 lines, `lib` must not import `components`), protocol sync + parity, unit tests.
-2. **«Фронтенд на Vercel и VPS»** (`deploy-frontend.yml`) — `vercel deploy --prod` and
-   rsync of the static `out/` to the VPS web root.
+2. **«Фронтенд на VPS»** (`deploy-frontend.yml`) — rsync of the static
+   `out/` to the VPS web root (the former Vercel mirror step was removed).
 3. **«Сервер комнаты на VPS»** (`deploy-backend.yml`) — rsync of `server/` + restart of
    the systemd unit `coop-field` (port 8787 behind nginx) with a health check.
 
