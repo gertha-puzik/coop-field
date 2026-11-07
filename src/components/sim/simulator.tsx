@@ -4168,25 +4168,37 @@ export default function Simulator() {
       prev = now;
       update(now, dt);
       draw(now);
-      // Атмосфера: Pixi-слой забирает готовый кадр 2D-холста как текстуру и
-      // выводит его с цветокоррекцией, тенями облаков и дождём.
+      // Сутки, погода и циферблат — только у рисованной локации («тест», Элизия).
+      // На клеточном поле (пивные гроты и остальные grid-комнаты) вуаль ложилась
+      // не на весь холст: backing store крупнее CSS-размера, и source-atop
+      // оставлял светлый прямоугольник. Плашка «День» в том же углу закрывала кота.
       const cam = camRef.current;
       const cp = camPrevRef.current;
-      // Страховка rAF: throw внутри Pixi-слоя не должен рвать цикл — без
-      // перепланирования замерзала бы вся игра, а не только атмосфера.
-      try {
-        atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
-      } catch (error) {
-        console.warn('[atmo] слой упал — выключаю до перезагрузки', error);
+      if (fieldFormatRef.current === 'test') {
+        atmoRef.current?.setVisible(atmoLayerOnRef.current);
+        // Страховка rAF: throw внутри Pixi-слоя не должен рвать цикл — без
+        // перепланирования замерзала бы вся игра, а не только атмосфера.
         try {
-          atmoRef.current?.setVisible(false);
-        } catch {
-          /* слой уже мёртв — прятать нечего */
+          atmoRef.current?.frame(now, dt, cp ? cam.x - cp.x : 0, cp ? cam.y - cp.y : 0);
+        } catch (error) {
+          console.warn('[atmo] слой упал — выключаю до перезагрузки', error);
+          try {
+            atmoRef.current?.setVisible(false);
+          } catch {
+            /* слой уже мёртв — прятать нечего */
+          }
+          atmoRef.current = null;
         }
-        atmoRef.current = null;
+        tickAtmo();
+      } else {
+        atmoRef.current?.setVisible(false);
+        const hud = hudRef.current;
+        if (hud && hud.width !== 0) {
+          hud.width = 0;
+          hud.height = 0;
+        }
       }
       camPrevRef.current = { x: cam.x, y: cam.y };
-      tickAtmo();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

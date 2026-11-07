@@ -227,7 +227,9 @@ function leave(ws) {
     clearMoveTimer(cat);
     cat.moveQueue = [];
     room.cats.delete(cat.id);
-    rememberCat(cat); // последняя позиция уходит в книгу — рестарт вернёт кота на место
+    // Книга позиций — только «тест». Клетка грота не должна затирать точку
+    // Элизии, и наоборот: чужая клетка на поле 10×6 рисуется за кадром.
+    if (room.fmt === "test") rememberCat(cat);
     flushCatBook(true);
     broadcast(room, EV.MOVE, { id: cat.id, x: 0, y: 0 });
     console.log(`ws leave room=${room.code} cat=${cat.login}#${cat.id}`);
