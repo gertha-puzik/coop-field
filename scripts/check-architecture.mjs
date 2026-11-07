@@ -30,7 +30,9 @@ const RULES = {
     maxLines: 800,
     extensions: [".ts", ".tsx", ".js", ".mjs"],
     // Каталоги вне проверки: зависимости, артефакты сборки, данные, спрайты, деплой VPS.
-    skipDirs: ["node_modules", ".git", ".next", "out", "public", "data", ".vercel", "incoming", "deploy"],
+    // www-grotto/www-elyria — вариантные статические корни P6 (контракт
+    // build:variants с preview-build.yml): после сборки лежат в корне репо.
+    skipDirs: ["node_modules", ".git", ".next", "out", "public", "data", ".vercel", "incoming", "deploy", "www-grotto", "www-elyria"],
   },
   // Формат: { file: "<путь от корня>", why: "<какой волной разрезается>" }.
   SIZE_ALLOWLIST: [
