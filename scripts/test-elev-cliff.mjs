@@ -12,7 +12,8 @@
  * которого freemove проходит свободно (дуга несёт кота через обрыв) — поэтому
  * стенки проверяются ДО прыжков и после выдержанной паузы.
  *
- * Флоу: join «test» → setmap с плато 2×2 (уровень 3, 0-based (11,12)..(12,13),
+ * Флоу: вход в «test» через sendJoin (комната закрыта — требует аккаунт)
+ * → setmap с плато 2×2 (уровень 3, 0-based (11,12)..(12,13),
  * внутри боевой зоны карты) → мирная ходьба (freemove): шаг на плато спереди/
  * сзади/сбоку молча отклоняется, прыжок (jp=1) пропускает, ходьба по плато
  * и спуск прыжком работают → боевой шаг на плато получает REFUSE «cliff»,
@@ -24,10 +25,13 @@
  */
 import { WebSocket } from 'ws';
 import { readFileSync } from 'node:fs';
+import { sendJoin } from './ws-auth.mjs';
 
 const url = process.argv[2] || process.env.WS_URL || 'ws://127.0.0.1:3780';
 
-/** Клиент с копилкой сообщений: события складываются, тесты их фильтруют. */
+/** Клиент с копилкой сообщений: события складываются, тесты их фильтруют.
+ *  Комната «test» закрыта (requiresAccount) — вход через sendJoin из
+ *  ws-auth.mjs: сначала регистрация/логин (кадр auth), затем join. */
 function client(login, room = 'test') {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -41,7 +45,7 @@ function client(login, room = 'test') {
     });
     ws.on('error', reject);
     ws.once('open', () => {
-      ws.send(JSON.stringify(['join', { room, login }]));
+      sendJoin(ws, { room, login });
       ws.inbox = inbox;
       resolve(ws);
     });
