@@ -14,7 +14,7 @@ import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition } from "./persist.js";
 import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
-import { requiresAccount } from "./modes.js";
+import { requiresAccount, RETIRED_ROOMS } from "./modes.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
@@ -42,7 +42,10 @@ function normalizeRoomCode(code) {
 }
 
 function roomOf(code) {
-  const key = normalizeRoomCode(code);
+  const raw = normalizeRoomCode(code);
+  // Снятые коды (P1, modes.RETIRED_ROOMS): легасий ?room=combat попадает в
+  // grot-1, а не тихо разворачивается в произвольную открытую grid-комнату.
+  const key = RETIRED_ROOMS[raw] || raw;
   if (!rooms.has(key)) {
     rooms.set(key, {
       code: key,
@@ -398,11 +401,15 @@ function space(ws, payload = {}) {
 /**
  * Состав комнат для выбора: клиент → ["rooms", { ids: ["grot-1", ...] }],
  * сервер → ["roomsinfo", [{ id, count, logins }]] в порядке запроса.
- * Пустой комнаты в rooms нет — отвечаем нулём, НЕ создавая её (roomOf растит карту).
+ * Пустой комнаты в rooms нет — отвечаем нулём, НЕ создавая её (roomOf растит
+ * карту; здесь только rooms.get — опрос состава комнат никогда не материализует
+ * ленивую комнату).
  * Опрос частый (экран выбора обновляется каждые пару секунд), но обход дешёвый;
  * от спама одной строкой — минимальный интервал на сокет.
- * Закрытая комната (requiresAccount): гость видит число сидящих, но не имена.
- * Несуществующая комната по-прежнему count 0 и пустые logins.
+ * Закрытая комната (requiresAccount) для ГОСТЯ — призрак: count 0 и пустые
+ * logins, как у несуществующей — гость не может даже сосчитать сидящих (P1,
+ * спек §11: публичный гость не должен обнаруживать комнату Элизии).
+ * Сессия с аккаунтом видит реальный состав — счётчик и имена.
  */
 const ROOMS_MIN_GAP_MS = 250;
 
@@ -413,13 +420,13 @@ function roomsInfo(ws, payload = {}) {
   const ids = Array.isArray(payload?.ids) ? payload.ids : [];
   const list = ids.slice(0, 32).map((raw) => {
     const key = normalizeRoomCode(raw);
-    // Закрытая комната: гость видит счётчик (меню миров), но не имена.
-    const closedForGuest = requiresAccount(key) && !ws.account;
-    const room = rooms.get(key);
+    // Гость простым кодом комнаты не разведает занятость закрытых комнат.
+    const ghost = requiresAccount(key) && !ws.account;
+    const room = ghost ? null : rooms.get(key);
     return {
       id: key,
       count: room ? room.cats.size : 0,
-      logins: room && !closedForGuest ? [...room.cats.values()].map((c) => c.login) : [],
+      logins: room ? [...room.cats.values()].map((c) => c.login) : [],
     };
   });
   send(ws, EV.ROOMSINFO, list);
