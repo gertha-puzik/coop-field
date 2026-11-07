@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-/** Guards of deploy/vps/preview-apply.sh: slug, destroy isolation, max 8. No SSH. */
+/** Guards of deploy/vps/preview-apply.sh: slug, dual-host fragment, env
+ * contract (PUBLIC_HOSTS/ELYRIA_HOSTS/ALLOWED_ORIGINS), destroy isolation,
+ * max 8, unit guards. No SSH. */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -47,10 +49,18 @@ function staging() {
 function fillIncoming(incoming, slug) {
   const dir = join(incoming, slug);
   mkdirSync(join(dir, "server"), { recursive: true });
-  mkdirSync(join(dir, "www"), { recursive: true });
+  mkdirSync(join(dir, "www-grotto"), { recursive: true });
+  mkdirSync(join(dir, "www-elyria"), { recursive: true });
   writeFileSync(join(dir, "server.js"), "export default 1;\n");
   writeFileSync(join(dir, "server/protocol.js"), "export const EV = {};\n");
-  writeFileSync(join(dir, "www/index.html"), "<html>ok</html>\n");
+  writeFileSync(join(dir, "www-grotto/index.html"), "<html>grotto</html>\n");
+  writeFileSync(join(dir, "www-elyria/index.html"), "<html>elyria</html>\n");
+}
+
+/** server-блок фрагмента по server_name (фрагмент держит по одному блоку на хост). */
+function blockFor(fragText, host) {
+  const blocks = fragText.split(/^server \{$/m).slice(1).map((b) => `server {${b}`);
+  return blocks.find((b) => b.includes(`server_name ${host};`)) || "";
 }
 
 const deny = [
@@ -66,26 +76,67 @@ for (const slug of deny) {
   const r = run({ PREVIEW_SLUG: slug, PREVIEW_ACTION: "validate" });
   eq(`deny ${slug || "<empty>"}`, r.status === 0 ? "ok" : "fail", "fail");
 }
+// Невалидный slug ломает и dual-host дефолты (HOST/HOST2 от slug) — до всего остального.
+const denyBadHostSlug = run({ PREVIEW_SLUG: "FOO BAR", PREVIEW_ACTION: "validate" });
+eq("deny uppercase+space slug", denyBadHostSlug.status === 0 ? "ok" : "fail", "fail");
 
 const okVal = run({ PREVIEW_SLUG: "cursor-test", PREVIEW_ACTION: "validate" });
 eq("validate good slug", okVal.status, 0);
 eq("validate prints app", okVal.stdout.includes("/opt/coop-field-preview/cursor-test"), true);
 eq("validate default host", okVal.stdout.includes("host=cursor-test.abnocw.miew.ru"), true);
+eq("validate default host2", okVal.stdout.includes("host2=cursor-test.elisium.miew.ru"), true);
+eq("validate prints both roots", okVal.stdout.includes("roots=/opt/coop-field-preview/cursor-test/www-grotto,/opt/coop-field-preview/cursor-test/www-elyria"), true);
 
-const longHost = run({
+// ── Валидация хостов в ОБОИХ суффикс-зонах ────────────────────────────────
+const longHostAbnocw = run({
   PREVIEW_SLUG: "pr-41",
   PREVIEW_HOST: "cursor-product-roadmap-and-platform-42e0.abnocw.miew.ru",
   PREVIEW_ACTION: "validate",
 });
-eq("deny long server_name", longHost.status === 0 ? "ok" : "fail", "fail");
+eq("deny long server_name abnocw", longHostAbnocw.status === 0 ? "ok" : "fail", "fail");
+
+const longHostElisium = run({
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_HOST2: "cursor-product-roadmap-and-platform-42e0.elisium.miew.ru",
+  PREVIEW_ACTION: "validate",
+});
+eq("deny long server_name elisium", longHostElisium.status === 0 ? "ok" : "fail", "fail");
 
 const prHostVal = run({
   PREVIEW_SLUG: "pr-41",
   PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
   PREVIEW_ACTION: "validate",
 });
-eq("validate pr host", prHostVal.status, 0);
+eq("validate pr hosts", prHostVal.status, 0);
 eq("validate pr host printed", prHostVal.stdout.includes("host=pr-41.abnocw.miew.ru"), true);
+eq("validate pr host2 printed", prHostVal.stdout.includes("host2=pr-41.elisium.miew.ru"), true);
+// Hosts взаимозаменяемы позициями: суффикс решает зону, не порядок аргументов.
+const swapped = run({
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_HOST: "pr-41.elisium.miew.ru",
+  PREVIEW_HOST2: "pr-41.abnocw.miew.ru",
+  PREVIEW_ACTION: "validate",
+});
+eq("hosts by suffix, not position", swapped.stdout.includes("host=pr-41.abnocw.miew.ru"), true);
+eq("hosts by suffix, not position 2", swapped.stdout.includes("host2=pr-41.elisium.miew.ru"), true);
+
+// Две зоны одного вида — отказ.
+for (const same of [
+  { PREVIEW_HOST: "pr-41.abnocw.miew.ru", PREVIEW_HOST2: "pr-42.abnocw.miew.ru" },
+  { PREVIEW_HOST: "pr-41.elisium.miew.ru", PREVIEW_HOST2: "pr-42.elisium.miew.ru" },
+]) {
+  const r = run({ PREVIEW_SLUG: "pr-41", PREVIEW_ACTION: "validate", ...same });
+  eq(`deny same-zone ${same.PREVIEW_HOST2}`, r.status === 0 ? "ok" : "fail", "fail");
+}
+// Чужой суффикс и мусор — отказ.
+for (const bad of ["pr-41.example.com", "pr-41.abnocw.miew.ru.evil.ru", "PR-41.ABNOCW.MIEW.RU", "pr 41.abnocw.miew.ru"]) {
+  const r = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: bad, PREVIEW_HOST2: "pr-41.elisium.miew.ru", PREVIEW_ACTION: "validate" });
+  eq(`deny host ${bad}`, r.status === 0 ? "ok" : "fail", "fail");
+}
+const badSecond = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: "pr-41.abnocw.miew.ru", PREVIEW_HOST2: "pr-41.example.com", PREVIEW_ACTION: "validate" });
+eq("deny second host foreign suffix", badSecond.status === 0 ? "ok" : "fail", "fail");
 
 const t = staging();
 fillIncoming(t.incoming, "alpha");
@@ -99,6 +150,8 @@ const base = {
   HOME: t.root,
   PREVIEW_IN: join(t.incoming, "alpha"),
   PREVIEW_SLUG: "alpha",
+  PREVIEW_HOST: "alpha.abnocw.miew.ru",
+  PREVIEW_HOST2: "alpha.elisium.miew.ru",
   PREVIEW_PORT: "41001",
   PREVIEW_ACTION: "apply",
   PREVIEW_SHA: "deadbeef",
@@ -106,20 +159,77 @@ const base = {
 const a = run({ ...base, PREVIEW_IN: join(t.incoming, "alpha") });
 dump("apply alpha", a);
 eq("apply alpha", a.status, 0);
-eq("alpha dir", existsSync(join(t.previewRoot, "alpha/www/index.html")), true);
+eq("alpha grotto root", existsSync(join(t.previewRoot, "alpha/www-grotto/index.html")), true);
+eq("alpha elyria root", existsSync(join(t.previewRoot, "alpha/www-elyria/index.html")), true);
 eq("alpha nginx", existsSync(join(t.nginxD, "preview-alpha.conf")), true);
-eq("alpha env not prod data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes("/opt/coop-field/data"), false);
-eq("alpha env preview data", readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes(join(t.previewRoot, "alpha/data")), true);
+const alphaEnv = readFileSync(join(t.previewRoot, "alpha/env"), "utf8");
+eq("alpha env not prod data", alphaEnv.includes("/opt/coop-field/data"), false);
+eq("alpha env preview data", alphaEnv.includes(join(t.previewRoot, "alpha/data")), true);
 eq(
-  "alpha env origins follow host",
-  readFileSync(join(t.previewRoot, "alpha/env"), "utf8").includes("ALLOWED_ORIGINS=http://alpha.abnocw.miew.ru,https://alpha.abnocw.miew.ru"),
+  "alpha env origins four values",
+  alphaEnv.includes(
+    "ALLOWED_ORIGINS=http://alpha.abnocw.miew.ru,https://alpha.abnocw.miew.ru,http://alpha.elisium.miew.ru,https://alpha.elisium.miew.ru",
+  ),
   true,
 );
+eq("alpha env public hosts", alphaEnv.includes("PUBLIC_HOSTS=alpha.abnocw.miew.ru"), true);
+eq("alpha env elyria hosts", alphaEnv.includes("ELYRIA_HOSTS=alpha.elisium.miew.ru"), true);
 eq(
   "apex cert without wildcard is not hung on preview vhost",
   readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8").includes("ssl_certificate"),
   false,
 );
+const alphaFrag = readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8");
+eq("alpha fragment two server blocks", (alphaFrag.match(/^server \{$/gm) || []).length, 2);
+eq(
+  "alpha abnocw block root is www-grotto",
+  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-grotto;`),
+  true,
+);
+eq(
+  "alpha elyria block root is www-elyria",
+  blockFor(alphaFrag, "alpha.elisium.miew.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-elyria;`),
+  true,
+);
+eq(
+  "grotto block has no elyria root",
+  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("www-elyria"),
+  false,
+);
+eq(
+  "elyria block has no grotto root",
+  blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("www-grotto"),
+  false,
+);
+// ACME-challenge на СВОЁМ root в каждом блоке (webroot certbot = root блока).
+eq(
+  "both blocks own acme location",
+  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("location /.well-known/acme-challenge/") &&
+    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /.well-known/acme-challenge/"),
+  true,
+);
+// Полный набор проксируемых маршрутов в ОБОИХ блоках.
+for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin", "/ws"]) {
+  eq(
+    `both blocks proxy ${loc}`,
+    blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`location ${loc} `) &&
+      blockFor(alphaFrag, "alpha.elisium.miew.ru").includes(`location ${loc} `),
+    true,
+  );
+}
+eq(
+  "both blocks keep ws upgrade headers",
+  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("proxy_set_header Upgrade $http_upgrade;") &&
+    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("proxy_set_header Upgrade $http_upgrade;"),
+  true,
+);
+eq(
+  "both blocks keep static immutable",
+  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("location /_next/static/") &&
+    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /_next/static/"),
+  true,
+);
+
 fillIncoming(t.incoming, "pr-41");
 const prApply = run({
   ...base,
@@ -127,16 +237,16 @@ const prApply = run({
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
   PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
   PREVIEW_SHA: "deadbeefcafebabe",
 });
 dump("pr host apply", prApply);
 eq("apply pr host", prApply.status, 0);
-eq(
-  "nginx server_name is pr id",
-  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name pr-41.abnocw.miew.ru;"),
-  true,
-);
-eq("dir is pr-id", existsSync(join(t.previewRoot, "pr-41/www/index.html")), true);
+const prFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
+eq("nginx server_name is pr id (grotto)", prFrag.includes("server_name pr-41.abnocw.miew.ru;"), true);
+eq("nginx server_name is pr id (elyria)", prFrag.includes("server_name pr-41.elisium.miew.ru;"), true);
+eq("dir is pr-id (grotto)", existsSync(join(t.previewRoot, "pr-41/www-grotto/index.html")), true);
+eq("dir is pr-id (elyria)", existsSync(join(t.previewRoot, "pr-41/www-elyria/index.html")), true);
 chmodSync(join(t.nginxD, "preview-pr-41.conf"), 0o444);
 const overwrite = run({
   ...base,
@@ -144,28 +254,46 @@ const overwrite = run({
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
   PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
   PREVIEW_SHA: "overwrite1",
 });
 dump("overwrite read-only fragment", overwrite);
 eq("overwrite read-only fragment", overwrite.status, 0);
+const owFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
+eq("fragment replaced after unlink (grotto)", owFrag.includes("server_name pr-41.abnocw.miew.ru;"), true);
+eq("fragment replaced after unlink (elyria)", owFrag.includes("server_name pr-41.elisium.miew.ru;"), true);
 eq(
-  "fragment replaced after unlink",
-  readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8").includes("server_name pr-41.abnocw.miew.ru;"),
+  "pr-41 env origins follow both hosts",
+  readFileSync(join(t.previewRoot, "pr-41/env"), "utf8").includes(
+    "ALLOWED_ORIGINS=http://pr-41.abnocw.miew.ru,https://pr-41.abnocw.miew.ru,http://pr-41.elisium.miew.ru,https://pr-41.elisium.miew.ru",
+  ),
   true,
 );
-eq(
-  "pr-41 env origins follow host",
-  readFileSync(join(t.previewRoot, "pr-41/env"), "utf8").includes("ALLOWED_ORIGINS=http://pr-41.abnocw.miew.ru,https://pr-41.abnocw.miew.ru"),
-  true,
-);
+// Вход без www-grotto/index.html или www-elyria/index.html — отказ: контракт
+// артефакта обязателен (оба корня обязательны).
+{
+  const brokenDir = join(t.incoming, "broken");
+  const noElyria = { ...base, PREVIEW_IN: brokenDir, PREVIEW_SLUG: "broken", PREVIEW_HOST: "broken.abnocw.miew.ru", PREVIEW_HOST2: "broken.elisium.miew.ru", PREVIEW_PORT: "41009" };
+  fillIncoming(t.incoming, "broken");
+  rmSync(join(brokenDir, "www-elyria/index.html"));
+  const r1 = run(noElyria);
+  eq("refuse artifact without elyria index", r1.status === 0 ? "ok" : "fail", "fail");
+  fillIncoming(t.incoming, "broken");
+  rmSync(join(brokenDir, "www-grotto/index.html"));
+  const r2 = run(noElyria);
+  eq("refuse artifact without grotto index", r2.status === 0 ? "ok" : "fail", "fail");
+}
 // Легаси-env без ALLOWED_ORIGINS (какой был на VPS до фикса): re-apply добавляет
-// ключ вместе с новым хостом и не теряет ADMIN_PASS.
+// новые ключи вместе с ОБЕИМИ хостами и не теряет ADMIN_PASS. HOST2 не передан —
+// дефолт от slug (pr-41.elisium.miew.ru), как в deploy-конвейере.
 writeFileSync(
   join(t.previewRoot, "pr-41/env"),
   "PORT=41041\nHOST=127.0.0.1\nDATA_DIR=/tmp/coop-legacy/data\nADMIN_PASS=zz\nREQUIRE_ORIGIN=0\n",
 );
+const noHost2 = { ...base };
+delete noHost2.PREVIEW_HOST2;
 const legacy = run({
-  ...base,
+  ...noHost2,
   PREVIEW_SLUG: "pr-41",
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
@@ -174,9 +302,17 @@ const legacy = run({
 });
 eq("apply over legacy env", legacy.status, 0);
 const legacyEnv = readFileSync(join(t.previewRoot, "pr-41/env"), "utf8");
-eq("legacy env gained origins", legacyEnv.includes("ALLOWED_ORIGINS=http://cafebabe.abnocw.miew.ru,https://cafebabe.abnocw.miew.ru"), true);
+eq(
+  "legacy env gained four origins",
+  legacyEnv.includes(
+    "ALLOWED_ORIGINS=http://cafebabe.abnocw.miew.ru,https://cafebabe.abnocw.miew.ru,http://pr-41.elisium.miew.ru,https://pr-41.elisium.miew.ru",
+  ),
+  true,
+);
+eq("legacy env gained public hosts", legacyEnv.includes("PUBLIC_HOSTS=cafebabe.abnocw.miew.ru"), true);
+eq("legacy env gained elyria hosts", legacyEnv.includes("ELYRIA_HOSTS=pr-41.elisium.miew.ru"), true);
 eq("legacy env kept admin pass", legacyEnv.includes("ADMIN_PASS=zz"), true);
-eq("legacy env erased stale origins", legacyEnv.includes("pr-41.abnocw.miew.ru"), false);
+eq("legacy env erased stale hosts", legacyEnv.includes("pr-41.abnocw.miew.ru") || legacyEnv.includes("alpha.elisium.miew.ru"), false);
 
 const b = run({
   ...base,
@@ -194,7 +330,7 @@ const gone = run({
 eq("destroy alpha", gone.status, 0);
 eq("alpha removed", existsSync(join(t.previewRoot, "alpha")), false);
 eq("alpha nginx removed", existsSync(join(t.nginxD, "preview-alpha.conf")), false);
-eq("beta kept", existsSync(join(t.previewRoot, "beta/www/index.html")), true);
+eq("beta kept", existsSync(join(t.previewRoot, "beta/www-grotto/index.html")), true);
 eq("beta nginx kept", existsSync(join(t.nginxD, "preview-beta.conf")), true);
 
 const badPort = run({ ...base, PREVIEW_SLUG: "gamma", PREVIEW_PORT: "8787", PREVIEW_IN: join(t.incoming, "alpha") });
@@ -216,6 +352,7 @@ for (let i = 0; i < 8; i += 1) {
   rmSync(join(t.previewRoot, `slot${i}`), { recursive: true, force: true });
 }
 
+// ── Сертификаты: per-host выбор по SAN, зоны не пересекаются ───────────────
 const certDir = join(t.root, "certs");
 mkdirSync(certDir, { recursive: true });
 function makeCert(dir, san) {
@@ -250,24 +387,28 @@ function makeCert(dir, san) {
 }
 makeCert(join(certDir, "apex"), "DNS:abnocw.miew.ru");
 makeCert(join(certDir, "wild"), "DNS:*.abnocw.miew.ru,DNS:abnocw.miew.ru");
+makeCert(join(certDir, "wild-el"), "DNS:*.elisium.miew.ru,DNS:elisium.miew.ru");
 fillIncoming(t.incoming, "tlsapex");
 const apexTls = run({
   ...base,
   PREVIEW_SLUG: "tlsapex",
   PREVIEW_IN: join(t.incoming, "tlsapex"),
+  PREVIEW_HOST: "tlsapex.abnocw.miew.ru",
+  PREVIEW_HOST2: "tlsapex.elisium.miew.ru",
   PREVIEW_PORT: "41011",
   PREVIEW_TLS_WILD: join(certDir, "apex"),
 });
 dump("apex tls", apexTls);
 eq("apply with apex-only cert", apexTls.status, 0);
+const apexFrag = readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8");
 eq(
-  "apex-only cert skipped",
-  readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8").includes("ssl_certificate"),
+  "apex-only cert skipped in both blocks",
+  apexFrag.includes("ssl_certificate"),
   false,
 );
 eq(
   "no cert — no https jump",
-  readFileSync(join(t.nginxD, "preview-tlsapex.conf"), "utf8").includes("return 301 https://"),
+  apexFrag.includes("return 301 https://"),
   false,
 );
 fillIncoming(t.incoming, "tlswild");
@@ -275,48 +416,124 @@ const wildTls = run({
   ...base,
   PREVIEW_SLUG: "tlswild",
   PREVIEW_IN: join(t.incoming, "tlswild"),
+  PREVIEW_HOST: "tlswild.abnocw.miew.ru",
+  PREVIEW_HOST2: "tlswild.elisium.miew.ru",
   PREVIEW_PORT: "41012",
   PREVIEW_TLS_WILD: join(certDir, "wild"),
 });
 dump("wild tls", wildTls);
-eq("apply with wildcard cert", wildTls.status, 0);
+eq("apply with abnocw wildcard cert", wildTls.status, 0);
+const wildFrag = readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8");
 eq(
-  "wildcard cert used",
-  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("ssl_certificate"),
+  "abnocw wildcard covers grotto block only",
+  blockFor(wildFrag, "tlswild.abnocw.miew.ru").includes("ssl_certificate"),
   true,
 );
 eq(
-  "wildcard adds https redirect",
-  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("return 301 https://"),
+  "abnocw wildcard does not cover elyria block",
+  blockFor(wildFrag, "tlswild.elisium.miew.ru").includes("ssl_certificate"),
+  false,
+);
+eq(
+  "wildcard adds https redirect in grotto block",
+  blockFor(wildFrag, "tlswild.abnocw.miew.ru").includes("return 301 https://"),
   true,
 );
 eq(
-  "wildcard keeps acme path open",
-  readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8").includes("acme-challenge"),
+  "wildcard keeps acme path open in both blocks",
+  wildFrag.includes("acme-challenge"),
+  true,
+);
+// Зеркало зоны elisium (tls/elisium.miew.ru) подхватывается вторым блоком.
+mkdirSync(join(t.previewRoot, "tls", "elisium.miew.ru"), { recursive: true });
+makeCert(join(t.previewRoot, "tls", "elisium.miew.ru"), "DNS:*.elisium.miew.ru,DNS:elisium.miew.ru");
+const wildTls2 = run({
+  ...base,
+  PREVIEW_SLUG: "tlswild",
+  PREVIEW_IN: join(t.incoming, "tlswild"),
+  PREVIEW_HOST: "tlswild.abnocw.miew.ru",
+  PREVIEW_HOST2: "tlswild.elisium.miew.ru",
+  PREVIEW_PORT: "41012",
+  PREVIEW_TLS_WILD: join(certDir, "wild"),
+  PREVIEW_SHA: "withzone",
+});
+dump("wild tls re-apply with zone mirror", wildTls2);
+eq("re-apply with elyria zone mirror", wildTls2.status, 0);
+const wildFrag2 = readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8");
+eq(
+  "elyria block got zone-wildcard cert",
+  blockFor(wildFrag2, "tlswild.elisium.miew.ru").includes(`ssl_certificate ${join(t.previewRoot, "tls", "elisium.miew.ru")}/fullchain.pem;`),
+  true,
+);
+eq(
+  "grotto block still on abnocw wildcard",
+  blockFor(wildFrag2, "tlswild.abnocw.miew.ru").includes(`ssl_certificate ${join(certDir, "wild")}/fullchain.pem;`),
   true,
 );
 
-// per-host линия (HTTP-01 coop-preview-cert): зеркало tls/<host> подхватывается
-// дефолтом PREVIEW_TLS_PER.
-makeCert(join(certDir, "perhost"), "DNS:tlsper.abnocw.miew.ru");
+// Per-host зеркала tls/<host> (дефолт coop-preview-cert): каждый блок свой серт.
+makeCert(join(t.previewRoot, "tls", "pr-41.abnocw.miew.ru"), "DNS:pr-41.abnocw.miew.ru");
+makeCert(join(t.previewRoot, "tls", "pr-41.elisium.miew.ru"), "DNS:pr-41.elisium.miew.ru");
+const perDual = run({
+  ...base,
+  PREVIEW_SLUG: "pr-41",
+  PREVIEW_IN: join(t.incoming, "pr-41"),
+  PREVIEW_PORT: "41041",
+  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
+  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
+  PREVIEW_SHA: "perhost-dual",
+});
+dump("per-host dual tls", perDual);
+eq("re-apply with per-host mirrors", perDual.status, 0);
+const perFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
+eq(
+  "grotto block got own per-host cert",
+  blockFor(perFrag, "pr-41.abnocw.miew.ru").includes(
+    `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.abnocw.miew.ru")}/fullchain.pem;`,
+  ),
+  true,
+);
+eq(
+  "elyria block got own per-host cert",
+  blockFor(perFrag, "pr-41.elisium.miew.ru").includes(
+    `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.elisium.miew.ru")}/fullchain.pem;`,
+  ),
+  true,
+);
+eq(
+  "per-host certs differ between blocks",
+  blockFor(perFrag, "pr-41.abnocw.miew.ru").includes("pr-41.elisium.miew.ru/fullchain") ||
+    blockFor(perFrag, "pr-41.elisium.miew.ru").includes("pr-41.abnocw.miew.ru/fullchain"),
+  false,
+);
+// Один общий PREVIEW_TLS_PER с SAN обеих хостов — покрывает оба блока.
+makeCert(join(certDir, "perboth"), "DNS:tlsper.abnocw.miew.ru,DNS:tlsper.elisium.miew.ru");
 fillIncoming(t.incoming, "tlsper");
 const perTls = run({
   ...base,
   PREVIEW_SLUG: "tlsper",
   PREVIEW_IN: join(t.incoming, "tlsper"),
+  PREVIEW_HOST: "tlsper.abnocw.miew.ru",
+  PREVIEW_HOST2: "tlsper.elisium.miew.ru",
   PREVIEW_PORT: "41013",
-  PREVIEW_TLS_PER: join(certDir, "perhost"),
+  PREVIEW_TLS_PER: join(certDir, "perboth"),
 });
 dump("perhost tls", perTls);
-eq("apply with per-host cert", perTls.status, 0);
+eq("apply with shared per-host cert", perTls.status, 0);
+const perFrag2 = readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8");
 eq(
-  "per-host cert used",
-  readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8").includes("ssl_certificate"),
+  "shared cert covers grotto block",
+  blockFor(perFrag2, "tlsper.abnocw.miew.ru").includes("ssl_certificate"),
   true,
 );
 eq(
-  "per-host adds https redirect",
-  readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8").includes("return 301 https://"),
+  "shared cert covers elyria block",
+  blockFor(perFrag2, "tlsper.elisium.miew.ru").includes("ssl_certificate"),
+  true,
+);
+eq(
+  "shared cert adds https redirect",
+  perFrag2.includes("return 301 https://"),
   true,
 );
 
@@ -389,6 +606,7 @@ const full = run({
   PREVIEW_IN: join(t.incoming, "psec"),
   PREVIEW_PORT: "41699",
   PREVIEW_HOST: "psec.abnocw.miew.ru",
+  PREVIEW_HOST2: "psec.elisium.miew.ru",
   PREVIEW_SHA: "psecdeadbeef",
   PREVIEW_SKIP_SYSTEMD: "0",
   PREVIEW_SKIP_NGINX: "1",
@@ -405,9 +623,15 @@ eq("fake sudo got no unit cp", logText.includes("cp "), false);
 eq("installed unit untouched by apply", readFileSync(installedUnit, "utf8"), installedUnitBody);
 eq("enable --now recorded", logText.includes("/usr/bin/systemctl enable --now coop-field-preview@psec"), true);
 eq("restart recorded", logText.includes("/usr/bin/systemctl restart coop-field-preview@psec"), true);
+const psecFrag = readFileSync(join(t.nginxD, "preview-psec.conf"), "utf8");
 eq(
   "generated /ws keeps X-Forwarded-For",
-  readFileSync(join(t.nginxD, "preview-psec.conf"), "utf8").includes("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"),
+  psecFrag.includes("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"),
+  true,
+);
+eq(
+  "full apply fragment has both hosts",
+  psecFrag.includes("server_name psec.abnocw.miew.ru;") && psecFrag.includes("server_name psec.elisium.miew.ru;"),
   true,
 );
 
