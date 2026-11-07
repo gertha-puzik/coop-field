@@ -71,6 +71,14 @@ jobs:
         run: node scripts/test-move-queue.mjs
       - name: Аккаунты и закрытая Элизия
         run: npm run test:auth
+      # Реестр конфига (P2): whitelist из 5 ключей, клэмпы урона/брони,
+      # админ-роуты /cfg (restore с path-guard, export/import).
+      - name: Реестр конфига
+        run: npm run test:cfg
+      # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
+      # строго по cookie-сессии.
+      - name: HTTP-профили
+        run: npm run test:profiles
       - name: Preview slug
         run: npm run test:preview-slug
       - name: Preview apply/destroy guards
