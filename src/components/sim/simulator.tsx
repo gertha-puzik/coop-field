@@ -236,6 +236,9 @@ import { useStrike } from './simulator/hooks/use-strike';
 import { useSimKeyboard } from './simulator/hooks/use-keyboard';
 import { useSimNet } from './simulator/hooks/use-network';
 import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
+import { useElisionView } from './simulator/hooks/use-elision-view';
+import { collectElisionFrame } from './simulator/elision-present';
+import type { ElisionView } from '@/lib/sim/elision-scene';
 
 
 
@@ -1340,6 +1343,21 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
   // на чистом 2D-канвасе — без атмосферы, но без ошибок.
   useAtmosphereLayer({ stage, canvasRef, pixiRef, atmoRef, atmoStateRef, atmoOnRef: atmoLayerOnRef, weatherFxOnRef, dayTintOnRef });
 
+  // WebGL-вид только у Элизии. Пока слот не смонтирован (экран входа, грот),
+  // import() Babylon не вызывается и 2D-холст остаётся единственной картинкой.
+  const elisionHostRef = useRef<HTMLDivElement | null>(null);
+  const elisionViewRef = useRef<ElisionView | null>(null);
+  const [elisionSlot, setElisionSlot] = useState(false);
+  const onElisionHost = useCallback((node: HTMLDivElement | null) => {
+    elisionHostRef.current = node;
+    setElisionSlot(!!node);
+  }, []);
+  useElisionView({
+    enabled: mode === 'elision' && stage === 'field' && elisionSlot,
+    hostRef: elisionHostRef,
+    viewRef: elisionViewRef,
+  });
+
   // ВРЕМЕННО (отладка бага рельефа): живое состояние сима в консоли.
   useEffect(() => {
     (window as unknown as { __sim?: unknown }).__sim = {
@@ -1349,6 +1367,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
       elevLevelAt,
       testPeacePointFree,
       net: () => netRef.current,
+      elisionGL: () => elisionViewRef.current?.webgl ?? null,
+      elisionGround: () => elisionViewRef.current?.ground ?? null,
     };
     return () => {
       delete (window as unknown as { __sim?: unknown }).__sim;
@@ -4211,6 +4231,55 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
           atmoRef.current = null;
         }
         tickAtmo();
+        const elision = elisionViewRef.current;
+        if (elision) {
+          try {
+            const sNow = settingsRef.current;
+            const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
+            elision.frame(
+              collectElisionFrame({
+                now,
+                editor: editorState().on,
+                day: atmoStateRef.current.dp,
+                camX: cam.x,
+                camY: cam.y,
+                yaw: camYawRef.current,
+                zoom: camFxRef.current.z,
+                viewW: cv.clientWidth,
+                viewH: cv.clientHeight,
+                cols: sNow.field.cols,
+                rows: sNow.field.rows,
+                cellW: sNow.field.cellW,
+                cellH: sNow.field.cellH,
+                peace: !sNow.arrow.battleMode,
+                engine: engineRef.current,
+                controlled: sNow.controlled,
+                selfSprite: sNow.controlled === 'main' ? sNow.character.sprite : (selfDummy?.sprite ?? sNow.character.sprite),
+                selfScale: sNow.controlled === 'main' ? sNow.character.spriteScale : (selfDummy?.scale ?? 100),
+                mainSprite: sNow.character.sprite,
+                mainScale: sNow.character.spriteScale,
+                mainAt: mainSavedRef.current,
+                remotes: liveRemotesRef.current,
+                remoteFree: remoteFreeRef.current,
+                remoteDraw: remoteDrawRef.current,
+                drag: dragRef.current
+                  ? { key: dragRef.current.key, x: dragRef.current.x, y: dragRef.current.y, w: dragRef.current.w, h: dragRef.current.h }
+                  : null,
+                spriteImage: (id) => spritesRef.current[id as SpriteId],
+                objects: currentTestMap().objects ?? [],
+                rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
+              }),
+            );
+          } catch (error) {
+            console.warn('[elision] WebGL-вид упал — остаётся прежний холст', error);
+            try {
+              elision.destroy();
+            } catch {
+              /* вид уже разобран */
+            }
+            elisionViewRef.current = null;
+          }
+        }
       } else {
         atmoRef.current?.setVisible(false);
         const hud = hudRef.current;
@@ -4658,6 +4727,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
           onContextMenu={onContextMenu}
           onClick={onClick}
           pixiRef={pixiRef}
+          elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
+          showElisionView={mode === 'elision'}
           hudRef={hudRef}
           battleHint={battleHint}
           mapLoading={mapLoading}

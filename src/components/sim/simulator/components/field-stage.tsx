@@ -27,6 +27,9 @@ export interface FieldStageProps {
   onContextMenu: (ev: MouseEvent<HTMLCanvasElement>) => void;
   onClick: (ev: MouseEvent<HTMLCanvasElement>) => void;
   pixiRef: RefObject<HTMLDivElement | null>;
+  /** Слот WebGL-вида Элизии. На гротах не передаётся — разметки слота нет. */
+  elisionHostRef?: (node: HTMLDivElement | null) => void;
+  showElisionView?: boolean;
   hudRef: RefObject<HTMLCanvasElement | null>;
   battleHint: string | null;
   mapLoading: boolean;
@@ -48,6 +51,8 @@ export function FieldStage(props: FieldStageProps) {
     onContextMenu,
     onClick,
     pixiRef,
+    elisionHostRef,
+    showElisionView,
     hudRef,
     battleHint,
     mapLoading,
@@ -89,6 +94,13 @@ export function FieldStage(props: FieldStageProps) {
                 onContextMenu={onContextMenu}
                 onClick={onClick}
               />
+              {showElisionView && testField && elisionHostRef ? (
+                <div
+                  ref={elisionHostRef}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 z-[8] block h-full w-full rounded-lg"
+                />
+              ) : null}
               {/* Слот-контейнер слоя атмосферы (div, а НЕ канвас): сам канвас
                   создаётся императивно в useAtmosphereLayer и удаляется из DOM
                   при размонтировании. Так каждый монтаж слоя получает свежий
