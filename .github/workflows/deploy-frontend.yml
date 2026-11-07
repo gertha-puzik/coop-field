@@ -54,7 +54,21 @@ jobs:
           npm run build:variants
           test -f www-grotto/index.html
           test -f www-elyria/index.html
-      - name: Заливка каталога www
+
+      # ── Staged deploy: согласованность двух сайтов ────────────────────────
+      #
+      # Проблема прошлой схемы: два независимых шага rsync. Заливка гротов
+      # проходит, заливка Элизии падает — на проде два сайта с несогласо-
+      # ванными версиями движка/протокола (комнаты кочуют между ними, ws
+      # ломается молча). Новая схема: ОБА корня сначала едут в stage-каталоги
+      # (/opt/coop-field/www.staging и /opt/coop-field/www-elyria.staging),
+      # проходя минимальную верификацию, и лишь затем пара промоутится
+      # атомарно (mv) в финальные имена; предыдущая выкладка остаётся в
+      # .prev (один снимок назад). Ошибка на любом шаге — финальные корни
+      # не меняются вовсе.
+      - name: Staging-заливка обоих корней
+        # www.staging / www-elyria.staging — НЕ читаются nginx'ом: это
+        # «зелёная зона», сюда можно лить что угодно без риска для прода.
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           SSH_HOST: 89.232.184.77
@@ -70,48 +84,91 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www && test -w /opt/coop-field/www"; then
-            echo "нет записи в /opt/coop-field/www. Один раз от root: mkdir, chown deploy:deploy. См. README." >&2
+          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging && test -w /opt/coop-field/www.staging && test -w /opt/coop-field/www-elyria.staging"; then
+            echo "нет записи в stage-каталоги /opt/coop-field/www{,-elyria}.staging. Один раз от root: install -d -o deploy -g deploy /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging. ПРЕД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты." >&2
             exit 1
           fi
-          # --delete только внутри www. Код комнаты в /opt/coop-field этим rsync не затрагивается.
-          # P6: источник — вариантный корень www-grotto/ (публичные «Пивные
-          # гроты», обрезанный вариант сборки), а не полный ванильный out/.
+          # --delete только внутри stage-каталогов: свежая пара гарантированно
+          # без файлов прошлых выкладок. Код комнаты (server) не затрагивается.
           rsync -az --delete -e "$SSH" \
             www-grotto/ \
-            "$SSH_USER@$SSH_HOST:/opt/coop-field/www/"
-          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www"
-          echo "статика в /opt/coop-field/www. сайт abnocw.89-232-184-77.sslip.io отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www.staging/"
+          rsync -az --delete -e "$SSH" \
+            www-elyria/ \
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www-elyria.staging/"
+          # Права читаемости — на stage, ДО промоушна: после mv nginx сразу
+          # отдаёт файлы, отдельного chmod в финальных корнях больше нет.
+          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging"
+          echo "оба корня в staging: /opt/coop-field/www.staging + /opt/coop-field/www-elyria.staging"
 
-      - name: Заливка каталога www-elyria
-        # ВНИМАНИЕ ВЛАДЕЛЬЦУ VPS: до мерджа этого PR создайте каталог ОДИН раз
-        # от root: install -d -o deploy -g deploy /opt/coop-field/www-elyria
-        # (шаг ниже пытается mkdir -p сам, но без прав у deploy упадёт).
-        # Если шаг красный — заливка www (гроты, главный сайт) к этому моменту
-        # УЖЕ выполнена и прод не затронут: создайте каталог и перезапустите workflow.
+      - name: Верификация stage-корней
+        # Минимум, без которого промоушн не имеет смысла: index.html на месте
+        # у ОБОИХ вариантов и структура _next живая (Next export: чанки
+        # лежат в _next/static — пустой _next = битая сборка, которую nginx
+        # молча отдаст как 404 на каждый чанк).
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           SSH_HOST: 89.232.184.77
           SSH_USER: deploy
         run: |
           set -euo pipefail
-          if [ -z "$SSH_KEY" ]; then
-            echo "секрет VPS_SSH_KEY пуст" >&2
-            exit 1
-          fi
-          # Подготовка ssh самодостаточна: этот шаг не зависит от порядка шагов.
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnKcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www-elyria && test -w /opt/coop-field/www-elyria"; then
-            echo "не удалось создать/записать /opt/coop-field/www-elyria (нет прав у deploy). Один раз от root: install -d -o deploy -g deploy /opt/coop-field/www-elyria. ВАЖНО: главный сайт (www, «Пивные гроты») уже синхронизирован этим же запуском и НЕ пострадал; после mkdir перезапустите workflow — Элизия выкатится." >&2
-            exit 1
-          fi
-          # --delete только внутри www-elyria. Код комнаты не затрагивается.
-          rsync -az --delete -e "$SSH" \
-            www-elyria/ \
-            "$SSH_USER@$SSH_HOST:/opt/coop-field/www-elyria/"
-          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www-elyria"
-          echo "вариант Элизии выложен в /opt/coop-field/www-elyria; vhost для него — отдельная одноразовая вставка (как nginx-www.conf для www)."
+          $SSH "$SSH_USER@$SSH_HOST" '
+            set -eu
+            for root in www.staging www-elyria.staging; do
+              test -f "/opt/coop-field/$root/index.html" || { echo "FAIL: нет /opt/coop-field/$root/index.html" >&2; exit 1; }
+              test -d "/opt/coop-field/$root/_next"   || { echo "FAIL: нет /opt/coop-field/$root/_next (Next-структура)" >&2; exit 1; }
+              test -d "/opt/coop-field/$root/_next/static" || { echo "FAIL: нет _next/static у $root" >&2; exit 1; }
+              [ -n "$(ls -A "/opt/coop-field/$root/_next/static" 2>/dev/null)" ] || { echo "FAIL: _next/static пуст у $root" >&2; exit 1; }
+              echo "VERIFIED: /opt/coop-field/$root (index.html + _next/static на месте)"
+            done
+          '
+          echo "stage-корни верифицированы: prod пока не тронут"
+
+      - name: Атомарный промоушн пары корней
+        # Промоушн = четыре rename в одном ssh-сеансе: старые финальные корни
+        # уезжают в .prev (бэкап ровно ОДНОЙ прошлой выкладки), stage-корни
+        # встают на финальные имена. Если промоушн падает на второй паре —
+        # удалённый сценарий сам откатывает ОБА сайта к состоянию до промоушна
+        # (.prev возвращаются на место); после этого шаг красный, прод живой
+        # и согласованный. Ручной откат для владельца: см. сообщение в else-ветке.
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          $SSH "$SSH_USER@$SSH_HOST" '
+            set -eu
+            cd /opt/coop-field
+            # Предусловия: stage-пара на месте и верифицирована шагом выше.
+            test -d www.staging && test -d www-elyria.staging || { echo "FAIL: stage-пара неполна, промоушн не начинаем" >&2; exit 1; }
+            # Снимаем ровно один прошлый бэкап (старее — теряем осознанно).
+            rm -rf www.prev www-elyria.prev
+            had_prev=0
+            if [ -d www ]; then mv www www.prev; had_prev=1; fi
+            if [ -d www-elyria ]; then mv www-elyria www-elyria.prev; had_prev=1; fi
+            if mv www.staging www && mv www-elyria.staging www-elyria; then
+              echo "PROMO-OK: /opt/coop-field/www + /opt/coop-field/www-elyria из staging, прежние в .prev"
+            else
+              echo "PROMO-FAIL: откатываю пару к состоянию до промоушна" >&2
+              rm -rf www www-elyria
+              if [ "$had_prev" = 1 ]; then
+                mv www.prev www 2>/dev/null || true
+                mv www-elyria.prev www-elyria 2>/dev/null || true
+              fi
+              echo "Ручной откат (если что-то не так, от deploy@vps):" >&2
+              echo "  cd /opt/coop-field && rm -rf www www-elyria && mv www.prev www && mv www-elyria.prev www-elyria" >&2
+              exit 1
+            fi
+          '
+          echo "прод-фронт согласован: оба корня из одной сборки. сервис coop-field не перезапускался (статика, nginx читает по запросу)."
