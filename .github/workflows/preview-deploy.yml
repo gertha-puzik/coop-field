@@ -22,9 +22,13 @@ on:
   workflow_run:
     workflows: ["Preview PR (build)"]
     types: [completed]
+  # destroy-триггер: workflow_run бывает только после сборки в ОТКРЫТОМ PR —
+  # после merge/close новых сборок нет, и превью оставалось жить на VPS.
+  pull_request:
+    types: [closed]
 
 concurrency:
-  group: preview-deploy-${{ github.event.workflow_run.head_branch }}
+  group: preview-deploy-${{ github.event.workflow_run.head_branch || github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -38,10 +42,19 @@ jobs:
     name: Выкладка или снос preview
     # success: cancel-in-progress сборки (устаревший пуш) не деплоим;
     # провалившиеся тоже — их комментирует сама build-джоба.
+    # pull_request[closed] — destroy-путь (свои ветки только, форки мимо).
     if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      ) ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -62,17 +75,26 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
-          SHA="${{ github.event.workflow_run.head_sha }}"
-          BRANCH="${{ github.event.workflow_run.head_branch }}"
-          # PR-номер — из GitHub API по ветке+SHA, не из PR-контролируемых
-          # данных: SHA дизамбигуирует повторные PR одной ветки.
-          JSON="$(gh api "repos/$REPO/pulls?head=$REPO:$BRANCH&state=all")"
-          PR="$(printf '%s' "$JSON" | jq -r --arg sha "$SHA" 'first(.[] | select((.head.sha // "") == $sha) | .number) // ""')"
-          if [ -z "$PR" ]; then
-            echo "::error::для SHA $SHA (ветка $BRANCH) не найден PR — деплоить нечего"
-            exit 1
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # destroy-путь (PR закрыт/вмержен): номер и SHA — прямо из события.
+            PR="${{ github.event.pull_request.number }}"
+            SHA="${{ github.event.pull_request.head.sha }}"
+            STATE="closed"
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            # PR-номер — из GitHub API, не из PR-контролируемых данных.
+            # Фильтр head= у API не возвращает ЗАКРЫТЫЕ PR (проверено день
+            # релиза: давал ложное «не найден PR» после мерджа) — поэтому
+            # перебираем state=all пагинацией и матчуемся по head.sha.
+            JSON="$(gh api --paginate "repos/$REPO/pulls?state=all&per_page=100")"
+            PR="$(printf '%s' "$JSON" | jq -r --arg sha "$SHA" 'first(.[] | select((.head.sha // "") == $sha) | .number) // ""')"
+            if [ -z "$PR" ]; then
+              echo "::error::для SHA $SHA (ветка $BRANCH) не найден PR — деплоить нечего"
+              exit 1
+            fi
+            STATE="$(gh api "repos/$REPO/pulls/$PR" --jq .state)"
           fi
-          STATE="$(gh api "repos/$REPO/pulls/$PR" --jq .state)"
           if [ "$STATE" != "open" ] && [ "$STATE" != "closed" ]; then
             echo "::error::неожиданное состояние PR: $STATE"
             exit 1
