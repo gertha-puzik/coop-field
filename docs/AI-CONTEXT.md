@@ -115,7 +115,7 @@ npm run check:landmarks      # doc sizes == wc -l
 ```
 
 - Browser checks: start the server (`npm start`, port 3780) + `npm run dev`
-  (http://localhost:3000), open `/?room=demo&name=<имя>`. If a change is visually
+  (http://localhost:3000). The root is the Wanderpaws menu; grottos are `/combat/?name=<имя>`. If a change is visually
   verifiable — give her the exact click path instead of trusting it "looks right".
 - A task that needs MANY files changed at once is usually a job for a repo agent WITH
   file-system access (Cursor-like) — say so honestly instead of juggling a dozen pastes.

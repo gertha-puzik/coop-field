@@ -401,8 +401,8 @@ function space(ws, payload = {}) {
  * Пустой комнаты в rooms нет — отвечаем нулём, НЕ создавая её (roomOf растит карту).
  * Опрос частый (экран выбора обновляется каждые пару секунд), но обход дешёвый;
  * от спама одной строкой — минимальный интервал на сокет.
- * Закрытая комната (requiresAccount) для гостя получает такой же ответ, как
- * несуществующая: count 0, logins [] — факт существования не раскрывается.
+ * Закрытая комната (requiresAccount): гость видит число сидящих, но не имена.
+ * Несуществующая комната по-прежнему count 0 и пустые logins.
  */
 const ROOMS_MIN_GAP_MS = 250;
 
@@ -413,14 +413,13 @@ function roomsInfo(ws, payload = {}) {
   const ids = Array.isArray(payload?.ids) ? payload.ids : [];
   const list = ids.slice(0, 32).map((raw) => {
     const key = normalizeRoomCode(raw);
-    // Закрытая комната (requiresAccount) для ГОСТЯ неотличима от несуществующей:
-    // не раскрываем ни факт существования, ни счётчик, ни логины сидящих.
+    // Закрытая комната: гость видит счётчик (меню миров), но не имена.
     const closedForGuest = requiresAccount(key) && !ws.account;
-    const room = closedForGuest ? null : rooms.get(key);
+    const room = rooms.get(key);
     return {
       id: key,
       count: room ? room.cats.size : 0,
-      logins: room ? [...room.cats.values()].map((c) => c.login) : [],
+      logins: room && !closedForGuest ? [...room.cats.values()].map((c) => c.login) : [],
     };
   });
   send(ws, EV.ROOMSINFO, list);

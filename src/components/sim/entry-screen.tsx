@@ -264,18 +264,9 @@ export function EntryScreen({
       <header>
         <h1 className="text-xl font-bold leading-tight">{MODE_COPY[playMode].title}</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">{MODE_COPY[playMode].lead}</p>
-        <nav className="mt-2 flex flex-wrap gap-2 text-[11px]" aria-label="Режимы">
+        <nav className="mt-2 text-[11px]" aria-label="Главное меню">
           <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/">
-            Гроты
-          </a>
-          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/elision">
-            Элизия
-          </a>
-          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/combat">
-            Активный бой
-          </a>
-          <a className="underline decoration-[var(--sim-line-hover)] underline-offset-2" href="/hunger">
-            Голодные игры
+            ← Главное меню
           </a>
         </nav>
       </header>

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import Simulator from "@/components/sim/simulator";
+import { HungerGate } from "@/components/menu/wander-gate";
 
 export const metadata: Metadata = {
-  title: "Голодные игры — abnocw",
-  description: "Открытая комната-каркас. Правила раунда владелицы ещё не задали.",
+  title: "Wanderpaws: Hunger Games",
+  description: "Великие игры Пузорящиков, находятся в разработке.",
 };
 
 export default function HungerPage() {
-  return <Simulator mode="hunger" />;
+  return <HungerGate />;
 }

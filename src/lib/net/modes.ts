@@ -21,7 +21,7 @@ export const NAMED_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №1",
     mode: "beer",
     access: "open",
-    href: "/",
+    href: "/combat/",
     emoji: "🍺",
     blurb: "Клеточное поле 10×6, бой, манекен и мишень. Гости заходят без аккаунта.",
   },
@@ -30,7 +30,7 @@ export const NAMED_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №2",
     mode: "beer",
     access: "open",
-    href: "/",
+    href: "/combat/",
     emoji: "🍺",
     blurb: "Второй грот — то же поле, другая комната.",
   },
@@ -39,18 +39,9 @@ export const NAMED_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №3",
     mode: "beer",
     access: "open",
-    href: "/",
+    href: "/combat/",
     emoji: "🍺",
     blurb: "Третий грот — то же поле, другая комната.",
-  },
-  {
-    id: "combat",
-    title: "Активный бой",
-    mode: "combat",
-    access: "open",
-    href: "/combat",
-    emoji: "💥",
-    blurb: "Отдельная страница и комната с теми же ударами и шагами, что в гротах.",
   },
   {
     id: "hunger",
@@ -75,7 +66,7 @@ export const NAMED_ROOMS: readonly NamedRoom[] = [
 export const MODE_COPY: Record<PlayMode, { title: string; lead: string }> = {
   hub: {
     title: "abnocw",
-    lead: "Слева — имя и скин, справа — скрытые параметры. Подтвердите три пункта — ниже откроется выбор комнаты. Пивные гроты открыты гостям. Элизия, активный бой и голодные игры — отдельные страницы.",
+    lead: "Слева — имя и скин, справа — скрытые параметры. Подтвердите три пункта — ниже откроется выбор комнаты.",
   },
   beer: {
     title: "Пивные гроты",
@@ -86,8 +77,8 @@ export const MODE_COPY: Record<PlayMode, { title: string; lead: string }> = {
     lead: "Закрытая локация: мирная ходьба, вход в бой по клетке, редактор карты, сутки и погода. Без аккаунта сервер не пустит — даже прямым сокетом.",
   },
   combat: {
-    title: "Активный бой",
-    lead: "Отдельная открытая комната с теми же шагами, ударами, блоком и бронёй, что в гротах. Новых сложных правил нет — основа, которую можно расширять.",
+    title: "abnocw",
+    lead: "Пивной грот №1–№3: клеточное поле, бой, манекен и мишень. Гости заходят без аккаунта.",
   },
   hunger: {
     title: "Голодные игры",
@@ -101,7 +92,8 @@ export function namedRoom(id: string): NamedRoom | undefined {
 
 export function roomsForMode(mode: PlayMode): NamedRoom[] {
   if (mode === "hub") return [...NAMED_ROOMS];
-  if (mode === "beer") return NAMED_ROOMS.filter((r) => r.mode === "beer");
+  // Страница /combat/ — это гроты. Отдельной комнаты с подписью «активный бой» в выборе нет.
+  if (mode === "beer" || mode === "combat") return NAMED_ROOMS.filter((r) => r.mode === "beer");
   return NAMED_ROOMS.filter((r) => r.mode === mode);
 }
 
