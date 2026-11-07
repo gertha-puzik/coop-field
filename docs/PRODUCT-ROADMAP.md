@@ -309,7 +309,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 | Контент локаций и скинов | Редактор + whitelist скинов | Расширять их, не второй редактор | `editor-ops.ts`, `settings.ts` SPRITES |
 | Справочник «как устроена игра» | Документы для агентов (`AGENTS.md`, `ARCHITECTURE.md`, `AI-CONTEXT.md`) | Внутриадминные карточки на простом русском из метаданных | `src/lib/handbook/*`, вкладка панели |
 | ИИ-помощник в игре | Нет, и **не делать** | Cursor + справочник + AGENTS.md | этот документ §10 |
-| Preview PR `*.abnocw.miew.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
+| Preview PR `*.abnocw.miew.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview-build.yml` + `preview-deploy.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
 | Не грузить все режимы сразу | Next code-split по маршрутам сам | Не импортировать hunger-каркас в грот без нужды | `src/app/*/page.tsx` |
 | Не три копии движка | Один `Simulator` | Проп `mode` / стартовая комната | `simulator.tsx` (тонкий проп, без роста логики) |
 
