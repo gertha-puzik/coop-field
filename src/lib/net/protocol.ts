@@ -45,7 +45,7 @@ import {
 
 /* ---------- имена событий ---------- */
 
-/** Клиент → сервер, 22 события. Порядок — как в таблице AGENTS.md. */
+/** Клиент → сервер, 23 события. Порядок — как в таблице AGENTS.md. */
 export const CLIENT_TO_SERVER = [
   "join",
   "move",
@@ -69,9 +69,10 @@ export const CLIENT_TO_SERVER = [
   "jump",
   "setmap",
   "rooms",
+  "auth",
 ] as const;
 
-/** Сервер → клиент, 22 события. Порядок — как в таблице AGENTS.md. */
+/** Сервер → клиент, 23 события. Порядок — как в таблице AGENTS.md. */
 export const SERVER_TO_CLIENT = [
   "you",
   "field",
@@ -95,12 +96,13 @@ export const SERVER_TO_CLIENT = [
   "atmo",
   "freemove",
   "roomsinfo",
+  "whoami",
 ] as const;
 
 export type ClientEventName = (typeof CLIENT_TO_SERVER)[number];
 export type ServerEventName = (typeof SERVER_TO_CLIENT)[number];
 
-/** Все 34 уникальных имени протокола одним словарём для кода (диспетчер coop.ts).
+/** Все 36 уникальных имён протокола одним словарём для кода (диспетчер coop.ts).
  *  «move»/«chat» и ещё 8 имён ходят в обе стороны — ключ один. Имя с пробелом —
  *  только как значение: в коде пишем EV.UPDATE_CAT, на проводе — "update cat". */
 export const EV = {
@@ -117,6 +119,7 @@ export const EV = {
   JUMP: "jump",
   SETMAP: "setmap",
   ROOMS: "rooms",
+  AUTH: "auth",
   // только сервер → клиент
   YOU: "you",
   FIELD: "field",
@@ -130,6 +133,7 @@ export const EV = {
   DUMMY_STATE: "dummyState",
   RAB_STATE: "rabState",
   ROOMSINFO: "roomsinfo",
+  WHOAMI: "whoami",
   // обе стороны
   MOVE: "move",
   CHAT: "chat",
@@ -233,6 +237,31 @@ export type CoopRefuse = {
 
 /** Состав одной комнаты для выбора: сколько игроков и кто именно. */
 export type CoopRoomInfo = { id: string; count: number; logins: string[] };
+
+/** Персонаж аккаунта (не гость): имя на поле, скин, рост. */
+export type CoopCharacter = {
+  id: string;
+  name: string;
+  sprite?: string;
+  size?: number;
+};
+
+/** Ответ на auth / снимок сессии. token — только владельцу сокета. */
+export type CoopWhoami = {
+  ok: boolean;
+  role?: "guest" | "registered" | "admin";
+  login?: string;
+  accountId?: string;
+  token?: string;
+  characters?: CoopCharacter[];
+  activeCharacterId?: string;
+  reason?: string;
+};
+
+export function isCoopWhoami(v: unknown): v is CoopWhoami {
+  if (!isObj(v)) return false;
+  return typeof v.ok === "boolean";
+}
 
 /* ---------- guard-валидаторы основных payload событий ---------- */
 

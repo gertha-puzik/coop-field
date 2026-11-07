@@ -46,8 +46,8 @@ function docEvents(heading) {
   return names;
 }
 
-const docClient = docEvents("### Client → server (22)");
-const docServer = docEvents("### Server → client (22)");
+const docClient = docEvents("### Client → server (23)");
+const docServer = docEvents("### Server → client (23)");
 const regClient = [...protocol.CLIENT_EVENTS];
 const regServer = [...protocol.SERVER_EVENTS];
 
@@ -66,8 +66,8 @@ function diffLabel(kind, doc, registry) {
       problems.push(`AGENTS.md:${docLine(name)}: событие \`${name}\` описано в доке, но его нет в реестре server/protocol.js — убери из таблицы или добавь в реестр.`);
     }
   }
-  if (doc.length !== 22) {
-    problems.push(`AGENTS.md ${kind}-таблица: строк событий ${doc.length}, ожидается 22 — счётчик в заголовке секции обязан сходиться.`);
+  if (doc.length !== registry.length) {
+    problems.push(`AGENTS.md ${kind}-таблица: строк событий ${doc.length}, ожидается ${registry.length} — счётчик в заголовке секции обязан сходиться с реестром.`);
   }
 }
 

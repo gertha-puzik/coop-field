@@ -11,6 +11,7 @@ import {
   ATMO_PHASE_MS_MIN, ATMO_PHASE_MS_MAX, ATMO_WEATHER_MS_MIN, ATMO_WEATHER_MS_MAX,
 } from "./protocol.js";
 import { broadcast } from "./room.js";
+import { atmoLengths } from "./runtime-config.js";
 
 const ATMO_DAYPARTS = new Set(ATMO_PHASE_LIST);
 const ATMO_WEATHERS = new Set(ATMO_WEATHER_LIST);
@@ -20,10 +21,13 @@ const ATMO_WEATHERS = new Set(ATMO_WEATHER_LIST);
  * погода — солнечная, её отсчёт пошёл сейчас.
  */
 function atmoDefaults(now) {
+  const len = atmoLengths();
+  const pl = len.pl || ATMO_PHASE_MS_DEF;
+  const wl = len.wl || ATMO_WEATHER_MS_DEF;
   return {
-    cs: now - Math.round(1.5 * ATMO_PHASE_MS_DEF), // floor(1.5)=1 → «день»
-    pl: ATMO_PHASE_MS_DEF,
-    wl: ATMO_WEATHER_MS_DEF,
+    cs: now - Math.round(1.5 * pl), // floor(1.5)=1 → «день»
+    pl,
+    wl,
     w: "sun",
     ws: now,
   };

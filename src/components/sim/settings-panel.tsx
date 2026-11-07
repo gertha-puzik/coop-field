@@ -21,6 +21,8 @@ import {
   wrap360,
 } from '@/lib/sim/settings';
 import type { CoopAtmo } from '@/lib/net/coop';
+import { GertaHandbook } from './gerta-handbook';
+import { AdminRoomConfig } from './admin-room-config';
 
 interface Props {
   settings: SimSettings;
@@ -216,7 +218,7 @@ function ColorInput({
 /* ---------- разделы настроек ---------- */
 
 /** Идентификатор раздела настроек (квадратик-иконка в переключателе). */
-type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config';
+type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config' | 'handbook';
 
 /** Вкладки расширенных настроек — клиентский UX-фильтр, а не защита:
  *  открываются любым непустым вводом. Настоящий арбитр — сервер: тот же
@@ -248,6 +250,7 @@ function writeAdminUnlocked(on: boolean) {
  *  «Общий» (#) виден всем; разделы с admin: true — только после пароля. */
 const TABS: { id: TabId; icon: string; label: string; admin?: boolean }[] = [
   { id: 'field', icon: '#', label: 'Общий' },
+  { id: 'handbook', icon: '📖', label: 'Справочник' },
   { id: 'arrow', icon: '🏹', label: 'Стрела', admin: true },
   { id: 'slowdown', icon: '⛔', label: 'Замедление', admin: true },
   { id: 'combat', icon: '💥', label: 'Удары и энергия', admin: true },
@@ -1240,8 +1243,15 @@ export function SettingsPanel(props: Props) {
         </div>
             </>
           )}
+          {tab === 'handbook' && <GertaHandbook />}
           {tab === 'config' && (
             <>
+        <p className="text-[11px] leading-snug text-[var(--sim-text-muted)]">
+          Этот JSON — настройки <b>этого браузера</b> (стрела, зоны, поле). Применяются сразу
+          у вас. Соседи их не видят. Сетевые длины суток — ниже, их хранит сервер: новые
+          комнаты возьмут default, уже открытая комната меняется ползунком «Сутки» сразу.
+        </p>
+        <AdminRoomConfig />
         <div className="flex flex-wrap gap-2 py-1">
           <Button
             size="sm"
@@ -1276,6 +1286,9 @@ export function SettingsPanel(props: Props) {
             variant="destructive"
             className="h-7 text-xs"
             onClick={() => {
+              if (!window.confirm('Сбросить все настройки этого браузера? Соседей и сервер это не затронет. Отменить потом нельзя.')) {
+                return;
+              }
               props.onResetAll();
               setIoMsg('Настройки сброшены.');
             }}
