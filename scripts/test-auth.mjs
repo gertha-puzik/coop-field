@@ -1,5 +1,5 @@
 /**
- * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг).
+ * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг + P1 сплит доменов).
  *
  *  1. store: регистрация, повторный login, чужой пароль, короткое имя, занятое имя;
  *  2. гость входит в grot-1 (you+field), в test — refuse auth_required + noplace;
@@ -8,14 +8,23 @@
  *  5. книга позиций: тот же login после регистрации поднимает fx/fy;
  *  6. guest join после logout снова не пускает в test;
  *  7. (pr-41) второй sandbox с заниженными порогами: BOOTSTRAP_ADMIN-СПИСОК
- *      (оба имени → admin), register-флуд с подделанным XFF ловится по
- *      ПОСЛЕДНЕМУ хопу, MAX_ACCOUNTS → 'full', per-LOGIN замок неудачных
- *      входов (успех сбрасывает, окно отпускает), rooms-lie (гость не видит
- *      occupancy закрытой комнаты — ответ как про несуществующую).
+ *     (оба имени → admin), register-флуд с подделанным XFF ловится по
+ *     ПОСЛЕДНЕМУ хопу, MAX_ACCOUNTS → 'full', per-LOGIN замок неудачных
+ *     входов (успех сбрасывает, окно отпускает), roomsinfo-«призрак»
+ *     (гость не видит ЗАНИМАЕМОСТЬ закрытой комнаты — комната как бы не
+ *     существует: count 0 без имён; аккаунт видит реальный состав);
+ *  8. (P1) третий sandbox с PUBLIC_HOSTS/ELYRIA_HOSTS: HTTP-гейт public-хоста
+ *     (/auth, POST /cfg, /profiles → 404, GET /cfg жив), WS-кадры register/
+ *     login на public — отказ без деталей (hello/logout гостя живы), CSRF
+ *     Origin (чужой → 403 csrf, белый → доходит до логина), матрица токенов
+ *     на elyria (тела без token, приём ?t= выключен, cookie работает),
+ *     https-cookie SameSite=Lax+Secure; join по коду combat → поле room
+ *     grot-1 (снятая комната алиасится в RETIRED_ROOMS).
  *
  * Запуск: node scripts/test-auth.mjs (сам спавнит server.js в песочнице DATA_DIR).
  */
 import { spawn } from "node:child_process";
+import http from "node:http";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -195,6 +204,19 @@ try {
   const httpBad = await resBad.json();
   check(resBad.status === 401 && httpBad.ok === false, "http bad password");
 
+  // (P1-б) https-сессия через x-forwarded-proto: Set-Cookie обязан стать
+  // Secure + SameSite=Lax (не None — кросс-сайт перенос кук больше не нужен).
+  const resSecure = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
+    body: JSON.stringify({ login: "HttpsKot", pass: "password1" }),
+  });
+  const setCookie = resSecure.headers.get("set-cookie") || "";
+  check(
+    setCookie.includes("SameSite=Lax") && setCookie.includes("Secure") && !setCookie.includes("None"),
+    "http register https: cookie SameSite=Lax + Secure (без None)",
+  );
+
   const withTok = await client(`/?t=${httpLogin.token}`);
   const hello = await waitFor(withTok, (m) => m[0] === "whoami" && m[1]?.accountId);
   check(hello[1].login === "HttpKot", "handshake query t binds session");
@@ -225,6 +247,11 @@ try {
   combatGuest.send(JSON.stringify(["join", { room: "combat", login: "Боец" }]));
   const youCombat = await waitFor(combatGuest, (m) => m[0] === "you");
   check(youCombat[1].login === "Боец", "guest: combat you");
+  const fieldCombat = await waitFor(combatGuest, (m) => m[0] === "field");
+  check(
+    fieldCombat[1]?.room === "grot-1",
+    "retired combat: join по коду combat привёл в grot-1 (RETIRED_ROOMS)",
+  );
   combatGuest.close();
 
   const hungerGuest = await client();
@@ -412,7 +439,8 @@ try {
   check(!!unlocked && unlocked[1]?.login === "лИзА", "per-login: окно отпустило — верный пароль входит");
   lk.close();
 
-  // Счётчик закрытой комнаты гостю виден (меню миров), имена — нет.
+  // Состав закрытой комнаты: аккаунту — реальный счётчик и имена; гость
+  // ниже получает «призрак» (count 0, пустые logins) — см. rooms-ghost.
   const sitter = await client2();
   let sMark = sitter.inbox.length;
   loginFrame(sitter, "лИзА", "password1");
@@ -435,13 +463,15 @@ try {
   const lie = await waitForFrom(spy, (m) => m[0] === "roomsinfo", 0);
   const lieTest = lie[1]?.[0];
   const lieGhost = lie[1]?.[1];
+  // P1 roomsinfo-ghost: гость не может даже СОСЧИТАТЬ сидящих закрытой комнаты —
+  // ответ неотличим от несуществующей (count 0, без имён; спек §11).
   check(
-    lieTest?.id === "test" && lieTest?.count >= 1 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
-    "rooms-count: гость видит число в закрытой комнате, но не имена",
+    lieTest?.id === "test" && lieTest?.count === 0 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
+    "rooms-ghost: гость в закрытой комнате видит «пустую» (count 0, без имён)",
   );
   check(
     lieGhost?.count === 0 && Array.isArray(lieGhost?.logins) && lieGhost.logins.length === 0,
-    "rooms-count: несуществующая комната по-прежнему пустая",
+    "rooms-ghost: несуществующая комната по-прежнему пустая",
   );
   spy.close();
   sitter.close();
@@ -450,6 +480,240 @@ try {
   console.error("FAIL exception (hardening sandbox)", e);
 } finally {
   server2.kill("SIGTERM");
+}
+
+/* ---------- P1: домен-гейты, CSRF и матрица токенов (третий sandbox) ----------
+ * PUBLIC_HOSTS=pub.example + ELYRIA_HOSTS=ely.example (+ белый Origin из
+ * ALLOWED_ORIGINS). Пробы шлют явный Host-заголовок (node:http — fetch его не
+ * переопределяет), поэтому один сервер показывает все три класса хоста. */
+const DATA3 = mkdtempSync(path.join(tmpdir(), "coop-auth-host-"));
+const PORT3 = 4015 + Math.floor(Math.random() * 40);
+const WS3 = `ws://${HOST}:${PORT3}`;
+const LOCAL3 = `127.0.0.1:${PORT3}`;
+
+const server3 = spawn(process.execPath, ["server.js"], {
+  cwd: ROOT,
+  env: {
+    ...process.env,
+    PORT: String(PORT3),
+    HOST,
+    DATA_DIR: DATA3,
+    PUBLIC_HOSTS: "pub.example",
+    ELYRIA_HOSTS: "ely.example",
+    ALLOWED_ORIGINS: "https://ely.example",
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+server3.stderr.on("data", (d) => process.stderr.write(d));
+
+/** HTTP-проба с ЯВНЫМ Host-заголовком (и, по желанию, Origin/cookie/proto). */
+function probe3({ method = "GET", path = "/", host = LOCAL3, origin, proto, cookie, body }) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const headers = { host };
+    if (payload) headers["content-type"] = "application/json";
+    if (origin) headers.origin = origin;
+    if (proto) headers["x-forwarded-proto"] = proto;
+    if (cookie) headers.cookie = cookie;
+    const req = http.request({ host: HOST, port: PORT3, method, path, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        const setCookie = res.headers["set-cookie"] || [];
+        try {
+          resolve({ status: res.statusCode, json: JSON.parse(text), setCookie });
+        } catch {
+          resolve({ status: res.statusCode, json: null, setCookie });
+        }
+      });
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+try {
+  await waitReady(WS3);
+
+  // (P1-а) HTTP-гейт public-хоста: зоны Элизии «не существуют»…
+  const gateReg = await probe3({
+    method: "POST", path: "/auth/register", host: "pub.example",
+    body: { login: "PubBlocked", pass: "password1" },
+  });
+  check(
+    gateReg.status === 404 && gateReg.json?.reason === "not_found",
+    "host-gate: POST /auth/register на public → 404 not_found",
+  );
+  const gateCfgPost = await probe3({
+    method: "POST", path: "/cfg", host: "pub.example",
+    body: { atmo: { phaseMin: 9, weatherMin: 20 } },
+  });
+  check(
+    gateCfgPost.status === 404 && gateCfgPost.json?.reason === "not_found",
+    "host-gate: POST /cfg на public → 404 (конфиг на гротах read-only)",
+  );
+  const gateCfgGet = await probe3({ method: "GET", path: "/cfg", host: "pub.example" });
+  check(
+    gateCfgGet.status === 200 && gateCfgGet.json?.ok === true,
+    "host-gate: GET /cfg на public жив (публичный конфиг)",
+  );
+  const gateProfiles = await probe3({ method: "GET", path: "/profiles", host: "pub.example" });
+  check(
+    gateProfiles.status === 404 && gateProfiles.json?.reason === "not_found",
+    "host-gate: GET /profiles на public → 404",
+  );
+
+  // …а elyria-хост — рабочая зона: регистрация доходит до исполнения.
+  const elyReg = await probe3({
+    method: "POST", path: "/auth/register", host: "ely.example",
+    body: { login: "ElyHost", pass: "password1" },
+  });
+  check(
+    elyReg.status === 200 && elyReg.json?.ok === true && elyReg.json?.login === "ElyHost",
+    "host-gate: register на elyria проходит до исполнения (200, не 404)",
+  );
+  // Матрица токенов P1: elyria — cookie-only, token в теле не выдаётся.
+  check(elyReg.json?.token === undefined, "token-matrix: elyria register — без token в теле (cookie-only)");
+  const elyTok = (String(elyReg.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
+  check(!!elyTok, "token-matrix: elyria register прислал куку с сессией");
+
+  // ?t= на elyria по умолчанию игнорируется; кука та же сессию поднимает.
+  const elyByQ = await probe3({ method: "GET", path: `/auth/me?t=${elyTok}`, host: "ely.example" });
+  check(elyByQ.json?.ok === true && elyByQ.json?.role === "guest", "token-matrix: elyria игнорирует ?t= (легаси выключено)");
+  const elyByCookie = await probe3({
+    method: "GET", path: "/auth/me", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    elyByCookie.json?.ok === true && elyByCookie.json?.login === "ElyHost",
+    "token-matrix: cookie-сессия на elyria работает",
+  );
+  const localByQ = await probe3({ method: "GET", path: `/auth/me?t=${elyTok}`, host: LOCAL3 });
+  check(
+    localByQ.json?.ok === true && localByQ.json?.login === "ElyHost",
+    "token-matrix: local-класс по-прежнему принимает ?t= (тесты/dev)",
+  );
+
+  // /profiles на elyria: DTO из сессии без login/role; гость — 401.
+  const elyProf = await probe3({
+    method: "GET", path: "/profiles/me", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    elyProf.status === 200 && elyProf.json?.ok === true && elyProf.json?.displayName === "ElyHost"
+      && !("login" in (elyProf.json || {})) && !("role" in (elyProf.json || {})),
+    "profiles: /profiles/me отдаёт DTO без login/role (accounts.publicProfile)",
+  );
+  const elyProfGuest = await probe3({ method: "GET", path: "/profiles/me", host: "ely.example" });
+  check(
+    elyProfGuest.status === 401 && elyProfGuest.json?.reason === "auth_required",
+    "profiles: гость /profiles/me → 401 auth_required",
+  );
+  const elyCat = await probe3({ method: "GET", path: "/profiles", host: "ely.example" });
+  check(
+    elyCat.status === 200 && elyCat.json?.ok === true && Array.isArray(elyCat.json?.items)
+      && elyCat.json.items.length === 0 && elyCat.json?.total === 0,
+    "profiles: каталог-заглушка GET /profiles → items 0, total 0",
+  );
+  const elyOne = await probe3({ method: "GET", path: "/profiles/some-id", host: "ely.example" });
+  check(
+    elyOne.status === 404 && elyOne.json?.reason === "unknown",
+    "profiles: GET /profiles/:id — заглушка 404 unknown до P4",
+  );
+  const elyPatch = await probe3({
+    method: "PATCH", path: "/profiles/me", host: "ely.example", body: { displayName: "NewName" },
+  });
+  check(
+    elyPatch.status === 501 && elyPatch.json?.reason === "not_implemented",
+    "profiles: PATCH /profiles/me → 501 not_implemented (правка — P4)",
+  );
+  const elyProf404 = await probe3({ method: "PUT", path: "/profiles/me", host: "ely.example", body: {} });
+  check(
+    elyProf404.status === 404 && elyProf404.json?.ok === false && !!elyProf404.json?.reason,
+    "profiles: мусорный метод/суб-путь — JSON-404 от обработчика, не статика",
+  );
+
+  // (P1-в) CSRF: пишущие POST с чужим Origin → 403 csrf, белый Origin —
+  // доходит до проверки пароля (401 bad, не 403).
+  const csrfLogin = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    origin: "https://evil.example", body: { login: "ElyHost", pass: "password1" },
+  });
+  check(
+    csrfLogin.status === 403 && csrfLogin.json?.reason === "csrf",
+    "csrf: login с чужим Origin → 403 csrf",
+  );
+  const csrfCfg = await probe3({
+    method: "POST", path: "/cfg", host: "ely.example",
+    origin: "https://evil.example", body: {},
+  });
+  check(
+    csrfCfg.status === 403 && csrfCfg.json?.reason === "csrf",
+    "csrf: POST /cfg с чужим Origin → 403 csrf",
+  );
+  const csrfOk = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    origin: "https://ely.example", body: { login: "ElyHost", pass: "wrong-wrong" },
+  });
+  check(
+    csrfOk.status === 401 && csrfOk.json?.reason === "bad",
+    "csrf: Origin из ALLOWED_ORIGINS доводит до проверки пароля (401 bad, не 403)",
+  );
+
+  // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;
+  // hello/logout прежние. На elyria-хосте вход работает и выдаёт токен кадром.
+  const client3 = (headers) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(WS3, { headers: headers || {} });
+      const inbox = [];
+      ws.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
+      ws.on("error", reject);
+      ws.inbox = inbox;
+      ws.once("open", () => resolve(ws));
+    });
+  const waitForIdx = (ws, pred, from, ms = 4000) =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const hit = ws.inbox.slice(from).find(pred);
+        if (hit) return resolve(hit);
+        if (Date.now() - t0 > ms) {
+          return reject(new Error(`timeout; inbox=${JSON.stringify(ws.inbox.slice(-8))}`));
+        }
+        setTimeout(tick, 15);
+      };
+      tick();
+    });
+
+  const pubWs = await client3({ host: "pub.example" });
+  const pubMark = pubWs.inbox.length;
+  pubWs.send(JSON.stringify(["auth", { action: "register", login: "WsPub", pass: "password1" }]));
+  const pubRefusal = await waitForIdx(pubWs, (m) => m[0] === "whoami" && m[1]?.ok === false, pubMark);
+  check(
+    pubRefusal[1]?.reason === "error",
+    "ws-gate: register на public-хосте — спокойный отказ (whoami reason:error)",
+  );
+  let markHello = pubWs.inbox.length;
+  pubWs.send(JSON.stringify(["auth", { action: "hello" }]));
+  const pubHello = await waitForIdx(pubWs, (m) => m[0] === "whoami" && m[1]?.ok === true, markHello);
+  check(
+    pubHello[1]?.role === "guest",
+    "ws-gate: hello на public-хосте жив (гость получает whoami guest)",
+  );
+  pubWs.close();
+
+  const elyWs = await client3({ host: "ely.example" });
+  const elyMark = elyWs.inbox.length;
+  elyWs.send(JSON.stringify(["auth", { action: "register", login: "WsEly", pass: "password1" }]));
+  const elyFrame = await waitForIdx(elyWs, (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId, elyMark);
+  check(!!elyFrame, "ws-gate: register кадром на elyria-хосте по-прежнему работает");
+  check(!!elyFrame[1]?.token, "token-matrix: WS-кадр на elyria выдаёт токен whoami (матрица — про HTTP-тела)");
+  elyWs.close();
+} catch (e) {
+  failures += 1;
+  console.error("FAIL exception (host-policy sandbox)", e);
+} finally {
+  server3.kill("SIGTERM");
 }
 
 if (failures) {

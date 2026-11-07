@@ -193,6 +193,38 @@ eq("atmoPhaseIdx: граница дня (419999)", atmo.atmoPhaseIdx({ cs: 0, pl
 eq("atmoPhaseIdx: старт ночи (1140000)", atmo.atmoPhaseIdx({ cs: 0, pl: 420000, wl: 720000 }, 1140000), 2);
 eq("modes: test registered-only", modes.requiresAccount("test"), true);
 eq("modes: grot open", modes.requiresAccount("grot-1"), false);
+
+/* ---------- P1: снятие combat-комнаты + хост-классы ---------- */
+eq("modes: RETIRED_ROOMS алиас combat → grot-1", modes.RETIRED_ROOMS.combat, "grot-1");
+eq("modes: combat нет в каталоге MODE_ROOMS", modes.MODE_ROOMS.some((r) => r.id === "combat"), false);
+eq("modes: снятый код не закрыт аккаунтом (замок только у живых комнат)", modes.requiresAccount("combat"), false);
+
+// env-листы host-политики читаются в момент вызова hostClassOf — задаём ДО проверок.
+process.env.PUBLIC_HOSTS = "pub.example";
+process.env.ELYRIA_HOSTS = "ely.example";
+eq("hostClassOf: env PUBLIC_HOSTS — точное имя", cfg.hostClassOf("pub.example"), "public");
+eq("hostClassOf: env PUBLIC_HOSTS — суффикс поддомена", cfg.hostClassOf("pr-45.pub.example"), "public");
+eq("hostClassOf: дефолт abnocw.miew.ru", cfg.hostClassOf("abnocw.miew.ru"), "public");
+eq("hostClassOf: дефолт суффикс .abnocw.miew.ru", cfg.hostClassOf("pr-12.abnocw.miew.ru"), "public");
+eq("hostClassOf: дефолт coop.sslip", cfg.hostClassOf("coop.89-232-184-77.sslip.io"), "public");
+eq("hostClassOf: дефолт abnocw.sslip", cfg.hostClassOf("abnocw.89-232-184-77.sslip.io"), "public");
+eq("hostClassOf: дефолт суффикс .89-232-184-77.sslip.io", cfg.hostClassOf("pr-7.89-232-184-77.sslip.io"), "public");
+eq("hostClassOf: env ELYRIA_HOSTS — точное имя", cfg.hostClassOf("ely.example"), "elyria");
+eq("hostClassOf: env ELYRIA_HOSTS — суффикс", cfg.hostClassOf("pr-9.ely.example"), "elyria");
+eq("hostClassOf: дефолт elisium.miew.ru", cfg.hostClassOf("elisium.miew.ru"), "elyria");
+eq("hostClassOf: дефолт суффикс .elisium.miew.ru", cfg.hostClassOf("pr-33.elisium.miew.ru"), "elyria");
+eq("hostClassOf: localhost — local", cfg.hostClassOf("localhost"), "local");
+eq("hostClassOf: порт не мешает классу (127.0.0.1)", cfg.hostClassOf("127.0.0.1:3780"), "local");
+eq("hostClassOf: 127.* — local", cfg.hostClassOf("127.0.0.99"), "local");
+eq("hostClassOf: *.localhost — local", cfg.hostClassOf("dev.localhost"), "local");
+eq("hostClassOf: ::1 — local", cfg.hostClassOf("::1"), "local");
+eq("hostClassOf: [::1]:8080 — local", cfg.hostClassOf("[::1]:8080"), "local");
+eq("hostClassOf: неизвестный хост → public", cfg.hostClassOf("evil.example"), "public");
+eq("hostClassOf: пустой хост → public (самый закрытый дефолт)", cfg.hostClassOf(""), "public");
+eq("isPublicHost: по req.headers.host", cfg.isPublicHost({ headers: { host: "pub.example:9000" } }), true);
+eq("isElyriaHost: по req.headers.host", cfg.isElyriaHost({ headers: { host: "ely.example" } }), true);
+eq("isElyriaHost: public-хост — false", cfg.isElyriaHost({ headers: { host: "pub.example" } }), false);
+eq("isElyriaHost: без заголовка host — false", cfg.isElyriaHost({ headers: {} }), false);
 eq("hunger idle", hunger.hungerState({}).phase, "idle");
 eq("auth cookie name", auth.COOKIE, "coop_session");
 eq("accounts PASS_MIN", accounts.PASS_MIN, 8);
