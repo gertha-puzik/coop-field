@@ -9,7 +9,9 @@ name: Preview PR (build)
 # с main, PR его подменить не может, секреты доступны только ему.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
 # Форки не собираем и не деплоим (head_repository проверяется и тут, и в deploy).
-# Каталог/юнит/имя сайта — pr-<номер PR>; сборка из SHA коммита, не из ветки.
+# Каталог/юнит/имена сайтов — pr-<номер PR>; dual-host P5: артефакт несёт
+# ОБА корня www-grotto/ + www-elyria/, на VPS один инстанс с двумя хостами.
+# Сборка из SHA коммита, не из ветки.
 
 on:
   pull_request:
@@ -40,12 +42,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Сборка статики
+      - name: Сборка обоих вариантов сайта
+        # Контракт с фазой P6: в package.json появляется скрипт
+        # build:variants, который из ЭТОГО ЖЕ head-SHA собирает оба Next-варианта
+        # и раскладывает статические корни РОВНО в www-grotto/ (публичные
+        # «Пивные гроты») и www-elyria/ (Элизия) в корне репо, с обрезкой чужих
+        # маршрутов. До вхождения P6 в ветку этого скрипта нет — шаг упадёт,
+        # и это осознанный enforcement контракта dual-host (P5 не собирает
+        # single-root www/ из out/).
         run: |
           set -euo pipefail
           npm ci
-          npm run build
-          test -f out/index.html
+          npm run build:variants
+          test -f www-grotto/index.html
+          test -f www-elyria/index.html
 
       - name: Preview-гейты
         run: |
@@ -56,18 +66,26 @@ jobs:
           npm run test:write-openssh-key
 
       - name: Упаковка preview-дистрибутива
-        # Ровно тот состав, что раньше уезжал на VPS rsync'ом из джобы PR:
-        # server-код, собранный www (out/), рантайм-скрипты, пакеты.
+        # Ровно тот состав, что уезжает на VPS: server-код, ДВА
+        # статических корня (www-grotto «гроты» + www-elyria «Элизия» —
+        # dual-host P5: один инстанс, два сайта), рантайм-скрипты, пакеты.
         # Деплой-скрипты preview-deploy.yml сюда НЕ входят.
+        # В корень артефакта кладём и штамп SHA (preview-sha): деплой
+        # сверяет его с head PR и отказывается выкладывать устаревший
+        # артефакт (очередь отменённых сборок и т.п.).
         run: |
           set -euo pipefail
           rm -rf preview-dist
-          mkdir -p preview-dist/www
-          cp -a out/. preview-dist/www/
+          mkdir -p preview-dist/www-grotto preview-dist/www-elyria
+          cp -a www-grotto/. preview-dist/www-grotto/
+          cp -a www-elyria/. preview-dist/www-elyria/
           cp -a server.js server scripts package.json package-lock.json preview-dist/
+          printf '%s\n' '${{ github.event.pull_request.head.sha }}' > preview-dist/preview-sha
           test -f preview-dist/server.js
           test -f preview-dist/server/protocol.js
-          test -f preview-dist/www/index.html
+          test -f preview-dist/www-grotto/index.html
+          test -f preview-dist/www-elyria/index.html
+          test -f preview-dist/preview-sha
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
