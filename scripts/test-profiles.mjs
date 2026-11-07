@@ -2,8 +2,8 @@
  * P4 профили: HTTP-контракт рабочих профилей + вариантная изоляция страниц.
  *
  *  1. гость: GET /profiles/me → 401 auth_required; GET /profiles — рабочий
- *     каталог (items/total, без пагинации); легаси-строка без profile
- *     в нём не показывается;
+ *     каталог (items/total/nextCursor; limit default 24); легаси-строка
+ *     без profile в нём не показывается;
  *  2. регистрация+cookie (HTTP): GET /profiles/me — 200 DTO без login/role/pass,
  *     с пустыми слотами bio/avatarCharacterId;
  *  3. PATCH /profiles/me: bio+displayName пишутся и читаются обратно
@@ -17,7 +17,16 @@
  *  6. GET /profiles — карточки: обе регистрированные записи, total согласован,
  *     приватных полей нет ни в одной карточке, порядок стабилен, легаси
  *     отсутствует;
- *  7. вариантная изоляция: www-grotto (после build:variants) не содержит
+ *  7. поиск и пагинация каталога (B3): q — подстрока displayName с
+ *     нормализацией (регистр, NFC, trim; длиннее 64 код-поинтов — обрезка
+ *     префиксом, НЕ 400); пустой/пробельный q = без фильтра; несуществующий
+ *     q → items пуст и nextCursor null; скрытый легаси через поиск не
+ *     течёт; limit — мусор → 400 invalid_limit, выше 48 — клэмп без 400;
+ *     cursor — base64 «createdAt:accountId», мусор → 400 invalid_cursor,
+ *     несуществующая позиция (удалённый элемент) — продолжение с ближайшей
+ *     следующей БЕЗ ошибки; страницы стыкуются без дублей и без приватных
+ *     полей на каждой; карточка по :id не зависит от limit/cursor/q;
+ *  8. вариантная изоляция: www-grotto (после build:variants) не содержит
  *     players/, admin/ и elision/; нет корня сборки → SKIP (как юнит-раннер).
  *
  * Запуск: node scripts/test-profiles.mjs (npm run test:profiles). Свои порт и
@@ -334,6 +343,247 @@ try {
   check(orderOk, "catalog: старейший аккаунт первым (createdAt asc)");
   const legacyLeaked = Array.isArray(items) && items.some((it) => it.accountId === LEGACY_ID);
   check(!legacyLeaked, "catalog: легаси-строка без profile в каталог не попала");
+
+  /* ---------- 7. поиск и пагинация каталога (B3) ---------- */
+  // Пул для многостраничного каталога: 5 аккаунтов поверх Пузика и Герты
+  // → 7 карточек; limit=3 даёт 3 страницы (3+3+1). rate-limiter не мешает:
+  // прямые loopback-коннекты теста исключены из троттлинга (auth.js rate()).
+  const extras = [];
+  for (const name of ["Ольга", "Тара", "Марго", "Кира", "Нова"]) {
+    const r = await probe({ method: "POST", path: "/auth/register", body: { login: name, pass: "password1" } });
+    if (r.status === 200 && r.json?.ok === true && r.json?.accountId) {
+      extras.push({ name, id: r.json.accountId, cookie: sessionCookie(r.setCookie) });
+    }
+  }
+  check(extras.length === 5, "page: пул из 5 аккаунтов зарегистрирован (всего 7 карточек)");
+
+  // 7a. поиск по подстроке имени (q=«мяу» → только «Пузик Мяу»)
+  const subQ = await probe({ path: `/profiles?q=${encodeURIComponent("мяу")}` });
+  check(
+    subQ.status === 200 &&
+      subQ.json?.ok === true &&
+      subQ.json?.items?.length === 1 &&
+      subQ.json.items[0].accountId === myAccount &&
+      subQ.json?.total === 1 &&
+      subQ.json?.nextCursor === null,
+    "search: подстрока имени (q=«мяу» → карточка Пузика, следующей страницы нет)",
+  );
+
+  // 7b. регистронезависимость: заглавные/строчные/смешанные
+  const upperQ = await probe({ path: `/profiles?q=${encodeURIComponent("МЯУ")}` });
+  check(
+    upperQ.json?.items?.length === 1 && upperQ.json.items[0].accountId === myAccount,
+    "search: регистронезависимость (q=«МЯУ»)",
+  );
+  const mixedQ = await probe({ path: `/profiles?q=${encodeURIComponent("пУзИк МяУ")}` });
+  check(
+    mixedQ.json?.items?.length === 1 && mixedQ.json.items[0].accountId === myAccount,
+    "search: смешанный регистр всей строки",
+  );
+
+  // 7c. trim по краям запроса
+  const trimQ = await probe({ path: `/profiles?q=${encodeURIComponent("  МЯУ  ")}` });
+  check(
+    trimQ.json?.items?.length === 1 && trimQ.json.items[0].accountId === myAccount,
+    "search: q тримится по краям",
+  );
+
+  // 7d. NFC: decomposed-имя ищется precomposed-запросом и наоборот.
+  // Нове ставим имя «Cafe\u0301» (e + combining acute, НЕ U+00E9).
+  const nova = extras[4];
+  const nfcPatch = await probe({
+    method: "PATCH",
+    path: "/profiles/me",
+    cookie: nova.cookie,
+    body: { displayName: "Cafe\u0301" },
+  });
+  check(nfcPatch.status === 200 && nfcPatch.json?.displayName === "Cafe\u0301", "setup: Нове поставили decomposed-имя (Cafe+U+0301)");
+  const nfcComposed = await probe({ path: `/profiles?q=${encodeURIComponent("caf\u00e9")}` });
+  check(
+    nfcComposed.json?.items?.length === 1 && nfcComposed.json.items[0].accountId === nova.id,
+    "search: NFC — precomposed-запрос («caf\u00e9») находит decomposed-имя",
+  );
+  const nfcDecomposed = await probe({ path: `/profiles?q=${encodeURIComponent("CAFE\u0301")}` });
+  check(
+    nfcDecomposed.json?.items?.length === 1 && nfcDecomposed.json.items[0].accountId === nova.id,
+    "search: NFC — decomposed-запрос нормализуется и находит то же имя",
+  );
+
+  // 7e. длинный q — обрезка префиксом, НЕ ошибка (имена ≤ 24 символов,
+  // сверхдлинная подстрока никого не находит, но ответ — 200, не 400)
+  const longQ = await probe({ path: `/profiles?q=${encodeURIComponent(`МЯУ${"х".repeat(100)}`)}` });
+  check(
+    longQ.status === 200 && longQ.json?.ok === true && longQ.json?.items?.length === 0 && longQ.json?.nextCursor === null,
+    "search: q длиннее 64 код-поинтов — обрезка, не 400; результата нет",
+  );
+
+  // 7f. пустой и пробельный q — без фильтра
+  const emptyQ = await probe({ path: "/profiles?q=" });
+  const spaceQ = await probe({ path: `/profiles?q=${encodeURIComponent("   ")}` });
+  check(
+    emptyQ.status === 200 &&
+      emptyQ.json?.items?.length === 7 &&
+      spaceQ.json?.items?.length === 7 &&
+      JSON.stringify(emptyQ.json?.items) === JSON.stringify(spaceQ.json?.items),
+    "search: пустой и пробельный q = каталог без фильтра",
+  );
+
+  // 7g. несуществующее имя; скрытый легаси через поиск не течёт
+  const noneQ = await probe({ path: `/profiles?q=${encodeURIComponent("зондызюжик")}` });
+  check(
+    noneQ.status === 200 && noneQ.json?.items?.length === 0 && noneQ.json?.total === 0 && noneQ.json?.nextCursor === null,
+    "search: несуществующее имя → items пуст, nextCursor null",
+  );
+  const legacyQ = await probe({ path: `/profiles?q=${encodeURIComponent("легаси")}` });
+  check(
+    legacyQ.status === 200 && legacyQ.json?.items?.length === 0,
+    "search: скрытый аккаунт (легаси) по логину не находится",
+  );
+
+  // 7h. пагинация: limit=3 на 7 карточках → 3 страницы
+  const p1 = await probe({ path: "/profiles?limit=3" });
+  const p1items = p1.json?.items || [];
+  check(
+    p1.status === 200 && p1items.length === 3 && typeof p1.json?.nextCursor === "string" && !!p1.json.nextCursor,
+    "page1: limit=3 → 3 карточки + nextCursor",
+  );
+  check(p1items[0].accountId === myAccount, "page1: старейший аккаунт первым (createdAt asc)");
+  check(cardsArePublic(p1items), "page1: приватных полей в items нет");
+  check(p1.json?.total === 7, "page1: total — весь отфильтрованный набор (7), не страница");
+  const cur1 = p1.json?.nextCursor;
+  const last1 = p1items[p1items.length - 1];
+  check(
+    Buffer.from(cur1, "base64").toString("utf8") === `${last1.createdAt}:${last1.accountId}`,
+    "page1: nextCursor = base64 «createdAt:accountId» последнего элемента страницы",
+  );
+
+  const p2 = await probe({ path: `/profiles?limit=3&cursor=${encodeURIComponent(cur1)}` });
+  const p2items = p2.json?.items || [];
+  check(
+    p2.status === 200 && p2items.length === 3 && typeof p2.json?.nextCursor === "string" && !!p2.json.nextCursor,
+    "page2: следующая тройка + свой nextCursor",
+  );
+  check(
+    p2items.every(
+      (it) => it.createdAt > last1.createdAt || (it.createdAt === last1.createdAt && it.accountId > last1.accountId),
+    ),
+    "page2: все элементы строго после позиции курсора",
+  );
+  check(cardsArePublic(p2items), "page2: приватных полей в items нет");
+
+  const p3 = await probe({ path: `/profiles?limit=3&cursor=${encodeURIComponent(p2.json?.nextCursor)}` });
+  const p3items = p3.json?.items || [];
+  check(
+    p3.status === 200 && p3items.length === 1 && p3.json?.nextCursor === null,
+    "page3: последний batch → nextCursor null",
+  );
+  check(cardsArePublic(p3items), "page3: приватных полей в items нет");
+
+  const allPages = [...p1items, ...p2items, ...p3items];
+  check(new Set(allPages.map((it) => it.accountId)).size === 7 && allPages.length === 7, "pages: три страницы покрывают все 7 карточек без дублей");
+
+  // 7i. limit по контракту: клэмп сверху, дефолт, мусор → 400
+  const overLimit = await probe({ path: "/profiles?limit=100" });
+  check(
+    overLimit.status === 200 && overLimit.json?.ok === true && overLimit.json?.items?.length === 7 && overLimit.json?.nextCursor === null,
+    "limit: 100 → 200 (клэмп до 48, не 400), весь набор на одной странице",
+  );
+  const lim1 = await probe({ path: "/profiles?limit=1" });
+  check(
+    lim1.status === 200 && lim1.json?.items?.length === 1 && !!lim1.json?.nextCursor,
+    "limit: 1 → одна карточка + курсор",
+  );
+  const badLimits = [];
+  for (const bad of ["0", "abc", "2.5"]) {
+    const r = await probe({ path: `/profiles?limit=${encodeURIComponent(bad)}` });
+    if (!(r.status === 400 && r.json?.ok === false && r.json?.reason === "invalid_limit")) badLimits.push(bad);
+  }
+  check(badLimits.length === 0, "limit: мусор (0/abc/2.5) → 400 invalid_limit");
+
+  // 7j. invalid cursor → 400, а не молчаливая первая страница
+  const b64Junk = await probe({ path: `/profiles?cursor=${encodeURIComponent("bm90LWN1cnNvcg==")}` });
+  check(
+    b64Junk.status === 400 && b64Junk.json?.ok === false && b64Junk.json?.reason === "invalid_cursor",
+    "cursor: годный b64 не-курсор («not-cursor») → 400 invalid_cursor",
+  );
+  const rawJunk = await probe({ path: `/profiles?cursor=${encodeURIComponent("!!!garbage!!!")}` });
+  check(
+    rawJunk.status === 400 && rawJunk.json?.reason === "invalid_cursor",
+    "cursor: b64-мусор → 400 invalid_cursor",
+  );
+
+  // 7k. несуществующий курсор (элемент удалён) — продолжение, не ошибка:
+  // позиция старее всех карточек даёт ту же первую страницу.
+  const ancientCursor = Buffer.from("999:zzz", "utf8").toString("base64");
+  const ancient = await probe({ path: `/profiles?limit=3&cursor=${encodeURIComponent(ancientCursor)}` });
+  check(
+    ancient.status === 200 && JSON.stringify(ancient.json?.items) === JSON.stringify(p1items),
+    "cursor: несуществующая позиция — 200, продолжение с ближайшей следующей (первая страница)",
+  );
+  // позиция «удалённого» элемента в середине списка: продолжение без него
+  const BIG_ID = "zzzzzzzzzzzzzzzzzzzz";
+  const midGone = await probe({
+    path: `/profiles?limit=3&cursor=${encodeURIComponent(
+      Buffer.from(`${last1.createdAt}:${BIG_ID}`, "utf8").toString("base64"),
+    )}`,
+  });
+  check(
+    midGone.status === 200 &&
+      midGone.json?.items?.length === 3 &&
+      midGone.json.items.every(
+        (it) => it.createdAt > last1.createdAt || (it.createdAt === last1.createdAt && it.accountId > BIG_ID),
+      ) &&
+      !midGone.json.items.some((it) => p1items.some((x) => x.accountId === it.accountId)),
+    "cursor: позиция удалённого элемента — продолжение без него и без 400",
+  );
+
+  // 7l. карточка по :id не зависит от limit/cursor/q в URL
+  const kira = extras[3];
+  const byIdWithParams = await probe({
+    path: `/profiles/${kira.id}?limit=${encodeURIComponent("0")}&cursor=${encodeURIComponent("junk")}&q=${encodeURIComponent("миу")}`,
+  });
+  check(
+    byIdWithParams.status === 200 &&
+      byIdWithParams.json?.ok === true &&
+      byIdWithParams.json?.accountId === kira.id &&
+      !("login" in (byIdWithParams.json || {})) &&
+      !("role" in (byIdWithParams.json || {})),
+    "byId: карточка по id не зависит от limit/cursor/q (маршрут их не парсит)",
+  );
+
+  // 7m. поиск + пагинация вместе: q=«а» → 5 имён (Герта/Ольга/Тара/Марго/
+  // Кира), limit=2 → страницы 2+2+1, объединение = весь результат
+  const qaAll = await probe({ path: `/profiles?q=${encodeURIComponent("а")}` });
+  check(
+    qaAll.status === 200 && qaAll.json?.items?.length === 5 && qaAll.json?.total === 5 && qaAll.json?.nextCursor === null,
+    "search: q=«а» без пагинации — все 5 карточек на одной странице",
+  );
+  const qa1 = await probe({ path: `/profiles?q=${encodeURIComponent("а")}&limit=2` });
+  check(
+    qa1.json?.items?.length === 2 && !!qa1.json?.nextCursor && qa1.json?.total === 5,
+    "search+page1: 2 из 5 найденных, курсор есть, total прежний",
+  );
+  const qa2 = await probe({ path: `/profiles?q=${encodeURIComponent("а")}&limit=2&cursor=${encodeURIComponent(qa1.json?.nextCursor)}` });
+  check(
+    qa2.json?.items?.length === 2 &&
+      !!qa2.json?.nextCursor &&
+      qa2.json.items.every(
+        (it) => it.createdAt > qa1.json.items[qa1.json.items.length - 1].createdAt ||
+          (it.createdAt === qa1.json.items[qa1.json.items.length - 1].createdAt &&
+            it.accountId > qa1.json.items[qa1.json.items.length - 1].accountId),
+      ),
+    "search+page2: продолжение строго после курсора",
+  );
+  const qa3 = await probe({ path: `/profiles?q=${encodeURIComponent("а")}&limit=2&cursor=${encodeURIComponent(qa2.json?.nextCursor)}` });
+  check(
+    qa3.json?.items?.length === 1 && qa3.json?.nextCursor === null,
+    "search+page3: хвост запроса → nextCursor null",
+  );
+  const qaUnion = new Set([...(qa1.json?.items || []), ...(qa2.json?.items || []), ...(qa3.json?.items || [])].map((it) => it.accountId));
+  check(
+    qaUnion.size === 5 && (qaAll.json?.items || []).every((it) => qaUnion.has(it.accountId)),
+    "search+pages: объединение страниц = весь результат запроса",
+  );
 } catch (e) {
   failures += 1;
   console.error("FAIL exception", e);
@@ -341,7 +591,7 @@ try {
   server.kill("SIGTERM");
 }
 
-/* ---------- 7. вариантная изоляция страниц (пост-сборочная) ----------
+/* ---------- 8. вариантная изоляция страниц (пост-сборочная) ----------
  * www-grotto лежит в корне только после build:variants; в CI без сборки
  * честно SKIP-им (как run-unit-tests), а на собранном дереве требуем
  * отсутствия вырезанных маршрутов. */
