@@ -129,6 +129,7 @@ export function startServer() {
     // Хост-гейт P1 (класс — config.hostClassOf по req.headers.host): public-фронт
     // (пивные гроты) не должен знать про зоны Элизии — auth, profiles и admin
     // отвечают «не существует», конфиг на нём читается, но не пишется (спек §11).
+    // P2: скрыты и admin-маршруты /cfg (дашборд/экспорт) — на public их нет.
     const p = url.pathname;
     if (isPublicHost(req)) {
       const hidden =
@@ -138,6 +139,9 @@ export function startServer() {
         p.startsWith("/profiles/") ||
         p === "/admin" ||
         p.startsWith("/admin/") ||
+        p === "/cfg/admin" ||
+        p.startsWith("/cfg/admin/") ||
+        p === "/cfg/export" ||
         (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
       if (hidden) {
         notFoundJson(res);

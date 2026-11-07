@@ -1,22 +1,36 @@
 /**
- * Safe room tunables stored in DATA_DIR/runtime-config.json.
- * Only atmoset-class lengths live here — protocol invariants stay in protocol.js.
- * Apply timing: new rooms pick the default; a live room already has its own atmo.
- * Admin HTTP POST /cfg (session role=admin). History: last 8 backups, like setmap.
+ * Runtime-конфиг v2 (P2, спек §6): в DATA_DIR/runtime-config.json лежат ТОЛЬКО
+ * значения { v: 1, atmo, universes } — whitelist-модель: что можно менять,
+ * определяет реестр server/cfg-registry.js (ключи atmo.phaseMin, atmo.weatherMin,
+ * universes.strikeDamage, universes.armor, universes.arrowSpeed). Протокольные
+ * константы, события авторизации и лимиты сюда НЕ входят и сюда не пишутся.
+ *
+ * Файл остаётся схемы v:1 — обратная совместимость на чтение: старый файл
+ * (только atmo) поднимается, universes добираются дефолтами реестра, файл НЕ
+ * перезаписывается до первого admin-POST. Запись — атомарная (writeFileAtomic)
+ * с вращением бэкапов (BACKUP_KEEP штук), механика без изменений.
+ *
+ * HTTP (роли проверяет adminFromReq по сессии; на public-хосте POST /cfg и
+ * admin-маршруты прячет host-гейт в net.js; пишущие POST идут через CSRF
+ * Origin-щит там же):
+ *   GET  /cfg           — публичный: v, atmo, universes, apply-hint (БЕЗ истории).
+ *   GET  /cfg/admin     — admin: значения + история + метаданные реестра.
+ *   POST /cfg           — admin: патч по ключам реестра; reset: true — дефолты.
+ *   POST /cfg/restore   — admin: восстановить бэкап по имени ИЗ listHistory.
+ *   GET  /cfg/export    — admin: текущие значения одним JSON.
+ *   POST /cfg/import    — admin: принять экспорт (через sanitizeValues, всё или ничего).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, isAllowedOrigin } from "./config.js";
-import { ATMO_PHASE_MS_DEF, ATMO_WEATHER_MS_DEF } from "./protocol.js";
+import {
+  REGISTRY, KEYS, defaultsFor, sanitizeValues, universesForPublic, mutationsForAdmin,
+} from "./cfg-registry.js";
 import { findById } from "./accounts.js";
 
 const FILE = path.join(DATA_DIR, "runtime-config.json");
 const BACKUP_DIR = path.join(DATA_DIR, "cfg-backups");
 const BACKUP_KEEP = 8;
-const PHASE_MIN_MIN = 1;
-const PHASE_MIN_MAX = 120;
-const WEATHER_MIN_MIN = 2;
-const WEATHER_MIN_MAX = 240;
 
 function writeFileAtomic(file, data) {
   const tmp = `${file}.tmp`;
@@ -24,42 +38,42 @@ function writeFileAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
-function defaults() {
-  return {
-    v: 1,
-    atmo: {
-      phaseMin: Math.round(ATMO_PHASE_MS_DEF / 60_000),
-      weatherMin: Math.round(ATMO_WEATHER_MS_DEF / 60_000),
-    },
-  };
-}
+/** Дефолты — из реестра (единственный источник). Легаси-алиас для смоука. */
+const defaults = defaultsFor;
 
-function clampInt(raw, lo, hi, fallback) {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(hi, Math.max(lo, Math.round(n)));
-}
-
+/**
+ * Легаси-валидатор atmo для модульного смоука (test-server-modules): толерантен
+ * к мусору (NaN→дефолт), универс значения дописывает дефолтами. HTTP-роуты
+ * используют строгий sanitizeValues из реестра — здесь только совместимость.
+ */
 function sanitizeConfig(raw) {
-  const base = defaults();
   if (!raw || typeof raw !== "object") return { error: "конфиг не распознан" };
-  const atmo = raw.atmo && typeof raw.atmo === "object" ? raw.atmo : raw;
-  return {
-    config: {
-      v: 1,
-      atmo: {
-        phaseMin: clampInt(atmo.phaseMin, PHASE_MIN_MIN, PHASE_MIN_MAX, base.atmo.phaseMin),
-        weatherMin: clampInt(atmo.weatherMin, WEATHER_MIN_MIN, WEATHER_MIN_MAX, base.atmo.weatherMin),
-      },
-    },
+  const sec = raw.atmo && typeof raw.atmo === "object" ? raw.atmo : raw;
+  const pick = (k) => {
+    const n = Number(sec[k]);
+    return Number.isFinite(n) ? n : undefined;
   };
+  const out = sanitizeValues(
+    { atmo: { phaseMin: pick("phaseMin"), weatherMin: pick("weatherMin") } },
+    defaults(),
+  );
+  return { config: out.values };
 }
 
+/**
+ * Чтение файла с read-time миграцией: старый atmo-only файл читается, universes
+ * добираются дефолтами, файл на диске не трогается до первого admin-POST.
+ * Мусор внутри (не наша писанина) → дефолты с предупреждением.
+ */
 function loadConfig() {
   try {
     const raw = JSON.parse(fs.readFileSync(FILE, "utf8"));
-    const out = sanitizeConfig(raw);
-    return out.config || defaults();
+    const out = sanitizeValues(raw, defaults());
+    if (!out.values) {
+      console.warn("runtime-config: файл не прошёл реестр — дефолты:", JSON.stringify(out.error));
+      return defaults();
+    }
+    return out.values;
   } catch (e) {
     if (e && e.code !== "ENOENT") console.warn("runtime-config read failed:", e?.message || e);
     return defaults();
@@ -68,14 +82,37 @@ function loadConfig() {
 
 let current = loadConfig();
 
-function publicConfig() {
-  return {
-    ...current,
-    apply: {
-      atmo: "new-room",
-      hint: "Длительности суток и погоды новых комнат. Уже открытая комната меняется событием atmoset сразу.",
-    },
+/** Apply-политики как данные: по каждому ключу реестра. */
+function applyMap() {
+  const out = {
+    hint: "Длительности суток и погоды — стартовые значения новых комнат (живую комнату крутит atmoset). Уровни урона и брони действуют на следующие события; список периодов стрелы игрок увидит в новой сессии.",
   };
+  for (const def of Object.values(REGISTRY)) out[def.key] = def.applyPolicy;
+  return out;
+}
+
+/** Публичный блок: v, atmo, universes (только списки+дефолты), apply-hint. */
+function publicConfig() {
+  return { v: current.v, atmo: { ...current.atmo }, universes: universesForPublic(current), apply: applyMap() };
+}
+
+/** Админ-блок: значения + история бэкапов + метаданные реестра. */
+function adminConfig() {
+  return {
+    ok: true,
+    v: current.v,
+    values: { atmo: { ...current.atmo }, universes: universesForPublic(current) },
+    registry: mutationsForAdmin(),
+    apply: applyMap(),
+    history: listHistory(),
+    historyKeep: BACKUP_KEEP,
+  };
+}
+
+/** Кэпсы боя для combat.js (читаются на каждом событии — on-next-event). */
+function combatCaps() {
+  const u = current.universes;
+  return { maxDamageLevel: Math.max(...u.strikeDamage.levels), armorTenths: u.armor.tenths };
 }
 
 function atmoLengths() {
@@ -85,10 +122,10 @@ function atmoLengths() {
   };
 }
 
-function rotateBackup(json) {
+function rotateBackup(cfgJson) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  fs.writeFileSync(path.join(BACKUP_DIR, `${stamp}.json`), json);
+  fs.writeFileSync(path.join(BACKUP_DIR, `${stamp}.json`), cfgJson);
   const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith(".json")).sort();
   while (files.length > BACKUP_KEEP) {
     const gone = files.shift();
@@ -113,15 +150,19 @@ function listHistory() {
   }
 }
 
+/**
+ * Сохранение: сначала вращение бэкапов (снимок текущего файла), потом
+ * атомарная запись. next обязан уже пройти реестр (sanitizeValues).
+ */
 function saveConfig(next) {
-  const json = JSON.stringify(next, null, 2);
+  const payload = JSON.stringify(next, null, 2);
   try {
     if (fs.existsSync(FILE)) rotateBackup(fs.readFileSync(FILE, "utf8"));
   } catch {
     /* first write */
   }
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  writeFileAtomic(FILE, json);
+  writeFileAtomic(FILE, payload);
   current = next;
 }
 
@@ -193,43 +234,108 @@ function readJson(req, limit = 4096) {
   });
 }
 
+/** Администратор или спокойный 403 (матрица ответа POST /cfg прежняя). */
+function requireAdmin(req, res) {
+  if (adminFromReq(req)) return true;
+  json(res, 403, { ok: false, reason: "auth_required" });
+  return false;
+}
+
 async function handleCfgHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  if (url.pathname !== "/cfg" && !url.pathname.startsWith("/cfg/")) return false;
+  const p = url.pathname;
+  if (p !== "/cfg" && !p.startsWith("/cfg/")) return false;
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return true;
   }
-  if (url.pathname === "/cfg" && req.method === "GET") {
-    json(res, 200, { ok: true, ...publicConfig(), history: listHistory() });
+  // Публичный: только значения (v, atmo, universes, apply-hint) — без истории.
+  if (p === "/cfg" && req.method === "GET") {
+    json(res, 200, { ok: true, ...publicConfig() });
     return true;
   }
-  if (url.pathname === "/cfg" && req.method === "POST") {
-    if (!adminFromReq(req)) {
-      json(res, 403, { ok: false, reason: "auth_required" });
-      return true;
-    }
+  // Администратор: текущие значения + история + метаданные реестра.
+  if (p === "/cfg/admin" && req.method === "GET") {
+    if (!requireAdmin(req, res)) return true;
+    json(res, 200, adminConfig());
+    return true;
+  }
+  // Администратор: экспорт текущих значений одним JSON (для переноса).
+  if (p === "/cfg/export" && req.method === "GET") {
+    if (!requireAdmin(req, res)) return true;
+    json(res, 200, {
+      ok: true,
+      v: current.v,
+      atmo: { ...current.atmo },
+      universes: universesForPublic(current),
+    });
+    return true;
+  }
+  if (p === "/cfg" && req.method === "POST") {
+    if (!requireAdmin(req, res)) return true;
     try {
       const body = await readJson(req);
-      if (body.reset) {
+      if (body && body.reset === true) {
         saveConfig(defaults());
-        json(res, 200, { ok: true, ...publicConfig(), history: listHistory() });
+        json(res, 200, { ok: true, ...publicConfig() });
         return true;
       }
-      const out = sanitizeConfig(body);
+      const out = sanitizeValues(body, current);
       if (out.error) {
-        json(res, 400, { ok: false, reason: out.error });
+        json(res, 400, { ok: false, ...out.error });
         return true;
       }
-      saveConfig(out.config);
-      json(res, 200, { ok: true, ...publicConfig(), history: listHistory() });
-      return true;
+      saveConfig(out.values);
+      json(res, 200, { ok: true, ...publicConfig() });
     } catch {
       json(res, 400, { ok: false, reason: "error" });
-      return true;
     }
+    return true;
+  }
+  // Восстановление бэкапа: только по имени из listHistory (path-guard — имя
+  // обязано быть в свежем списке бэкапов, никаких путей наружу каталога).
+  if (p === "/cfg/restore" && req.method === "POST") {
+    if (!requireAdmin(req, res)) return true;
+    try {
+      const body = await readJson(req);
+      const name = body?.name;
+      const history = listHistory();
+      if (typeof name !== "string" || !history.includes(name)) {
+        json(res, 404, { ok: false, reason: "unknown_backup", allowed: history });
+        return true;
+      }
+      const raw = JSON.parse(fs.readFileSync(path.join(BACKUP_DIR, name), "utf8"));
+      const out = sanitizeValues(raw, defaults());
+      if (out.error) {
+        json(res, 400, { ok: false, ...out.error });
+        return true;
+      }
+      saveConfig(out.values);
+      json(res, 200, { ok: true, restored: name, ...publicConfig() });
+    } catch {
+      json(res, 400, { ok: false, reason: "error" });
+    }
+    return true;
+  }
+  // Импорт экспортного JSON: только секции реестра, всё или ничего.
+  if (p === "/cfg/import" && req.method === "POST") {
+    if (!requireAdmin(req, res)) return true;
+    try {
+      const body = await readJson(req);
+      const patch = { atmo: body?.atmo ?? {}, universes: body?.universes ?? {} };
+      const out = sanitizeValues(patch, defaults());
+      if (out.error) {
+        json(res, 400, { ok: false, ...out.error });
+        return true;
+      }
+      saveConfig(out.values);
+      json(res, 200, { ok: true, ...publicConfig() });
+    } catch {
+      json(res, 400, { ok: false, reason: "error" });
+    }
+    return true;
   }
   json(res, 404, { ok: false, reason: "error" });
   return true;
@@ -237,8 +343,11 @@ async function handleCfgHttp(req, res) {
 
 export {
   FILE,
+  BACKUP_DIR,
   sanitizeConfig,
   publicConfig,
+  adminConfig,
+  combatCaps,
   atmoLengths,
   saveConfig,
   loadConfig,
