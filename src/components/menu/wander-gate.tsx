@@ -332,6 +332,13 @@ export function WanderMenu() {
           );
         })}
       </div>
+      {IS_ELYRIA ? (
+        <nav className="wander-note" aria-label="Аккаунты и администрация">
+          <a href="/players/">Каталог игроков</a>
+          <span aria-hidden> · </span>
+          <a href="/admin/">Панель админа</a>
+        </nav>
+      ) : null}
     </NightSky>
   );
 }
