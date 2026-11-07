@@ -644,16 +644,16 @@ try {
     origin: "https://evil.example", body: { login: "ElyHost", pass: "password1" },
   });
   check(
-    csrfLogin.status === 403 && csrfLogin.json?.reason === "csrf",
-    "csrf: login с чужим Origin → 403 csrf",
+    csrfLogin.status === 403 && csrfLogin.json?.reason === "csrf_origin_mismatch",
+    "csrf: login с чужим Origin → 403 csrf_origin_mismatch (B1: per-destination)",
   );
   const csrfCfg = await probe3({
     method: "POST", path: "/cfg", host: "ely.example",
     origin: "https://evil.example", body: {},
   });
   check(
-    csrfCfg.status === 403 && csrfCfg.json?.reason === "csrf",
-    "csrf: POST /cfg с чужим Origin → 403 csrf",
+    csrfCfg.status === 403 && csrfCfg.json?.reason === "csrf_origin_mismatch",
+    "csrf: POST /cfg с чужим Origin → 403 csrf_origin_mismatch (B1)",
   );
   const csrfOk = await probe3({
     method: "POST", path: "/auth/login", host: "ely.example",
@@ -738,7 +738,7 @@ try {
   );
   pubWs.close();
 
-  const elyWs = await client3({ host: "ely.example" });
+  const elyWs = await client3({ host: "ely.example", origin: "https://ely.example" });
   const elyMark = elyWs.inbox.length;
   elyWs.send(JSON.stringify(["auth", { action: "register", login: "WsEly", pass: "password1" }]));
   const elyFrame = await waitForIdx(elyWs, (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId, elyMark);

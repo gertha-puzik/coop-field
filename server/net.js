@@ -14,7 +14,8 @@ import path from "node:path";
 import { WebSocketServer } from "ws";
 import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
 import {
-  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS, isAllowedOrigin, isPublicHost,
+  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
+  REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest,
 } from "./config.js";
 import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
@@ -24,7 +25,7 @@ import { dummyToggle, dummyMove, dummyGrab, dummyDrop, rabToggle, rabHit } from 
 import { atmo, atmoset, atmoState, atmoBroadcast, atmoPhaseIdx } from "./atmo.js";
 import { setMap, testMap, MAP_FILE, saveTestMap } from "./testmap.js";
 import { flushCatBook } from "./persist.js";
-import { handleAuthHttp, handleAuthFrame, handshake, flushAuth } from "./auth.js";
+import { handleAuthHttp, handleAuthFrame, handshake, flushAuth, COOKIE } from "./auth.js";
 import { handleCfgHttp } from "./runtime-config.js";
 import { handleProfilesHttp } from "./profiles.js";
 
@@ -121,17 +122,21 @@ export function startServer() {
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    if (url.pathname === "/health") {
+    const p = url.pathname;
+    if (p === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, rooms: rooms.size, maxPlayers: MAX_PLAYERS }));
       return;
     }
-    // Хост-гейт P1 (класс — config.hostClassOf по req.headers.host): public-фронт
-    // (пивные гроты) не должен знать про зоны Элизии — auth, profiles и admin
-    // отвечают «не существует», конфиг на нём читается, но не пишется (спек §11).
-    // P2: скрыты и admin-маршруты /cfg (дашборд/экспорт) — на public их нет.
-    const p = url.pathname;
-    if (isPublicHost(req)) {
+    // B1: класс САЙТА destination (siteClassOfRequest: Host-классификация +
+    // доверенная loopback-метка прокси AUTH_TRUST_PROXY_HEADER) решает и
+    // host-гейт, и пары (Origin, destination) в CORS/CSRF ниже.
+    const destClass = siteClassOfRequest(req);
+    // Хост-гейт P1: public-фронт (пивные гроты) не должен знать про зоны
+    // Элизии — auth, profiles и admin отвечают «не существует», конфиг на
+    // нём читается, но не пишется (спек §11). P2: скрыты и admin-маршруты
+    // /cfg (дашборд/экспорт) — на public их нет.
+    if (destClass === "public") {
       const hidden =
         p === "/auth" ||
         p.startsWith("/auth/") ||
@@ -148,14 +153,55 @@ export function startServer() {
         return;
       }
     }
-    // CSRF Origin для пишущего /cfg-POST (cookie-аутентификация админа): чужой
-    // браузерный Origin → 403. Пустой/отсутствующий Origin не блокируем.
-    // Пишущие auth-POST проверяются тем же правилом в server/auth.js.
-    if (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/"))) {
-      const origin = String(req.headers.origin || "");
-      if (origin && !isAllowedOrigin(origin)) {
+    // B1: CORS-надзор на ВСЕХ API-зонах. Обработчики (auth/cfg/profiles)
+    // отражают Origin по ГЛОБАЛЬНОМУ списку — над ними (крюк на res.setHeader)
+    // стоит per-destination политика: чужой Origin ответа не прочитает
+    // (Access-Control-* не выдаётся браузеру), свой получает ТОЧНЫЙ origin
+    // (никогда wildcard) + Allow-Credentials + Vary: Origin. Префлайты
+    // OPTIONS проходят ту же пару (Origin, класс destination).
+    const originHeader = String(req.headers.origin || "");
+    const originAllowed = originHeader && originAllowedHere(originHeader, destClass);
+    const apiZone =
+      p === "/auth" || p.startsWith("/auth/") ||
+      p === "/profiles" || p.startsWith("/profiles/") ||
+      p === "/cfg" || p.startsWith("/cfg/");
+    if (apiZone) {
+      if (originHeader) res.setHeader("Vary", "Origin");
+      if (originAllowed) {
+        res.setHeader("Access-Control-Allow-Origin", originHeader);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
+    }
+    {
+      const rawSetHeader = res.setHeader.bind(res);
+      res.setHeader = (name, value) => {
+        const key = String(name).toLowerCase();
+        if (key.startsWith("access-control-")) {
+          if (!originAllowed) return res; // произвольный Origin не отражается
+          if (key === "access-control-allow-origin" || key === "access-control-allow-credentials") {
+            return res; // уже выставлены точно и только «своему» origin
+          }
+        }
+        return rawSetHeader(name, value);
+      };
+    }
+    // CSRF fail-closed (B1): unsafe-методы с cookie-аутентификацией на
+    // public/elyria обязаны нести Origin, точный для destination-класса
+    // (пустой Origin → 403 csrf_origin_required, чужой → 403 csrf_origin_mismatch);
+    // класс local — прежний щит ('0'/'1' в AUTH_CSRF_STRICT форсируют для всех).
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && apiZone) {
+      const hasAuth =
+        new RegExp(`(?:^|;\\s*)${COOKIE}=[0-9a-f]+`, "i").test(String(req.headers.cookie || "")) ||
+        Boolean(url.searchParams.get("t"));
+      const csrfBad = csrfDecision({
+        method: req.method,
+        origin: req.headers.origin,
+        destClass,
+        hasAuth,
+      });
+      if (csrfBad) {
         res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ ok: false, reason: "csrf" }));
+        res.end(JSON.stringify({ ok: false, reason: csrfBad.reason }));
         return;
       }
     }
@@ -178,9 +224,15 @@ export function startServer() {
     server,
     maxPayload: MAX_PAYLOAD,
     verifyClient(info) {
+      // B1: Origin на upgrade — ПАРА (origin, класс destination-хоста).
+      // Отсутствие Origin допускается (гость-геймплей, originless-скрипты;
+      // cookie-аутентифицированные кадры register/login на public/elyria
+      // добьёт handleAuthFrame), но REQUIRE_ORIGIN=1 сохраняет старый смысл.
       const origin = info.origin || "";
-      const ok = isAllowedOrigin(origin);
-      if (!ok) console.warn("ws origin rejected:", origin || "(нет Origin)");
+      if (!origin) return !REQUIRE_ORIGIN;
+      const destClass = siteClassOfRequest(info.req);
+      const ok = originAllowedHere(origin, destClass);
+      if (!ok) console.warn("ws origin rejected:", origin);
       return ok;
     },
   });

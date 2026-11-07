@@ -47,6 +47,139 @@ function isAllowedOrigin(origin) {
     return false;
   }
 }
+
+/* ---------- B1: per-destination Origin-политика ----------
+ * Один инстанс обслуживает оба сайта (гроты и Элизию), превью повторяет
+ * топологию: pr-<N>.abnocw.miew.ru и pr-<N>.elisium.miew.ru на одном сервере,
+ * а env ALLOWED_ORIGINS — один общий список. Поэтому «разрешён» — это ПАРА
+ * (Origin, класс destination-хоста), а не вхождение в общий список: origin
+ * гротов не может читать credentialed-ответы Элизии и наоборот. Origin-хост
+ * класса определяется только ТОЧНЫМ вхождением в списки хостов класса
+ * (превью-инстансы регистрируют свои pr-<N>-хосты через env); поддомены и
+ * подстроки не считаются «своими». Scheme+host+port сравниваются канонично:
+ * нестандартный порт разрешён только явной строкой в ALLOWED_ORIGINS.
+ */
+
+/** Канонизация web-origin: {origin: 'scheme://host[:port]', host, explicitPort}. */
+function canonicalOrigin(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ""));
+  } catch {
+    return null;
+  }
+  const protocol = u.protocol === "https:" || u.protocol === "http:" ? u.protocol : null;
+  if (!protocol) return null;
+  const host = String(u.hostname || "").toLowerCase();
+  if (!host) return null;
+  const origin = u.port ? `${protocol}//${host}:${u.port}` : `${protocol}//${host}`;
+  return { origin, host, protocol, explicitPort: Boolean(u.port) };
+}
+
+/** Класс ХОСТА ОРИГИНА по точным спискам классов; null = чужой (fail-closed).
+ *  Ведущие точки (суффикс-зоны вроде '.89-232-184-77.sslip.io') точным
+ *  вхождением не match-атся — origin такого хоста должен быть явно в env. */
+function originHostClass(hostname) {
+  if (!hostname) return null;
+  if (isLocalHostName(hostname)) return "local";
+  const sets = hostSets();
+  const exact = (list) => list.some((h) => !h.startsWith(".") && h === hostname);
+  if (exact(sets.public)) return "public";
+  if (exact(sets.elyria)) return "elyria";
+  return null;
+}
+
+/** Точные origin-строки из ALLOWED_ORIGINS, относящиеся к классу: общий список
+ *  превью этим и спасается — каждый его origin уходит СВОЕМУ классу по хосту. */
+function envClassOrigins(hostClass) {
+  const out = [];
+  for (const raw of String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    const c = canonicalOrigin(raw);
+    if (c && originHostClass(c.host) === hostClass) out.push(c.origin);
+  }
+  return out;
+}
+
+/** ПАРА (origin, destination-класс): разрешение одно, точное и fail-closed.
+ *  local-destination — прежняя пермиссивная политика (isAllowedOrigin). */
+function originAllowedHere(rawOrigin, destClass) {
+  const c = canonicalOrigin(rawOrigin);
+  if (!c || !destClass) return false;
+  if (destClass === "local") return isAllowedOrigin(rawOrigin);
+  // Явная env-строка своего класса — разрешение как есть (нестандартный порт).
+  if (envClassOrigins(destClass).includes(c.origin)) return true;
+  // Иначе: scheme http/https, хост ТОЧНО из списка класса, порт дефолтный.
+  if (c.explicitPort) return false;
+  return originHostClass(c.host) === destClass;
+}
+
+/* ---------- B1: CSRF fail-closed ----------
+ * env AUTH_CSRF_STRICT: 'auto' (дефолт) — strict на public/elyria, легаси
+ * permissive на local; '0'/'1' форсируют permissive/strict для ВСЕХ классов
+ * (контроль тестовых стендов). strict: unsafe+cookie-аутентификация ⇒ Origin
+ * обязателен и точен; пустой Origin → 403 csrf_origin_required, чужой →
+ * 403 csrf_origin_mismatch. Локальный класс оставлен прежним: на нём стоят
+ * легаси-тесты и originless-скрипты карт.
+ */
+function csrfStrictFor(destClass) {
+  const v = String(process.env.AUTH_CSRF_STRICT ?? "auto").trim().toLowerCase();
+  if (["0", "no", "off", "false"].includes(v)) return false;
+  if (["1", "yes", "on", "true"].includes(v)) return true;
+  return destClass === "public" || destClass === "elyria";
+}
+
+/** Решение по unsafe-запросу: null — пропустить, иначе {status, reason} = 403.
+ *  hasAuth = запрос несёт сессию-реквизиты (cookie coop_session / ?t=token,
+ *  в т.ч. невалидные — fail-closed: серверу не важно, жив ли токен, чтобы
+ *  требовать Origin у credentialed-запроса). */
+function csrfDecision({ method, origin, destClass, hasAuth }) {
+  const m = String(method || "").toUpperCase();
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return null;
+  const known = String(destClass || "");
+  if (!csrfStrictFor(known)) {
+    // Легаси-режим: прежний щит — непустой чужой Origin из ГЛОБАЛЬНОГО
+    // списка → 403 'csrf'; пустой/отсутствующий Origin не блокируется.
+    const raw = String(origin || "").trim();
+    if (raw && !isAllowedOrigin(raw)) return { status: 403, reason: "csrf" };
+    return null;
+  }
+  if (known !== "public" && known !== "elyria" && known !== "local") return null;
+  const originRaw = String(origin || "").trim();
+  // Браузер на unsafe-методах шлёт Origin всегда; отсутствие Origin при
+  // credentialed-запросе → отказ. Originless-запрос БЕЗ сессии-реквизитов
+  // (curl, сервер-сервер, легаси-скрипты) пролезает: ambient-авторитета нет.
+  if (!originRaw) return hasAuth ? { status: 403, reason: "csrf_origin_required" } : null;
+  if (!originAllowedHere(originRaw, known)) return { status: 403, reason: "csrf_origin_mismatch" };
+  return null;
+}
+
+/* ---------- B1: доверенная метка класса сайта (за прокси) ----------
+ * env AUTH_TRUST_PROXY_HEADER — имя внутреннего заголовка (например
+ * 'X-Coop-Site'), которым nginx помечает класс сайта на каждый vhost.
+ * Прод/превью: сервер слушает 8787 НА localhost за nginx, наружу порт не
+ * проброшен — напрямую к бэку снаружи не достучаться, поэтому метке можно
+ * верить ТОЛЬКО у loopback-сокета (nginx перезаписывает заголовок в каждом
+ * vhost, входящие копии с улицы сбрасывает). Запрос НЕ с loopback метку
+ * ИГНОРИРУЕТ (класс по Host, как раньше); неизвестное значение — тоже
+ * (fail-closed к Host-классификации). */
+function isLoopbackRemote(req) {
+  const sock = req?.socket || req?._socket;
+  const ip = String(sock?.remoteAddress || "");
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function siteClassOfRequest(req) {
+  const byHost = hostClassOf(req?.headers?.host);
+  // env читается на вызов (а не на загрузку модуля): тесты перезаписывают env.
+  const headerName = String(process.env.AUTH_TRUST_PROXY_HEADER || "").trim().toLowerCase();
+  if (!headerName || !isLoopbackRemote(req)) return byHost;
+  const value = String(req?.headers?.[headerName] || "").trim().toLowerCase();
+  if (value === "public" || value === "elyria" || value === "local") return value;
+  return byHost;
+}
 const WIDTH = 10;
 const HEIGHT = 6;
 
@@ -130,12 +263,14 @@ function hostClassOfRequest(req) {
   return hostClassOf(req?.headers?.host);
 }
 
+/** B1: класс САЙТА запроса — Host-классификация с опциональной доверенной
+ *  меткой прокси (siteClassOfRequest); гейты ниже решают по ней. */
 function isPublicHost(req) {
-  return hostClassOfRequest(req) === "public";
+  return siteClassOfRequest(req) === "public";
 }
 
 function isElyriaHost(req) {
-  return hostClassOfRequest(req) === "elyria";
+  return siteClassOfRequest(req) === "elyria";
 }
 
 /** Пауза между ping-ами. Браузер отвечает pong сам, клиентский код не нужен. */
@@ -216,9 +351,11 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 export {
   // net/transport
   __dirname, PUBLIC, HOST, PORT, HEARTBEAT_MS, MAX_PAYLOAD, FRAME_LIMIT,
-  isAllowedOrigin,
+  isAllowedOrigin, REQUIRE_ORIGIN,
   // хост-политика (P1): классы public | elyria | local
   hostClassOf, isPublicHost, isElyriaHost,
+  // B1: per-destination Origin/CSRF-политика + класс сайта по запросу
+  originAllowedHere, csrfDecision, siteClassOfRequest, csrfStrictFor,
   // field/rooms
   WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM,
   STRIKE_COOLDOWN_MS,

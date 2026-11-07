@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { EV } from "./protocol.js";
-import { DATA_DIR, isAllowedOrigin, hostClassOf } from "./config.js";
+import { DATA_DIR, originAllowedHere, csrfDecision, siteClassOfRequest } from "./config.js";
 import { send } from "./room.js";
 import {
   PASS_MIN,
@@ -225,7 +225,7 @@ function tokenFromRequest(req) {
   // URL: принимает только cookie; AUTH_LEGACY_TOKEN=1 возвращает приём ?t=
   // на переходный период. Класс public ?t= пока принимает (гейт net.js всё
   // равно закрывает его HTTP-зоны; старые клиенты снимают ?t= в соседней фазе).
-  if (hostClassOf(req?.headers?.host) === "elyria" && process.env.AUTH_LEGACY_TOKEN !== "1") {
+  if (siteClassOfRequest(req) === "elyria" && process.env.AUTH_LEGACY_TOKEN !== "1") {
     return cookieToken(req);
   }
   return queryToken(req) || cookieToken(req);
@@ -269,6 +269,8 @@ function reasonText(code) {
 
 function cookieHeader(token, secure) {
   const maxAge = Math.floor(TTL_MS / 1000);
+  // B1: host-only cookie — атрибута Domain намеренно НЕТ: кука привязана к
+  // точному хосту и не расползается на соседние поддомены miew.ru.
   const parts = [`${COOKIE}=${token}`, "HttpOnly", "Path=/", `Max-Age=${maxAge}`];
   // P1: https-кука — Secure + SameSite=Lax (браузерный ход Элизии был
   // same-origin, None туда не нужен). COOKIE_LOOSE=1 возвращает легаси None
@@ -280,15 +282,20 @@ function cookieHeader(token, secure) {
   return parts.join("; ");
 }
 
+/** B1: CORS решается парой (Origin, класс destination-хоста): Access-Control-
+ *  Allow-Origin — только точный origin и только если он «свой» для класса
+ *  destination. Никогда wildcard, чужой origin не отражается; куки по нему
+ *  браузер не прочитает (ACAO не выдан), даже если запрос дойдёт. */
 function setCors(req, res) {
-  const origin = req.headers.origin || "";
-  if (origin && isAllowedOrigin(origin)) {
+  const origin = String(req.headers.origin || "");
+  const destClass = siteClassOfRequest(req);
+  res.setHeader("Vary", "Origin");
+  if (origin && originAllowedHere(origin, destClass)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "content-type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   }
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
 
 function readJson(req, limit = 4096) {
@@ -327,6 +334,16 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
   // в гротах по-прежнему получает hello/logout как обычно, а аккаунт на
   // elyria/local — прежний вход (см. матрицу токенов в tokenFromRequest).
   if ((action === "register" || action === "login") && ws.hostClass === "public") {
+    sendWhoami(ws, { ok: false, reason: "error" });
+    return;
+  }
+  // B1: register/login — «cookie-аутентифицированные» WS-операции (кадры
+  // создают/поднимают сессию): на public/elyria они требуют Origin, точный
+  // для destination-класса (upgrade-гейт в net.js отказывает чужому Origin
+  // ПРИ подключении; здесь — отказ кадрам без Origin). Гость-геймплей,
+  // hello/logout и прочие кадры работают, как раньше; на local классе
+  // прежнее пермиссивное поведение (легаси-тесты и originless-скрипты).
+  if ((action === "register" || action === "login") && ws.hostClass !== "local" && !ws.originOk) {
     sendWhoami(ws, { ok: false, reason: "error" });
     return;
   }
@@ -403,17 +420,23 @@ async function handleAuthHttp(req, res) {
   }
   const ip = clientIp(req);
   const secure = req.headers["x-forwarded-proto"] === "https" || url.protocol === "https:";
-  // Класс хоста запроса — матрица тел-токенов (cookie-only на elyria).
-  const hostClass = hostClassOf(req.headers.host);
-  // CSRF-щит cookie-аутентификации (P1): браузерный Origin пишущих POST-ов
-  // обязан проходить белый список; пустой или отсутствующий Origin не
-  // блокируем (curl, сервер-сервер, локальные тесты и dev).
-  if (req.method !== "GET" && req.method !== "OPTIONS") {
-    const origin = String(req.headers.origin || "");
-    if (origin && !isAllowedOrigin(origin)) {
-      json(res, 403, { ok: false, reason: "csrf" });
-      return true;
-    }
+  // Класс САЙТА запроса (B1: Host-классификация + доверенная метка прокси) —
+  // матрица тел-токенов (cookie-only на elyria).
+  const siteClass = siteClassOfRequest(req);
+  // CSRF fail-closed (B1): unsafe-методы с cookie-аутентификацией на
+  // public/elyria обязаны нести Origin, точный для destination-класса:
+  // пустой Origin → 403 csrf_origin_required, чужой → 403 csrf_origin_mismatch.
+  // Класс local — прежнее пермиссивное поведение (AUTH_CSRF_STRICT='0'/'1'
+  // форсирует режим для всех классов — контроль тестовых стендов).
+  const csrfBad = csrfDecision({
+    method: req.method,
+    origin: req.headers.origin,
+    destClass: siteClass,
+    hasAuth: Boolean(cookieToken(req) || queryToken(req)),
+  });
+  if (csrfBad) {
+    json(res, csrfBad.status, { ok: false, reason: csrfBad.reason });
+    return true;
   }
   try {
     if (url.pathname === "/auth/me" && req.method === "GET") {
@@ -445,7 +468,7 @@ async function handleAuthHttp(req, res) {
       // Элизия — cookie-only: токен в теле HTTP-ответа не выдаётся (кука та же).
       // local — прежнее поведение, тесты и dev завязаны на токен в теле.
       const resp = { ok: true, ...publicAccount(out.account) };
-      if (hostClass !== "elyria") resp.token = token;
+      if (siteClass !== "elyria") resp.token = token;
       json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
@@ -469,7 +492,7 @@ async function handleAuthHttp(req, res) {
       const token = createSession(out.account.id);
       // Матрица тел-токенов P1: elyria — cookie-only, local — токен в теле.
       const resp = { ok: true, ...publicAccount(out.account) };
-      if (hostClass !== "elyria") resp.token = token;
+      if (siteClass !== "elyria") resp.token = token;
       json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
@@ -482,9 +505,14 @@ async function handleAuthHttp(req, res) {
 }
 
 function handshake(ws, req) {
-  // Класс хоста хендшейка (config.hostClassOf): WS-кадры auth гейтятся по нему
-  // в handleAuthFrame — register/login не работают на public-хосте.
-  ws.hostClass = hostClassOf(req?.headers?.host);
+  // Класс САЙТА хендшейка (B1: siteClassOfRequest — Host + доверенная метка
+  // прокси): WS-кадры auth гейтятся по нему в handleAuthFrame — register/login
+  // не работают на public-хосте, а на elyria требуют Origin своего класса.
+  ws.hostClass = siteClassOfRequest(req);
+  ws.clientOrigin = String(req?.headers?.origin || "");
+  // B1: origin сокета — ПАРА (origin, destination-класс): чужой origin на
+  // upgrade уже отклонён в net.js; сюда попадают «свои» и пустые (гость).
+  ws.originOk = Boolean(ws.clientOrigin) && originAllowedHere(ws.clientOrigin, ws.hostClass);
   const token = tokenFromRequest(req);
   if (token) bindToken(ws, token);
   ws.clientIp = clientIp(req);
