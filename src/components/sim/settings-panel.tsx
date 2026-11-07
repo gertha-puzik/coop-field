@@ -673,9 +673,10 @@ export function SettingsPanel(props: Props) {
         />
           </>
         )}
-        {/* Атмосфера комнаты: время суток и погода — общие для всех игроков.
-            Кнопки перематывают цикл к выбранной части суток; сутки и погода едут
-            и сами, с темпом из ползунков ниже. */}
+        {/* Атмосфера — только рисованная локация. На клеточном поле (пивные
+            гроты) суток и погоды нет: вуаль и циферблат там портили картинку. */}
+        {props.testField ? (
+        <>
         <div className="py-1.5">
           <div className="text-xs text-[var(--sim-text-soft)]">Время суток</div>
           <div className="mt-1 flex flex-wrap gap-1">
@@ -757,6 +758,8 @@ export function SettingsPanel(props: Props) {
           hint="Погода меняется сама и всегда на другую; кнопкой можно поставить любую сейчас"
           onChange={(v) => props.onAtmoCfg(props.atmoCfg.phaseMin, v)}
         />
+        </>
+        ) : null}
         <Toggle label="Сетка клеток" checked={s.field.showGrid} onChange={(v) => props.patchField({ showGrid: v })} />
         <Toggle
           label="Шахматная подсветка"
