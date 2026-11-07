@@ -132,6 +132,12 @@ npm run check:landmarks      # doc sizes == wc -l
 - **Field/map/editor:** `src/lib/sim/test-map.ts` (client limits) + `server/testmap.js`
   (server sanitize, same limits) + `src/components/sim/simulator/editor-ops.ts`.
 - **Settings/HUD:** `src/components/sim/settings-panel.tsx` + ARCHITECTURE §2.
+- **Accounts/limits/auth:** `server/accounts.js` (`BOOTSTRAP_ADMIN` = comma-separated
+  preset admin logins, each on its own first registration; `MAX_ACCOUNTS` cap → `full`),
+  `server/auth.js` (session store + rate envs `AUTH_REGISTER_GAP_MS`,
+  `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`, `AUTH_LOGIN_FAIL_MAX`,
+  `AUTH_LOGIN_FAIL_WINDOW_MS`; XFF trusted only from the last hop behind our own nginx),
+  `server/room.js` (guests get `roomsinfo` about closed rooms as if they did not exist).
 - Known hand-synced mirrors WITHOUT CI coverage (check both in one PR):
   sprite whitelist — `server/config.js:86` ↔ `src/lib/sim/settings.ts:96` (31 entries
   each side); client localStorage routes — `simulator.tsx` :659 (read), :674/:1089
