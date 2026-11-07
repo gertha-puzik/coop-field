@@ -795,8 +795,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
    *  Закрытые комнаты (access 'registered') гость не опрашивает: состав ему
    *  всё равно не нужен (без аккаунта не войти), а сервер и не расскажет —
    *  гость получает про них такой же ответ, как про несуществующие. */
+  const whoamiHasAccount = !!whoami?.ok && !!whoami.accountId;
   const wantedRoomIds = useCallback((): string[] => {
-    const inAccount = !!(whoami?.ok && whoami.accountId);
+    const inAccount = whoamiHasAccount;
     const ids = roomsForMode(mode)
       .filter((r) => r.access !== 'registered' || inAccount)
       .map((r) => r.id);
@@ -808,7 +809,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
       }
     }
     return ids;
-  }, [mode, whoami]);
+    // Deps MUST be primitives. `whoami` is re-set with a fresh object on every
+    // ws handshake, and this callback sits in the network effect deps — with an
+    // object dep the client was torn down and re-created on every RTT (entry
+    // screen reconnect loop: join never sent, sockets opened 3/sec forever).
+  }, [mode, whoamiHasAccount]);
 
   /* ---------- редактор локации «теста» ---------- */
 
