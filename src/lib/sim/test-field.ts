@@ -986,6 +986,12 @@ function terrainFaceOf(yaw: number): FaceDir {
   return (['s', 'e', 'n', 'w'] as const)[k];
 }
 
+/** Сдвиг «вверх экрана» в мировых пикселях. У прямого угла это одна ось
+ *  (yaw 0 — север), поэтому ряд клеток не уезжает вкось при другом ракурсе. */
+export function terrainLiftShift(liftPx: number, yaw: number): { dx: number; dy: number } {
+  return { dx: -Math.sin(yaw) * liftPx, dy: -Math.cos(yaw) * liftPx };
+}
+
 function oppositeFace(face: FaceDir): FaceDir {
   return face === 's' ? 'n' : face === 'n' ? 's' : face === 'e' ? 'w' : 'e';
 }
@@ -1003,6 +1009,7 @@ function faceWallRect(
   cellW: number,
   cellH: number,
   face: FaceDir,
+  yaw: number,
 ): { e: number; x: number; y: number; w: number; h: number; face: FaceDir } | null {
   const e = elevLevelAt(c, r);
   if (e <= 0) return null;
@@ -1010,8 +1017,9 @@ function faceWallRect(
   const nb = elevNeighborForWall(c + step.dc, r + step.dr);
   if (nb >= e) return null;
   const drop = (e - nb) * TERRAIN_LIFT_PX;
-  const gx = c * cellW;
-  const gy = r * cellH - e * TERRAIN_LIFT_PX;
+  const shift = terrainLiftShift(e * TERRAIN_LIFT_PX, yaw);
+  const gx = c * cellW + shift.dx;
+  const gy = r * cellH + shift.dy;
   if (face === 's') return { e, x: gx, y: gy + cellH, w: cellW, h: drop, face };
   if (face === 'n') return { e, x: gx, y: gy - drop, w: cellW, h: drop, face };
   if (face === 'e') return { e, x: gx + cellW, y: gy, w: drop, h: cellH, face };
@@ -1027,7 +1035,7 @@ export function terrainWallAnchor(
   cellH: number,
   yaw: number,
 ): { x: number; y: number } | null {
-  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw));
+  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw), yaw);
   if (!g) return null;
   if (g.face === 's') return { x: g.x + g.w / 2, y: g.y + g.h - 1 };
   if (g.face === 'n') return { x: g.x + g.w / 2, y: g.y + 1 };
@@ -1035,10 +1043,29 @@ export function terrainWallAnchor(
   return { x: g.x + 1, y: g.y + g.h / 2 };
 }
 
+/** Дальняя (верхняя на экране) точка верха клетки — ключ глубины билборда. */
+export function terrainTopAnchor(
+  c: number,
+  r: number,
+  cellW: number,
+  cellH: number,
+  liftPx: number,
+  yaw: number,
+): { x: number; y: number } {
+  const face = terrainFaceOf(yaw);
+  const shift = terrainLiftShift(liftPx, yaw);
+  const gx = c * cellW + shift.dx;
+  const gy = r * cellH + shift.dy;
+  if (face === 's') return { x: gx + cellW / 2, y: gy };
+  if (face === 'n') return { x: gx + cellW / 2, y: gy + cellH };
+  if (face === 'e') return { x: gx, y: gy + cellH / 2 };
+  return { x: gx + cellW, y: gy + cellH / 2 };
+}
+
 /**
  * Лицевая стена обрыва одной клетки: срез дёрна на грани, которая смотрит
- * в камеру. Верх клетки остаётся в мировых осях (плато не рвётся), перестраивается
- * только фасад. Рисуется ОТДЕЛЬНО от верха: свой ключ глубины — внешний край
+ * в камеру. Верх сдвинут вверх экрана, чтобы ряд одной оси оставался прямым.
+ * Рисуется ОТДЕЛЬНО от верха: свой ключ глубины — внешний край
  * стены, поэтому кот перед фасадом рисуется поверх, а кот за ним — под стеной.
  */
 export function drawTerrainWall(
@@ -1049,7 +1076,7 @@ export function drawTerrainWall(
   r: number,
   yaw = 0,
 ): void {
-  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw));
+  const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw), yaw);
   if (!g) return;
   const { x, y, w, h, face, e } = g;
   // градиент от кромки травы к внешнему краю (к игроку)
@@ -1126,9 +1153,10 @@ export function drawTerrainTop(
   const e = elevLevelAt(c, r);
   if (e <= 0) return;
   const lift = e * TERRAIN_LIFT_PX;
-  const x = c * cellW;
-  const y = r * cellH;
-  // верх плато: кусок пиксельной отрисовки клетки, поднятый на уровень; чем
+  const shift = terrainLiftShift(lift, yaw);
+  const x = c * cellW + shift.dx;
+  const y = r * cellH + shift.dy;
+  // верх плато: кусок пиксельной отрисовки клетки, поднятый вверх экрана; чем
   // выше — тем светлее. Без рисунка — травяной тайл пака, как раньше.
   if (paintSrc) {
     ctx.save();
@@ -1140,7 +1168,7 @@ export function drawTerrainTop(
       PAINT_CELL_W,
       PAINT_CELL_H,
       x,
-      y - lift,
+      y,
       cellW + 0.5,
       cellH + 0.5,
     );
@@ -1149,20 +1177,20 @@ export function drawTerrainTop(
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = pat;
-    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+    ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
     ctx.restore();
   } else {
     ctx.fillStyle = '#2c4a1d';
-    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+    ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
   }
   if (e >= 2) {
     ctx.fillStyle = `rgba(255, 238, 176, ${(0.055 * (e - 1)).toFixed(3)})`;
-    ctx.fillRect(x, y - lift, cellW + 0.5, cellH + 0.5);
+    ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
   }
   // Складки по бокам лицевой грани и тёмная кромка с дальней стороны.
   // При yaw 0 это прежние восточная/западная полоски и северная губа.
   const face = terrainFaceOf(yaw);
-  const gy = y - lift;
+  const gy = y;
   const t = 7;
   for (const side of sideFaces(face)) {
     const step = FACE_STEP[side];
@@ -1884,11 +1912,12 @@ export function drawGroundCover(
   o: TestMapObject,
   cellW: number,
   cellH: number,
-  /** Сдвиг по вертикали: у клеток плато настил лежит на поднятой земле. */
+  /** Сдвиг поднятой земли: у клеток плато настил лежит на верхе. */
   dy = 0,
+  dx = 0,
 ): void {
   const cv = groundCoverOf(o);
-  const x0 = o.c * cellW;
+  const x0 = o.c * cellW + dx;
   const y0 = o.r * cellH + dy;
   const pat = coverPattern(ctx, cv);
   if (pat) {
