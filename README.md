@@ -41,11 +41,11 @@ npm run dev
 | Workflow | Когда стартует | Что делает / ловит |
 |----------|---------------|--------------------|
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | typecheck, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков |
-| «Фронтенд на Vercel и VPS» | изменения `src/`, `public/`, Next-конфига, зависимостей | `vercel deploy --prod` + rsync `out/` → `/opt/coop-field/www` |
+| «Фронтенд на VPS» | изменения `src/`, `public/`, Next-конфига, зависимостей | rsync `out/` → `/opt/coop-field/www` (зеркало на Vercel удалено) |
 | «Сервер комнаты на VPS» | изменения `server.js`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
 | «Preview PR» | PR своего репо | тот же VPS, `deploy-preview`, снос при close/merge; живой URL после секрета `PREVIEW_SSH_KEY` и `preview-bootstrap.sh`, см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
-Секреты в GitHub: `VERCEL_TOKEN`, `VPS_SSH_KEY`; для preview ещё нужен `PREVIEW_SSH_KEY`. Значений в коде и логах нет.
+Секреты в GitHub: `VPS_SSH_KEY`; для preview ещё нужен `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
 
 ## Для разработки — куда смотреть
 

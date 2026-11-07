@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { DATA_DIR } from "./config.js";
+import { DATA_DIR, SPRITES } from "./config.js";
 
 const INVISIBLE_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
@@ -148,12 +148,34 @@ function findById(id) {
   return store.accounts[id] || null;
 }
 
-function anyAdmin() {
-  return Object.values(store.accounts).some((a) => a.role === "admin");
+/**
+ * Глобальный предохранитель от флуда регистрациями: потолок общего числа
+ * аккаунтов. Env MAX_ACCOUNTS (дефолт 2000); 0/мусор → дефолт. При достижении
+ * createAccount отвечает ошибкой 'full' — вместе с per-IP register-лимитом
+ * (server/auth.js) это закрывает и «медленный» флуд с роты адресов.
+ */
+function maxAccounts() {
+  const n = Number(process.env.MAX_ACCOUNTS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
 }
 
-function bootstrapLogin() {
-  return String(process.env.BOOTSTRAP_ADMIN || "").trim().toLowerCase();
+/**
+ * BOOTSTRAP_ADMIN — СПИСОК предустановленных админов: имена через запятую,
+ * каждое приводим к нижнему регистру и обрезаем пробелы. Значение задаёт
+ * владелица (systemd-юнит / env тестов), дефолт — пустой список (никто).
+ *
+ * Механика создания админа (прежняя защита от подделки, обобщённая на список):
+ * админ — ТОТ, КТО ПЕРВЫМ ЗААНЯЛ имя из списка. Каждый элемент списка
+ * НЕЗАВИСИМО становится admin при своей первой регистрации: наличие другого
+ * админа НЕ мешает остальным именам списка (все они декларированы владелицей
+ * и должны получить роль при регистрации). Имя уже занято кем-то другим → это
+ * чужой аккаунт, роли admin он не получит (проверка 'taken' срабатывает раньше).
+ */
+function bootstrapLogins() {
+  return String(process.env.BOOTSTRAP_ADMIN || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 async function hashPassword(password) {
@@ -227,8 +249,14 @@ async function createAccount(rawLogin, rawPass) {
   const P = validatePassword(rawPass);
   if (P.error) return { error: P.error };
   if (findByLogin(L.login)) return { error: "taken" };
+  // Флуд-предохранитель: глобальный потолок аккаунтов сервера. Считаем ДО
+  // создания (учётной записи может добавлять только этот же код — гонок нет).
+  if (Object.keys(store.accounts).length >= maxAccounts()) {
+    return { error: "full" };
+  }
   const id = newId("a");
-  const wantAdmin = bootstrapLogin() && L.login.toLowerCase() === bootstrapLogin() && !anyAdmin();
+  // Bootstrap-список: логин совпал с одним из предустановленных имён → admin.
+  const wantAdmin = bootstrapLogins().includes(L.login.toLowerCase());
   const acc = {
     id,
     login: L.login,
@@ -263,7 +291,11 @@ async function loginAccount(rawLogin, rawPass) {
 function attachSprite(acc, sprite, size) {
   const ch = activeCharacter(acc);
   if (!ch) return;
-  if (typeof sprite === "string" && sprite) ch.sprite = sprite;
+  // Тот же whitelist, что в pickSprite (server/room.js): персистим в аккаунт
+  // только легальный id спрайта — чужой join-payload не может протащить произвольную
+  // строку в сторе (и дальше в whoami/поле).
+  const want = typeof sprite === "string" ? sprite.trim() : "";
+  if (want && SPRITES.includes(want)) ch.sprite = want;
   if (Number.isFinite(Number(size))) ch.size = Math.min(100, Math.max(60, Math.round(Number(size))));
   markDirty();
 }

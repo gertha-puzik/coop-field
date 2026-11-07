@@ -320,6 +320,117 @@ eq(
   true,
 );
 
+// ── Блокер root-RCE (PR #41): apply юниты не ставит ─────────────────────
+// Статические проверки файлов конвейера: sudoers без cp юнита и
+// daemon-reload, bootstrap без группы deploy. Комментарии файлов не
+// смотри — только активные строки.
+const active = (s) =>
+  s
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+const sudoersText = active(readFileSync(join(here, "..", "deploy/vps/sudoers-coop-field-preview"), "utf8"));
+eq("sudoers has no daemon-reload", sudoersText.includes("daemon-reload"), false);
+eq("sudoers has no unit cp", sudoersText.includes("/usr/bin/cp"), false);
+eq("sudoers keeps restart", sudoersText.includes("/usr/bin/systemctl restart coop-field-preview@*"), true);
+eq("sudoers keeps enable --now", sudoersText.includes("/usr/bin/systemctl enable --now coop-field-preview@*"), true);
+eq("sudoers keeps stop/disable/reset-failed for destroy", sudoersText.includes("/usr/bin/systemctl reset-failed coop-field-preview@*"), true);
+eq("sudoers keeps nginx -t/reload", sudoersText.includes("/usr/sbin/nginx -t, /usr/bin/systemctl reload nginx"), true);
+const applyText = readFileSync(script, "utf8");
+eq("apply has no unit copy into /etc/systemd", applyText.includes("incoming-preview/coop-field-preview@.service\" /etc/systemd"), false);
+eq("apply refuses when unit missing", applyText.includes("apply юниты не ставит"), true);
+const bootstrapText = readFileSync(join(here, "..", "deploy/vps/preview-bootstrap.sh"), "utf8");
+eq("bootstrap no usermod -aG deploy", active(bootstrapText).includes("usermod"), false);
+eq("bootstrap still installs unit from its own dir", bootstrapText.includes("cp \"$HERE/coop-field-preview@.service\" /etc/systemd/system/coop-field-preview@.service"), true);
+const nginxDocText = readFileSync(join(here, "..", "deploy/vps/nginx-preview.conf"), "utf8");
+eq(
+  "nginx doc /ws has X-Forwarded-For",
+  /location \/ws[\s\S]*X-Forwarded-For \$proxy_add_x_forwarded_for/.test(nginxDocText),
+  true,
+);
+
+// Полный apply без SKIP_SYSTEMD. «sudo» и «curl» подменяются шимами в PATH:
+// фейковый sudo пишет лог вызовов (assert: только enable --now/restart,
+// без cp юнита и daemon-reload), шим curl отвечает 200 на /health —
+// настоящий curl на macOS в этом сандбоксе виснет на loopback-HTTP
+// (0 байт при живом сервере), на CI ubuntu поведение шима и curl совпадают.
+// Юнит в фейковом systemd-каталоге «уже установлен» bootstrap'ом; ядовитый
+// юнит лежит в incoming — apply обязан его игнорировать.
+const sudoLog = join(t.root, "sudo.log");
+const fakeSudo = join(t.root, "fake-sudo.sh");
+writeFileSync(fakeSudo, `#!/bin/bash\nprintf '%s\\n' "$*" >> "${sudoLog}"\nexit 0\n`);
+chmodSync(fakeSudo, 0o755);
+const fakeBin = join(t.root, "bin");
+mkdirSync(fakeBin, { recursive: true });
+const fakeCurl = join(fakeBin, "curl");
+writeFileSync(
+  fakeCurl,
+  `#!/bin/bash\nfor a in "$@"; do case "$a" in http://127.0.0.1:*) echo '{"ok":true}' ;; esac; done\nexit 0\n`,
+);
+chmodSync(fakeCurl, 0o755);
+const shimPath = `${fakeBin}:${process.env.PATH}`;
+const sysDir = join(t.root, "systemd");
+mkdirSync(sysDir, { recursive: true });
+const installedUnit = join(sysDir, "coop-field-preview@.service");
+const installedUnitBody = "[Unit]\nDescription=installed by bootstrap once\n[Service]\nUser=deploy-preview\nExecStart=/opt/coop-field/.node/bin/node server.js\n";
+writeFileSync(installedUnit, installedUnitBody);
+mkdirSync(join(t.root, "incoming-preview"), { recursive: true });
+writeFileSync(
+  join(t.root, "incoming-preview/coop-field-preview@.service"),
+  "[Unit]\nDescription=poison from PR\n[Service]\nUser=root\nExecStart=/bin/sh\n",
+);
+fillIncoming(t.incoming, "psec");
+// node_modules «уже есть» (на VPS его кладёт первый apply): иначе sandbox
+// побежит в несуществующий npm ci до systemd-фазы.
+mkdirSync(join(t.previewRoot, "psec", "node_modules"), { recursive: true });
+const full = run({
+  ...base,
+  PREVIEW_SLUG: "psec",
+  PREVIEW_IN: join(t.incoming, "psec"),
+  PREVIEW_PORT: "41699",
+  PREVIEW_HOST: "psec.abnocw.miew.ru",
+  PREVIEW_SHA: "psecdeadbeef",
+  PREVIEW_SKIP_SYSTEMD: "0",
+  PREVIEW_SKIP_NGINX: "1",
+  PREVIEW_SYSTEMD_DIR: sysDir,
+  PREVIEW_SUDO: fakeSudo,
+  PATH: shimPath,
+});
+dump("apply psec full run", full);
+eq("full apply (no skip) succeeds", full.status, 0);
+eq("full apply prints health ok", full.stdout.includes("health ok"), true);
+const logText = readFileSync(sudoLog, "utf8");
+eq("fake sudo got no daemon-reload", logText.includes("daemon-reload"), false);
+eq("fake sudo got no unit cp", logText.includes("cp "), false);
+eq("installed unit untouched by apply", readFileSync(installedUnit, "utf8"), installedUnitBody);
+eq("enable --now recorded", logText.includes("/usr/bin/systemctl enable --now coop-field-preview@psec"), true);
+eq("restart recorded", logText.includes("/usr/bin/systemctl restart coop-field-preview@psec"), true);
+eq(
+  "generated /ws keeps X-Forwarded-For",
+  readFileSync(join(t.nginxD, "preview-psec.conf"), "utf8").includes("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"),
+  true,
+);
+
+// Юнит не установлен → apply отказывает ДО systemctl и ничего не пишет в
+// systemd-каталог (даже при ядовитом юните в incoming).
+const emptySys = join(t.root, "systemd-empty");
+mkdirSync(emptySys, { recursive: true });
+mkdirSync(join(t.previewRoot, "psec2", "node_modules"), { recursive: true });
+const noUnit = run({
+  ...base,
+  PREVIEW_SLUG: "psec2",
+  PREVIEW_IN: join(t.incoming, "psec"),
+  PREVIEW_PORT: "41699",
+  PREVIEW_SKIP_SYSTEMD: "0",
+  PREVIEW_SKIP_NGINX: "1",
+  PREVIEW_SYSTEMD_DIR: emptySys,
+  PREVIEW_SUDO: fakeSudo,
+  PATH: shimPath,
+});
+eq("apply refuses when unit missing", noUnit.status === 0 ? "ok" : "fail", "fail");
+eq("refusal points to bootstrap", (noUnit.stderr || "").includes("preview-bootstrap.sh"), true);
+eq("refusal wrote nothing into systemd dir", existsSync(join(emptySys, "coop-field-preview@.service")), false);
+
 rmSync(t.root, { recursive: true, force: true });
 
 if (failed) {

@@ -1,0 +1,114 @@
+name: Preview PR (build)
+
+# Безопасная половина preview-пайплайна (блокер-2 security-обзора PR #41).
+# На pull_request GitHub исполняет workflow-файл ИЗ MERGE-РЕФА PR — автор
+# ветки правит его как угодно. Поэтому здесь НЕТ ни одного секрета репо
+# (PREVIEW_SSH_KEY недоступен), только одноразовый GITHUB_TOKEN: джоба
+# собирает из head-SHA артефакт preview-дистрибутива. На VPS его выкладывает
+# отдельный preview-deploy.yml (workflow_run): тот файл GitHub берёт всегда
+# с main, PR его подменить не может, секреты доступны только ему.
+# Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
+# Форки не собираем и не деплоим (head_repository проверяется и тут, и в deploy).
+# Каталог/юнит/имя сайта — pr-<номер PR>; сборка из SHA коммита, не из ветки.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # GITHUB_TOKEN одноразовый, не секрет; нужен только для одного
+  # маркер-комментария о провале сборки (обновляет существующий).
+  pull-requests: write
+
+jobs:
+  build:
+    name: Сборка preview-дистрибутива
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Сборка статики
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -f out/index.html
+
+      - name: Preview-гейты
+        run: |
+          set -euo pipefail
+          npm run test:preview-slug
+          npm run test:preview-apply
+          npm run test:preview-pr-link
+          npm run test:write-openssh-key
+
+      - name: Упаковка preview-дистрибутива
+        # Ровно тот состав, что раньше уезжал на VPS rsync'ом из джобы PR:
+        # server-код, собранный www (out/), рантайм-скрипты, пакеты.
+        # Деплой-скрипты preview-deploy.yml сюда НЕ входят.
+        run: |
+          set -euo pipefail
+          rm -rf preview-dist
+          mkdir -p preview-dist/www
+          cp -a out/. preview-dist/www/
+          cp -a server.js server scripts package.json package-lock.json preview-dist/
+          test -f preview-dist/server.js
+          test -f preview-dist/server/protocol.js
+          test -f preview-dist/www/index.html
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview-dist
+          path: preview-dist
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Комментарий при провале
+        # Артефакта нет — деплоя этого коммита не будет. Маркер тот же, что у
+        # preview-deploy.yml: комментарий ОДИН на PR, обновляется, не плодится.
+        # Секретов не касаемся.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          MARKER="<!-- coop-field-preview -->"
+          BODY="${MARKER}
+          Сборка preview не прошла (коммит \`${SHA:0:7}\`): артефакт не собран, выкладки этого коммита не будет.
+          Лог: ${URL}. Если preview уже был — он продолжает работать со своего последнего успешного коммита.
+          Пушь исправление — preview поднимется с нового коммита сам."
+          CID=$(gh api "repos/$REPO/issues/$PR/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$CID" -f body="$BODY"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY"
+          fi
+
+  rapid:
+    name: Rapid run (закрыт — не собираем)
+    # Артефакт не нужен: снос сделает preview-deploy.yml по workflow_run
+    # (state PR закрыт → PREVIEW_ACTION=destroy). Форки тоже ничего не ждут.
+    if: github.event.action == 'closed' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ничего не собираем
+        run: |
+          echo "PR закрыт (merge/close) или форк: артефакт не собирается."
+          echo "Снос окружения (для закрытых PR своего репо) — preview-deploy.yml по workflow_run."

@@ -34,9 +34,9 @@ grep -R --include='*.conf' -h '^\s*root ' /etc/nginx 2>/dev/null | sort -u | hea
 echo "=== конец инвентаря ==="
 
 id "$USER_NAME" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$USER_NAME"
-if getent group deploy >/dev/null && [ "$USER_NAME" != "deploy" ]; then
-  usermod -aG deploy "$USER_NAME" || true
-fi
+# Группу deploy юзеру НЕ даём: авто-вливание в неё (usermod -aG deploy)
+# открывало preview-пользователю запись в файлы прода при g+w — риск из
+# security-обзора; экономия прав не нужна, каталог preview свой.
 
 mkdir -p "$ROOT" "$INCOMING" "$NGINX_D" "$IN_HOME/.ssh"
 chown -R "$USER_NAME:$USER_NAME" "$ROOT" "$INCOMING" "$NGINX_D" "$IN_HOME/.ssh"
@@ -60,6 +60,8 @@ if [ -f "$PUB" ]; then
   chmod 600 "$AUTH"
 fi
 
+# Единственное место, где юнит попадает в /etc/systemd/system: bootstrap от
+# root. deploy-конвейер (preview-apply.sh от deploy-preview) юнит не ставит.
 if [ -f "$HERE/coop-field-preview@.service" ]; then
   cp "$HERE/coop-field-preview@.service" /etc/systemd/system/coop-field-preview@.service
   systemctl daemon-reload

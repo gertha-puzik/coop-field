@@ -107,7 +107,7 @@ import {
 import { ROOMS, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import { JUMP_MAX_CELLS, type CoopWhoami } from '@/lib/net/protocol';
 import { authPayload } from '@/lib/net/auth';
-import { roomsForMode } from '@/lib/net/modes';
+import { roomsForMode, namedRoom } from '@/lib/net/modes';
 import {
   type RemoteDraw,
 } from '@/lib/net/move-book';
@@ -791,15 +791,24 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
     });
   }, []);
 
-  /** Какие комнаты спрашивать у сервера: каталог режима + комната из ссылки на хабе. */
+  /** Какие комнаты спрашивать у сервера: каталог режима + комната из ссылки на хабе.
+   *  Закрытые комнаты (access 'registered') гость не опрашивает: состав ему
+   *  всё равно не нужен (без аккаунта не войти), а сервер и не расскажет —
+   *  гость получает про них такой же ответ, как про несуществующие. */
   const wantedRoomIds = useCallback((): string[] => {
-    const ids = roomsForMode(mode).map((r) => r.id);
+    const inAccount = !!(whoami?.ok && whoami.accountId);
+    const ids = roomsForMode(mode)
+      .filter((r) => r.access !== 'registered' || inAccount)
+      .map((r) => r.id);
     if (mode === 'hub') {
       const urlRoom = roomFromUrl();
-      if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) ids.push(urlRoom);
+      if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) {
+        const gate = namedRoom(urlRoom);
+        if (!gate || gate.access !== 'registered' || inAccount) ids.push(urlRoom);
+      }
     }
     return ids;
-  }, [mode]);
+  }, [mode, whoami]);
 
   /* ---------- редактор локации «теста» ---------- */
 

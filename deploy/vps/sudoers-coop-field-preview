@@ -1,8 +1,16 @@
 # Узкий sudo для пользователя preview. Не ALL, не юнит прода coop-field.
 # Ставит preview-bootstrap.sh в /etc/sudoers.d/coop-field-preview (режим 0440).
 # Проверка: visudo -cf /etc/sudoers.d/coop-field-preview
+#
+# Юнит-файл сюда НЕ входит и daemon-reload запрещён (фикс root-RCE из PR #41:
+# раньше cp юнита из incoming-preview + daemon-reload позволяли PR-коду
+# исполнять произвольный юнит от root). Юнит ставит только
+# preview-bootstrap.sh от root. Набор ниже — ровно те команды, что зовёт
+# deploy/vps/preview-apply.sh: enable --now/restart (apply),
+# stop/disable/reset-failed (destroy), --no-pager status (диагностика health),
+# плюс nginx -t и reload nginx.
 
-Cmnd_Alias COOP_PREVIEW_SVC = /usr/bin/systemctl start coop-field-preview@*, /usr/bin/systemctl stop coop-field-preview@*, /usr/bin/systemctl restart coop-field-preview@*, /usr/bin/systemctl enable coop-field-preview@*, /usr/bin/systemctl disable coop-field-preview@*, /usr/bin/systemctl enable --now coop-field-preview@*, /usr/bin/systemctl reset-failed coop-field-preview@*, /usr/bin/systemctl --no-pager status coop-field-preview@*, /usr/bin/systemctl daemon-reload, /usr/bin/cp /home/deploy-preview/incoming-preview/coop-field-preview@.service /etc/systemd/system/coop-field-preview@.service
+Cmnd_Alias COOP_PREVIEW_SVC = /usr/bin/systemctl stop coop-field-preview@*, /usr/bin/systemctl restart coop-field-preview@*, /usr/bin/systemctl disable coop-field-preview@*, /usr/bin/systemctl enable --now coop-field-preview@*, /usr/bin/systemctl reset-failed coop-field-preview@*, /usr/bin/systemctl --no-pager status coop-field-preview@*
 
 Cmnd_Alias COOP_PREVIEW_NGINX = /usr/sbin/nginx -t, /usr/bin/systemctl reload nginx
 

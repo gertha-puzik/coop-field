@@ -21,9 +21,24 @@ import {
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const COOKIE = "coop_session";
 const TTL_MS = 14 * 24 * 60 * 60 * 1000;
-const REGISTER_GAP_MS = 60_000;
-const REGISTER_HOUR_MAX = 5;
-const LOGIN_GAP_MS = 6_000;
+
+// Темп-лимиты auth-действий. Дефолты — прод-поведение; env-тюнинг нужен
+// тестам (детерминированные пороги без sleep-магии) и владельцу для подстройки
+// через systemd-юнит. Имена env: AUTH_REGISTER_GAP_MS, AUTH_REGISTER_HOURLY_MAX,
+// AUTH_LOGIN_GAP_MS, AUTH_LOGIN_FAIL_MAX, AUTH_LOGIN_FAIL_WINDOW_MS.
+const envMs = (name, def) => {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 0 ? n : def;
+};
+const REGISTER_GAP_MS = envMs("AUTH_REGISTER_GAP_MS", 60_000);
+const REGISTER_HOUR_MAX = Math.max(1, Math.round(Number(process.env.AUTH_REGISTER_HOURLY_MAX) || 5));
+const LOGIN_GAP_MS = envMs("AUTH_LOGIN_GAP_MS", 6_000);
+// Подбор пароля к ОДНОМУ логину (дополнение к per-IP bucket): счёт ведётся по
+// логину, поэтому ротация адресов не обходит, а владельца враг может лишь
+// на время окна притормозить вход его имени — навсегда логин не закрывается;
+// успешный вход сбрасывает счётчик.
+const LOGIN_FAIL_MAX = Math.max(1, Math.round(Number(process.env.AUTH_LOGIN_FAIL_MAX) || 20));
+const LOGIN_FAIL_WINDOW_MS = envMs("AUTH_LOGIN_FAIL_WINDOW_MS", 15 * 60_000);
 
 let sessions = loadSessions();
 const hits = new Map();
@@ -89,17 +104,39 @@ function destroySession(token) {
   }
 }
 
+/**
+ * Клиентский IP для темп-лимитов. X-Forwarded-For доверяем в ОДНОМ случае:
+ * TCP-сокет пришёл с loopback (127.0.0.1/::1) — т.е. соединение терминировал
+ * наш собственный nginx — и тогда берём ПОСЛЕДНЮЮ запись XFF: её дописал сам
+ * nginx, клиент подделать её не может (свои поддельные хопы он дописал раньше,
+ * они остаются НЕпоследними). Прямой коннект (не с loopback) — адрес сокета:
+ * заголовок XFF от постороннего клиента — просто данные, не источник правды.
+ * Обычно nginx /ws не передаёт XFF вовсе — до деплоя x-forwarded-for фрагмента
+ * proxy-коннекты остаются loopback.
+ */
 function clientIp(reqOrWs) {
-  const fwd = reqOrWs?.headers?.["x-forwarded-for"];
-  if (fwd) return String(fwd).split(",")[0].trim();
+  const fwd = String(reqOrWs?.headers?.["x-forwarded-for"] || "");
   const sock = reqOrWs?.socket || reqOrWs?._socket;
-  return String(reqOrWs?.ip || sock?.remoteAddress || "0").split(",")[0].trim();
+  const remote = String(reqOrWs?.ip || sock?.remoteAddress || "0").split(",")[0].trim();
+  if (fwd && isLoopback(remote)) {
+    const last = fwd.split(",").pop().trim();
+    if (last) return last;
+  }
+  return remote;
 }
 
 function isLoopback(ip) {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
+/**
+ * Троттлер на IP+действие: bucket хранит времена последних попыток за час.
+ * loopback-исключение — это только ПРЯМОЙ локальный коннект (без XFF): локальная
+ * разработка и скриптовые тесты не упираются в лимиты. Прод-трафик приходит
+ * через nginx с XFF — тогда clientIp уже отдал реальный адрес, и лимиты
+ * работают; без XFF-фрагмента nginx proxy-трафик тоже loopback (известный
+ * остаточный риск до деплоя фрагмента).
+ */
 function rate(ip, key, gapMs, hourMax) {
   if (isLoopback(ip)) return true;
   const now = Date.now();
@@ -116,6 +153,55 @@ function rate(ip, key, gapMs, hourMax) {
   arr.push(now);
   hits.set(ip, { ...bucket, [key]: arr });
   return true;
+}
+
+/* ---------- per-LOGIN замок неудачных входов ----------
+ * Дополняет per-IP rate: брутфорс одного аккаунта с РОТАЦИЕЙ адресов per-IP
+ * не ловит (gap 6 с на адрес — сотни попыток в час с одного IP и безлимит с роты).
+ * Счёт ведём по логину: AUTH_LOGIN_FAIL_MAX неудач за AUTH_LOGIN_FAIL_WINDOW_MS
+ * → дальнейшие попытки ПО ЛЮБОМУ адресу получают 'rate' до конца окна; успех
+ * сбрасывает счётчик. Навсегда логин не закрывается — злой игрок может лишь
+ * на время окна затормозить чей-то вход, DoS-лока имени нет. */
+
+const loginFails = new Map();
+/** Потолок карты, чтобы флуд несуществующими логинами не раздувал память. */
+const LOGIN_FAIL_MAP_MAX = 4096;
+
+function failKey(rawLogin) {
+  return String(rawLogin || "").trim().toLowerCase();
+}
+
+/** Отдельная неудача: +1 в окно логина (по пути вычищаем просроченные записи). */
+function noteLoginFail(rawLogin) {
+  const key = failKey(rawLogin);
+  if (!key) return;
+  const now = Date.now();
+  if (loginFails.size >= LOGIN_FAIL_MAP_MAX) {
+    for (const [k, arr] of loginFails) {
+      const keep = arr.filter((t) => now - t < LOGIN_FAIL_WINDOW_MS);
+      if (keep.length) loginFails.set(k, keep);
+      else loginFails.delete(k);
+    }
+  }
+  const arr = (loginFails.get(key) || []).filter((t) => now - t < LOGIN_FAIL_WINDOW_MS);
+  arr.push(now);
+  loginFails.set(key, arr);
+}
+
+/** Замокнут ли логин (порог неудач в окне). Прежние неудачи по выходу
+ *  из окна перестают считаться — лимит поствременный. */
+function loginLocked(rawLogin) {
+  const key = failKey(rawLogin);
+  const now = Date.now();
+  const arr = (loginFails.get(key) || []).filter((t) => now - t < LOGIN_FAIL_WINDOW_MS);
+  if (arr.length) loginFails.set(key, arr);
+  else loginFails.delete(key);
+  return arr.length >= LOGIN_FAIL_MAX;
+}
+
+/** Успешный вход: счётчик неудач имени гасим. */
+function clearLoginFails(rawLogin) {
+  loginFails.delete(failKey(rawLogin));
 }
 
 function cookieToken(req) {
@@ -163,6 +249,7 @@ function reasonText(code) {
   if (code === "weak") return `Пароль слишком короткий (минимум ${PASS_MIN}).`;
   if (code === "short") return "Имя слишком короткое.";
   if (code === "bad") return "Неверный логин или пароль.";
+  if (code === "full") return "Регистрация закрыта: на сервере больше нет свободных мест для аккаунтов.";
   if (code === "rate") return "Слишком часто. Подождите немного.";
   return "Не получилось войти.";
 }
@@ -247,6 +334,11 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     return;
   }
   if (action === "login") {
+    if (loginLocked(payload.login)) {
+      sendWhoami(ws, { ok: false, reason: "rate" });
+      send(ws, EV.INFO, "Много неудачных попыток входа с этим именем. Подождите немного.");
+      return;
+    }
     if (!rate(ip, "login", LOGIN_GAP_MS, 0)) {
       sendWhoami(ws, { ok: false, reason: "rate" });
       send(ws, EV.INFO, reasonText("rate"));
@@ -254,10 +346,12 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     }
     const out = await loginAccount(payload.login, payload.pass);
     if (out.error) {
+      noteLoginFail(payload.login);
       sendWhoami(ws, { ok: false, reason: "bad" });
       send(ws, EV.INFO, reasonText("bad"));
       return;
     }
+    clearLoginFails(payload.login);
     const token = createSession(out.account.id);
     bindAccount(ws, out.account, token);
     sendWhoami(ws, whoamiBody(ws, { token }));
@@ -314,16 +408,22 @@ async function handleAuthHttp(req, res) {
       return true;
     }
     if (url.pathname === "/auth/login" && req.method === "POST") {
+      const body = await readJson(req);
+      if (loginLocked(body.login)) {
+        json(res, 429, { ok: false, reason: "rate" });
+        return true;
+      }
       if (!rate(ip, "login", LOGIN_GAP_MS, 0)) {
         json(res, 429, { ok: false, reason: "rate" });
         return true;
       }
-      const body = await readJson(req);
       const out = await loginAccount(body.login, body.pass);
       if (out.error) {
+        noteLoginFail(body.login);
         json(res, 401, { ok: false, reason: "bad" });
         return true;
       }
+      clearLoginFails(body.login);
       const token = createSession(out.account.id);
       json(res, 200, { ok: true, token, ...publicAccount(out.account) }, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
