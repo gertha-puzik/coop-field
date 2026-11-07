@@ -34,14 +34,14 @@ All eight must be green. If `arch:check` fails on a new file — do not grow the
 | Task leads to | File | What is inside |
 | --- | --- | --- |
 | Any engine task | `docs/ARCHITECTURE.md` §2 | map of ALL modules with line ranges — read first |
-| Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 280 (W3 canon), testmap 493, world 663, sanitize 95, room 412, movement 294, combat 271, dummy-rab 133, atmo 114, persist 131, net 199 — domain map with details in ARCHITECTURE.md §2 |
-| Canvas engine | `src/components/sim/simulator.tsx` (4729) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 257, use-network 631, use-canvas-layers 186, use-strike 277), hookless factories (editor-ops 734, editor-cells 196, editor-select 197, pointer-tools 670), HUD day panel (hud-canvas 225), sim-model 178 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 396 — кнопки «Погода»/«Сутки», editor-overlay 692, field-stage 147). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3993 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–873) + buildEditorOps call :888, effects ~1041–1274, pointer-tools call :4146, JSX assembly 4371–4609. targeting.pickStrikeTarget mirrors `server/combat.js` aimedNeighbor (:76) -> ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
+| Room server | `server.js` (10, thin entry since W4: imports `startServer()` from `server/net.js`) + `server/` modules: config 137, protocol 284 (W3 canon + auth/whoami), testmap 493, world 663, sanitize 95, room 425, movement 295, combat 271, dummy-rab 133, atmo 114, persist 131, net 221, modes, accounts, auth, hunger, runtime-config — domain map with details in ARCHITECTURE.md §2 |
+| Canvas engine | `src/components/sim/simulator.tsx` (4736) | Two-stage carve: W5a moved the pure helper belt to `src/lib/sim/*` (engine-consts, geometry, targeting, combat-log, particles, paint, editor-model); W5b moved stage-2 pieces to `src/components/sim/simulator/*` — hooks (use-keyboard 257, use-network 641, use-canvas-layers 186, use-strike 277), hookless factories (editor-ops 734, editor-cells 196, editor-select 197, pointer-tools 670), HUD day panel (hud-canvas 225), sim-model 178 (types, fmtSec, remote-draw + lib/net consumers), JSX chrome (chrome 396 — кнопки «Погода»/«Сутки», editor-overlay 692, field-stage 147). Kept ON PURPOSE: the main rAF closure (~2700 lines, one `useEffect` deps `[stage]`, `const loop` at :3993 — moving it whole recreates a >800-line file, splitting it rewires engine variables), state/refs belt of `Simulator()` (233–873) + buildEditorOps call :888, effects ~1041–1274, pointer-tools call :4146, JSX assembly 4371–4609. targeting.pickStrikeTarget mirrors `server/combat.js` aimedNeighbor (:76) -> ARCHITECTURE §4; module/belt map — ARCHITECTURE §2/§7 |
 | Combat model, sprites, armor | `src/lib/sim/settings.ts` (1131) | ARMOR_CURVE (:572), strike zones, damage levels; 54 exports |
 | «Elision» location | `src/lib/sim/test-field.ts` (2155) | walkability, route graph, edge render, paint, cheap terrain-cell clips, camera-facing cliff faces; mutable singletons — one Simulator mount per process (ARCHITECTURE §6) |
 | Location config | `src/lib/sim/test-map.ts` (736) | v1/v2 + editor limits (mirror of server-side sanitize) |
 | Transport, inbound dispatch | `src/lib/net/coop.ts` (537) | socket choice, reconnect backoff, dispatcher 367+ |
 | Step prediction | `src/lib/net/move-book.ts` (89) | **the reference module** — copy its style for new files |
-| Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; the real password arbiter is the server (setmap) |
+| Settings panel | `src/components/sim/settings-panel.tsx` | admin-tab gate is a UX filter; setmap/admin-role is the real arbiter. Handbook tab «Справочник Герты»; server tunables `/cfg` |
 
 Where to start common tasks:
 - **"Add/change an event"** → both registries first (`server/protocol.js` + `src/lib/net/protocol.ts`; they must stay mirrored) → `server/net.js` onMessage dispatcher and the domain handler in `server/*.js` →
@@ -65,11 +65,11 @@ Invariants (violating one = a bug):
 - Clients advance on LOCAL clocks from the `atmo.t` anchor; the server ticker (5 s) resends the anchor only on phase change.
 - Damage is client-authoritative (an accepted debt of this sandbox): the server cuts it by target armor and ships it in `fight`.
 
-### Client → server (22)
+### Client → server (23)
 
 | Event | Payload | Limits / response |
 | --- | --- | --- |
-| `join` | `room?, login?, sprite?, size?` | 1/s; login ≤24 codepoints, unique; size 60–100; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` |
+| `join` | `{room?, login?, sprite?, size?}` | 1/s; login ≤24 codepoints, unique; size 60–100; session uses character name (client login is not identity); room `test` needs a session else refuse/noplace auth_required; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` |
 | `move` | `{x, y}` — step −1..1 | cooldown 80 ms, queue ≤3; response: echo or `refuse {code}` |
 | `aim` | `{deg}` | coalesced ≥20 ms; the angle is broadcast via `update cat` |
 | `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); damage 0–100; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
@@ -90,8 +90,9 @@ Invariants (violating one = a bug):
 | `jump` | `{x, y, deg?, charge?}` 1-based | cooldown 450 ms; 8 directions, 1–3 cells; `charge` 0–1 is the spacebar fill. Step is free when the elevation delta is at most 1. Jump: delta 2 needs charge ≥ 0.5, delta 3 needs charge ≥ 1, climbing 4 or more is impossible, dropping 4 or more needs a full charge |
 | `setmap` | `{pass, map}` | admin location editor: sanitize (v1\|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000), ≥8 backups; the password is verified by the server (ADMIN_PASS, env); throttle 1/10 s per socket (any frame); → `map`+`field` to the `test` room; errors → `info` |
 | `rooms` | `{ids: [...]}` ≤32 | 1/250 ms; → `roomsinfo` (does not materialize rooms) |
+| `auth` | `{action, login?, pass?, token?}` | `hello`/`register`/`login`/`logout`; register 1/min/IP; login 10/min/IP; pass ≥8; → `whoami`. Token also on WS query `t` or Cookie `coop_session`. |
 
-### Server → client (22)
+### Server → client (23)
 
 | Event | Payload | To whom / when |
 | --- | --- | --- |
@@ -100,9 +101,9 @@ Invariants (violating one = a bug):
 | `chatlog` | ≤40 `{seq,id,login,color,text,ts}` | only the joiner, after `field` |
 | `move` | publicCat of the joiner \| `{id,x:0,y:0}` | to all; the latter is the leave marker (see the invariant above) |
 | `update cat` | publicCat (id, login, color, sprite, x, y, deg, size, blocking, sq) | step/jump/cellsync/skin/aim — to all, including the author |
-| `refuse` | `{code, text}` | codes: `edge`/`cell_busy`/`cliff`/`cooldown` — machine-readable predictor rollback |
+| `refuse` | `{code, text}` | codes: `edge`/`cell_busy`/`cliff`/`cooldown`/`auth_required` — machine-readable predictor rollback |
 | `info` | string | all human-facing errors/hints (parse by `refuse` code, not by text) |
-| `noplace` | `{room, reason}` | join refusal: 30-cats cap or no free cell |
+| `noplace` | `{room, reason}` | join refusal: 30-cats cap, no free cell, or `auth_required` (Элизия без сессии) |
 | `fight` | `{attacker, targetId, part, zone, damage, flightMs…}` | after flightMs; the striker gets `isAttacking=true`; damage is already armor-cut |
 | `chat` | `{seq, id, login, color, text, ts}` | whole room, including the sender |
 | `map` | TestMap config | every socket of the `test` room after setmap |
@@ -113,6 +114,7 @@ Invariants (violating one = a bug):
 | `atmo` | anchor `{t, cs, pl, wl, w, ws, dp}` | to ALL on atmo/atmoset + 5 s ticker on dp/w change; on rejoin it rides inside `field` |
 | `freemove` | `{id, x, y, cx, cy, sp, jp}` | to others, ≤1/50 ms |
 | `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s |
+| `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}` |
 
 ## Server env
 
@@ -121,7 +123,8 @@ Invariants (violating one = a bug):
 | `PORT` / `HOST` | listen socket | 3780 (prod: 8787 behind nginx) / 0.0.0.0 |
 | `REQUIRE_ORIGIN` | enforce the browser Origin check | prod = 1; `ALLOWED_ORIGINS` holds the whitelist |
 | `ADMIN_PASS` | setmap editor password | legacy default in server/config.js; on prod override via the systemd unit (template in `deploy/vps/coop-field.service`) |
-| `DATA_DIR` | data (cat positions, map, backups) | `data/` |
+| `BOOTSTRAP_ADMIN` | login that becomes `admin` on first registration | empty = no account-admin until set in `accounts.json` |
+| `DATA_DIR` | data (cat positions, map, backups, accounts, sessions) | `data/` |
 
 Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod endpoint
 (`wss://coop.89-232-184-77.sslip.io`) requires the explicit `--prod` flag — scripts refuse without it.
@@ -143,12 +146,15 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 3. **External chat AIs (no file-system access, z.ai-style):** point them to `docs/AI-CONTEXT.md` FIRST — it is the one-file EN project brief (stack, deploy, module map, hard rules, human-intermediary protocol). Paste files they ask for; take unified diffs back.
 4. **localStorage routes (client persistence):** `simulator.tsx:664` (read saved SP), `:679` (write SP), `:1116` (write combat log), `:4187–4188` (reset), `:4200` (log rotation); `editor-ops.ts:144`/`:769` (editor password). Storage keys are named constants in `src/lib/sim/engine-consts.ts`.
 5. **Sprite whitelist mirror (no CI coverage):** `server/config.js:86` (`SPRITES`, 31) <-> `src/lib/sim/settings.ts:96` (`SPRITES: SpriteMeta[]`) — always change both sides in one PR, keep the counts equal.
-6. **Production/VPS is owner-only.** Agents never run prod operations, even with SSH access: write the exact commands/steps for the owner (game nick «Сырь») and wait for her confirmation. VPS root is owner-only.
+6. **Production/VPS is owner-only**, except a one-shot preview bootstrap the owner explicitly authorized. Agents still never restart `coop-field`, never write `/opt/coop-field` (except reading node), never copy prod `data/` or `ADMIN_PASS`. Preview: user `deploy-preview`, `/opt/coop-field-preview/`, destroy on PR `closed`/`merged`. SSH as `deploy-preview` works with Cursor secret `PREVIEW_SSH_KEY`. Preview bootstrap on the VPS is done. Public host is `http://<8 hex SHA>.abnocw.miew.ru`; unit/dir is `pr-<N>`. See `docs/PREVIEW-ENVIRONMENTS.md`.
 
 ## Doc index
 
 - `AGENTS.md` — this map + wire-contract tables (updated by the wave that changes the protocol).
 - `docs/ARCHITECTURE.md` — as-is map, data flows, mirrors, coordinates, target structure (W3–W5).
+- `docs/PRODUCT-ROADMAP.md` — product audit: what exists, what's missing, order of platform work.
+- `docs/PLATFORM-ARCHITECTURE.md` — accounts / modes / sessions / pages (on top of this map).
+- `docs/PREVIEW-ENVIRONMENTS.md` — PR preview on the same VPS (`/opt/coop-field-preview/`, `*.abnocw.miew.ru`); remaining owner steps.
 - `README.md` — human overview in Russian: what the game is, quick start, prod, feature eras.
 - `scripts/` — npm runners: test:ws (against a running server or `WS_URL`), test:queue (self-spawn),
   test:unit, arch:check; manual probes with self-spawn carry a "how to run" header line.
@@ -161,7 +167,7 @@ Map scripts read `MAP_PASS` (same legacy default fallback). Hitting the prod end
 - Boot starts two processes and waits until they answer:
   - room: `npm start` — `http://127.0.0.1:3780/health`, socket `ws://127.0.0.1:3780`
   - front: `npm run dev -- --hostname 0.0.0.0 --port 3000` — open `http://localhost:3000`. The dev HMR socket rejects a page opened as `127.0.0.1` while the server listens on all interfaces.
-- A localhost page connects to `ws://localhost:3780` by itself. Hello-world: `/?name=...`, confirm the three hidden parameters («Использовать предыдущие СП»), pick «Пивной грот №1». Join answers `you` then `field`; a step answers `update cat` or `refuse`.
+- A localhost page connects to `ws://localhost:3780` by itself. Hello-world: `/?name=...`, confirm the three hidden parameters («Использовать предыдущие СП»), pick «Пивной грот №1». Join answers `you` then `field`; a step answers `update cat` or `refuse`. Elision (`/elision` or room `test`) needs register/login first (`auth` → `whoami`). Extra tests: `npm run test:auth`, `npm run test:preview-slug`, `npm run test:preview-apply`, `npm run test:preview-pr-link`, `npm run test:write-openssh-key`.
 - `npm run test:queue` spawns its own server on a random port. `npm run test:ws` needs the room already listening (`WS_URL`, default `ws://127.0.0.1:3780`).
 - `next dev` rewrites `next-env.d.ts` to `.next/dev/types`; `next build` points it back at `.next/types`. Leave that flip out of feature commits. `agentRules: false` in `next.config.ts` keeps `next dev` from appending its own block to this file.
 - Production sockets stay untouched unless a script is given `--prod`. `ADMIN_PASS` is optional for local play.

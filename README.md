@@ -17,7 +17,7 @@ npm run dev
 ```
 
 Откройте `http://localhost:3000/?room=demo&name=Сырь` и вторую вкладку с другим `?name=`.
-Комнаты: «Пивные гроты» (поле 10×6) и рисованная локация «Элизия Эйдес».
+Страницы: `/` пивные гроты (гости), `/elision` Элизия Эйдес (нужен аккаунт), `/combat` активный бой, `/hunger` голодные игры (каркас).
 
 Тесты: `npm run test:queue` — очередь шагов (сервер поднимает сам); `npm run test:ws` — контракт комнаты,
 нужен уже поднятый сервер (`npm start`, либо `WS_URL=ws://...`); `npm run test:unit` — юнит-тесты движка
@@ -43,13 +43,16 @@ npm run dev
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | typecheck, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков |
 | «Фронтенд на Vercel и VPS» | изменения `src/`, `public/`, Next-конфига, зависимостей | `vercel deploy --prod` + rsync `out/` → `/opt/coop-field/www` |
 | «Сервер комнаты на VPS» | изменения `server.js`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
+| «Preview PR» | PR своего репо | тот же VPS, `deploy-preview`, снос при close/merge; живой URL после секрета `PREVIEW_SSH_KEY` и `preview-bootstrap.sh`, см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
-Секреты в GitHub: `VERCEL_TOKEN`, `VPS_SSH_KEY` — в коде и логах их нет.
+Секреты в GitHub: `VERCEL_TOKEN`, `VPS_SSH_KEY`; для preview ещё нужен `PREVIEW_SSH_KEY`. Значений в коде и логах нет.
 
 ## Для разработки — куда смотреть
 
 - Протокол комнаты `[event, payload]`, лимиты и refuse-коды — [AGENTS.md](AGENTS.md).
 - Слои модулей, зеркала-константы клиент↔сервер, план разреза god-файлов — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- Что уже есть в продукте и что наращиваем (аккаунты, режимы, админка) — [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md).
+- Целевая модель аккаунта, режимов и сессий — [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md).
 
 ## Работа с ИИ
 

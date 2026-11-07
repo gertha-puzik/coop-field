@@ -69,3 +69,13 @@ jobs:
       # (каждый ход получает ответ, гонки за клетку, переполнение очереди).
       - name: Очередь шагов на сервере
         run: node scripts/test-move-queue.mjs
+      - name: Аккаунты и закрытая Элизия
+        run: npm run test:auth
+      - name: Preview slug
+        run: npm run test:preview-slug
+      - name: Preview apply/destroy guards
+        run: npm run test:preview-apply
+      - name: Preview link (шапка PR)
+        run: npm run test:preview-pr-link
+      - name: OpenSSH PEM из однострочного секрета
+        run: npm run test:write-openssh-key

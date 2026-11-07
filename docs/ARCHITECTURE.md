@@ -3,6 +3,8 @@
 Сопутствует [AGENTS.md](../AGENTS.md): там — маршруты агента и контракт протокола, здесь —
 глубина: слои, потоки данных, зеркала-инварианты, координатные системы и целевая структура
 рефакторинга (волны W3–W5). Читай секцию задачи, не весь файл.
+Платформа (аккаунты, режимы, сессии) — [PLATFORM-ARCHITECTURE.md](PLATFORM-ARCHITECTURE.md);
+аудит продукта — [PRODUCT-ROADMAP.md](PRODUCT-ROADMAP.md).
 
 Состояние чисел: `wc -l` на 2026-11-06 (main = `060a51f`; волны W3–W5b слиты; в CI числа бережёт
 гейт `npm run check:landmarks`, W7a). Карта as-is честная: god-файлы разобраны — `server.js` (2701)
@@ -34,20 +36,20 @@ server.js             комната: комнаты, клетки, бой, ча
 
 | Модуль | Строк | Ответственность (диапазоны) |
 | --- | ---: | --- |
-| `src/components/sim/simulator.tsx` | 4729 | Остаток после выносов W5a+W5b (behavior-preserving): стейт/refs-пояс и сетевые колбэки 233–873; вызов buildEditorOps :888 (тела — ./simulator/editor-ops.ts); эффекты атмосферы/комнат/подсказки боя ~1041–1274; главный rAF 1275–4145 (оставлен на месте: ~2700-строчное замыкание с deps `[stage]`, `const loop` :4064 — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); ручной угол/клавиатура/мышь 4025–4122, вызов buildPointerTools :4146 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек 4150+ (patchField :345 — перенесён выше вызова buildEditorOps); entry-флоу/theme ~4258–4370; JSX-каркас 4371–4609 (панели — ./simulator/components/*) |
-| `src/components/sim/simulator/` вынос W5b | 4670 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving, проверено байт-в-байт diff): hud-canvas.ts 225 (HUD-плашка суток+погода), sim-model.ts 178 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 257 (window keydown/keyup/blur, deps []), hooks/use-network.ts 631 (сетевой эффект coop-клиента, deps [loaded, netStarted, applyNetFight, wantedRoomIds]), hooks/use-canvas-layers.ts 186 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike, doStrikeRef), editor-ops.ts 734 (операции черновика локации как per-render фабрика; клетки/спавны/заходы вынесены в editor-cells.ts, «Перенести» — в editor-select.ts), pointer-tools.ts 670 (мышиные обработчики канваса), editor-cells.ts 196 (земля/покрытие/боевая клетка/спавн/заход), editor-select.ts 197 (инструмент «Перенести»: вырезать/потащить/поставить), components/chrome.tsx 396 (SimulatorHeader — кнопки «Погода»/«Сутки», ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 692 (панель редактора + прогресс сохранения), components/field-stage.tsx 147 (рамка канвасов+легенда) |
+| `src/components/sim/simulator.tsx` | 4736 | Остаток после выносов W5a+W5b (behavior-preserving): стейт/refs-пояс и сетевые колбэки 233–873; вызов buildEditorOps :888 (тела — ./simulator/editor-ops.ts); эффекты атмосферы/комнат/подсказки боя ~1041–1274; главный rAF 1275–4145 (оставлен на месте: ~2700-строчное замыкание с deps `[stage]`, `const loop` :4064 — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); ручной угол/клавиатура/мышь 4025–4122, вызов buildPointerTools :4146 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек 4150+ (patchField :345 — перенесён выше вызова buildEditorOps); entry-флоу/theme ~4258–4370; JSX-каркас 4371–4609 (панели — ./simulator/components/*) |
+| `src/components/sim/simulator/` вынос W5b | 4670 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving, проверено байт-в-байт diff): hud-canvas.ts 225 (HUD-плашка суток+погода), sim-model.ts 178 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 257 (window keydown/keyup/blur, deps []), hooks/use-network.ts 641 (сетевой эффект coop-клиента, deps [loaded, netStarted, applyNetFight, wantedRoomIds]), hooks/use-canvas-layers.ts 186 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike, doStrikeRef), editor-ops.ts 734 (операции черновика локации как per-render фабрика; клетки/спавны/заходы вынесены в editor-cells.ts, «Перенести» — в editor-select.ts), pointer-tools.ts 670 (мышиные обработчики канваса), editor-cells.ts 196 (земля/покрытие/боевая клетка/спавн/заход), editor-select.ts 197 (инструмент «Перенести»: вырезать/потащить/поставить), components/chrome.tsx 396 (SimulatorHeader — кнопки «Погода»/«Сутки», ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 692 (панель редактора + прогресс сохранения), components/field-stage.tsx 147 (рамка канвасов+легенда) |
 | `src/lib/sim/` вынос W5a-1 | 980 | Чистые модули, вырезанные из пояса simulator.tsx (behavior-preserving): engine-consts.ts 109 (именованные константы+STORAGE-ключи, пометки [MIRROR] у DUMMY_DEFAULT/RAB_POS), geometry.ts 109 (spriteBoxOf/якоря стрелы/coveredRatio/nearestEntryCell), targeting.ts 151 (правило удара pickStrikeTarget — зеркало server.js aimedNeighbor, STRIKE_RESPONSE_MS), combat-log.ts 187 (layout колонок+STORAGE, mergeLog/CombatState), particles.ts 55 (спринт-частицы), paint.ts 311 (кисть PaintXP: материалы/штампы/undo/encode, синхронный+асинхронный PNG), editor-model.ts 93 (типы редактора+EDITOR_PASS_KEY) |
 | `src/lib/sim/settings.ts` | 1131 | Модель боя: STRIKE_ZONES, ARMOR_CURVE (:572), DAMAGE_LEVELS (:527), спрайты (31), замедление, атмосфера-типы; ~54 экспорта |
 | `src/lib/sim/test-field.ts` | 2155 | Играбельная площадь «Элизии»: проходимость клеток и anchor-точек, route-граф, рендер кромки (марширующие квадраты + Чайкин), paint-маска, дешёвые клипы клеток рельефа, лицевая стена блока по квадранту камеры, кэши; мутабельные модульные синглтоны (раздел 5) |
 | `src/lib/sim/test-map.ts` | 736 | Модель конфига локации v1/v2 + клиентский sanitize; TEST_MAP_LIMITS (:304) — зеркало серверных лимитов |
 | `src/lib/sim/atmosphere.ts` | 529 | Атмосфера: облака/дождь — Pixi-оверлей, тонировка суток — цветная вуаль «source-atop» на мировом холсте (один fillRect за кадр; без заливки текстуры мира в GPU и без SVG-фильтров) |
 | `src/lib/sim/` прочее | ~355 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 136, theme.ts 54 |
-| `src/lib/net/coop.ts` | 537 | Транспорт: выбор сокета (prod по домену, `?ws=` на localhost), reconnect backoff, диспетчер входящих 325+; имена событий и guard-валидаторы — из `./protocol` (W3) |
-| `src/lib/net/protocol.ts` | 338 | Client-side protocol canon (W3): mirrored `EV.*` registries, payload types, guards; re-exports sim-owned constants from `settings.ts`/`test-map.ts` |
+| `src/lib/net/coop.ts` | 552 | Транспорт: выбор сокета (prod по домену, preview `*.abnocw.miew.ru` → свой `/ws`, `?ws=` на localhost), reconnect backoff, диспетчер входящих; имена событий и guard-валидаторы — из `./protocol` (W3) |
+| `src/lib/net/protocol.ts` | 367 | Client-side protocol canon (W3): mirrored `EV.*` registries (23+23, auth/whoami), payload types, guards; re-exports sim-owned constants from `settings.ts`/`test-map.ts` |
 | `src/lib/net/move-book.ts` | 89 | Предикт своих шагов (≤1 неподтверждённый), откат по refuse, достройка чужих котов. Эталон чистоты для новых модулей |
-| `src/components/sim/` прочее | ~2650 | settings-panel.tsx 1302 (панель настроек, 25 пропсов/10 колбэков — разрез в W5), entry-screen.tsx 586, room-picker 129, room-chat 126, fight-log 71, beer/theme-бэкдропы |
+| `src/components/sim/` прочее | ~2650 | settings-panel.tsx 1312 (панель настроек, 25 пропсов/10 колбэков — разрез в W5, вкладка справочника), entry-screen.tsx 634, room-picker 129, room-chat 126, fight-log 71, beer/theme-бэкдропы |
 
-### Сервер (тонкий вход `server.js` 10 строк + 12 модулей `server/`; разрез волной W4, behavior-preserving)
+### Сервер (тонкий вход `server.js` 10 строк + модули `server/`; разрез волной W4, behavior-preserving)
 
 Вход `node server.js` только вызывает `startServer()` из `server/net.js` — весь код переехал
 в модули ниже; все имена событий — только `EV.*` из `server/protocol.js` (W3-канон).
@@ -55,17 +57,22 @@ server.js             комната: комнаты, клетки, бой, ча
 | Модуль | Строк | Что |
 | --- | ---: | --- |
 | `server/config.js` | 137 | env (PORT/HOST/DATA_DIR/ADMIN_PASS), Origin-политика REQUIRE_ORIGIN, payload/frame limits, поле (WIDTH/HEIGHT/SPAWNS/PALETTE), whitelist 31 спрайта, имена котов |
-| `server/protocol.js` | 280 | канон W3 (вырезом не тронут): реестры EV.* 22+22, зеркальные константы (кулдауны, лимиты, ARMOR_CURVE, зоны, atmo, геометрия прыжка/dummy/rab) |
+| `server/protocol.js` | 284 | канон W3 + auth/whoami: реестры EV.* 23+23, зеркальные константы (кулдауны, лимиты, ARMOR_CURVE, зоны, atmo, геометрия прыжка/dummy/rab) |
 | `server/testmap.js` | 493 | конфиг локации: defaultTestMap, sanitizeTestMap (cols 6–60, rows 3–40, zones ≤48, objects ≤2000), атомарная запись, карантин битых конфигов, setmap-хендлер (админ-пароль, бэкапы, рассылка map+field), live-геометрия testMap/TEST_* |
 | `server/world.js` | 663 | чистая геометрия по конфигу: PNG-кисть (декод zlib, маска земли), марширующие квадраты+Чайкин, island/cells, препятствия, высоты, обрывы (`cliffBetween`), entry-клетки — бит-в-бит зеркало клиентской |
 | `server/sanitize.js` | 95 | чистые валидаторы входа: clipChars/sanitizeChat (контрольные/bidi, ≤200)/sanitizeLogin/uniqueLogin + chat-хендлер (450 мс, история 40) |
-| `server/room.js` | 412 | комнаты: roomOf, жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move)/leave, publicCat/поле, send/broadcast, спрайт, block, space (присед — clamp hold 0–4000), roomsinfo |
+| `server/room.js` | 425 | комнаты: roomOf, жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move, Элизия без сессии → auth_required)/leave, publicCat/поле, send/broadcast, спрайт, block, space (присед — clamp hold 0–4000), roomsinfo |
 | `server/movement.js` | 295 | очередь шагов 80 мс×3, move-хендлер с refuse-кодами, freemove, cellsync, jump (кулдаун 450, 8 направлений, 1–3 клетки, charge 0..1) |
 | `server/combat.js` | 271 | aim (коалесценция 20 мс)/strike: aimedNeighbor — зеркало pickStrikeTarget, зоны удара, броня по ARMOR_CURVE; урон/броня клиент-авторитетные |
 | `server/dummy-rab.js` | 133 | манекен (доли клетки, перенос grab/drop), мишень РАБ, toggle-режимы dummy/rab |
-| `server/atmo.js` | 114 | якорь суток/погоды (фазы 4×pl, погода wl/ws), atmo/atmoset/atmoState/atmoBroadcast |
+| `server/atmo.js` | 118 | якорь суток/погоды (фазы 4×pl, погода wl/ws), atmo/atmoset/atmoState/atmoBroadcast; дефолт новых комнат из runtime-config |
 | `server/persist.js` | 131 | книга позиций котов data/test-cats.json, TTL 30 дней, троттлинг записи 1/3 с, flushCatBook/restoreCatPosition |
-| `server/net.js` | 199 | транспорт: http statics+`/health`, ws-accept (verifyClient+Origin, heartbeat 30 с), onMessage-диспетчер по EV.*, таймеры (слив позиций 2 с, тикер атмо 5 с), SIGTERM/SIGINT-флаш; startServer() — единственная точка старта |
+| `server/net.js` | 221 | транспорт: http statics+`/health`+`/auth`+`/cfg`, ws-accept (verifyClient+Origin, heartbeat 30 с), onMessage-диспетчер по EV.*, таймеры (слив позиций 2 с, тикер атмо 5 с), SIGTERM/SIGINT-флаш; startServer() — единственная точка старта |
+| `server/modes.js` | 37 | каталог комнат и доступа: `test` registered-only, гроты/combat/hunger открыты |
+| `server/accounts.js` | 286 | аккаунт/профиль/персонаж, scrypt, `accounts.json` |
+| `server/auth.js` | 361 | сессии, HTTP `/auth/*`, WS `auth`/`whoami`, handshake `?t=` / cookie |
+| `server/hunger.js` | 11 | каркас раунда idle, без выдуманных правил |
+| `server/runtime-config.js` | 248 | безопасные длины суток новых комнат, HTTP `/cfg`, бэкапы |
 | `server.js` | 10 | тонкий вход W4: импорт startServer() из `server/net.js` и вызов; юнит деплоя не изменился |
 
 ### Сценарии и деплой
@@ -81,6 +88,8 @@ package.json комнаты (`ws` — синхронно с корневым loc
 ### Join (вход в комнату)
 
 ```
+клиент ── auth {action, login, pass, token?}  (необязательно; гость пропускает)
+сервер ── whoami {ok, role, login, accountId, token?}
 клиент ── join {room, login, sprite, size} ──► сервер
 сервер ── you (свой publicCat)     ──► только владельцу   } ответ на(join) всегда эта
 сервер ── field (снимок комнаты)   ──► только владельцу   } тройка, в этом порядке
@@ -88,7 +97,10 @@ package.json комнаты (`ws` — синхронно с корневым loc
 сервер ── move  (publicCat входящего) ──► всем остальным
 ```
 
-Отказ: `info` (кулдаун, логин занят) или `noplace` (потолок 30 / нет клеток).
+Отказ: `info` (кулдаун, логин занят) или `noplace` (потолок 30 / нет клеток /
+`auth_required` для комнаты `test` без сессии). Личность registered-сокета
+берётся из сессии (handshake query `t` / cookie / `auth hello`), не из
+`join.login`. Гостевой `join` в гроты без изменений.
 Reconnect после обрыва: backoff 1–2–4…30 c, повторный join; движение и удары до
 переподключения заблокированы.
 

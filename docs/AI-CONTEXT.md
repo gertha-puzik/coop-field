@@ -12,7 +12,9 @@ the CI gate `npm run check:landmarks` keeps them honest — line numbers drift, 
 **coop-field** — a browser co-op game: cats battle on a shared canvas field (WASD walking
 that survives the Russian keyboard layout, aimed strikes with zones and block, skins,
 chat, day/night + weather, a drawn location with an in-game editor). Two independent apps
-live in one GitHub repo (`gertha-puzik/coop-field`, public):
+live in one GitHub repo (`gertha-puzik/coop-field`; owner decision: **private** —
+if it is still public, GitHub → Settings → General → Danger Zone → Change
+repository visibility → Private):
 
 - **Frontend** — Next.js static export (`output: "export"`): canvas engine, HUD, panels. `src/`.
 - **Room server** — plain Node process (`ws` WebSocket library): rooms, cell authority,
@@ -28,7 +30,7 @@ owner's VPS behind nginx.
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind 4, pixi.js 8 (weather overlay, lazy).
 - Room server: Node ESM JavaScript, no build step; `ws@8`; data in `data/*.json`.
-- Protocol: 22 client→server + 22 server→client events, mirrored by hand in
+- Protocol: 23 client→server + 23 server→client events, mirrored by hand in
   `server/protocol.js` and `src/lib/net/protocol.ts` (constants like ARMOR_CURVE are
   re-exported per side); CI gates pin the mirror.
 - CI: GitHub Actions on every PR (node 22) — see gates below.
@@ -46,6 +48,11 @@ A push to `main` IS a production deploy. Three workflows start on `main`:
 
 So **nobody ever pushes to `main` directly** — that would ship to production unreviewed
 (the live game AND the room server). The workflow is always: branch → PR → green CI → merge.
+
+PR preview (same VPS, `/opt/coop-field-preview/`, host `*.abnocw.miew.ru`) is a fourth
+workflow on pull_request, not on `main`. It does not replace the prod pipeline.
+Until DNS-01 wildcard TLS exists, previews are HTTP. Remaining owner step:
+`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh`.
 
 ## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-06)
 
@@ -116,7 +123,7 @@ npm run check:landmarks      # doc sizes == wc -l
 ## Files to ask for, by task
 
 - **Change/add an event (anything on the wire):** `src/lib/net/protocol.ts`,
-  `server/protocol.js`, `AGENTS.md` (the 22+22 tables), `src/lib/net/coop.ts` (client
+  `server/protocol.js`, `AGENTS.md` (the 23+23 tables), `src/lib/net/coop.ts` (client)
   dispatch), the `server/*.js` domain module, `scripts/test-ws.mjs`. Always ALL sides
   of the registry in one change — single-sided edits are guaranteed rework.
 - **Combat/damage/armor:** `src/lib/sim/settings.ts` (single client source) ↔

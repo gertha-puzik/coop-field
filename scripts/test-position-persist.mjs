@@ -16,6 +16,7 @@
  */
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
+import { sendJoin } from "./ws-auth.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -47,7 +48,7 @@ function client(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_ADDR);
     ws.inbox = [];
-    ws.on("open", () => ws.send(JSON.stringify(["join", { room: "test", login: name }])));
+    ws.on("open", () => sendJoin(ws, { room: "test", login: name }));
     ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
     ws.on("error", reject);
     ws.once("open", () => resolve(ws));

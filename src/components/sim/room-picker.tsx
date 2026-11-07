@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import type { CoopRoomInfo } from '@/lib/net/coop';
+import { namedRoom } from '@/lib/net/modes';
 
 /** Строка списка комнат: состав с сервера + людское имя и пометка «вы здесь». */
 export type RoomRow = CoopRoomInfo & { title: string; here: boolean };
@@ -31,6 +32,7 @@ export function RoomPicker({
   onPick,
   onCancel,
   embedded,
+  signedIn,
 }: {
   rows: RoomRow[];
   /** roomsinfo уже приходил — иначе вместо чисел показываем «…». */
@@ -42,6 +44,8 @@ export function RoomPicker({
   onCancel?: () => void;
   /** Внутри экрана входа: без узкой внешней обёртки. */
   embedded?: boolean;
+  /** Есть сессия — бейдж «нужен вход» на Элизии не показываем. */
+  signedIn?: boolean;
 }) {
   const first = !onCancel;
   const content = (
@@ -50,7 +54,7 @@ export function RoomPicker({
         <h1 className="text-xl font-bold leading-tight">{first ? 'Выберите комнату' : 'Перейти в другую комнату'}</h1>
         <p className="mt-1 text-sm text-[var(--sim-text-muted)]">
           {first
-            ? 'Пивной грот №1–№3 и «Элизия Эйдес» — игроки одни и те же, поле у каждого своё. В «Элизии Эйдес» — нарисованная лужайка с закутком: камера едет за котом, в мирном режиме ходьба свободная.'
+            ? 'Пивные гроты открыты гостям. Элизия — только со входом (регистрация на этой странице или /elision). Активный бой и Голодные игры — отдельные страницы, тоже открытые.'
             : 'Состав комнат обновляется сам. Текущая комната помечена «вы здесь».'}
         </p>
       </header>
@@ -76,12 +80,18 @@ export function RoomPicker({
             >
               <span className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold leading-tight text-[var(--sim-text)]">
-                  <span aria-hidden className="mr-1">🍺</span>
+                  <span aria-hidden className="mr-1">
+                    {namedRoom(row.id)?.emoji ?? '🏠'}
+                  </span>
                   {row.title}
                 </span>
-                {row.here ? (
+                  {row.here ? (
                   <span className="shrink-0 rounded bg-[var(--sim-accent-hover)] px-1.5 py-px text-[10px] font-bold leading-none text-white">
                     вы здесь
+                  </span>
+                ) : namedRoom(row.id)?.access === 'registered' && !signedIn ? (
+                  <span className="shrink-0 rounded bg-[var(--sim-inset)] px-1.5 py-px text-[10px] font-bold leading-none text-[var(--sim-text-soft)]">
+                    нужен вход
                   </span>
                 ) : null}
               </span>
