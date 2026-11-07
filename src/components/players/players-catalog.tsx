@@ -20,7 +20,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  httpMe,
   httpMyProfile,
   httpPatchProfile,
   httpProfileById,
@@ -28,7 +27,8 @@ import {
   type ProfileCard,
   type ProfileCharacter,
   type PublicProfile,
-} from '@/lib/net/http-auth';
+} from '@/lib/net/http-profiles';
+import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';

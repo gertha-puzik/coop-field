@@ -27,11 +27,11 @@ import {
   httpCfgImportText,
   httpCfgReset,
   httpCfgRestore,
-  httpMe,
   type CfgAdminSnapshot,
   type CfgFieldMeta,
   type CfgUniversesValues,
-} from '@/lib/net/http-auth';
+} from '@/lib/net/http-cfg';
+import { httpMe } from '@/lib/net/http-auth';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 

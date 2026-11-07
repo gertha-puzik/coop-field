@@ -10,7 +10,7 @@
 //
 // Использование: node scripts/prune-export.mjs <grotto|elyria> [источник=out] [приёмник=www-<вариант>]
 
-import { cp, rm } from "node:fs/promises";
+import { cp, rm, readFile, readdir } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -54,6 +54,57 @@ for (const dir of EXCLUDE[variant]) {
   }
 }
 
+// Чистка немонтируемых чанков (follow-up §10.4): next export кладёт чанки
+// ВСЕХ маршрутов (включая вырезанные только что) в общий _next/static/chunks.
+// Вырезанные каталоги ссылаться на них больше не могут — но файлы остаются
+// в поставке варианта. Собираем граф упомянутостей: html(.html) → тела чанков
+// (строки static/chunks/<name>.js) → фикс-пойнт; всё не попавшее в граф — удаляем.
+const chunksDir = path.join(dest, "_next", "static", "chunks");
+if (existsSync(chunksDir)) {
+  // 1. Пул корней: каждая уцелевшая страница html ссылается на стартовые чанки.
+  const pageFiles = [];
+  const walk = async (dir) => {
+    for (const ent of await readdir(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) await walk(p);
+      else if (ent.name.endsWith(".html")) pageFiles.push(p);
+    }
+  };
+  await walk(dest);
+  const chunkRefs = /_next\/static\/chunks\/([A-Za-z0-9._-]+\.js)/g;
+  const pooled = new Set();
+  const scanText = (text) => {
+    for (const m of text.matchAll(chunkRefs)) pooled.add(m[1]);
+  };
+  for (const f of pageFiles) scanText(await readFile(f, "utf8"));
+  // 2. Фикс-пойнт: тела известных чанков тоже ссылаются на чанки (динамика).
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const name of Array.from(pooled)) {
+      const p = path.join(chunksDir, name);
+      if (!existsSync(p)) continue;
+      const before = pooled.size;
+      scanText(await readFile(p, "utf8"));
+      if (pooled.size !== before) grew = true;
+    }
+  }
+  if (pooled.size === 0) {
+    console.error("prune-export: пул чанков пуст — html-ссылок на _next не найдено; отказ (не чистим вслепую)");
+    process.exit(1);
+  }
+  // 3. Удаление немонтируемых chunk-файлов.
+  const onDisk = (await readdir(chunksDir)).filter((n) => n.endsWith(".js"));
+  let pruned = 0;
+  for (const name of onDisk) {
+    if (!pooled.has(name)) {
+      await rm(path.join(chunksDir, name), { force: true });
+      pruned += 1;
+    }
+  }
+  console.log(`prune-export: чанки: граф ${pooled.size}, удалено немонтируемых: ${pruned}`);
+}
+
 // Самопроверка (контракт build:variants): вырезанных маршрутов нет, index.html есть.
 const label = destArg || `www-${variant}`;
 const failures = [];
@@ -61,6 +112,23 @@ for (const dir of EXCLUDE[variant]) {
   if (existsSync(path.join(dest, dir))) failures.push(`${label}/${dir}/ остался после обрезки`);
 }
 if (!existsSync(path.join(dest, "index.html"))) failures.push(`${label}/index.html отсутствует`);
+// Целостность после чистки: каждая упоминаемая ссылка на чанк обязана существовать.
+if (existsSync(chunksDir)) {
+  const chunkRefs = /_next\/static\/chunks\/([A-Za-z0-9._-]+\.js)/g;
+  const walkVerify = async (dir) => {
+    for (const ent of await readdir(path.join(dir), { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) await walkVerify(p);
+      else if (/\.(html|txt|js)$/.test(ent.name)) {
+        const text = await readFile(p, "utf8");
+        for (const m of text.matchAll(chunkRefs)) {
+          if (!existsSync(path.join(chunksDir, m[1]))) failures.push(`${label}: ссылка на удалённый чанк ${m[1]} (файл ${p.replace(dest + path.sep, "")})`);
+        }
+      }
+    }
+  };
+  await walkVerify(dest);
+}
 if (failures.length) {
   console.error(`prune-export: САМОПРОВЕРКА ПРОВАЛЕНА:\n  ${failures.join("\n  ")}`);
   process.exit(1);
