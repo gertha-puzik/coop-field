@@ -612,10 +612,12 @@ try {
     "profiles: гость /profiles/me → 401 auth_required",
   );
   const elyCat = await probe3({ method: "GET", path: "/profiles", host: "ely.example" });
+  const elyCatItems = elyCat.json?.items || [];
   check(
-    elyCat.status === 200 && elyCat.json?.ok === true && Array.isArray(elyCat.json?.items)
-      && elyCat.json.items.length === 0 && elyCat.json?.total === 0,
-    "profiles: каталог-заглушка GET /profiles → items 0, total 0",
+    elyCat.status === 200 && elyCat.json?.ok === true && Array.isArray(elyCatItems)
+      && elyCatItems.length === elyCat.json?.total && elyCatItems.length >= 1
+      && elyCatItems.every((it) => !("login" in it) && !("role" in it) && !("pass" in it)),
+    "profiles: GET /profiles — рабочий каталог публичных карточек (без login/role)",
   );
   const elyOne = await probe3({ method: "GET", path: "/profiles/some-id", host: "ely.example" });
   check(
@@ -626,8 +628,8 @@ try {
     method: "PATCH", path: "/profiles/me", host: "ely.example", body: { displayName: "NewName" },
   });
   check(
-    elyPatch.status === 501 && elyPatch.json?.reason === "not_implemented",
-    "profiles: PATCH /profiles/me → 501 not_implemented (правка — P4)",
+    elyPatch.status === 401 && elyPatch.json?.reason === "auth_required",
+    "profiles: PATCH /profiles/me без сессии → 401 auth_required (P4: правка живая)",
   );
   const elyProf404 = await probe3({ method: "PUT", path: "/profiles/me", host: "ely.example", body: {} });
   check(
