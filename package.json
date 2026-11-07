@@ -14,6 +14,7 @@
     "test:ws": "node scripts/test-ws.mjs",
     "test:queue": "node scripts/test-move-queue.mjs",
     "test:auth": "node scripts/test-auth.mjs",
+    "test:profiles": "node scripts/test-profiles.mjs",
     "test:cfg": "node scripts/test-cfg-registry.mjs",
     "test:preview-slug": "node scripts/test-preview-slug.mjs",
     "test:preview-apply": "node scripts/test-preview-apply.mjs",
