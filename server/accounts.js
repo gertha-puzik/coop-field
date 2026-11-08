@@ -150,13 +150,14 @@ function findById(id) {
 
 /**
  * Глобальный предохранитель от флуда регистрациями: потолок общего числа
- * аккаунтов. Env MAX_ACCOUNTS (дефолт 2000); 0/мусор → дефолт. При достижении
- * createAccount отвечает ошибкой 'full' — вместе с per-IP register-лимитом
- * (server/auth.js) это закрывает и «медленный» флуд с роты адресов.
+ * аккаунтов. Env MAX_ACCOUNTS (дефолт 500 — решение владелицы 2026-11-08);
+ * 0/мусор → дефолт. При достижении createAccount отвечает ошибкой 'full' —
+ * вместе с per-IP register-лимитом (server/auth.js) это закрывает и
+ * «медленный» флуд с роты адресов.
  */
 function maxAccounts() {
   const n = Number(process.env.MAX_ACCOUNTS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 500;
 }
 
 /**

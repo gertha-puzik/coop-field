@@ -232,15 +232,15 @@ eq("accounts PASS_MIN", accounts.PASS_MIN, 8);
 eq("cfg sanitize phase clamp", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 999, weatherMin: 12 } }).config.atmo.phaseMin, 120);
 eq("cfg sanitize weather floor", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 7, weatherMin: 0 } }).config.atmo.weatherMin, 2);
 
-/* ---------- F2 §7: MAX_ACCOUNTS — значение владелицы 2000, env bounded ----------
+/* ---------- F2 §7: MAX_ACCOUNTS — значение владелицы 500 (2026-11-08), env bounded ----------
  * Фактический код server/accounts.js: maxAccounts() = env-число (>0) или
  * дефолт 2000; потолок достижим ('full'). Проверяем через ПУБЛИЧНЫЙ
  * createAccount — контракт {account}|{error}, без правок модуля. */
 {
   const stamp = Date.now();
-  process.env.MAX_ACCOUNTS = "0"; // 0/мусор → дефолт 2000 (bounded override)
+  process.env.MAX_ACCOUNTS = "0"; // 0/мусор → дефолт 500 (bounded override)
   const zeroRes = await accounts.createAccount(`мх-0-${stamp}`, "password123");
-  eq("MAX_ACCOUNTS env=0/мусор → дефолт 2000 (регистрация проходит)", zeroRes.error, undefined);
+  eq("MAX_ACCOUNTS env=0/мусор → дефолт 500 (регистрация проходит)", zeroRes.error, undefined);
   process.env.MAX_ACCOUNTS = "3"; // в песочнице уже есть 1 аккаунт (мх-0)
   const a1 = await accounts.createAccount(`мх-1-${stamp}`, "password123");
   const a2 = await accounts.createAccount(`мх-2-${stamp}`, "password123");

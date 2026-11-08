@@ -153,7 +153,7 @@ Invariants (violating one = a bug):
 | `BOOTSTRAP_ADMIN` | MIGRATION list of logins (trim, case-insensitive): registration of a listed name gives `registered` + a log warning (S1); the `admin` role is handed out ONLY by the one-shot CLI `scripts/make-admin.mjs` (server stopped) | empty = no migration list |
 | `AUTH_LEGACY_TOKEN` | return `?t=` token acceptance on elyria for the transition period | off: elyria is cookie-only |
 | `COOKIE_LOOSE` | relax session cookie to legacy `SameSite=None` | off: `SameSite=Lax` (+`Secure` on https) |
-| `MAX_ACCOUNTS` | account registry cap; further registrations → `full` | 2000 (server/accounts.js) |
+| `MAX_ACCOUNTS` | account registry cap; further registrations → `full` | 500 (server/accounts.js) |
 | `WS_MAX_PER_IP` | max simultaneous WS sockets per client IP (S5a); over the cap → `info too_many_sockets` + close | 8 |
 | `ROOMS_MAX` | cap of LIVE rooms per process (S5b); a new room over the cap → `noplace rooms_full` | 32 |
 | `DATA_DIR` | data (cat positions, map, backups, accounts, sessions) | `data/` |
