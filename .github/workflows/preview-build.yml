@@ -65,6 +65,18 @@ jobs:
           npm run test:preview-pr-link
           npm run test:write-openssh-key
 
+      - name: Изоляция вариантов (A1)
+        # Аудит Z.AI 2026-11-08 (A1): в собранных корнях не должно быть чужих
+        # маркеров — www-grotto без следов Элизии (elisium, «Элизи», /auth/,
+        # coop_session…), www-elyria без снятых маршрутов /combat/ /hunger/ и
+        # со своей подписью (Elysiae, каталог игроков, players/admin/index.html).
+        # Гейт идёт ПОСЛЕ сборки обоих корней и ДО упаковки артефакта: утечка
+        # останавливает выкладку preview раньше, чем дистрибутив уедет на VPS.
+        # Списки маркеров — константы в scripts/check-variants.mjs.
+        run: |
+          set -euo pipefail
+          node scripts/check-variants.mjs www-grotto www-elyria
+
       - name: Упаковка preview-дистрибутива
         # Ровно тот состав, что уезжает на VPS: server-код, ДВА
         # статических корня (www-grotto «гроты» + www-elyria «Элизия» —

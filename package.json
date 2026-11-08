@@ -27,6 +27,7 @@
     "test:protocol-parity": "node scripts/test-protocol-parity.mjs",
     "check:protocol": "node scripts/check-protocol-sync.mjs",
     "check:landmarks": "node scripts/check-doc-landmarks.mjs",
+    "check:variants": "node scripts/check-variants.mjs",
     "arch:check": "node scripts/check-architecture.mjs",
     "typecheck": "tsc --noEmit",
     "map:restore": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06.json",

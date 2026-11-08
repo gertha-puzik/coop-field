@@ -41,6 +41,10 @@ const RULES = {
     { file: "src/lib/sim/settings.ts", why: "выносы lib/sim/* — волна W5" },
     { file: "src/lib/sim/test-field.ts", why: "выносы lib/sim/* — волна W5" },
     { file: "scripts/test-ws.mjs", why: "сценарии по реестру протокола — волна W3" },
+    // S1–S5 аудита Z.AI (2026-11-08): сценарии Bootstrap-CLI/гейтов раздули
+    // файл за лимит; разрез — вынос песочниц-спавнера/проб в scripts/testlib,
+    // волна следующих правок окна безопасности.
+    { file: "scripts/test-auth.mjs", why: "S1–S5 аудита Z.AI: вынос песочниц-спавнера в testlib" },
   ],
   // Формат: { from: "<префикс каталога>", forbidden: "<префикс каталога-цели import-ов>" }.
   importBoundaries: [
@@ -54,6 +58,18 @@ const RULES = {
       forbidden: "src/components/",
       why: "транспорт не должен знать про react-компоненты",
     },
+  ],
+  // A1 (аудит Z.AI 2026-11-08, вторая часть): канон варианта — src/lib/site.ts.
+  // Весь модуль флаговый (SITE-константа + isGrotto/isElyria): межмодульный
+  // импорт НЕ сворачивается минифаером Next, мёртвая ветка чужого варианта
+  // остаётся в бандле — так в grotto-чанки уезжал elisium (находка A1).
+  // Правило: импорт site.ts (или '@/lib/site') разрешён ТОЛЬКО самому site.ts.
+  // Всем остальным — инлайн-сравнение process.env.NEXT_PUBLIC_SITE === 'elyria'
+  // в собственном модуле (канон уже в players-catalog.tsx, wander-gate.tsx,
+  // simulator.tsx и др.): тогда сборщик фолдит условие и вырезает мёртвую
+  // ветку целиком. Формат: { file: "<путь>", why: "<выход при нарушении>" }.
+  isolatedImports: [
+    { file: "src/lib/site.ts", why: "импортируй флаг инлайном: const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria' — см. докстринг site.ts (DCE-свёртка)" },
   ],
 };
 
@@ -143,9 +159,38 @@ function checkImportBoundaries(files) {
   return violations;
 }
 
+// ---------- правило 3: изолированные модули (A1) ----------
+// Импорт файла-канона разрешён только ему самому: см. RULES.isolatedImports.
+function checkIsolatedImports(files) {
+  const violations = [];
+  for (const rule of RULES.isolatedImports) {
+    for (const abs of files) {
+      const rel = relToRoot(abs);
+      if (rel === rule.file) continue; // сам канон волен
+      for (const spec of importTargets(abs)) {
+        const target = resolveImport(spec, abs);
+        if (target === null) continue;
+        const stem = rule.file.replace(/\.ts$/, "");
+        if (target === rule.file || target === stem) {
+          violations.push({
+            file: rel,
+            detail: `импортирует ${spec} (канон ${rule.file})`,
+            message:
+              `  Изоляция A1: файл-канон варианта нельзя импортировать — экспорт НЕ сворачивается\n` +
+              `  минифаером, мёртвая ветка чужого варианта уедет в бандл (утечка между сборками).\n` +
+              `  Выход: ${rule.why}`,
+          });
+          break; // одно нарушение на файл достаточно
+        }
+      }
+    }
+  }
+  return violations;
+}
+
 // ---------- применение ----------
 const files = listSourceFiles();
-const violations = [...checkSize(files), ...checkImportBoundaries(files)];
+const violations = [...checkSize(files), ...checkImportBoundaries(files), ...checkIsolatedImports(files)];
 
 if (violations.length) {
   console.error(`Архитектурный гейт: нарушений — ${violations.length}.`);
@@ -157,5 +202,5 @@ if (violations.length) {
 
 console.log(
   `arch:check — зелёный: исходников ${files.length}, лимит ${RULES.sizeLimit.maxLines} строк,` +
-    ` import-границ ${RULES.importBoundaries.length}; нарушений нет.`
+    ` import-границ ${RULES.importBoundaries.length}, изолированных канонов ${RULES.isolatedImports.length}; нарушений нет.`
 );
