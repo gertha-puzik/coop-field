@@ -89,11 +89,14 @@ function catSeenAt(login) {
 }
 
 /** Мирная точка не внутри тела препятствия (эллипс с поворотом, чуть проще
- *  клиентского — на граничных точках лучше вернуть кота, чем оставить на спавне). */
+ *  клиентского — на граничных точках лучше вернуть кота, чем оставить на спавне).
+ *  Камень пропускается: он — платформа уровня 1, мирный кот стоит НА клетке
+ *  камня (зеркало testPeaceObjectDepth клиента). */
 function peacePointFreeOfObjects(fx, fy) {
   const px = fx * 100;
   const py = fy * 150;
   for (const b of TEST_OBST_BODIES) {
+    if (b.o && b.o.kind === 'stone') continue;
     if (!(b.hw > 0) || !(b.h > 0)) continue;
     const cos = Math.cos(-b.rot);
     const sin = Math.sin(-b.rot);

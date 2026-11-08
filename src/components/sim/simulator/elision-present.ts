@@ -7,7 +7,7 @@
 import type { DummyConfig, SpriteId } from '@/lib/sim/settings';
 import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
-import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, elevLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
+import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
@@ -134,7 +134,10 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
       }
     }
   }
-  for (const [key, lv] of Object.entries(map.elev ?? {})) {
+  // Эффективные высоты: явные высоты карты + клетки камней (платформа уровня 1) —
+  // атлас обязан совпадать с логикой ходьбы (elevLevelAt) и 2D-отрисовкой.
+  const effElev = effectiveElevRecord(map);
+  for (const [key, lv] of Object.entries(effElev)) {
     if (lv < 1) continue;
     const [c, r] = key.split(',').map(Number);
     g.fillStyle = `rgba(255, 238, 176, ${Math.min(0.4, 0.055 * Math.max(0, lv - 1))})`;
@@ -148,7 +151,7 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
       [0, 1, c*cellW, (r+1)*cellH, (c+1)*cellW, (r+1)*cellH],
       [-1, 0, c*cellW, r*cellH, c*cellW, (r+1)*cellH],
     ]) {
-      if ((map.elev?.[`${c+dc},${r+dr}`] ?? 0) >= lv) continue;
+      if ((effElev[`${c+dc},${r+dr}`] ?? 0) >= lv) continue;
       g.moveTo(x0, y0);
       g.lineTo(x1, y1);
     }
@@ -330,7 +333,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     cols: input.cols,
     rows: input.rows,
     editor: input.editor,
-    elev: currentTestMap().elev ?? {},
+    elev: effectiveElevRecord(currentTestMap()),
     terrainLiftStep: TERRAIN_LIFT_PX,
     day: input.day,
     dayProgress: input.dayProgress,
