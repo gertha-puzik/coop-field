@@ -42,7 +42,8 @@
     "test:preview-comment": "node scripts/test-preview-comment.mjs",
     "test:prod-switch": "node scripts/test-prod-switch.mjs",
     "test:sp-privacy": "node scripts/test-sp-privacy.mjs",
-    "test:stone": "node scripts/test-stone-platform.mjs"
+    "test:stone": "node scripts/test-stone-platform.mjs",
+    "test:editor-save": "node scripts/test-editor-save.mjs"
   },
   "engines": {
     "node": ">=18"

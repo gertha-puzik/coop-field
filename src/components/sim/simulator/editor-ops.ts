@@ -88,7 +88,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
   };
 
-  const draftMap = (d: EditorDraft): TestMap => ({
+  const draftMap = (d: EditorDraft, withPaint = true): TestMap => ({
     // Правки редактора сохраняются в текущей версии конфига (v2 — деление поля
     // на траву и боевые клетки).
     v: 2,
@@ -102,7 +102,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     ...(Object.keys(d.elev).length > 0 ? { elev: { ...d.elev } } : {}),
     // Кисть локации: холст черновика уходит в конфиг PNG base64. С рисунком
     // проталины/покрытия больше не нужны (запечены) — как в sanitize.
-    ...(d.pcv ? { paint: encodeDraftPaint(d) } : {}),
+    ...(withPaint && d.pcv ? { paint: encodeDraftPaint(d) } : {}),
   });
 
   /** Черновик сразу рисуется на поле (WYSIWYG): setTestMap пересобирает кэши.
@@ -665,11 +665,11 @@ export function buildEditorOps(params: EditorOpsParams) {
   };
 
   /** Предварительная проверка черновика — те же правила, что у сервера. */
-  const editorDraftError = (): string | null => {
+  const editorDraftError = (checkPaint = true): string | null => {
     const d = editorRef.current;
     if (!d) return null;
     // Кисть локации: PNG base64 обязан быть валидным и не слишком большим.
-    if (d.pcv) {
+    if (checkPaint && d.pcv) {
       const perr = paintFormatError(encodeDraftPaint(d));
       if (perr) return perr === 'рисунок локации слишком велик' ? 'Рисунок локации слишком велик — сотрите лишнее и сохраните снова.' : perr;
     }
@@ -702,15 +702,13 @@ export function buildEditorOps(params: EditorOpsParams) {
     const t0 = Date.now();
     setEditorMsg(null);
     setEditorSave({ phase: 'encode', bytes: 0, t0 });
+    const err = editorDraftError(false);
+    if (err) { setEditorSave(null); setEditorMsg(err); return; }
+    const snapshot = draftMap(d, false);
     void encodeDraftPaintAsync(d)
       .then((paint) => {
-        if (editorRef.current !== d) return; // редактор закрыли пока кодировали
-        const err = editorDraftError(); // рисунок уже в кэше — проверка мгновенна
-        if (err) {
-          setEditorSave(null);
-          setEditorMsg(err);
-          return;
-        }
+        const perr = paint ? paintFormatError(paint) : null;
+        if (perr) { setEditorSave(null); setEditorMsg(perr); return; }
         setEditorSave({ phase: 'send', bytes: paint.length, t0 });
         // Предгейт троттлинга сервера (setmap — раз в 10 с на сокет): кадр,
         // отправленный раньше срока, сервер молча отбрасывает — прогресс гас,
@@ -724,7 +722,7 @@ export function buildEditorOps(params: EditorOpsParams) {
           return;
         }
         d.lastSaveSentAt = nowMs;
-        net.emit('setmap', { pass: editorPass, map: draftMap(d) });
+        net.emit('setmap', { pass: editorPass, map: { ...snapshot, ...(paint ? { paint } : {}) } });
         setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
       })
       .catch(() => {

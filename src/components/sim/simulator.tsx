@@ -135,6 +135,8 @@ import {
   drawTestObject,
   elevAny,
   elevLevelAt,
+  supportLevelAt,
+  terrainLevelAt,
   effectiveElevRecord,
   terrainCellClipPath,
   elevLiftAtPoint,
@@ -1484,7 +1486,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
         const ax = e.fx + hb.dx;
         const ay = e.fy + hb.dy * 2; // точка опоры (низ-центр модельки)
-        const curLevel = elevLevelAt(Math.floor(ax), Math.floor(ay));
+        const curLevel = supportLevelAt(ax, ay);
         const strict = testEntryStrict();
         const peaceSpotOk = (px: number, py: number): boolean => {
           const dist = Math.hypot(px - ax, py - ay);
@@ -1492,13 +1494,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           if (!testPeacePointFree(px, py)) return false;
           if (!testPeaceObjectsFree(px, py, s.field.cellW, s.field.cellH, peaceBodyRadius(hb.dx * 2 * s.field.cellW))) return false;
           if (strict && testPeaceBattleBlocked(px, py)) return false;
-          const level = elevLevelAt(Math.floor(px),Math.floor(py));
+          const level = supportLevelAt(px,py);
           const radius = peaceBodyRadius(hb.dx*2*s.field.cellW);
-          if (terrainBodyOverlap(px,py,radius/s.field.cellW,radius/s.field.cellH,level,elevLevelAt) > 1e-7) return false;
+          if (terrainBodyOverlap(px,py,radius/s.field.cellW,radius/s.field.cellH,terrainLevelAt(Math.floor(px),Math.floor(py)),terrainLevelAt) > 1e-7) return false;
           return elevJumpOk(curLevel, level, fill);
         };
         const packPeace = (px: number, py: number, ok: boolean, deg: number) => {
-          const lvl = elevLevelAt(Math.floor(px), Math.floor(py));
+          const lvl = supportLevelAt(px, py);
           const dist = Math.hypot(px - ax, py - ay);
           return {
             sx: px,
@@ -2046,11 +2048,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
             const [x0, y0] = stand(e.fx, e.fy);
             const [x1, y1] = stand(fxT, fyT);
-            const level = elevLevelAt(Math.floor(x0), Math.floor(y0));
-            if (!elevStepOk(level, elevLevelAt(Math.floor(x1), Math.floor(y1)))) return true;
+            const level = terrainLevelAt(Math.floor(x0), Math.floor(y0));
+            if (!elevStepOk(level, terrainLevelAt(Math.floor(x1), Math.floor(y1)))) return true;
             const rx = myR/cellW, ry = myR/cellH;
-            const before = terrainBodyOverlap(x0,y0,rx,ry,level,elevLevelAt);
-            const after = terrainBodyOverlap(x1,y1,rx,ry,level,elevLevelAt);
+            const before = terrainBodyOverlap(x0,y0,rx,ry,level,terrainLevelAt);
+            const after = terrainBodyOverlap(x1,y1,rx,ry,level,terrainLevelAt);
             // После посадки/правки карты разрешаем выйти из наложения, но не углубляться.
             return after > Math.max(1e-7,before+1e-7);
           };
@@ -2152,7 +2154,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const targetLift = testMode
           ? (s.arrow.battleMode
               ? elevLevelAt(e.col, e.row)
-              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
+              : supportLevelAt(e.fx + hbL.dx, e.fy + hbL.dy * 2)) * TERRAIN_LIFT_PX
           : 0;
         // Твёрдый грунт не может оказаться выше лап даже на кадр анимации подъёма.
         e.liftV = targetLift > e.liftV ? targetLift
@@ -3420,7 +3422,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           else flatsByCellT.set(kT, [oT]);
         }
         // Эффективные высоты: явные высоты карты + клетки камней (платформа уровня 1).
-        // Логика ходьбы (elevLevelAt) и отрисовка обязаны считать одинаковые уровни.
+        // Рисуем только явный грунт; опора камня не создаёт видимого плато.
         const mapElev = effectiveElevRecord(currentTestMap());
         // Лицо блока — ближайший прямой угол камеры. Один угол на кадр, чтобы
         // ключ сортировки стены и сама стена смотрели в одну сторону.
@@ -3435,7 +3437,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const battleT = isBattleCellT(cT, rT);
           const flatsT = flatsByCellT.get(key);
           const sameLvlBattleT = (cc: number, rr: number): boolean =>
-            isBattleCellT(cc, rr) && elevLevelAt(cc, rr) === lvT;
+            isBattleCellT(cc, rr) && terrainLevelAt(cc, rr) === lvT;
           // Клип клетки: полный контур локации на десятки тысяч вершин на КАЖДУЮ
           // клетку рельефа (~180 клипов за кадр) «сильно тормозил» и подвешивал
           // слабые машины. Теперь клетка без кромки не режется вовсе, у клетки на
@@ -3903,7 +3905,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               ctx.translate(objX, by);
               ctx.rotate(-camYawRef.current);
               ctx.translate(-objX, -by);
-              if (covered) ctx.globalAlpha = OCCLUDE_ALPHA;
+              if (covered && o.kind !== 'stone') ctx.globalAlpha = OCCLUDE_ALPHA;
               drawTestObject(ctx, o, s.field.cellW, s.field.cellH, objX, by, 1, vO);
               ctx.restore();
             },

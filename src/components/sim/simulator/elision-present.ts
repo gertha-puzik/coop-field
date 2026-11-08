@@ -7,7 +7,7 @@
 import type { DummyConfig, SpriteId } from '@/lib/sim/settings';
 import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
-import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
+import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
@@ -134,8 +134,8 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
       }
     }
   }
-  // Эффективные высоты: явные высоты карты + клетки камней (платформа уровня 1) —
-  // атлас обязан совпадать с логикой ходьбы (elevLevelAt) и 2D-отрисовкой.
+  // В атлас попадает только явный грунт. Опора камня поднимает персонажа,
+  // но не рисует и не поднимает землю под предметом.
   const effElev = effectiveElevRecord(map);
   for (const [key, lv] of Object.entries(effElev)) {
     if (lv < 1) continue;
@@ -246,7 +246,7 @@ function propActor(o: TestMapObject, cellW: number, cellH: number): ElisionActor
     y: footY - h,
     w,
     h,
-    lift: elevLevelAt(o.c, o.r) * TERRAIN_LIFT_PX,
+    lift: terrainLevelAt(Math.floor(base.x), Math.floor(base.y)) * TERRAIN_LIFT_PX,
     url: `/tex/${spr}.png`,
     mirror: objectMir(o) === 1,
     rot: objectRotDeg(o),
@@ -296,8 +296,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
         ? { x: free.x * input.cellW, y: free.y * input.cellH }
         : { x: col * input.cellW, y: row * input.cellH };
       const size = spriteSizePx(input.cellH, remote.scale, aspectOf(input.spriteImage(remote.sprite)));
-      const lift = elevLevelAt(Math.floor(free ? free.x + size.w/2/input.cellW : col),
-        Math.floor(free ? free.y + size.h/input.cellH : row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
+      const lift = (free ? supportLevelAt(free.x + size.w/2/input.cellW, free.y + size.h/input.cellH) : elevLevelAt(col, row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
       pushActor(
         decals,
         catActor(remote.id, remote.sprite, remote.scale, top, lift, free?.face === -1, input, true),

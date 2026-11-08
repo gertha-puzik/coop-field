@@ -185,3 +185,6 @@ for(const [y0,y1,l0,l1] of [[5.19,3.5,0,52],[3.5,5.19,52,0]]) {
   }
 }
 assert(elisionLeapClearance(0,0,2,0,0,0,60,26,()=>0)===60,'прыжок по ровной земле не меняется');
+
+const rock = { id: 'rock', isProp: true, x: 0, y: 0, w: 100, h: 100, lift: 0, url: '/tex/rock-1.png', mirror: false, rot: 0 };
+assert(elisionObstacleAlpha(rock, {...rock, id: 'self', isProp: false}, 0) === 1, 'камень остаётся непрозрачным при пересечении с котом');

@@ -936,70 +936,46 @@ export function elevLevelAt(c: number, r: number): number {
   return Math.min(TERRAIN_MAX_LEVEL, mapElevOf(currentMap, c, r) + (stoneCellAt(c, r) ? STONE_LEVEL : 0));
 }
 
-/** Эффективная карта высот (редкая, ключи «c,r» → уровень): явные высоты карты
- *  плюс клетки камней (платформа STONE_LEVEL), всё зажато в TERRAIN_MAX_LEVEL.
- *  Единый источник для отрисовки рельефа (2D plateau-pass и атлас/геометрия
- *  WebGL) — логика ходьбы читает elevLevelAt напрямую. */
-let effElevCache: { map: TestMap; rec: Record<string, number> } | null = null;
+/** Только явный грунт: опора камня никогда не создаёт видимых клеток рельефа. */
 export function effectiveElevRecord(map: TestMap): Record<string, number> {
-  if (effElevCache && effElevCache.map === map) return effElevCache.rec;
-  const rec: Record<string, number> = {};
-  for (const [key, v] of Object.entries(map.elev ?? {})) {
-    const base = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
-    if (base <= 0) continue;
-    const [c, r] = key.split(',').map(Number);
-    if (!Number.isFinite(c) || !Number.isFinite(r) || c < 0 || r < 0 || c >= map.cols || r >= map.rows) continue;
-    rec[key] = Math.min(TERRAIN_MAX_LEVEL, base + (stoneCellAt(c, r) ? STONE_LEVEL : 0));
-  }
-  if (map === currentMap) {
-    for (const key of objectIndex().stoneCells) {
-      if (rec[key] != null) continue;
-      rec[key] = Math.min(TERRAIN_MAX_LEVEL, STONE_LEVEL);
-    }
-  } else {
-    // чужой конфиг (не текущий): считаем клетки камней напрямую
-    for (const o of map.objects ?? []) {
-      if (o.kind !== 'stone') continue;
-      const base = objectBase(o);
-      const body = obstacleBodyPx(o);
-      const ob = { o, x: base.x, y: base.y, hw: body.hw * objectScale(o), h: body.h * objectScale(o), rot: (objectRotDeg(o) * Math.PI) / 180 };
-      for (let r = Math.max(0, Math.floor(ob.y) - 1); r <= Math.min(map.rows - 1, Math.ceil(ob.y) + 1); r++) {
-        for (let c = Math.max(0, Math.floor(ob.x) - 1); c <= Math.min(map.cols - 1, Math.ceil(ob.x) + 1); c++) {
-          const key = `${c},${r}`;
-          if (rec[key] == null && ellipseHitsCell(ob, c, r)) rec[key] = Math.min(TERRAIN_MAX_LEVEL, STONE_LEVEL);
-        }
-      }
-    }
-  }
-  effElevCache = { map, rec };
-  return rec;
+  return map.elev ?? {};
 }
 
-/** Есть ли рельеф на локации — быстрый пропуск целых проходов отрисовки.
- *  Камни — платформы уровня 1: рельефная отрисовка нужна и без явных высот. */
-export function elevAny(): boolean {
-  const e = currentMap.elev;
-  if (e && Object.keys(e).length > 0) return true;
-  for (const o of currentMap.objects ?? []) {
-    if (o.kind === 'stone') return true;
+export function terrainLevelAt(c: number, r: number): number {
+  return mapElevOf(currentMap, c, r);
+}
+
+/** Опора внутри повёрнутого тела камня, а не всей задетой им клетки. */
+export function supportLevelAt(x: number, y: number): number {
+  let stone = false;
+  for (const b of objectIndex().obstacles) {
+    if (b.o.kind !== 'stone') continue;
+    const dx = (x - b.x) * IDX_CELL_W, dy = (y - b.y) * IDX_CELL_H;
+    const cos = Math.cos(-b.rot), sin = Math.sin(-b.rot);
+    const ux = dx*cos - dy*sin, uy = dx*sin + dy*cos;
+    if ((ux / (b.hw + 2)) ** 2 + (uy / (b.h + 2)) ** 2 <= 1) { stone = true; break; }
   }
-  return false;
+  return Math.min(TERRAIN_MAX_LEVEL, terrainLevelAt(Math.floor(x), Math.floor(y)) + (stone ? STONE_LEVEL : 0));
+}
+
+export function elevAny(): boolean {
+  return Object.keys(currentMap.elev ?? {}).length > 0;
 }
 
 /** Подъём земли (px) в точке (клеточные доли мира) — уровень её клетки. */
 export function elevLiftAtPoint(x: number, y: number): number {
-  return elevLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
+  return terrainLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
 }
 
 /** Уровень нарисованного верха под точкой (доли клетки), не логической клетки.
  *  Спина высокого плато рисуется севернее своей клетки — ходить нужно по картинке. */
 export function surfaceLevelAt(x: number, y: number): number {
-  return surfaceLevelOf(x, y, currentMap.cols, currentMap.rows, elevLevelAt);
+  return surfaceLevelOf(x, y, currentMap.cols, currentMap.rows, terrainLevelAt);
 }
 
 /** Точка в южной стене обрыва (доли клетки). */
 export function pointInSouthWall(x: number, y: number): boolean {
-  return pointInSouthWallOf(x, y, currentMap.cols, currentMap.rows, elevLevelAt);
+  return pointInSouthWallOf(x, y, currentMap.cols, currentMap.rows, terrainLevelAt);
 }
 
 /**
@@ -1024,7 +1000,7 @@ export function groundPointAtWorld(
   for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
     const r = r0 + k;
     if (r < 0 || r >= currentMap.rows) break;
-    const lift = elevLevelAt(c, r) * TERRAIN_LIFT_PX;
+    const lift = terrainLevelAt(c, r) * TERRAIN_LIFT_PX;
     const top = r * cellH - lift;
     if (y < top || y >= top + cellH) continue;
     if (lift > bestLift) bestLift = lift;
@@ -1038,7 +1014,7 @@ export function groundPointAtWorld(
 function elevNeighborForWall(c: number, r: number): number {
   if (c < 0 || r < 0 || c >= currentMap.cols || r >= currentMap.rows) return 0;
   if (!pointInPolygon(islandPolygon(), c + 0.5, r + 0.5)) return 0;
-  return elevLevelAt(c, r);
+  return terrainLevelAt(c, r);
 }
 
 /** Куда смотрит камера: ближайший прямой угол. Лицевая стена блока строится
@@ -1083,7 +1059,7 @@ function faceWallRect(
   face: FaceDir,
   yaw: number,
 ): { e: number; x: number; y: number; w: number; h: number; face: FaceDir } | null {
-  const e = elevLevelAt(c, r);
+  const e = terrainLevelAt(c, r);
   if (e <= 0) return null;
   const step = FACE_STEP[face];
   const nb = elevNeighborForWall(c + step.dc, r + step.dr);
@@ -1222,7 +1198,7 @@ export function drawTerrainTop(
   /** Угол камеры: боковые складки и дальняя кромка следуют за лицевой гранью. */
   yaw = 0,
 ): void {
-  const e = elevLevelAt(c, r);
+  const e = terrainLevelAt(c, r);
   if (e <= 0) return;
   const lift = e * TERRAIN_LIFT_PX;
   const shift = terrainLiftShift(lift, yaw);
