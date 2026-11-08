@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import CfgDashboard from "@/components/admin/cfg-dashboard";
+import { AuthGate } from "@/components/menu/auth-gate";
 
 export const metadata: Metadata = {
   title: "Wanderpaws: дашборд конфига",
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 };
 
 export default function AdminPage() {
-  return <CfgDashboard />;
+  return (
+    <AuthGate>
+      <CfgDashboard />
+    </AuthGate>
+  );
 }

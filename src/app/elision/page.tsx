@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Simulator from "@/components/sim/simulator";
+import { AuthGate } from "@/components/menu/auth-gate";
 
 export const metadata: Metadata = {
   title: "Wanderpaws: Elysiae",
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function ElisionPage() {
-  return <Simulator mode="elision" />;
+  return (
+    <AuthGate>
+      <Simulator mode="elision" />
+    </AuthGate>
+  );
 }

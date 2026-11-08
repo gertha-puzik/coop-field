@@ -4,41 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { CoopWhoami } from '@/lib/net/protocol';
+import { localAuthError, reasonText, roleLabel } from './auth-reasons';
 
 /**
- * Вход и регистрация на русском. Пароль не показывается. Панель монтируется
+ * Боковая панель входа на русском. Пароль не показывается. Панель монтируется
  * только в elyria-варианте (гейт — в entry-screen): в гротах входа нет.
  *
- * Контракты сервера (server/accounts.js + server/auth.js handleAuthHttp),
- * живыми пробами сверены: логин 2–24 симв. после обрезки пробелов, пароль —
- * от 8 симв.; занятое имя → reason 'taken', короткое имя/пароль → 'short'/
- * 'weak', неверные данные входа → 'bad', флуд → 'rate' (429). Сервер в теле
- * отвечает кодом — русский текст для пользователя живёт здесь, ниже.
+ * Подписи отказов сервера и локальные проверки — общие с полноэкранным гейтом
+ * входа (menu/auth-gate.tsx): они живут в auth-reasons.ts (контракты
+ * server/accounts.js + server/auth.js handleAuthHttp: логин 2–24, пароль от 8,
+ * отказы taken/weak/short/full/rate/bad).
  */
-
-/** Серверный reason → человекочитаемая строка. Прочие коды (сбой, CSRF) —
- *  общий фолбэк 'error': в браузерном флоу они не складываются в детали. */
-const REASON_TEXTS: Record<string, string> = {
-  taken: 'Это имя уже занято — придумайте другое.',
-  weak: 'Пароль слишком короткий: нужно минимум 8 символов.',
-  short: 'Имя слишком короткое: нужно минимум 2 символа.',
-  full: 'Регистрация закрыта: места для новых аккаунтов закончились.',
-  rate: 'Слишком часто. Подождите немного и попробуйте снова.',
-  bad: 'Неверный логин или пароль.',
-  error: 'Не получилось: сервер не принял запрос. Попробуйте ещё раз.',
-};
-
-/** Проверка ДО отправки (повторяет контракты сервера, чтобы пустые и короткие
- *  поля не гоняли лишний запрос и ошибку видно сразу, без сети).
- *  Пароль не обрезаем: пробелы в нём валидны. null — можно отправлять. */
-function localError(login: string, pass: string): string | null {
-  const name = login.trim();
-  if (!name) return 'Введите имя — без него не войти.';
-  if (name.length < 2) return 'Имя слишком короткое: нужно минимум 2 символа.';
-  if (!pass) return 'Введите пароль.';
-  if (Array.from(pass).length < 8) return 'Пароль слишком короткий: нужно минимум 8 символов.';
-  return null;
-}
 
 export function AuthPanel({
   whoami,
@@ -60,13 +36,10 @@ export function AuthPanel({
   /** Ошибка локальной проверки — показывается до отправки и гаснет при вводе. */
   const [localFail, setLocalFail] = useState<string | null>(null);
   const inAccount = !!(whoami?.ok && whoami.accountId);
-  const role =
-    whoami?.role === 'admin' ? 'администратор' : whoami?.role === 'registered' ? 'игрок Элизии' : 'гость';
+  const role = roleLabel(whoami?.role);
   /** Сетевая/серверная ошибка — из message; отказ из ответа — по reason. */
   const fail =
-    localFail ||
-    message ||
-    (!whoami?.ok && whoami?.reason ? (REASON_TEXTS[whoami.reason] ?? REASON_TEXTS.error) : null);
+    localFail || message || (!whoami?.ok ? reasonText(whoami?.reason) : null);
 
   /** После выхода не оставлять прошлый пароль в поле. */
   const wasAccount = useRef(inAccount);
@@ -88,7 +61,7 @@ export function AuthPanel({
   };
   const submit = (action: 'login' | 'register') => {
     if (busy) return;
-    const local = localError(login, pass);
+    const local = localAuthError(login, pass);
     if (local) {
       setLocalFail(local);
       return;
