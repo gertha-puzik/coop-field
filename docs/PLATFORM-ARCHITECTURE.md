@@ -96,7 +96,7 @@ S4: `loopback` на прод-классе хоста = темп-лимиты aut
 | --- | --- | --- |
 | `guest` | нет сессии | гроты, demo, голодные игре, справочник. **Не** Элизия (join-отказ `auth_required`, даже прямым WS) |
 | `registered` | регистрация | + Элизия, свой профиль (PATCH /profiles/me), страницы /players |
-| `admin` | только одноразовый CLI владелицы: `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет). Env `BOOTSTRAP_ADMIN` отныне МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin. `setmap` остаётся за паролем `ADMIN_PASS` — это аварийный ключ редактора, не «логин» |
+| `admin` | только одноразовый CLI владелицы: `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет). Env `BOOTSTRAP_ADMIN` отныне МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin. `setmap` доступен всем игрокам комнаты test без пароля; админ-роль для редактирования карты не нужна |
 
 Права проверяет **сервер** (сессия), UI только рендерит по `whoami.role`. Клиентский
 «пароль вкладок» снят (P3): вкладки `admin:true` в settings-panel рендерятся только при
@@ -283,7 +283,7 @@ main; репо-часть конвейера в этой ветке — толь
 
 | Модуль | Строк | Ответственность |
 | --- | ---: | --- |
-| `server/config.js` | 386 | host-политика `hostClassOf` (public/elyria/local), env сплитов PUBLIC_HOSTS/ELYRIA_HOSTS, ADMIN_PASS fail-closed (S2), WS_MAX_PER_IP/ROOMS_MAX (S5) |
+| `server/config.js` | 386 | host-политика `hostClassOf` (public/elyria/local), env сплитов PUBLIC_HOSTS/ELYRIA_HOSTS, WS_MAX_PER_IP/ROOMS_MAX (S5) |
 | `server/net.js` | 388 | HTTP host-гейт (404 зон Элизии на public), per-destination Origin/CSRF fail-closed (B1), per-IP сокет-лимит (S5a), /health clientIpMode (S4) |
 | `server/auth.js` | 538 | сессии, cookie HttpOnly host-only/Lax/Secure, матрица токенов, rate-лимиты, /auth/* |
 | `server/modes.js` | 45 | каталог комнат + RETIRED_ROOMS (combat→grot-1) |

@@ -235,7 +235,7 @@ const CONSTANT_CARDS_BASE: readonly ConstantCard[] = [
     editable: false,
     sync: "server",
     apply: "never",
-    note: "Регистрация. Не путать с ADMIN_PASS редактора карты.",
+    note: "Регистрация аккаунта для входа в локацию.",
   },
 ];
 
@@ -404,7 +404,7 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = IS_ELYRIA
         functions: ["setMap", "sanitizeTestMap", "buildEditorOps"],
         params: ["pass", "map"],
         breaks: "Карта за лимитами; запись без бэкапа; клиентский «пароль вкладок» как защита.",
-        deps: ["ADMIN_PASS или роль admin", "backups/"],
+        deps: ["Любой игрок локации", "backups/"],
       },
     ]
   : [...MECHANIC_CARDS_BASE, ...GROTTO_MECHANIC_CARDS];

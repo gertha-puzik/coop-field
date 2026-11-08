@@ -11,7 +11,7 @@
 
 import type { TestMapObject, TestMapSpawn, TestMapZone } from './test-map';
 
-/** Ключ localStorage: пароль редактора локации (вводится один раз). */
+/** Устаревший ключ: удаляется при открытии редактора, пароль больше не нужен. */
 export const EDITOR_PASS_KEY = 'catwar-editor-pass';
 
 /** Зазор между сохранениями локации на сервере (setmap-кадры, раз в 10 с на

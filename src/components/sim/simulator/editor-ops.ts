@@ -39,7 +39,6 @@ export interface EditorOpsParams {
   setEditorView: Dispatch<SetStateAction<EditorDraft | null>>;
   setEditorOpen: Dispatch<SetStateAction<boolean>>;
   setEditorMsg: Dispatch<SetStateAction<string | null>>;
-  setEditorPass: Dispatch<SetStateAction<string>>;
   setEditorPlace: Dispatch<SetStateAction<EditorPlace | null>>;
   /** Прогресс сохранения локации (фазы: кодирование рисунка → отправка → подтверждение сервера). */
   setEditorSave: Dispatch<SetStateAction<EditorSaveState | null>>;
@@ -49,7 +48,6 @@ export interface EditorOpsParams {
   patchField: (p: { cols: number; rows: number }) => void;
   /** Состояние инструмента «Перенести»: вырезанный кусок (холст + уехавшие объекты). */
   editorSelRef: RefObject<EditorSelState | null>;
-  editorPass: string;
 }
 
 /** Прогресс сохранения локации: фаза, размер рисунка, время старта (для секунд в UI). */
@@ -75,12 +73,10 @@ export function buildEditorOps(params: EditorOpsParams) {
     setEditorView,
     setEditorOpen,
     setEditorMsg,
-    setEditorPass,
     setEditorPlace,
     setEditorSave,
     patchField,
     editorSelRef,
-    editorPass,
   } = params;
   const syncEditorView = () => {
     const d = editorRef.current;
@@ -191,10 +187,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     }
     patchOrClearPlace(null);
     setEditorMsg(null);
-    // S2 (аудит Z.AI 2026-11-08): пароль редактора больше НЕ живёт на диске
-    // клиента — только в сессионном состоянии компонента, вводится при
-    // сохранении. Миграция: чистим след устаревшего ключа у существующих
-    // пользователей (с ключа только удаляем, на диск ничего не пишем).
+    // Удаляем устаревший пароль из хранилища старых версий клиента.
     try {
       localStorage.removeItem(EDITOR_PASS_KEY);
     } catch {
@@ -722,7 +715,7 @@ export function buildEditorOps(params: EditorOpsParams) {
           return;
         }
         d.lastSaveSentAt = nowMs;
-        net.emit('setmap', { pass: editorPass, map: { ...snapshot, ...(paint ? { paint } : {}) } });
+        net.emit('setmap', { map: { ...snapshot, ...(paint ? { paint } : {}) } });
         setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
       })
       .catch(() => {
