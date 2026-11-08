@@ -11,11 +11,14 @@ on:
       - "server.js"
       - "package.json"
       - "package-lock.json"
-      - "deploy/vps/**"
+      - "deploy/**"
       - "AGENTS.md"
       - "docs/**"
       - "tsconfig.json"
-      - ".github/workflows/ci.yml"
+      # A2/D4 (аудит Z.AI 2026-11-08): правки ЛЮБЫХ workflow и deploy-скриптов
+      # требуют полного чека — раньше едва не «молча» обходили ci (фильтр знал
+      # только ci.yml и deploy/vps/**).
+      - ".github/workflows/**"
 
 permissions:
   contents: read
