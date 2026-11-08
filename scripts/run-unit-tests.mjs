@@ -23,6 +23,10 @@ const TESTS = [
   "scripts/test-elev-rules.mts",
   "scripts/test-handbook.mts",
   "scripts/test-elision-scene.mts",
+  // Волна C (агент-спека): регресс-пакеты слоёв, доступных без стенда.
+  "scripts/test-combat-legacy.mts",
+  "scripts/test-cfg-guard.mts",
+  "scripts/test-me-dedup.mts",
 ];
 
 if (!supportsStripTypes) {
