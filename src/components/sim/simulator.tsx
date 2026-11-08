@@ -135,6 +135,7 @@ import {
   drawTestObject,
   elevAny,
   elevLevelAt,
+  effectiveElevRecord,
   terrainCellClipPath,
   elevLiftAtPoint,
   groundPointAtWorld,
@@ -3045,13 +3046,16 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             }
             if (o.kind === 'dirt' || o.kind === 'ground') continue;
             const bE = objectBase(o);
+            // Рельеф: объект на плато/камне стоит на поднятой земле своей клетки
+            // (как в игровой отрисовке ниже) — иначе камень уезжает в стену своей же платформы.
+            const posE = raised(bE.x * s.field.cellW, bE.y * s.field.cellH, elevLiftAtPoint(bE.x, bE.y));
             drawTestObject(
               ctx,
               o,
               s.field.cellW,
               s.field.cellH,
-              bE.x * s.field.cellW,
-              bE.y * s.field.cellH,
+              posE.x,
+              posE.y,
               1,
               hashStr(o.id) & 7,
             );
@@ -3063,8 +3067,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.ellipse(
-              bE.x * s.field.cellW,
-              bE.y * s.field.cellH,
+              posE.x,
+              posE.y,
               bodyE.hw * scE + 6,
               bodyE.h * scE + 6,
               (objectRotDeg(o) * Math.PI) / 180,
@@ -3415,7 +3419,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           if (arrT) arrT.push(oT);
           else flatsByCellT.set(kT, [oT]);
         }
-        const mapElev = currentTestMap().elev ?? {};
+        // Эффективные высоты: явные высоты карты + клетки камней (платформа уровня 1).
+        // Логика ходьбы (elevLevelAt) и отрисовка обязаны считать одинаковые уровни.
+        const mapElev = effectiveElevRecord(currentTestMap());
         // Лицо блока — ближайший прямой угол камеры. Один угол на кадр, чтобы
         // ключ сортировки стены и сама стена смотрели в одну сторону.
         const faceYaw = camYawRef.current;

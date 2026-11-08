@@ -424,7 +424,18 @@ function buildCells(map, island) {
       mask[o.r][o.c] = true;
     }
   }
-  const blocked = obstacleBlockedCells(map);
+  // Блокируют только ДЕРЕВЬЯ: камень — платформа уровня 1, его клетка
+  // проходима (на неё заходит шаг по правилам рельефа). Клетки камней по-прежнему
+  // остаются в obstacleBlockedCells — они используются для поиска спавна (room.js).
+  const blocked = new Set();
+  for (const b of obstacleBodiesOf(map)) {
+    if (b.o.kind !== 'tree') continue;
+    for (let r = Math.max(0, Math.floor(b.y) - 1); r <= Math.min(map.rows - 1, Math.ceil(b.y) + 1); r++) {
+      for (let c = Math.max(0, Math.floor(b.x) - 1); c <= Math.min(map.cols - 1, Math.ceil(b.x) + 1); c++) {
+        if (ellipseHitsCell(b, c, r)) blocked.add(`${c},${r}`);
+      }
+    }
+  }
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
       if (mask[r][c] && (!testCellInIsland(c, r, island) || blocked.has(`${c},${r}`))) mask[r][c] = false;
@@ -530,12 +541,45 @@ function testWalkable(x, y) {
 }
 
 
+/** Высота камня (уровней над землёй его клетки): камень — платформа уровня 1,
+ *  на неё можно зайти шагом. Зеркало STONE_LEVEL из src/lib/sim/test-map.ts. */
+const STONE_LEVEL = 1;
+
+/** Кэш клеток камней текущего конфига: тест точный (эллипс против клетки),
+ *  пересчёт — только при смене объекта конфига (rebuildTestGeometry всегда
+ *  кладёт НОВЫЙ объект testMap — WeakMap-семантика через сравнение ссылок). */
+let stoneCache = { map: null, cells: null };
+
+/** Клетки (0-based), задетые телом КАМНЯ: камень — платформа уровня STONE_LEVEL.
+ *  Поднимает эффективный уровень рельефа (см. testElev) и больше не блокирует
+ *  боевую клетку (см. buildCells) — на камень забираются. */
+function stoneCellsOf(map) {
+  if (stoneCache.map === map && stoneCache.cells) return stoneCache.cells;
+  const cells = new Set();
+  for (const b of obstacleBodiesOf(map)) {
+    if (b.o.kind !== 'stone') continue;
+    for (let r = Math.max(0, Math.floor(b.y) - 1); r <= Math.min(map.rows - 1, Math.ceil(b.y) + 1); r++) {
+      for (let c = Math.max(0, Math.floor(b.x) - 1); c <= Math.min(map.cols - 1, Math.ceil(b.x) + 1); c++) {
+        if (ellipseHitsCell(b, c, r)) cells.add(`${c},${r}`);
+      }
+    }
+  }
+  stoneCache = { map, cells };
+  return cells;
+}
+
 /** Уровень рельефа клетки (1-based координаты сервера; вне карты — 0).
- *  Зеркало elevLevelAt клиента: обе стороны считают перепады по одному конфигу. */
+ *  Эффективный уровень = явные высоты карты + камень (платформа STONE_LEVEL),
+ *  зажатые в TERRAIN_MAX_LEVEL. Зеркало elevLevelAt клиента (test-field.ts):
+ *  обе стороны считают перепады по одному правилу. */
 function testElev(x, y) {
   const v = testMap.elev?.[`${x - 1},${y - 1}`];
   const n = Math.round(Number(v));
-  return Number.isFinite(n) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, n)) : 0;
+  const base = Number.isFinite(n) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, n)) : 0;
+  const c = x - 1;
+  const r = y - 1;
+  const stone = c >= 0 && r >= 0 && c < testMap.cols && r < testMap.rows && stoneCellsOf(testMap).has(`${c},${r}`);
+  return Math.min(TERRAIN_MAX_LEVEL, base + (stone ? STONE_LEVEL : 0));
 }
 
 /** Перепад больше одного уровня — стенка: шагом не проходится, только

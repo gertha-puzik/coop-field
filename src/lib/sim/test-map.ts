@@ -229,6 +229,13 @@ export type TestMapSpawn = { c: number; r: number };
  *  server/protocol.js, функции — server/world.js. */
 export const TERRAIN_MAX_LEVEL = 10;
 
+/** Высота камня (уровней над землёй его клетки): камень — платформа уровня 1,
+ *  на неё можно зайти шагом (перепад 1 — elevStepOk) и стоит на ней в мирном
+ *  режиме. Эффективный уровень клетки = высоты карты (elev) + камень, зажатые
+ *  в TERRAIN_MAX_LEVEL. Зеркало константы — server/world.js; клетки камня —
+ *  клетки, задетые телом его спрайта (те же, что раньше блокировал). */
+export const STONE_LEVEL = 1;
+
 /** Перепад, который берётся шагом без прыжка (вверх и вниз). */
 export const ELEV_STEP_MAX = 1;
 

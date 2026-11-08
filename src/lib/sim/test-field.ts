@@ -34,6 +34,7 @@ import {
   objectSprite,
   obstacleBodyPx,
   groundCoverOf,
+  STONE_LEVEL,
   TERRAIN_MAX_LEVEL,
   type TestMap,
   type TestMapEntryDir,
@@ -604,11 +605,12 @@ export function isBattleCell(c: number, r: number): boolean {
 }
 
 /** Проходимая ли клетка мира (0-based) в боевом режиме: боевая клетка (зона или
- *  одиночная), не задета кромкой и не занята препятствием (камень/дерево стоят
- *  на клетке намертво; земля — наземный декор, через неё ходят). */
+ *  одиночная), не задета кромкой и не занята деревом. Камень — платформа
+ *  уровня 1: его клетка проходима, на неё заходит шаг (перепад 1). Земля —
+ *  наземный декор, через неё ходят. Зеркало buildCells на сервере. */
 export function testWalkableCell(c: number, r: number): boolean {
   if (!isBattleCell(c, r)) return false;
-  if (testObstacleAt(c, r)) return false;
+  if (treeAtCell(c, r)) return false;
   return testCellInIsland(c, r);
 }
 
@@ -685,6 +687,9 @@ let objCache: {
   obstacles: ObstacleBody[];
   /** клетки (0-based), задетые телом препятствия — маска боя/якорей */
   cells: Map<string, TestMapObject[]>;
+  /** клетки (0-based), задетые телом КАМНЯ: камень — платформа уровня 1
+   *  (поднимает рельеф и больше не блокирует ходьбу, см. elevLevelAt) */
+  stoneCells: Set<string>;
   /** клеточные объекты (земля/покрытие/заход) по своей клетке */
   flat: Map<string, TestMapObject[]>;
 } | null = null;
@@ -718,11 +723,13 @@ function ellipseHitsCell(b: ObstacleBody, c: number, r: number): boolean {
 function objectIndex(): {
   obstacles: ObstacleBody[];
   cells: Map<string, TestMapObject[]>;
+  stoneCells: Set<string>;
   flat: Map<string, TestMapObject[]>;
 } {
   if (!objCache || objCache.map !== currentMap) {
     const obstacles: ObstacleBody[] = [];
     const cells = new Map<string, TestMapObject[]>();
+    const stoneCells = new Set<string>();
     const flat = new Map<string, TestMapObject[]>();
     for (const o of currentMap.objects ?? []) {
       if (isObstacleKind(o.kind)) {
@@ -743,6 +750,7 @@ function objectIndex(): {
               const arr = cells.get(`${c},${r}`);
               if (arr) arr.push(o);
               else cells.set(`${c},${r}`, [o]);
+              if (o.kind === 'stone') stoneCells.add(`${c},${r}`);
             }
           }
         }
@@ -753,7 +761,7 @@ function objectIndex(): {
         else flat.set(key, [o]);
       }
     }
-    objCache = { map: currentMap, obstacles, cells, flat };
+    objCache = { map: currentMap, obstacles, cells, stoneCells, flat };
   }
   return objCache;
 }
@@ -852,6 +860,7 @@ export function testPeaceObjectDepth(x: number, y: number, cellW: number, cellH:
   const m = bodyRadius; // физическое тело кота у лап, а не нулевая точка
   let overlap = 0;
   for (const b of objectIndex().obstacles) {
+    if (b.o.kind === 'stone') continue; // камень — платформа: кот заходит НА клетку камня, тело не стена
     const dx = px - b.x * cellW;
     const dy = py - b.y * cellH;
     const rx = b.hw + m;
@@ -909,14 +918,72 @@ export const TERRAIN_LIFT_PX = 26;
 /** Уровень рельефа клетки (0-based) текущей локации: 0 — базовая земля,
  *  до TERRAIN_MAX_LEVEL. Правила общие с сервером (testElev): перепад больше
  *  одного уровня — стенка, шагом не проходится (см. elevWalkBlocked). */
-export function elevLevelAt(c: number, r: number): number {
-  return mapElevOf(currentMap, c, r);
+/** Клетка (0-based) под телом камня — платформа уровня 1. */
+function stoneCellAt(c: number, r: number): boolean {
+  return objectIndex().stoneCells.has(`${c},${r}`);
 }
 
-/** Есть ли рельеф на локации — быстрый пропуск целых проходов отрисовки. */
+/** Клетка (0-based) под телом ДЕРЕВА: дерево — единственное оставшееся
+ *  непроходимое препятствие (камень — платформа, на него забираются). */
+function treeAtCell(c: number, r: number): boolean {
+  return (objectIndex().cells.get(`${c},${r}`) ?? []).some((o) => o.kind === 'tree');
+}
+
+export function elevLevelAt(c: number, r: number): number {
+  // Камень — платформа уровня STONE_LEVEL: эффективный уровень клетки = явные
+  // высоты карты + камень, зажатые в TERRAIN_MAX_LEVEL (зеркало testElev в
+  // server/world.js — обе стороны считают перепады по одному правилу).
+  return Math.min(TERRAIN_MAX_LEVEL, mapElevOf(currentMap, c, r) + (stoneCellAt(c, r) ? STONE_LEVEL : 0));
+}
+
+/** Эффективная карта высот (редкая, ключи «c,r» → уровень): явные высоты карты
+ *  плюс клетки камней (платформа STONE_LEVEL), всё зажато в TERRAIN_MAX_LEVEL.
+ *  Единый источник для отрисовки рельефа (2D plateau-pass и атлас/геометрия
+ *  WebGL) — логика ходьбы читает elevLevelAt напрямую. */
+let effElevCache: { map: TestMap; rec: Record<string, number> } | null = null;
+export function effectiveElevRecord(map: TestMap): Record<string, number> {
+  if (effElevCache && effElevCache.map === map) return effElevCache.rec;
+  const rec: Record<string, number> = {};
+  for (const [key, v] of Object.entries(map.elev ?? {})) {
+    const base = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+    if (base <= 0) continue;
+    const [c, r] = key.split(',').map(Number);
+    if (!Number.isFinite(c) || !Number.isFinite(r) || c < 0 || r < 0 || c >= map.cols || r >= map.rows) continue;
+    rec[key] = Math.min(TERRAIN_MAX_LEVEL, base + (stoneCellAt(c, r) ? STONE_LEVEL : 0));
+  }
+  if (map === currentMap) {
+    for (const key of objectIndex().stoneCells) {
+      if (rec[key] != null) continue;
+      rec[key] = Math.min(TERRAIN_MAX_LEVEL, STONE_LEVEL);
+    }
+  } else {
+    // чужой конфиг (не текущий): считаем клетки камней напрямую
+    for (const o of map.objects ?? []) {
+      if (o.kind !== 'stone') continue;
+      const base = objectBase(o);
+      const body = obstacleBodyPx(o);
+      const ob = { o, x: base.x, y: base.y, hw: body.hw * objectScale(o), h: body.h * objectScale(o), rot: (objectRotDeg(o) * Math.PI) / 180 };
+      for (let r = Math.max(0, Math.floor(ob.y) - 1); r <= Math.min(map.rows - 1, Math.ceil(ob.y) + 1); r++) {
+        for (let c = Math.max(0, Math.floor(ob.x) - 1); c <= Math.min(map.cols - 1, Math.ceil(ob.x) + 1); c++) {
+          const key = `${c},${r}`;
+          if (rec[key] == null && ellipseHitsCell(ob, c, r)) rec[key] = Math.min(TERRAIN_MAX_LEVEL, STONE_LEVEL);
+        }
+      }
+    }
+  }
+  effElevCache = { map, rec };
+  return rec;
+}
+
+/** Есть ли рельеф на локации — быстрый пропуск целых проходов отрисовки.
+ *  Камни — платформы уровня 1: рельефная отрисовка нужна и без явных высот. */
 export function elevAny(): boolean {
   const e = currentMap.elev;
-  return !!e && Object.keys(e).length > 0;
+  if (e && Object.keys(e).length > 0) return true;
+  for (const o of currentMap.objects ?? []) {
+    if (o.kind === 'stone') return true;
+  }
+  return false;
 }
 
 /** Подъём земли (px) в точке (клеточные доли мира) — уровень её клетки. */
@@ -1444,7 +1511,9 @@ function peaceAnchorData(): PeaceAnchors {
     const k = `${x},${y}`;
     if (seen.has(k)) return;
     if (!pointInPolygon(poly, x, y)) return;
-    if (testObstacleAt(Math.floor(x), Math.floor(y))) return; // клетка с камнем/деревом непроходима
+    // клетка с деревом непроходима; клетка с камнем — платформа уровня 1,
+    // якоря на ней нужны (мирный кот забирается на камень шагом)
+    if (treeAtCell(Math.floor(x), Math.floor(y))) return;
     seen.add(k);
     pts.push({ x, y });
   };
