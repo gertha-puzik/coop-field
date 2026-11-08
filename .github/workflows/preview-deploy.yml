@@ -384,7 +384,7 @@ jobs:
             if [ -n "$DEP" ]; then
               gh api -X POST "repos/${{ github.repository }}/deployments/$DEP/statuses" \
                 -f state="$STATE" -f environment_url="$URL" \
-                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true)
+                -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
             fi
           fi
           CID=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
