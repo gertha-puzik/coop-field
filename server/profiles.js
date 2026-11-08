@@ -51,7 +51,7 @@
  * Домен-изоляция: на public-хосте весь /profiles/* закрыт гейтом net.js ещё
  * до этого обработчика; сюда класс public дотянуться не может.
  */
-import { isAllowedOrigin } from "./config.js";
+import { originAllowedHere, csrfDecision, siteClassOfRequest } from "./config.js";
 import { sessionFromRequest, lastSeenByAccount } from "./auth.js";
 import {
   publicProfile,
@@ -97,10 +97,10 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-/** Тот же CORS-набор, что у /auth и /cfg: белые Origin получают явное разрешение. */
+/** Та же пара (Origin, класс сайта), что в общем HTTP-слое и /auth. */
 function setCors(req, res) {
   const origin = req.headers.origin || "";
-  if (origin && isAllowedOrigin(origin)) {
+  if (origin && originAllowedHere(origin, siteClassOfRequest(req))) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
@@ -462,11 +462,14 @@ export async function handleProfilesHttp(req, res) {
         json(res, 401, { ok: false, reason: "auth_required" });
         return true;
       }
-      // CSRF-щит в стиле auth.js для пишущих методов: непустой чужой Origin →
-      // 403 ещё до разбора тела (куки браузера уезжают и на злые сайты).
-      const origin = String(req.headers.origin || "");
-      if (origin && !isAllowedOrigin(origin)) {
-        json(res, 403, { ok: false, reason: "csrf" });
+      // Повторная проверка использует общую политику, а не старый список:
+      // легитимный адрес сайта не обязан дублироваться в ALLOWED_ORIGINS.
+      const csrfBad = csrfDecision({
+        method: req.method, origin: req.headers.origin,
+        destClass: siteClassOfRequest(req), hasAuth: true,
+      });
+      if (csrfBad) {
+        json(res, csrfBad.status, { ok: false, reason: csrfBad.reason });
         return true;
       }
       let body;
