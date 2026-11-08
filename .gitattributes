@@ -1,0 +1,2 @@
+# Keep uploaded OBJ source bytes unchanged for catalog provenance hashes.
+assets/models/source/*.obj -text

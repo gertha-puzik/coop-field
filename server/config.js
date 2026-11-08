@@ -83,7 +83,7 @@ const SPAWNS = [
 ];
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
-const SPRITES = ["blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit"];
+const SPRITES = ["origami-cat", "blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit"];
 /* ---------- размеры спрайтов пака и их варианты.
    Объявлены ДО loadTestMap(): sanitizeTestMap читает их при загрузке карты —
    раньше константы стояли ниже по файлу, sanitize падал с «Cannot access
@@ -104,7 +104,8 @@ const OBJECT_DIMS = {
   'rock-9': [19, 16],
   'rock-10': [31, 19],
 };
-const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
+const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3',
+  ...Array.from({ length: 200 }, (_, index) => `tree3d-${String(index + 1).padStart(3, '0')}`)]);
 const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
 const OBJECT_SCALE_MIN = 0.4;
 const OBJECT_SCALE_MAX = 3.5;

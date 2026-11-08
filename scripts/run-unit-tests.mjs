@@ -23,6 +23,7 @@ const TESTS = [
   "scripts/test-elev-rules.mts",
   "scripts/test-handbook.mts",
   "scripts/test-elision-scene.mts",
+  "scripts/test-elision-models.mts",
 ];
 
 if (!supportsStripTypes) {

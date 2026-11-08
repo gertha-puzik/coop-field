@@ -4735,6 +4735,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
           editorOverlay={
             editorOpen && editorView ? (
               <EditorOverlay
+                playerSprite={settings.character.sprite}
+                onPlayerSprite={(sprite) => patchCharacter({ sprite })}
                 editorRef={editorRef}
                 syncEditorView={syncEditorView}
                 editorView={editorView}

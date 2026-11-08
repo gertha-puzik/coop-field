@@ -53,6 +53,7 @@ export type WindowKey = '0' | '45' | '90' | '135' | '180' | '225' | '270' | '315
 
 /** Идентификатор спрайта персонажа. */
 export type SpriteId =
+  | 'origami-cat'
   | 'puhlyashik'
   | 'puhlyashshshshshshshsh'
   | 'blestyashka'
@@ -94,6 +95,7 @@ export interface SpriteMeta {
 
 /** Доступные спрайты персонажа (экран выбора перед полем). */
 export const SPRITES: SpriteMeta[] = [
+  { id: 'origami-cat', name: 'Оригами-кот · 3D', src: '/models/previews/origami-cat.png' },
   { id: 'puhlyashik', name: 'Пухляшик', src: '/sprites/puhlyashik.png' },
   { id: 'puhlyashshshshshshshsh', name: 'Пухляшшшшшшшш', src: '/sprites/puhlyashshshshshshshsh.png' },
   { id: 'blestyashka', name: 'Блестяшка', src: '/sprites/blestyashka.png' },
@@ -145,6 +147,7 @@ export interface SpriteGroup {
  *  Набор «Малышочки» — отдельно (см. MALYSHOCHKI_SET): он показывается своим
  *  разделом под общей каруселью, а не колонкой среди привычных скинов. */
 export const SPRITE_GROUPS: SpriteGroup[] = [
+  { id: 'origami', name: 'Оригами · 3D', spriteIds: ['origami-cat'] },
   { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puhlyashshshshshshshsh', 'puzatik', 'razdora'] },
   { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel', 'gromoryov', 'gremuchnik'] },
   { id: 'syr', name: 'Сырь', spriteIds: ['ryzhiy'] },

@@ -7,6 +7,11 @@
  * Engine, не WebGPUEngine. Камера ортографическая и совпадает с
  * screenToWorld (формулы — elision-scene.ts), поэтому клики не переезжают.
  */
+import '@babylonjs/loaders/glTF';
+import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
+import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetContainer';
+import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
+import { MODEL_BY_ID } from './model-catalog';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
@@ -15,6 +20,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
@@ -24,6 +30,9 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import {
   elisionOrtho,
+  elisionActorFoot,
+  elisionObstacleAlpha,
+  elisionDepthBias,
   elisionCameraPose,
   elisionTerrainGeometry,
   worldPxToScene,
@@ -42,19 +51,19 @@ const DAY_TINT: Record<ElisionDay, [number, number, number]> = {
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
 
-type DecalNode = { mesh: Mesh; mat: StandardMaterial; sig: string };
+type DecalNode = { root: TransformNode; mesh: Mesh; mat: StandardMaterial; sig: string };
 
 export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const engine = new Engine(
     canvas,
-    false,
+    true,
     {
       // Явно WebGL: disableWebGL2Support выключен, WebGPUEngine не создаётся.
       disableWebGL2Support: false,
       stencil: false,
       alpha: true,
       premultipliedAlpha: false,
-      antialias: false,
+      antialias: true,
       failIfMajorPerformanceCaveat: false,
     },
     true,
@@ -116,6 +125,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   let wasEditor = false;
   let lastCssW = 0;
   let lastCssH = 0;
+  const models = createElisionModels(scene);
   const textures = new Map<string, Texture>();
   const decals = new Map<string, DecalNode>();
 
@@ -221,11 +231,13 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       src.width,
       src.height,
       scene,
+      version >= 2,
       false,
-      false,
-      Constants.TEXTURE_NEAREST_SAMPLINGMODE,
+      version >= 2 ? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE : Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
     );
     groundTex.hasAlpha = true;
+    groundTex.anisotropicFilteringLevel = 8;
+    groundTex.wrapU = groundTex.wrapV = Texture.CLAMP_ADDRESSMODE;
     groundMat.diffuseTexture = groundTex;
     groundMat.opacityTexture = groundTex;
     groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
@@ -242,17 +254,21 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       scene,
       false,
       true,
-      Constants.TEXTURE_NEAREST_SAMPLINGMODE,
+      Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
     );
     tex.hasAlpha = true;
+    tex.anisotropicFilteringLevel = 8;
+    tex.wrapU = tex.wrapV = Texture.CLAMP_ADDRESSMODE;
     textures.set(url, tex);
     return tex;
   };
 
-  const syncDecals = (list: ElisionActor[], day: ElisionDay) => {
+  const syncDecals = (frame: ElisionFrame, readyModels: Set<string>) => {
+    const list = frame.decals;
+    const self = list.find((actor) => actor.id === frame.controlledId);
     const seen = new Set<string>();
     for (const actor of list) {
-      if (!actor.url || actor.w < 1 || actor.h < 1) continue;
+      if (readyModels.has(actor.id) || !actor.url || actor.w < 1 || actor.h < 1) continue;
       seen.add(actor.id);
       const sig = `${actor.url}|${actor.w.toFixed(2)}|${actor.h.toFixed(2)}|${actor.mirror ? 1 : 0}|${actor.rot}`;
       let node = decals.get(actor.id);
@@ -260,7 +276,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         if (node) {
           node.mat.emissiveTexture = null;
           node.mat.dispose(false, false);
-          node.mesh.dispose(false, false);
+          node.root.dispose();
         }
         const mat = new StandardMaterial(`decal-${actor.id}`, scene);
         mat.disableLighting = true;
@@ -268,34 +284,43 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         const tex = textureFor(actor.url);
         mat.emissiveColor = Color3.White();
         mat.diffuseTexture = tex;
-        mat.opacityTexture = tex;
+        // Берём альфу один раз: повторная opacityTexture темнила и обрезала края.
         mat.useAlphaFromDiffuseTexture = true;
         mat.transparencyMode = Material.MATERIAL_ALPHATEST;
         mat.alphaCutOff = 0.35;
         mat.backFaceCulling = false;
+        mat.zOffset = elisionDepthBias(actor.id);
         const mesh = CreatePlane(
           `decal-${actor.id}`,
-          { width: actor.w, height: actor.h, sideOrientation: Mesh.DOUBLESIDE },
+          { width: actor.w, height: actor.h },
           scene,
         );
         mesh.material = mat;
         mesh.isPickable = false;
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.rotation.y = (-actor.rot * Math.PI) / 180;
-        mesh.rotation.z = 0;
-        mesh.scaling.x = actor.mirror ? -1 : 1;
-        node = { mesh, mat, sig };
+        const root = new TransformNode(`sprite-foot-${actor.id}`, scene);
+        mesh.parent = root;
+        mesh.position.y = actor.h/2;
+        root.scaling.x = actor.mirror ? -1 : 1;
+        node = { root, mesh, mat, sig };
         decals.set(actor.id, node);
       }
-      node.mat.emissiveColor.set(...DAY_TINT[day]);
-      const place = worldPxToScene(actor.x + actor.w / 2, actor.y + actor.h / 2, actor.lift + 2);
-      node.mesh.position.set(place.x, place.y, place.z);
+      node.mat.emissiveColor.set(...DAY_TINT[frame.day]);
+      const targetAlpha = elisionObstacleAlpha(actor, self, frame.yaw);
+      const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
+        : node.mat.alpha + (targetAlpha - node.mat.alpha) * 0.18;
+      node.mat.alpha = alpha;
+      node.mat.alphaCutOff = alpha < 1 ? 0.05 : 0.35;
+      node.mat.transparencyMode = alpha < 1 ? Material.MATERIAL_ALPHATESTANDBLEND : Material.MATERIAL_ALPHATEST;
+      const foot = elisionActorFoot(actor);
+      node.root.position.set(foot.x, foot.y, foot.z);
+      // Вертикальные билборды имеют глубину по точке опоры, а не общей плоскости земли.
+      node.root.rotation.set(0, frame.yaw, -actor.rot * Math.PI/180);
     }
     for (const [id, node] of decals) {
       if (seen.has(id)) continue;
       node.mat.emissiveTexture = null;
       node.mat.dispose(false, false);
-      node.mesh.dispose(false, false);
+      node.root.dispose();
       decals.delete(id);
     }
   };
@@ -334,7 +359,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       fitCanvas();
       placeCamera(frame);
       syncGround(frame);
-      syncDecals(frame.decals, frame.day);
+      const readyModels = models.sync(frame, DAY_TINT[frame.day]);
+      syncDecals(frame, readyModels);
       scene.render();
     },
     destroy() {
@@ -343,9 +369,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       for (const node of decals.values()) {
         node.mat.emissiveTexture = null;
         node.mat.dispose(false, false);
-        node.mesh.dispose(false, false);
+        node.root.dispose();
       }
       decals.clear();
+      models.destroy();
       for (const tex of textures.values()) tex.dispose();
       textures.clear();
       groundTex?.dispose();
@@ -359,4 +386,105 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     },
   };
   return view;
+}
+
+type ModelNode = { model: string; root: TransformNode; entries?: InstantiatedEntries; placed?: boolean; heading?: number; alpha?: number };
+
+function createElisionModels(scene: Scene) {
+  const cache = new Map<string, Promise<AssetContainer>>();
+  const nodes = new Map<string, ModelNode>();
+  const failures = new Set<string>();
+  const light = new HemisphericLight('elision-model-light', new Vector3(-0.4, 1, 0.3), scene);
+  light.intensity = 1.15;
+  light.specular = Color3.Black();
+  light.groundColor = new Color3(0.2, 0.23, 0.18);
+  let dead = false;
+
+  const disposeNode = (node: ModelNode) => {
+    const materials = new Set(node.root.getChildMeshes().map((mesh) => mesh.material));
+    node.entries?.dispose();
+    for (const material of materials) material?.dispose(false, false);
+    node.root.dispose();
+  };
+
+  return {
+    sync(frame: ElisionFrame, tint: [number, number, number]): Set<string> {
+      const ready = new Set<string>();
+      const seen = new Set<string>();
+      const self = frame.decals.find((actor) => actor.id === frame.controlledId);
+      light.diffuse.set(...tint);
+      for (const actor of frame.decals) {
+        const info = actor.model ? MODEL_BY_ID.get(actor.model) : null;
+        if (!info || failures.has(info.id)) continue;
+        seen.add(actor.id);
+        let node = nodes.get(actor.id);
+        if (node?.model !== info.id) {
+          if (node) disposeNode(node);
+          node = { model: info.id, root: new TransformNode(`model-${actor.id}`, scene) };
+          nodes.set(actor.id, node);
+          const created = node;
+          let promise = cache.get(info.id);
+          if (!promise) {
+            promise = LoadAssetContainerAsync(info.url, scene).then((container) => {
+              if (dead) container.dispose();
+              return container;
+            });
+            cache.set(info.id, promise);
+          }
+          promise.then((container) => {
+            if (dead || nodes.get(actor.id) !== created) return;
+            // Clone materials so fading one tree cannot fade every tree of that type.
+            const entries = container.instantiateModelsToScene((name) => `${actor.id}:${name}`, true,
+              { doNotInstantiate: true });
+            for (const root of entries.rootNodes) root.parent = created.root;
+            created.entries = entries;
+          }).catch((error) => {
+            if (dead) return;
+            failures.add(info.id);
+            console.warn(`[elision] Модель ${info.id} недоступна, остаётся превью`, error);
+          });
+        }
+        const foot = elisionActorFoot(actor);
+        if (!actor.isProp) {
+          const dx = foot.x - node.root.position.x, dz = foot.z - node.root.position.z;
+          if (!node.placed) node.heading = Math.PI/2 - (actor.heading ?? 0) * Math.PI/180;
+          else if (Math.hypot(dx, dz) > 0.1) node.heading = Math.atan2(dx, dz);
+          const target = node.heading ?? 0;
+          const turn = Math.atan2(Math.sin(target - node.root.rotation.y), Math.cos(target - node.root.rotation.y));
+          node.root.rotation.y = node.placed ? node.root.rotation.y + turn * 0.35 : target;
+        }
+        node.root.position.set(foot.x, foot.y, foot.z);
+        node.placed = true;
+        const scale = info.worldHeight * (actor.modelScale ?? 1);
+        node.root.scaling.set(scale * (actor.isProp && actor.mirror ? -1 : 1), scale, scale);
+        if (actor.isProp) node.root.rotation.y = -actor.rot * Math.PI/180;
+        if (!node.entries) continue;
+        ready.add(actor.id);
+        const targetAlpha = elisionObstacleAlpha(actor, self, frame.yaw);
+        const previousAlpha = node.alpha ?? 1;
+        const alpha = Math.abs(previousAlpha - targetAlpha) < 0.001 ? targetAlpha
+          : previousAlpha + (targetAlpha - previousAlpha) * 0.18;
+        node.alpha = alpha;
+        for (const mesh of node.root.getChildMeshes()) {
+          if (!mesh.material) continue;
+          mesh.material.alpha = alpha;
+          mesh.material.transparencyMode = alpha < 1 ? Material.MATERIAL_ALPHABLEND : Material.MATERIAL_OPAQUE;
+        }
+      }
+      for (const [id, node] of nodes) {
+        if (seen.has(id)) continue;
+        disposeNode(node);
+        nodes.delete(id);
+      }
+      return ready;
+    },
+    destroy() {
+      dead = true;
+      for (const node of nodes.values()) disposeNode(node);
+      nodes.clear();
+      for (const container of cache.values()) void container.then((value) => value.dispose()).catch(() => {});
+      cache.clear();
+      light.dispose();
+    },
+  };
 }
