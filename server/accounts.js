@@ -160,16 +160,17 @@ function maxAccounts() {
 }
 
 /**
- * BOOTSTRAP_ADMIN — СПИСОК предустановленных админов: имена через запятую,
- * каждое приводим к нижнему регистру и обрезаем пробелы. Значение задаёт
- * владелица (systemd-юнит / env тестов), дефолт — пустой список (никто).
+ * BOOTSTRAP_ADMIN — МИГРАЦИОННЫЙ список имён (аудит Z.AI S1, 2026-11-08):
+ * имена через запятую, каждое приводим к нижнему регистру и обрезаем пробелы.
+ * Значение задаёт владелица (systemd-юнит / env тестов), дефолт — пустой.
  *
- * Механика создания админа (прежняя защита от подделки, обобщённая на список):
- * админ — ТОТ, КТО ПЕРВЫМ ЗААНЯЛ имя из списка. Каждый элемент списка
- * НЕЗАВИСИМО становится admin при своей первой регистрации: наличие другого
- * админа НЕ мешает остальным именам списка (все они декларированы владелицей
- * и должны получить роль при регистрации). Имя уже занято кем-то другим → это
- * чужой аккаунт, роли admin он не получит (проверка 'taken' срабатывает раньше).
+ * Механика БОЛЬШЕ НЕ назначает роль автоматически: прежний «кто первый занял
+ * имя из списка — тот админ» был гонкой (имя мог занять любой игрок раньше
+ * владелицы). Теперь env читается только как подсказка: регистрация имени из
+ * списка логируется warning'ом, а роль назначает ОДНОРАЗОВЫЙ CLI владелицы
+ * `node scripts/make-admin.mjs <login> [pass]` (создаёт аккаунт с ролью admin
+ * или повышает существующий, сохраняя его пароль-хеш). Существующие админы из
+ * старого механизма при старте НЕ трогаются (migrateStore сохраняет role).
  */
 function bootstrapLogins() {
   return String(process.env.BOOTSTRAP_ADMIN || "")
@@ -283,13 +284,19 @@ async function createAccount(rawLogin, rawPass) {
     return { error: "full" };
   }
   const id = newId("a");
-  // Bootstrap-список: логин совпал с одним из предустановленных имён → admin.
-  const wantAdmin = bootstrapLogins().includes(L.login.toLowerCase());
+  // S1 (аудит Z.AI): автоназначение роли admin по BOOTSTRAP_ADMIN УБРАНО —
+  // занявший bootstrap-имя игрок получает обычную роль, а владелица видит
+  // в логе подсказку и назначает админа одноразовым CLI scripts/make-admin.mjs.
+  if (bootstrapLogins().includes(L.login.toLowerCase())) {
+    console.warn(
+      `bootstrap имя «${L.login}» занято; назначьте роль через scripts/make-admin.mjs`,
+    );
+  }
   const acc = {
     id,
     login: L.login,
     pass: await hashPassword(P.pass),
-    role: wantAdmin ? "admin" : "registered",
+    role: "registered",
     createdAt: Date.now(),
     profile: { displayName: L.login },
     characters: [newCharacter(L.login)],
@@ -328,6 +335,23 @@ function attachSprite(acc, sprite, size) {
   markDirty();
 }
 
+/**
+ * S1 (аудит Z.AI): единственный путь повысить роль до admin — этот mutator,
+ * который вызывает ТОЛЬКО scripts/make-admin.mjs (CLI владелицы, вне сервера).
+ * Существующий аккаунт: role → "admin" с сохранением пароль-хеша и прочих полей;
+ * уже админ → no-op c меткой already (idempotent); НИКОГДА не понижает роль и
+ * ничего не создаёт — создание делает сам CLI через createAccount + этот же
+ * вызов. Запись атомарная (markDirty → flushAccounts → writeFileAtomic).
+ */
+function promoteToAdmin(login) {
+  const acc = findByLogin(login);
+  if (!acc) return { error: "no_such_login" };
+  if (acc.role === "admin") return { ok: true, already: true, account: acc };
+  acc.role = "admin";
+  markDirty();
+  return { ok: true, account: acc };
+}
+
 export {
   ACCOUNTS_FILE,
   PASS_MIN,
@@ -339,6 +363,7 @@ export {
   publicProfile,
   activeCharacter,
   createAccount,
+  promoteToAdmin,
   loginAccount,
   attachSprite,
   verifyPassword,

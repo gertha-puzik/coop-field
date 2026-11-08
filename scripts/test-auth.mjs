@@ -7,8 +7,9 @@
  *  4. HTTP POST /auth/register и /auth/login;
  *  5. книга позиций: тот же login после регистрации поднимает fx/fy;
  *  6. guest join после logout снова не пускает в test;
- *  7. (pr-41) второй sandbox с заниженными порогами: BOOTSTRAP_ADMIN-СПИСОК
- *     (оба имени → admin), register-флуд с подделанным XFF ловится по
+ *  7. (pr-41→S1) второй sandbox с заниженными порогами: BOOTSTRAP_ADMIN-СПИСОК
+ *     (оба имени → роль registered, автоназначения admin больше нет;
+ *     роль даёт только CLI make-admin), register-флуд с подделанным XFF ловится по
  *     ПОСЛЕДНЕМУ хопу, MAX_ACCOUNTS → 'full', per-LOGIN замок неудачных
  *     входов (успех сбрасывает, окно отпускает), roomsinfo-«призрак»
  *     (гость не видит ЗАНИМАЕМОСТЬ закрытой комнаты — комната как бы не
@@ -25,7 +26,7 @@
  *
  * Запуск: node scripts/test-auth.mjs (сам спавнит server.js в песочнице DATA_DIR).
  */
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -179,7 +180,9 @@ try {
   const gertha = await client();
   gertha.send(JSON.stringify(["auth", { action: "register", login: "Герта", pass: "password1" }]));
   const whoAdmin = await waitFor(gertha, (m) => m[0] === "whoami" && m[1]?.login === "Герта");
-  check(whoAdmin[1].role === "admin", "bootstrap admin on first matching register");
+  // S1 (аудит Z.AI): регистрация имени из BOOTSTRAP_ADMIN больше НЕ назначает
+  // роль admin — кто угодно мог занять имя раньше владелицы и стать админом.
+  check(whoAdmin[1].role !== "admin", "S1: bootstrap-имя регистрируется БЕЗ роли admin");
   gertha.close();
 
   const resReg = await fetch(`${HTTP}/auth/register`, {
@@ -272,13 +275,68 @@ try {
     body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
   });
   check(cfgGuest.status === 403, "cfg post guest forbidden");
-  const cfgAdmin = await fetch(`${HTTP}/cfg?t=${whoAdmin[1].token}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
+
+  // ---------- S1: назначение admin одноразовым CLI (как владелица на проде).
+  // Сервер останавливаем: он держит сте в памяти и перезапишет файл; CLI
+  // повышает существующий bootstrap-аккаунт, повтор — idempotent.
+  const waitExit = (child) =>
+    new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode) return resolve();
+      child.once("exit", resolve);
+    });
+  server.kill("SIGTERM");
+  await waitExit(server);
+  const cliEnv = { ...process.env, DATA_DIR: DATA };
+  const cli1 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+    env: cliEnv,
+    encoding: "utf8",
   });
-  const cfgSaved = await cfgAdmin.json();
-  check(cfgAdmin.ok && cfgSaved.atmo?.phaseMin === 9, "cfg post admin");
+  check(/повышен/.test(cli1), "S1: make-admin повышает существующий аккаунт (CLI, код возврата 0)");
+  const cli2 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+    env: cliEnv,
+    encoding: "utf8",
+  });
+  check(/уже админ/.test(cli2), "S1: make-admin повтор — idempotent (уже admin, код возврата 0)");
+  let cli3Code = 0;
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Никогда-не-существует"], {
+      env: cliEnv,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (e) {
+    cli3Code = e.status ?? 1;
+  }
+  check(cli3Code !== 0, "S1: make-admin без пароля для нового имени — отказ (не создаёт вслепую)");
+
+  const serverB = spawn(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  serverB.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await waitReady(WS);
+    const resAdminLogin = await fetch(`${HTTP}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: "Герта", pass: "password1" }),
+    });
+    const adminLogin = await resAdminLogin.json();
+    check(
+      resAdminLogin.ok && adminLogin.role === "admin" && adminLogin.login === "Герта",
+      "S1: после make-admin вход даёт роль admin (пароль-хеш сохранён)",
+    );
+    const cfgAdmin = await fetch(`${HTTP}/cfg?t=${adminLogin.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
+    });
+    const cfgSaved = await cfgAdmin.json();
+    check(cfgAdmin.ok && cfgSaved.atmo?.phaseMin === 9, "cfg post admin");
+  } finally {
+    serverB.kill("SIGTERM");
+  }
 } catch (e) {
   failures += 1;
   console.error("FAIL exception", e);
@@ -345,18 +403,19 @@ try {
     ws.send(JSON.stringify(["auth", { action: "login", login, pass }]));
   const registeredOk = (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId;
 
-  // (в) BOOTSTRAP_ADMIN-СПИСОК: каждое имя из списка становится admin при
-  // СВОЕЙ первой регистрации — уже существующий админ не гасит роль второго.
+  // (в) BOOTSTRAP_ADMIN-СПИСОК (S1, аудит Z.AI): регистрация имени из списка
+  // больше НЕ даёт роли — у каждого НЕзависимо от списка обычная роль; роль
+  // назначает только CLI владелицы. Пробелы/регистр по-прежнему: trim+lower.
   const gA = await client2();
   registerFrame(gA, "  гЕРТА "); // пробелы и регистр: список сравнивается после trim+lower
   const whoGA = await waitForFrom(gA, registeredOk, 0);
-  check(whoGA[1]?.role === "admin", "bootstrap list: имя №1 → admin");
+  check(whoGA[1]?.role === "registered", "S1 list: имя №1 из BOOTSTRAP_ADMIN → роль НЕ admin");
   gA.close();
 
   const gB = await client2();
   registerFrame(gB, "  лИзА ");
   const whoGB = await waitForFrom(gB, registeredOk, 0);
-  check(whoGB[1]?.role === "admin", "bootstrap list: имя №2 → admin при живом админе №1");
+  check(whoGB[1]?.role === "registered", "S1 list: имя №2 из списка → тоже НЕ admin (независимо)");
   gB.close();
 
   // (б) register-флуд с ПОДДЕЛАННЫМ XFF: loopback-сокет + XFF → лимит
@@ -492,6 +551,17 @@ const DATA3 = mkdtempSync(path.join(tmpdir(), "coop-auth-host-"));
 const PORT3 = 4015 + Math.floor(Math.random() * 40);
 const WS3 = `ws://${HOST}:${PORT3}`;
 const LOCAL3 = `127.0.0.1:${PORT3}`;
+
+// S1 (аудит Z.AI): админа для /cfg/admin-проб создаём ДО старта сервера
+// одноразовым CLI make-admin (создание аккаунта сразу с ролью admin);
+// регистрация bootstrap-имени роль больше не даёт.
+const ADMIN3_PASS = "b7-elision-admin1";
+const cliS3 = execFileSync(
+  process.execPath,
+  [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта", ADMIN3_PASS],
+  { env: { ...process.env, DATA_DIR: DATA3 }, encoding: "utf8" },
+);
+check(/создан с ролью admin/.test(cliS3), "S1: make-admin создаёт новый аккаунт с ролью admin (до старта сервера)");
 
 const server3 = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
@@ -682,11 +752,12 @@ try {
       cfgAdminUser.status === 403 && cfgAdminUser?.json?.reason === "auth_required",
     "cfg-admin: гость и не-админ на /cfg/admin → 403 auth_required",
   );
-  const adminReg = await probe3({
-    method: "POST", path: "/auth/register", host: "ely.example", body: { login: "Герта", pass: "password1" },
+  const adminLogin3 = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    body: { login: "Герта", pass: ADMIN3_PASS },
   });
-  const adminTok3 = (String(adminReg.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
-  check(adminReg.json?.role === "admin" && !!adminTok3, "cfg-admin: bootstrap-админ зарегистрирован (роль в ответе)");
+  const adminTok3 = (String(adminLogin3.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
+  check(adminLogin3.json?.role === "admin" && !!adminTok3, "cfg-admin: make-admin-аккаунт входит, роль admin (cookie-only на elyria)");
   const cfgAdminOk = await probe3({
     method: "GET", path: "/cfg/admin", host: "ely.example", cookie: `coop_session=${adminTok3}`,
   });
