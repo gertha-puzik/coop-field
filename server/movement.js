@@ -17,7 +17,7 @@ import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
 import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, surfaceLevel, inSouthWall, nearestTestCell, pointInPolygon } from "./world.js";
+import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -163,6 +163,13 @@ function freeMove(ws, payload = {}) {
   // проходится (зеркало клиентского elevWalkBlocked). Пакет прыжка (jp=1 во
   // время дуги) открывает окно — дуга несёт кота через обрыв, и финальные
   // пакеты посадки идут сразу за ним: они проходят, пока окно не закрылось.
+  // Новый клиент передаёт смещение лап от верхнего левого угла спрайта.
+  // Старые клиенты без foot сохраняют прежнюю нулевую опору. Это не экранный lift.
+  const rawFoot = payload.foot;
+  const foot = rawFoot && Number.isFinite(rawFoot.dx) && Number.isFinite(rawFoot.dy)
+    && rawFoot.dx >= 0 && rawFoot.dx <= 4 && rawFoot.dy >= 0 && rawFoot.dy <= 2
+    ? rawFoot : (cat.freeFoot || {dx:0,dy:0});
+  const previousFoot = cat.freeFoot || foot;
   const nowGuard = Date.now();
   const jumping = payload.jp === 1 || payload.jp === true;
   if (jumping) {
@@ -170,12 +177,13 @@ function freeMove(ws, payload = {}) {
   } else if (nowGuard >= (cat.freeJumpUntil || 0)) {
     const fromX = Number.isFinite(cat.fx) ? cat.fx : cat.x - 1;
     const fromY = Number.isFinite(cat.fy) ? cat.fy : cat.y - 1;
-    if (inSouthWall(nx, ny)) return;
-    if (Math.abs(surfaceLevel(nx, ny) - surfaceLevel(fromX, fromY)) > ELEV_STEP_MAX) return;
+    if (Math.abs(testElev(Math.floor(nx + foot.dx) + 1, Math.floor(ny + foot.dy) + 1)
+      - testElev(Math.floor(fromX + previousFoot.dx) + 1, Math.floor(fromY + previousFoot.dy) + 1)) > ELEV_STEP_MAX) return;
   }
+  cat.freeFoot = {dx:foot.dx,dy:foot.dy};
   cat.fm = 1;
-  cat.fx = Math.round(nx * 100) / 100;
-  cat.fy = Math.round(ny * 100) / 100;
+  cat.fx = nx; // Не округляем угол спрайта: округление могло перенести лапы через край.
+  cat.fy = ny;
   cat.fsp = payload.stop ? 0 : payload.sp === 1 || payload.sp === true ? 1 : 0;
   cat.jp = payload.jp === 1 || payload.jp === true ? 1 : 0;
   const cell = nearestTestCell(cat.fx, cat.fy);

@@ -46,7 +46,7 @@ const DAY_TINT: Record<ElisionDay, [number, number, number]> = {
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
 
-type DecalNode = { root: TransformNode; mesh: Mesh; mat: StandardMaterial; sig: string };
+type DecalNode = { root: TransformNode; mesh: Mesh; mat: StandardMaterial; sig: string; poseSig?: string };
 
 export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const engine = new Engine(
@@ -266,7 +266,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       seen.add(actor.id);
       const sig = `${actor.url}|${actor.w.toFixed(2)}|${actor.h.toFixed(2)}|${actor.mirror ? 1 : 0}|${actor.rot}`;
       let node = decals.get(actor.id);
-      if (!node || node.sig !== sig) {
+      if (!node || node.sig.split('|')[0] !== actor.url) {
         if (node) {
           node.mat.emissiveTexture = null;
           node.mat.dispose(false, false);
@@ -290,7 +290,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         vertices.indices = [0,1,2, 0,2,3];
         vertices.normals = [0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1];
         vertices.uvs = [0,0, 1,0, 1,1, 0,1];
-        vertices.applyToMesh(mesh);
+        vertices.applyToMesh(mesh, true);
         mesh.material = mat;
         mesh.isPickable = false;
         const root = new TransformNode(`sprite-foot-${actor.id}`, scene);
@@ -298,6 +298,16 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         node = { root, mesh, mat, sig };
         decals.set(actor.id, node);
       }
+      // Обновляем только вершины: разворот не удаляет материал и не ждёт компиляции шейдера.
+      const pose = actor.pose;
+      const poseSig = `${sig}|${pose?.scaleX}|${pose?.scaleY}|${pose?.rot}`;
+      if (node.poseSig !== poseSig) {
+        node.mesh.updateVerticesData('position', elisionSpriteVertices(
+          actor.w * (pose?.scaleX ?? 1), actor.h * (pose?.scaleY ?? 1),
+          actor.rot + (pose?.rot ?? 0) * 180/Math.PI, actor.mirror), true);
+        node.poseSig = poseSig;
+      }
+      node.sig = sig;
       node.mat.emissiveColor.set(...DAY_TINT[frame.day]);
       const targetAlpha = elisionObstacleAlpha(actor, self, frame.yaw);
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
@@ -306,7 +316,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       node.mat.alphaCutOff = alpha < 1 ? 0.05 : 0.35;
       node.mat.transparencyMode = alpha < 1 ? Material.MATERIAL_ALPHATESTANDBLEND : Material.MATERIAL_ALPHATEST;
       const foot = elisionActorFoot(actor);
-      node.root.position.set(foot.x, foot.y, foot.z);
+      node.root.position.set(foot.x + (pose?.sway ?? 0)*Math.cos(frame.yaw),
+        foot.y + (pose?.lift ?? 0), foot.z - (pose?.sway ?? 0)*Math.sin(frame.yaw));
       // Вертикальные билборды имеют глубину по точке опоры, а не общей плоскости земли.
       node.root.rotation.set(0, frame.yaw, 0);
     }
