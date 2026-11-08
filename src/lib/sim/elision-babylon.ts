@@ -32,17 +32,10 @@ import {
   elisionTerrainGeometry,
   worldPxToScene,
   type ElisionActor,
-  type ElisionDay,
+  elisionDayTint,
   type ElisionFrame,
   type ElisionView,
 } from './elision-scene';
-
-const DAY_TINT: Record<ElisionDay, [number, number, number]> = {
-  morning: [1, 0.94, 0.82],
-  day: [1, 1, 1],
-  evening: [1, 0.8, 0.66],
-  night: [0.42, 0.5, 0.72],
-};
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
 
@@ -134,8 +127,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     canvas.style.height = '100%';
   };
 
-  const applyTint = (day: ElisionDay, textured: boolean) => {
-    const [r, g, b] = DAY_TINT[day];
+  let tint: [number,number,number] = [1,1,1];
+  let tintAt = performance.now();
+  const applyTint = (textured: boolean) => {
+    const [r, g, b] = tint;
     wallMat.emissiveColor.set(r, g, b);
     if (textured) groundMat.emissiveColor.set(r, g, b);
     else groundMat.emissiveColor.set(GRASS.r * r, GRASS.g * g, GRASS.b * b);
@@ -183,7 +178,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     const src = frame.paint;
     const key = `${worldW}x${worldH}:${src ? `${src.width}x${src.height}` : 'flat'}:${frame.paintRev}`;
     if (key === paintKey && ground) {
-      applyTint(frame.day, groundMat.diffuseTexture != null);
+      applyTint(groundMat.diffuseTexture != null);
       return;
     }
     paintKey = key;
@@ -213,7 +208,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     if (!pixels || !src) {
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
-      applyTint(frame.day, false);
+      applyTint(false);
       syncTerrain(frame);
       return;
     }
@@ -236,7 +231,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     groundMat.opacityTexture = groundTex;
     groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
     groundMat.alphaCutOff = 0.15;
-    applyTint(frame.day, true);
+    applyTint(true);
     syncTerrain(frame);
   };
 
@@ -308,7 +303,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         node.poseSig = poseSig;
       }
       node.sig = sig;
-      node.mat.emissiveColor.set(...DAY_TINT[frame.day]);
+      node.mat.emissiveColor.set(...tint);
       const targetAlpha = elisionObstacleAlpha(actor, self, frame.yaw);
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
         : node.mat.alpha + (targetAlpha - node.mat.alpha) * 0.18;
@@ -361,6 +356,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         paintKey = '';
         wasEditor = false;
       }
+      const now = performance.now(), target = elisionDayTint(frame.dayProgress);
+      const k = 1-Math.exp(-Math.min(100,Math.max(0,now-tintAt))/1200);
+      tint = tint.map((v,i)=>v+(target[i]-v)*k) as [number,number,number];
+      tintAt = now;
       fitCanvas();
       placeCamera(frame);
       syncGround(frame);

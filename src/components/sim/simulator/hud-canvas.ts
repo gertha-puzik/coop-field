@@ -1,230 +1,96 @@
-/**
- * Field HUD canvas painters, carved out of simulator.tsx verbatim (W5b stage 2,
- * behavior-preserving). Pure canvas drawing: no React, no refs, no engine state.
- * Contract: the only public export is `drawFieldHud(cv, vw, vh, p4, weather,
- * weatherPrev, weatherAt)` — called once per frame by the game loop in
- * simulator.tsx to paint the rotating day panel and the weather badge overlay.
- * Internal helpers (hudCloud/hudWeatherIcon) and geometry constants stay
- * module-private on purpose.
- */
+/** Canvas HUD above WebGL: rotating four-season-of-day dial, weather satellite and jump overlays. */
 import { elisionActorFoot, type ElisionFrame, type ElisionSpace } from '@/lib/sim/elision-scene';
 import { jumpFillOf } from '@/lib/sim/test-map';
-import { DAYPART_LABEL, dayPartOfProgress, type DayPart, type WeatherKind } from '@/lib/sim/settings';
+import { type WeatherKind } from '@/lib/sim/settings';
 
-/* ---------- HUD поля: вращающаяся плашка суток и значок погоды ---------- */
+const TAU = Math.PI*2;
+const WEATHER_LABEL: Record<WeatherKind,string> = {sun:'Солнечно',cloud:'Облачно',rain:'Дождь'};
 
-/** Плашка суток: длина и высота (px экрана), стрелка на правом торце.
- *  Вращается вместе с серверным временем: в середине утра лежит горизонтально
- *  (стрелка на восток), дальше крутится по часовой — каждые 90° поворота это
- *  середина следующей части суток (день/вечер/ночь), полный оборот — сутки. */
-const PANEL_L = 56;
-const PANEL_H = 16;
-/** Радиус круга, который заметает плашка при обороте (полудиагональ + зазор). */
-const PANEL_SWEEP = Math.ceil(Math.hypot(PANEL_L / 2, PANEL_H / 2)) + 1;
-const HUD_WX_R = 13;
-const HUD_PAD = 12;
-const HUD_GAP = 10;
-const HUD_DEG = Math.PI / 180;
-/** Цвета частей суток на плашке: от хвоста к стрелке — утро → день → вечер → ночь. */
-const PANEL_SEGMENT: Record<DayPart, string> = {
-  morning: '#f0bd62',
-  day: '#a9d7f2',
-  evening: '#e0885f',
-  night: '#31427c',
-};
-
-/** Облако из кругов с подошвой — в значке погоды. */
-function hudCloud(g: CanvasRenderingContext2D, x: number, y: number, s: number, fill: string): void {
-  g.fillStyle = fill;
-  g.beginPath();
-  g.arc(x - s * 0.45, y + s * 0.15, s * 0.42, 0, Math.PI * 2);
-  g.arc(x + s * 0.05, y - s * 0.2, s * 0.55, 0, Math.PI * 2);
-  g.arc(x + s * 0.5, y + s * 0.12, s * 0.4, 0, Math.PI * 2);
-  g.fill();
-  g.fillRect(x - s * 0.8, y, s * 1.65, s * 0.42);
+function circle(g: CanvasRenderingContext2D,x:number,y:number,r:number) {
+  g.beginPath();g.arc(x,y,r,0,TAU);
+}
+function cloud(g:CanvasRenderingContext2D,x:number,y:number,r:number) {
+  const color=g.createLinearGradient(0,y-r,0,y+r);color.addColorStop(0,'#fff');color.addColorStop(1,'#aebcde');
+  g.fillStyle=color;g.beginPath();
+  g.arc(x-r*.46,y+r*.12,r*.48,Math.PI*.7,Math.PI*1.6);
+  g.arc(x,y-r*.22,r*.64,Math.PI,TAU);
+  g.arc(x+r*.5,y+r*.1,r*.47,Math.PI*1.5,Math.PI*.5);
+  g.lineTo(x-r*.45,y+r*.58);g.closePath();g.fill();
+}
+function sun(g:CanvasRenderingContext2D,x:number,y:number,r:number) {
+  g.save();g.strokeStyle='#ffe585';g.lineWidth=Math.max(1,r*.18);g.lineCap='round';
+  for(let i=0;i<8;i++) {const a=i*TAU/8;g.beginPath();g.moveTo(x+Math.cos(a)*r*1.3,y+Math.sin(a)*r*1.3);g.lineTo(x+Math.cos(a)*r*1.65,y+Math.sin(a)*r*1.65);g.stroke();}
+  const fill=g.createLinearGradient(x,y-r,x,y+r);fill.addColorStop(0,'#fff3ac');fill.addColorStop(1,'#ffb82f');
+  circle(g,x,y,r);g.fillStyle=fill;g.fill();g.restore();
+}
+function spark(g:CanvasRenderingContext2D,x:number,y:number,r:number) {
+  g.beginPath();g.moveTo(x,y-r);g.lineTo(x+r*.3,y-r*.25);g.lineTo(x+r,y);g.lineTo(x+r*.25,y+r*.3);
+  g.lineTo(x,y+r);g.lineTo(x-r*.3,y+r*.25);g.lineTo(x-r,y);g.lineTo(x-r*.25,y-r*.3);g.closePath();
+  const fill=g.createLinearGradient(x-r,y-r,x+r,y+r);fill.addColorStop(0,'#fff8ca');fill.addColorStop(.5,'#ffdc83');fill.addColorStop(1,'#b46c26');g.fillStyle=fill;g.fill();
+}
+function goldRing(g:CanvasRenderingContext2D,x:number,y:number,r:number) {
+  const gold=g.createLinearGradient(x-r,y-r,x+r,y+r);gold.addColorStop(0,'#fff6b5');gold.addColorStop(.3,'#e6a74d');gold.addColorStop(.6,'#ffde91');gold.addColorStop(1,'#ad6429');
+  circle(g,x,y,r);g.strokeStyle='#36264e';g.lineWidth=7;g.stroke();
+  g.strokeStyle=gold;g.lineWidth=4;g.stroke();circle(g,x,y,r-3);g.strokeStyle='#fff0bd';g.lineWidth=.8;g.stroke();
+}
+function weatherIcon(g:CanvasRenderingContext2D,x:number,y:number,kind:WeatherKind) {
+  if(kind==='sun') {sun(g,x,y,7);return;}
+  if(kind==='cloud') {sun(g,x-5,y-4,4);cloud(g,x+2,y+2,9);return;}
+  cloud(g,x,y-4,10);g.strokeStyle='#8ed7ff';g.lineWidth=2;g.lineCap='round';
+  for(let i=-1;i<=1;i++) {g.beginPath();g.moveTo(x+i*6+1,y+5);g.lineTo(x+i*6-2,y+11);g.stroke();}
 }
 
-/** Значок погоды: солнце / облачко / туча с косыми каплями. */
-function hudWeatherIcon(g: CanvasRenderingContext2D, x: number, y: number, kind: WeatherKind): void {
-  if (kind === 'sun') {
-    g.strokeStyle = '#f0a92e';
-    g.lineWidth = 1.2;
-    g.lineCap = 'round';
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI * 0.25;
-      g.beginPath();
-      g.moveTo(x + Math.cos(a) * 5, y + Math.sin(a) * 5);
-      g.lineTo(x + Math.cos(a) * 6.8, y + Math.sin(a) * 6.8);
-      g.stroke();
+/** Fixed left needle reads the continuously rotating day disc. No rotation of the whole HUD. */
+export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,weather:WeatherKind,weatherPrev:WeatherKind,weatherAt:number) {
+  const dpr=Math.min(2,window.devicePixelRatio||1),bw=Math.round(vw*dpr),bh=Math.round(vh*dpr);
+  if(cv.width!==bw||cv.height!==bh) {cv.width=bw;cv.height=bh;}
+  const g=cv.getContext('2d');if(!g)return;
+  g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,vw,vh);
+  const r=43,cx=vw-80,cy=64,satX=cx+r-2;
+  g.save();g.shadowColor='rgba(0,0,0,.42)';g.shadowBlur=9;g.shadowOffsetY=3;
+  circle(g,cx,cy,r+2);g.fillStyle='#132343';g.fill();g.restore();
+  g.save();circle(g,cx,cy,r-2);g.clip();g.translate(cx,cy);g.rotate(-p4*Math.PI/2);
+  const skies=[['#ffd3b2','#ef8768'],['#abdfff','#4f9ee9'],['#ffba88','#d65c44'],['#243a69','#101d3e']];
+  for(let i=0;i<4;i++) {
+    const a=Math.PI+i*Math.PI/2;
+    g.save();g.beginPath();g.moveTo(0,0);g.arc(0,0,r,a,a+Math.PI/2);g.closePath();g.clip();
+    const fill=g.createLinearGradient(0,-r,0,r);fill.addColorStop(0,skies[i][0]);fill.addColorStop(1,skies[i][1]);g.fillStyle=fill;g.fillRect(-r,-r,r*2,r*2);
+    const x=Math.cos(a+Math.PI/4)*r*.56,y=Math.sin(a+Math.PI/4)*r*.56;
+    if(i===3) {
+      circle(g,x,y,9);g.fillStyle='#ffe49c';g.fill();circle(g,x+4,y-3,8);g.fillStyle='#192c54';g.fill();
+      spark(g,x-11,y-10,2);spark(g,x+12,y+10,2);spark(g,x-9,y+12,1.5);
+    } else if(i===1) sun(g,x,y,6);
+    else {
+      circle(g,x,y+3,8);g.fillStyle='#ffe397';g.fill();
+      g.fillStyle=i===0?'#ed9275':'#db6b51';g.beginPath();g.moveTo(x-22,y+8);g.quadraticCurveTo(x-8,y+2,x+2,y+7);g.quadraticCurveTo(x+12,y+3,x+24,y+9);g.lineTo(x+24,y+25);g.lineTo(x-22,y+25);g.closePath();g.fill();
     }
-    g.fillStyle = '#ffd44d';
-    g.beginPath();
-    g.arc(x, y, 3.6, 0, Math.PI * 2);
-    g.fill();
-    return;
+    g.restore();
   }
-  if (kind === 'cloud') {
-    hudCloud(g, x, y + 0.5, 7.5, '#dbe4ec');
-    return;
-  }
-  g.strokeStyle = '#3f97e4';
-  g.lineWidth = 1.5;
-  g.lineCap = 'round';
-  for (let i = -1; i <= 1; i++) {
-    g.beginPath();
-    g.moveTo(x + i * 3.6 - 1, y + 3.2);
-    g.lineTo(x + i * 3.6 - 2.4, y + 6.8);
-    g.stroke();
-  }
-  hudCloud(g, x, y - 2, 7.5, '#c9d4de');
+  g.restore();goldRing(g,cx,cy,r);
+  spark(g,cx,cy-r,8);spark(g,cx,cy+r,7);
+  // The pointer is stationary; its tip reads the current quadrant at the left edge.
+  g.beginPath();g.moveTo(cx-r-13,cy-8);g.lineTo(cx-r+7,cy);g.lineTo(cx-r-13,cy+8);g.closePath();g.fillStyle='#162846';g.fill();g.strokeStyle='#ffe6a2';g.lineWidth=3;g.lineJoin='round';g.stroke();
+  circle(g,satX,cy,19);g.fillStyle='#16294f';g.fill();goldRing(g,satX,cy,19);
+  const wt=weather===weatherPrev?1:Math.min(1,Math.max(0,(performance.now()-weatherAt)/900));
+  g.save();circle(g,satX,cy,16);g.clip();
+  if(wt<1){g.globalAlpha=1-wt;weatherIcon(g,satX,cy,weatherPrev);}
+  g.globalAlpha=wt;weatherIcon(g,satX,cy,weather);g.restore();
+  g.beginPath();g.roundRect(cx-49,cy+r+12,114,23,12);g.fillStyle='rgba(15,28,52,.88)';g.fill();g.strokeStyle='rgba(235,209,149,.6)';g.lineWidth=1;g.stroke();
+  g.font='600 11px ui-sans-serif,system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillStyle='#fff0ca';g.fillText(WEATHER_LABEL[weather],cx+8,cy+r+23.5);
 }
 
-/** Плашка суток в локальных координатах (центр — точка вращения, стрелка на +X).
- *  cur — текущая часть суток: её сегмент подсвечен, её цвет у стрелки. */
-function hudDayPanel(g: CanvasRenderingContext2D, p4: number, cur: DayPart): void {
-  const half = PANEL_L / 2;
-  const hh = PANEL_H / 2;
-  // тело плашки: четыре сегмента суток, у текущего — полная яркость
-  const keys: DayPart[] = ['morning', 'day', 'evening', 'night'];
-  for (let i = 0; i < 4; i++) {
-    g.globalAlpha = keys[i] === cur ? 1 : 0.66;
-    g.fillStyle = PANEL_SEGMENT[keys[i]];
-    g.fillRect(-half + (i * PANEL_L) / 4, -hh, PANEL_L / 4, PANEL_H);
-  }
-  g.globalAlpha = 1;
-  // разделители сегментов
-  g.strokeStyle = 'rgba(0,0,0,0.28)';
-  g.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
-    const x = -half + (i * PANEL_L) / 4;
-    g.beginPath();
-    g.moveTo(x, -hh + 1);
-    g.lineTo(x, hh - 1);
-    g.stroke();
-  }
-  // точка времени: едет от хвоста (начало утра) к стрелке (конец ночи)
-  const t = (((p4 / 4) % 1) + 1) % 1;
-  const dx = -half + t * PANEL_L;
-  g.fillStyle = 'rgba(0,0,0,0.55)';
-  g.beginPath();
-  g.arc(dx, 0, 3.4, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = '#ffffff';
-  g.beginPath();
-  g.arc(dx, 0, 2.2, 0, Math.PI * 2);
-  g.fill();
-  // корпус: белая кромка поверх сегментов — читаемость на любом фоне
-  g.strokeStyle = 'rgba(255,255,255,0.92)';
-  g.lineWidth = 1.5;
-  g.strokeRect(-half, -hh, PANEL_L, PANEL_H);
-  // стрелка на правом торце — цветом текущей части суток
-  g.fillStyle = PANEL_SEGMENT[cur];
-  g.strokeStyle = 'rgba(0,0,0,0.45)';
-  g.lineWidth = 1;
-  g.beginPath();
-  g.moveTo(half - 1.5, -5.5);
-  g.lineTo(half + 6.5, 0);
-  g.lineTo(half - 1.5, 5.5);
-  g.closePath();
-  g.fill();
-  g.stroke();
+/** Ground marker is projected from the same landing calculation as the jump, above WebGL. */
+export function drawElisionJumpTarget(cv:HTMLCanvasElement|null,frame:ElisionFrame,now:number) {
+  const target=frame.jumpTarget;if(!cv||frame.editor||!target)return;
+  const g=cv.getContext('2d');if(!g)return;
+  const dx=target.x-frame.camX,dy=target.y-frame.camY;
+  const x=frame.viewW/2+(dx*Math.cos(frame.yaw)-dy*Math.sin(frame.yaw))*frame.zoom;
+  const y=frame.viewH/2+(dx*Math.sin(frame.yaw)+dy*Math.cos(frame.yaw)-target.lift)*frame.zoom;
+  const r=(8+Math.sin(now*.012)*1.5)*frame.zoom;
+  g.save();const dpr=Math.min(2,window.devicePixelRatio||1);g.setTransform(dpr,0,0,dpr,0,0);
+  circle(g,x,y,r);g.fillStyle=target.ok?'rgba(126,247,156,.22)':'rgba(255,178,126,.22)';g.fill();
+  g.strokeStyle=target.ok?'#a9ffbf':'#ffb27e';g.lineWidth=1.8;g.stroke();g.restore();
 }
-
-/**
- * Кадр HUD поля: плашка суток, вращающаяся вместе с серверным временем
- * (в середине утра лежит горизонтально, каждые 90° поворота — середина
- * следующей части суток, полный оборот — сутки), белая точка на ней показывает
- * точное положение в сутках, стрелка на торце — цветом текущей части суток.
- * Под плашкой — подпись части суток. Рядом — значок текущей погоды с мягким
- * кроссфейдом при смене. HUD рисуется поверх слоя атмосферы (Pixi), поэтому сам
- * не темнеет ночью и не прячется под дождём.
- */
-function drawFieldHud(
-  cv: HTMLCanvasElement,
-  vw: number,
-  vh: number,
-  p4: number,
-  weather: WeatherKind,
-  weatherPrev: WeatherKind,
-  weatherAt: number,
-): void {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const bw = Math.round(vw * dpr);
-  const bh = Math.round(vh * dpr);
-  if (cv.width !== bw || cv.height !== bh) {
-    cv.width = bw;
-    cv.height = bh;
-  }
-  const g = cv.getContext('2d');
-  if (!g) return;
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, vw, vh);
-
-  const S = PANEL_SWEEP;
-  const cx = vw - HUD_PAD - S - 3;
-  const cy = HUD_PAD + S + 3;
-  const wxX = cx - S - HUD_GAP - HUD_WX_R;
-  const cur = dayPartOfProgress(p4);
-
-  // тень-подложка: читаемость на любом фоне
-  g.fillStyle = 'rgba(0,0,0,0.32)';
-  g.beginPath();
-  g.arc(cx, cy, S + 2.5, 0, Math.PI * 2);
-  g.arc(wxX, cy, HUD_WX_R + 2.5, 0, Math.PI * 2);
-  g.fill();
-
-  // вращающаяся плашка суток: середина утра — горизонтально, далее по часовой
-  g.save();
-  g.translate(cx, cy);
-  g.rotate((p4 - 0.5) * 90 * HUD_DEG);
-  hudDayPanel(g, p4, cur);
-  g.restore();
-  // ось вращения поверх плашки
-  g.fillStyle = 'rgba(0,0,0,0.7)';
-  g.beginPath();
-  g.arc(cx, cy, 2.4, 0, Math.PI * 2);
-  g.fill();
-  g.strokeStyle = 'rgba(255,255,255,0.9)';
-  g.lineWidth = 1;
-  g.beginPath();
-  g.arc(cx, cy, 2.4, 0, Math.PI * 2);
-  g.stroke();
-
-  // подпись части суток
-  const label = DAYPART_LABEL[cur];
-  g.font = '600 10px ui-sans-serif, system-ui, sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'top';
-  g.lineWidth = 3;
-  g.strokeStyle = 'rgba(0,0,0,0.55)';
-  g.strokeText(label, cx, cy + S + 5);
-  g.fillStyle = 'rgba(255,255,255,0.95)';
-  g.fillText(label, cx, cy + S + 5);
-
-  // значок погоды с мягким кроссфейдом при смене
-  g.beginPath();
-  g.arc(wxX, cy, HUD_WX_R, 0, Math.PI * 2);
-  g.fillStyle = 'rgba(252,252,255,0.88)';
-  g.fill();
-  g.strokeStyle = 'rgba(255,255,255,0.9)';
-  g.lineWidth = 1.5;
-  g.stroke();
-  const wt = Math.min(1, Math.max(0, (performance.now() - weatherAt) / 900));
-  g.save();
-  g.beginPath();
-  g.arc(wxX, cy, HUD_WX_R - 0.5, 0, Math.PI * 2);
-  g.clip();
-  if (wt < 1) {
-    g.globalAlpha = 1 - wt;
-    hudWeatherIcon(g, wxX, cy, weatherPrev);
-    g.globalAlpha = 1;
-  }
-  g.globalAlpha = wt;
-  hudWeatherIcon(g, wxX, cy, weather);
-  g.restore();
-  g.globalAlpha = 1;
-}
-export { drawFieldHud };
 
 /** Заряд прыжка поверх WebGL и погоды; координаты из того же кадра, что спрайт. */
 export function drawElisionJumpHud(cv: HTMLCanvasElement | null, frame: ElisionFrame, sp: ElisionSpace, now: number) {

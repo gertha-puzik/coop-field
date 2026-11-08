@@ -137,23 +137,6 @@ export function FieldStage(props: FieldStageProps) {
           {editorOverlay}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-[var(--sim-text-faint)]">
-          <span>W A S D — идти (зажать; на траве — свободная ходьба по пикселям, в боевых клетках — шаг по клеткам)</span>
-          <span>Q E Z X — диагонали</span>
-          <span>Колесо мыши — приблизить/отдалить вид</span>
-          <span>[ ] — повернуть обзор на 90°. В редакторе те же клавиши меняют размер кисти</span>
-          <span>ЛКМ — идти к точке · манекен — тянуть</span>
-          <span>{testField ? 'вход в бой — с клетки захода кнопкой «Боевой режим» (B), выход — ею же' : 'B — бой'}</span>
-          <span>Enter — чат</span>
-          <span>I — удар</span>
-          <span>K (удерживать) — блок</span>
-          <span>Пробел (удержать и отпустить) — прыжок в точку под курсором. Перепад 1 — шагом, 2 — шкала до половины, 3 — полная, 4 и выше вверх нельзя</span>
-          <span>J — стрела против часовой</span>
-          <span>L — по часовой</span>
-          <span className="ml-auto">
-            Скорость = 100% − замедление · замедление фиксируется в момент прыжка
-          </span>
-        </div>
       </section>
   );
 }

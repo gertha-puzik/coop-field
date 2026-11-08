@@ -22,7 +22,7 @@
  * страницы каталога/симулятора/админки): сам файл env-строк не носит —
  * grotto-сборка вырезает ветку целиком вместе с компонентом (DCE).
  */
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { httpLogout } from '@/lib/net/http-auth';
 import { meBadgeName, meHasAccount, myProfileHref, useMeRow } from '@/lib/net/me-cache';
@@ -41,6 +41,15 @@ const NAV_LINK =
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 export function SiteHeader() {
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const update = () => document.documentElement.style.setProperty('--site-header-height', `${header.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);observer.observe(header);
+    return () => { observer.disconnect();document.documentElement.style.removeProperty('--site-header-height'); };
+  }, []);
   const me = useMeRow();
   const inAccount = meHasAccount(me);
   const isAdmin = inAccount && me?.role === 'admin';
@@ -68,7 +77,7 @@ export function SiteHeader() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]">
+    <header ref={headerRef} className="sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]">
       <nav aria-label="Разделы сайта" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
         <a className={NAV_LINK} href="/">
           Главная
