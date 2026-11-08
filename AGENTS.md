@@ -212,6 +212,10 @@ PR previews). Variant checks are inline `IS_ELYRIA` constants in each module (se
 - `AGENTS.md` — this map + wire-contract tables (updated by the wave that changes the protocol).
 - `docs/ARCHITECTURE.md` — as-is map, data flows, mirrors, coordinates, target structure (W3–W5 + platform §).
 - `docs/PLATFORM-ARCHITECTURE.md` — as-implemented platform: accounts, host policy, token matrix, config registry, profiles, RETIRED_ROOMS, build variants.
+- `docs/UI-KIT.md` — in-app UI Kit: paired `--uk-*` tokens, public barrel `src/components/ui`, component API, rules for agents (reuse a kit primitive before writing a new one).
+- `docs/AGENT-PLAYBOOK.md` — recipes: add admin tab / tunable param / UI-kit component / profile field / room mode.
+- `docs/PRIVACY-DATA.md` — data map: accounts.json, sessions, DTO privacy, sp owner-only, DATA_DIR per env, logs, backups; legal qualification is owner-action, do not claim compliance from tests.
+- `docs/DEPLOY-CHECKLIST.md` — owner-only production steps (environment protection, secret rotation, VPS manual actions); nothing there is claimed as done.
 - `docs/PRODUCT-ROADMAP.md` — product audit: what exists, what's missing, order of platform work.
 - `docs/PREVIEW-ENVIRONMENTS.md` — PR preview on the same VPS (`/opt/coop-field-preview/`, dual-host `pr-<N>.abnocw.miew.ru` + `pr-<N>.elisium.miew.ru`).
 - `README.md` — human overview in Russian: two sites, quick start, tests, prod, feature eras.
