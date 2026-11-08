@@ -15,6 +15,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import net from "node:net";
+
+const netCreateServer = () => net.createServer();
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SERVER = path.join(ROOT, "server.js");
@@ -113,12 +116,20 @@ try {
 /* ---------- секция 2: живой server.js — старт умирает/живёт как заявлено ---------- */
 const dir = mkdtempSync(path.join(tmpdir(), "coop-csrf-startup-"));
 
+// Reserve a guaranteed-free port instead of PORT=0: server.js treats 0 as
+// unset and falls back to its default port, so a live local stage sharing
+// that default would make every "must survive" spawn die with EADDRINUSE.
+const probe = netCreateServer();
+await new Promise((res) => probe.listen(0, "127.0.0.1", res));
+const FREE_PORT = String(probe.address().port);
+probe.close();
+
 async function spawnServer(envPatch, waitMs = 4000) {
   const env = {
     ...process.env,
     DATA_DIR: dir,
     HOST: "127.0.0.1",
-    PORT: "0", // слушатель нам не нужен: валидация до listen; 0 = свободный порт
+    PORT: FREE_PORT, // just a free-port placeholder: validation runs before listen
     ...envPatch,
   };
   for (const k of savedKeys) if (!(k in envPatch)) delete env[k];
