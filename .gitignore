@@ -5,3 +5,8 @@ out/
 .vercel/
 tsconfig.tsbuildinfo
 data/
+# Dual-host сборка (build:variants) кладёт статические корни прямо в
+# корень репо: у них отдельные webroot'ы и они не коммитятся.
+www-grotto/
+www-elyria/
+node_modules
