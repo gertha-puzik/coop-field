@@ -1,9 +1,15 @@
 // @ts-nocheck
 // Вид Элизии: один перевод px мира в сцену и ортокамера, совпадающая с
-// screenToWorld. Babylon-математика здесь только в проверке проекции;
-// WebGL-сцена в юнит-тест не поднимается.
+// screenToWorld. Настоящая камера Babylon в NullEngine проверяет проекцию
+// и frustum, браузер отдельно проверяет WebGL и ориентацию текстур.
 // Запуск — через npm run test:unit.
-import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector.js';
+import { NullEngine } from '@babylonjs/core/Engines/nullEngine.js';
+import { Scene } from '@babylonjs/core/scene.js';
+import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
+import { Camera } from '@babylonjs/core/Cameras/camera.js';
+import { Frustum } from '@babylonjs/core/Maths/math.frustum.js';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
   elisionCameraDown,
   elisionCameraRight,
@@ -60,16 +66,33 @@ const up = elisionCameraUp(0);
 assert(up.x === 0 && up.y === 0 && up.z === -1, 'yaw 0: верх экрана = −z');
 
 const ortho = elisionOrtho(200, 100, 2);
-assert(ortho.left === 50 && ortho.right === -50 && ortho.top === 25 && ortho.bottom === -25, 'грани орто: ширина вида / zoom, X перевёрнут');
+assert(ortho.left === -50 && ortho.right === 50 && ortho.top === 25 && ortho.bottom === -25, 'грани орто: ширина вида / zoom, без отражения X');
+
+const engine = new NullEngine();
+const world = new Scene(engine);
+world.useRightHandedSystem = true;
+const camera = new FreeCamera('regression-camera', new Vector3(0, 800, 0), world);
+camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
+camera.minZ = 0.1;
+camera.maxZ = 4000;
+camera.updateUpVectorFromRotation = true;
+const prop = CreatePlane('visible-tree', { width: 30, height: 60 }, world);
+prop.rotation.x = -Math.PI / 2;
 
 function project(wx, wy, camX, camY, yawRad, zoom, vw, vh) {
-  const eyeUp = elisionCameraUp(yawRad);
-  const view = new Matrix();
-  Matrix.LookAtLHToRef(new Vector3(camX, 800, camY), new Vector3(camX, 0, camY), new Vector3(eyeUp.x, eyeUp.y, eyeUp.z), view);
+  camera.position.set(camX, 800, camY);
+  camera.rotation.set(-Math.PI / 2, yawRad, 0);
   const box = elisionOrtho(vw, vh, zoom);
-  const proj = new Matrix();
-  Matrix.OrthoOffCenterLHToRef(box.left, box.right, box.bottom, box.top, 0.1, 4000, proj, true);
-  const p = Vector3.TransformCoordinates(new Vector3(wx, 0, wy), view.multiply(proj));
+  camera.orthoLeft = box.left;
+  camera.orthoRight = box.right;
+  camera.orthoBottom = box.bottom;
+  camera.orthoTop = box.top;
+  const transform = camera.getViewMatrix(true).multiply(camera.getProjectionMatrix(true));
+  // До исправления left > right отсекает даже объект в центре кадра.
+  prop.position.set(camX, 2, camY);
+  prop.computeWorldMatrix(true);
+  assert(prop.isInFrustum(Frustum.GetPlanes(transform)), 'объект в центре виден frustum');
+  const p = Vector3.TransformCoordinates(new Vector3(wx, 0, wy), transform);
   return { sx: (p.x * 0.5 + 0.5) * vw, sy: (1 - (p.y * 0.5 + 0.5)) * vh };
 }
 
@@ -86,4 +109,6 @@ for (const [wx, wy, camX, camY, yawRad, zoom, vw, vh] of samples) {
   assert(Math.abs(back.x - wx) < 1e-3 && Math.abs(back.y - wy) < 1e-3, `проекция не совпала с screenToWorld (${wx}, ${wy})`);
 }
 
+world.dispose();
+engine.dispose();
 console.log('elision scene ok');

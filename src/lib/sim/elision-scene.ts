@@ -86,9 +86,9 @@ export function elisionCameraUp(yaw: number): { x: number; y: number; z: number 
 }
 
 /**
- * Грани ортопроекции в px мира. left > right специально: LookAtLH даёт
- * экранный +X против мира, обмен граней это компенсирует (проверено против
- * обратной формулы screenToWorld).
+ * Обычные грани ортопроекции для правой системы координат Babylon.
+ * Отражённая проекция (left > right) инвертирует также плоскости frustum:
+ * видимые декали отсекаются, хотя большая земля ещё попадает в кадр.
  */
 export function elisionOrtho(
   viewW: number,
@@ -98,7 +98,7 @@ export function elisionOrtho(
   const z = Math.max(0.05, zoom);
   const halfW = viewW / (2 * z);
   const halfH = viewH / (2 * z);
-  return { left: halfW, right: -halfW, bottom: -halfH, top: halfH };
+  return { left: -halfW, right: halfW, bottom: -halfH, top: halfH };
 }
 
 export type SelfLeap = {

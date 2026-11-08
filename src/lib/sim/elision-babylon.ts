@@ -22,7 +22,6 @@ import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import {
-  elisionCameraUp,
   elisionOrtho,
   worldPxToScene,
   type ElisionActor,
@@ -65,6 +64,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const webgl: ElisionView['webgl'] = version >= 2 ? 'webgl2' : 'webgl1';
 
   const scene = new Scene(engine);
+  // RH даёт экранный +X вправо без отражённой ортопроекции.
+  scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(9 / 255, 9 / 255, 11 / 255, 1);
   scene.autoClear = true;
 
@@ -72,11 +73,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
   camera.minZ = 0.1;
   camera.maxZ = 5000;
-  // Смотрим ровно вниз. yaw живёт в upVector, не в крене: setTarget его
-  // затирает (там Vector3.Up и rotation.z = 0), поэтому цель не лочим.
-  camera.rotation.x = Math.PI / 2;
-  camera.rotation.y = 0;
-  camera.rotation.z = 0;
+  // Публичный механизм Babylon обновляет upVector из того же поворота.
+  camera.updateUpVectorFromRotation = true;
+  camera.rotation.set(-Math.PI / 2, 0, 0);
   scene.activeCamera = camera;
 
   const groundMat = new StandardMaterial('elision-ground', scene);
@@ -160,14 +159,15 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       return;
     }
     groundMode = 'paint';
-    // ImageData идёт сверху вниз, GL — снизу вверх. invertY кладёт верх рисунка на z = 0.
+    // У CreateGround v=0 на z=0: ImageData загружаем без invertY,
+    // иначе рисунок зеркалится по вертикали относительно объектов и коллизий.
     groundTex = RawTexture.CreateRGBATexture(
       new Uint8Array(pixels),
       src.width,
       src.height,
       scene,
       false,
-      true,
+      false,
       Constants.TEXTURE_NEAREST_SAMPLINGMODE,
     );
     groundTex.hasAlpha = true;
@@ -226,8 +226,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         );
         mesh.material = mat;
         mesh.isPickable = false;
-        mesh.rotation.x = Math.PI / 2;
-        mesh.rotation.y = (actor.rot * Math.PI) / 180;
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.y = (-actor.rot * Math.PI) / 180;
         mesh.rotation.z = 0;
         mesh.scaling.x = actor.mirror ? -1 : 1;
         node = { mesh, mat, sig };
@@ -248,13 +248,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const placeCamera = (frame: ElisionFrame) => {
     const eye = worldPxToScene(frame.camX, frame.camY, 800);
     camera.position.set(eye.x, eye.y, eye.z);
-    camera.rotation.x = Math.PI / 2;
-    camera.rotation.y = 0;
-    camera.rotation.z = 0;
-    // getViewMatrix один раз подменяет upVector, если крен «ещё не кэширован».
-    (camera as unknown as { _cachedRotationZ: number })._cachedRotationZ = 0;
-    const up = elisionCameraUp(frame.yaw);
-    camera.upVector.set(up.x, up.y, up.z);
+    camera.rotation.set(-Math.PI / 2, frame.yaw, 0);
     const ortho = elisionOrtho(frame.viewW, frame.viewH, frame.zoom);
     camera.orthoLeft = ortho.left;
     camera.orthoRight = ortho.right;
