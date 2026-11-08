@@ -128,6 +128,21 @@ export default function CfgDashboard() {
   useEffect(() => {
     setTabState(readSavedTab());
   }, []);
+
+  /** Единственный переключатель вкладок: сначала localStorage, затем state —
+   *  старт на сохранённой и ручной клик идут одним путём. ОБЯЗАТЕЛЬНО выше
+   *  условных return ниже: ранний выход loading/denied между рендерами менял
+   *  число вызванных хуков и валил панель React #310 (owner report: пустой
+   *  /admin/ вместо интерфейса, 2026-11-08). */
+  const pickTab = useCallback((id: string) => {
+    if (!TAB_IDS.includes(id as (typeof TAB_IDS)[number])) return;
+    try {
+      localStorage.setItem(TAB_KEY, id);
+    } catch {
+      /* приватный режим/квота — переключаем и без персиста */
+    }
+    setTabState(id as (typeof TAB_IDS)[number]);
+  }, []);
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -135,7 +150,6 @@ export default function CfgDashboard() {
   /** Предпросмотр «было → станет», ждёт второго подтверждения (Отмена = ничего не отправлено). */
   const [pending, setPending] = useState<FieldDiff[] | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-
   const refresh = useCallback(async () => {
     const res = await httpCfgAdmin();
     if (res.ok && res.snapshot) {
@@ -572,18 +586,6 @@ export default function CfgDashboard() {
   ];
 
   const activeTab = tabs.find((t) => t.id === tab) ?? null;
-
-  /** Единственный переключатель вкладок: сначала localStorage, затем state —
-   *  старт на сохранённой и ручной клик идут одним путём. */
-  const pickTab = useCallback((id: string) => {
-    if (!TAB_IDS.includes(id as (typeof TAB_IDS)[number])) return;
-    try {
-      localStorage.setItem(TAB_KEY, id);
-    } catch {
-      /* приватный режим/квота — переключаем и без персиста */
-    }
-    setTabState(id as (typeof TAB_IDS)[number]);
-  }, []);
 
   return (
     <>
