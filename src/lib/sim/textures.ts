@@ -134,3 +134,9 @@ export function coverPattern(ctx: CanvasRenderingContext2D, name: GroundCover): 
   if (!e.covers.has(name)) e.covers.set(name, ctx.createPattern(img, 'repeat'));
   return e.covers.get(name) ?? null;
 }
+
+/** Меняется при догрузке пака: кэш атласа WebGL повторяет отрисовку после загрузки тайлов. */
+export function packRevision(): number {
+  ensureStarted();
+  return imgs.size;
+}
