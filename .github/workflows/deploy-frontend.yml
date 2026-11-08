@@ -13,6 +13,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/prune-export.mjs"
+      - "scripts/prod-switch-www.mjs"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
 
@@ -20,8 +21,34 @@ permissions:
   contents: read
 
 jobs:
+  # Manual runs off main are refused honestly — a red step with a plain
+  # explanation, not a silent gray "skipped": production deploys arrive via
+  # PR + merge into main only (PR-only policy).
+  dispatch-guard:
+    name: Источник запуска (только main)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Отказ для dispatch вне main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Ручной запуск production-deploy разрешён только из main (сейчас: ${GITHUB_REF_NAME:-$GITHUB_REF}). Прод деплоится влитием PR в main."
+          exit 1
+      - name: Dispatch из main — продолжаем
+        run: echo "workflow_dispatch из main, продолжаем"
+
   vps:
-    name: Статика на VPS
+    name: Статика на VPS (только main)
+    needs: dispatch-guard
+    # Production job: main only. Push always arrives with this ref (on.push
+    # pins branches: [main]); workflow_dispatch is double-gated here — the
+    # guard job above explains the refusal in plain language.
+    if: ${{ github.ref == 'refs/heads/main' && !failure() && !cancelled() }}
+    # Deployment record in the 'production' environment. First reference
+    # auto-creates the environment UNPROTECTED; protection rules (required
+    # reviewers) are an owner action in repo Settings — see
+    # docs/DEPLOY-CHECKLIST.md.
+    environment: production
     runs-on: ubuntu-latest
     concurrency:
       group: coop-field-frontend-vps
@@ -61,11 +88,12 @@ jobs:
       # проходит, заливка Элизии падает — на проде два сайта с несогласо-
       # ванными версиями движка/протокола (комнаты кочуют между ними, ws
       # ломается молча). Новая схема: ОБА корня сначала едут в stage-каталоги
-      # (/opt/coop-field/www.staging и /opt/coop-field/www-elyria.staging),
-      # проходя минимальную верификацию, и лишь затем пара промоутится
-      # атомарно (mv) в финальные имена; предыдущая выкладка остаётся в
-      # .prev (один снимок назад). Ошибка на любом шаге — финальные корни
-      # не меняются вовсе.
+      # (/opt/coop-field/www.staging и /opt/coop-field/www-elyria.staging);
+      # затем ОДИН main-owned скрипт-транзакция (scripts/prod-switch-www.mjs)
+      # повторно валидирует пару и переключает её целиком: предыдущая выкладка
+      # остаётся в .prev (один снимок назад), ошибку на любом шаге он
+      # откатывает — результат строго бинарный: оба сайта обновлены или оба
+      # старые. Ошибка до/во время свитча — финальные корни не меняются.
       - name: Изоляция вариантов (A1)
         # Задача 3 (N4): проверка обрезки чужих маршрутов обязана жить в самом
         # прод-деплое, не только в PR-пути (merge-коммит ≠ head-SHA PR;
@@ -95,10 +123,10 @@ jobs:
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
           if ! $SSH "$SSH_USER@$SSH_HOST" "test -w /opt/coop-field && mkdir -p /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging && test -w /opt/coop-field/www.staging && test -w /opt/coop-field/www-elyria.staging"; then
             echo "нет записи в stage-каталоги /opt/coop-field/www{,-elyria}.staging ИЛИ в сам /opt/coop-field" >&2
-            echo "промоушн делает mv/rm в САМОМ /opt/coop-field (mv www www.prev и т.д.) — нужна запись в каталог, а не только в www-elyria/; без неё первый прод-деплой после мерджа упадёт на промоушне (fail-safe: прод цел, деплой сломан до ручной правки)" >&2
+            echo "промоушен делает mv в САМОМ /opt/coop-field (www -> www.prev и т.д.) — нужна запись в каталог, а не только в www-elyria/; без неё первый прод-деплой после мерджа упадёт на промоушене (fail-safe: прод цел, деплой сломан до ручной правки)" >&2
             echo "один раз от root, вариант A: chgrp deploy /opt/coop-field && chmod g+w /opt/coop-field" >&2
             echo "вариант B (жёстче): root-owned скрипт промоушна + sudoers-строка только на него — см. docs" >&2
-            echo "ПРЕД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты" >&2
+            echo "ПРОД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты" >&2
             exit 1
           fi
           # --delete только внутри stage-каталогов: свежая пара гарантированно
@@ -109,16 +137,27 @@ jobs:
           rsync -az --delete -e "$SSH" \
             www-elyria/ \
             "$SSH_USER@$SSH_HOST:/opt/coop-field/www-elyria.staging/"
-          # Права читаемости — на stage, ДО промоушна: после mv nginx сразу
+          # Права читаемости — на stage, ДО промоушена: после mv nginx сразу
           # отдаёт файлы, отдельного chmod в финальных корнях больше нет.
           $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging"
           echo "оба корня в staging: /opt/coop-field/www.staging + /opt/coop-field/www-elyria.staging"
 
-      - name: Верификация stage-корней
-        # Минимум, без которого промоушн не имеет смысла: index.html на месте
-        # у ОБОИХ вариантов и структура _next живая (Next export: чанки
-        # лежат в _next/static — пустой _next = битая сборка, которую nginx
-        # молча отдаст как 404 на каждый чанк).
+      - name: Транзакционный промоушен (prod-switch-www.mjs)
+        # One transaction inside scripts/prod-switch-www.mjs replaces the old
+        # inline remote shell: it re-validates BOTH staging roots (index.html
+        # + non-empty _next/static) and refuses BEFORE a single rename when
+        # either is broken; per root it moves the previous release into .prev
+        # (NEVER deleted up front — old snapshots are only retired into a
+        # `.retired-<stamp>` pen and rm -rf'd after BOTH roots switched), then
+        # promotes staging. Any failure rolls BOTH roots back through the
+        # rename journal — strictly binary: both new, or both on the previous
+        # release. A lock dir serializes manual + CI runs. Contract is pinned
+        # by scripts/test-prod-switch.mjs (failure injection included).
+        #
+        # Trust: main-owned VPS tooling, changed only via merged PRs (same
+        # rule as preview-apply.sh). Node binary: the prod unit path
+        # /opt/coop-field/.node/bin/node — the deploy user's non-interactive
+        # shell has no node in PATH.
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           SSH_HOST: 89.232.184.77
@@ -130,58 +169,6 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          $SSH "$SSH_USER@$SSH_HOST" '
-            set -eu
-            for root in www.staging www-elyria.staging; do
-              test -f "/opt/coop-field/$root/index.html" || { echo "FAIL: нет /opt/coop-field/$root/index.html" >&2; exit 1; }
-              test -d "/opt/coop-field/$root/_next"   || { echo "FAIL: нет /opt/coop-field/$root/_next (Next-структура)" >&2; exit 1; }
-              test -d "/opt/coop-field/$root/_next/static" || { echo "FAIL: нет _next/static у $root" >&2; exit 1; }
-              [ -n "$(ls -A "/opt/coop-field/$root/_next/static" 2>/dev/null)" ] || { echo "FAIL: _next/static пуст у $root" >&2; exit 1; }
-              echo "VERIFIED: /opt/coop-field/$root (index.html + _next/static на месте)"
-            done
-          '
-          echo "stage-корни верифицированы: prod пока не тронут"
-
-      - name: Атомарный промоушн пары корней
-        # Промоушн = четыре rename в одном ssh-сеансе: старые финальные корни
-        # уезжают в .prev (бэкап ровно ОДНОЙ прошлой выкладки), stage-корни
-        # встают на финальные имена. Если промоушн падает на второй паре —
-        # удалённый сценарий сам откатывает ОБА сайта к состоянию до промоушна
-        # (.prev возвращаются на место); после этого шаг красный, прод живой
-        # и согласованный. Ручной откат для владельца: см. сообщение в else-ветке.
-        env:
-          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          SSH_HOST: 89.232.184.77
-          SSH_USER: deploy
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
-          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          $SSH "$SSH_USER@$SSH_HOST" '
-            set -eu
-            cd /opt/coop-field
-            # Предусловия: stage-пара на месте и верифицирована шагом выше.
-            test -d www.staging && test -d www-elyria.staging || { echo "FAIL: stage-пара неполна, промоушн не начинаем" >&2; exit 1; }
-            # Снимаем ровно один прошлый бэкап (старее — теряем осознанно).
-            rm -rf www.prev www-elyria.prev
-            had_prev=0
-            if [ -d www ]; then mv www www.prev; had_prev=1; fi
-            if [ -d www-elyria ]; then mv www-elyria www-elyria.prev; had_prev=1; fi
-            if mv www.staging www && mv www-elyria.staging www-elyria; then
-              echo "PROMO-OK: /opt/coop-field/www + /opt/coop-field/www-elyria из staging, прежние в .prev"
-            else
-              echo "PROMO-FAIL: откатываю пару к состоянию до промоушна" >&2
-              rm -rf www www-elyria
-              if [ "$had_prev" = 1 ]; then
-                mv www.prev www 2>/dev/null || true
-                mv www-elyria.prev www-elyria 2>/dev/null || true
-              fi
-              echo "Ручной откат (если что-то не так, от deploy@vps):" >&2
-              echo "  cd /opt/coop-field && rm -rf www www-elyria && mv www.prev www && mv www-elyria.prev www-elyria" >&2
-              exit 1
-            fi
-          '
-          echo "прод-фронт согласован: оба корня из одной сборки. сервис coop-field не перезапускался (статика, nginx читает по запросу)."
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/.deploy-tools"
+          rsync -az -e "$SSH" scripts/prod-switch-www.mjs "$SSH_USER@$SSH_HOST:/opt/coop-field/.deploy-tools/"
+          $SSH "$SSH_USER@$SSH_HOST" "cd /opt/coop-field && exec ./.node/bin/node ./.deploy-tools/prod-switch-www.mjs"
