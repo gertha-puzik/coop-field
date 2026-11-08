@@ -256,11 +256,11 @@ export default function CfgDashboard() {
   }
 
   const reset = () => {
-    if (!window.confirm('Сбросить ВСЕ параметры реестра на дефолты?')) return;
-    void runAction('reset', httpCfgReset, 'Значения сброшены на дефолты (момент вступления в силу — по подсказкам полей).');
+    if (!window.confirm('Сбросить ВСЕ настройки к исходным значениям?')) return;
+    void runAction('reset', httpCfgReset, 'Значения сброшены к исходным (когда вступят в силу — подсказки у полей).');
   };
   const restore = (name: string) => {
-    void runAction(name, () => httpCfgRestore(name), `Бэкап «${name}» восстановлен.`);
+    void runAction(name, () => httpCfgRestore(name), `Резервная копия «${name}» восстановлена.`);
   };
   const doExport = async () => {
     setBusy('export');
@@ -358,7 +358,7 @@ export default function CfgDashboard() {
         <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <p className="text-xs text-[var(--sim-text-faint)]">
-              Схема v{snap.v} · {registryKeys.length} ключей реестра · хранится {snap.historyKeep} последних бэкапов.
+              Формат настроек v{snap.v} · {registryKeys.length} ключей · хранится {snap.historyKeep} последних резервных копий.
             </p>
             <div className="mt-3 grid grid-cols-1 gap-3">
               {registryKeys.map((key) => {
@@ -485,10 +485,10 @@ export default function CfgDashboard() {
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <h2 className="text-base font-bold text-[var(--sim-text)]">Комнатные настройки</h2>
             <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-              F2 §3: слоеная модель — движковые дефолты ← глобальный runtime ← явный per-room override.
-              Комната без override наследует глобальные значения; эффективный слой считается на сервере.
-              Override применяется при (пере)создании объекта комнаты (new-rooms-only) и НЕ ломает живую
-              атмосферу. Гейт «игроки могут крутить atmoset» — per-room, по умолчанию разрешён.
+              Значения считаются так: сначала берутся встроенные значения игры, поверх — общие настройки сервера, и
+              последнее слово за явной настройкой комнаты. Комната без своей настройки берёт общие значения; итог считает
+              сервер. Настройка комнаты вступает в силу при создании новой комнаты и не трогает уже идущую игру.
+              Разрешение игрокам менять погоду и время суток настраивается по комнатам, по умолчанию оно включено.
             </p>
             <RoomConfigPanel registry={snap.registry} />
           </section>
@@ -524,7 +524,7 @@ export default function CfgDashboard() {
           </section>
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
-            <h2 className="text-base font-bold text-[var(--sim-text)]">История бэкапов</h2>
+            <h2 className="text-base font-bold text-[var(--sim-text)]">История резервных копий</h2>
             {snap.history.length ? (
               <ul className="mt-2 space-y-2">
                 {snap.history.map((name, i) => (
@@ -547,7 +547,7 @@ export default function CfgDashboard() {
               </ul>
             ) : (
               <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-                Бэкапов ещё нет — они появляются при первом изменении конфига.
+                Резервных копий ещё нет — они появляются при первом изменении настроек.
               </p>
             )}
           </section>
