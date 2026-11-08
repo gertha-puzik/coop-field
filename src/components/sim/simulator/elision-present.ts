@@ -80,6 +80,7 @@ let islandKey = '';
 let islandReady = false;
 let paintRev = 0;
 let paintSeen: HTMLCanvasElement | null = null;
+let mapSeen: ReturnType<typeof currentTestMap> | null = null;
 
 /** Нет рисунка кисти — остров травы на прозрачном холсте, как 2D-заливка geo.path. */
 function islandPaint(cols: number, rows: number, cellW: number, cellH: number): HTMLCanvasElement | null {
@@ -123,6 +124,14 @@ function islandPaint(cols: number, rows: number, cellW: number, cellH: number): 
 }
 
 function framePaint(cols: number, rows: number, cellW: number, cellH: number): { paint: HTMLCanvasElement | null; paintRev: number } {
+  const map = currentTestMap();
+  if (mapSeen !== map) {
+    mapSeen = map;
+    islandKey = '';
+    islandReady = false;
+    paintSeen = null;
+    paintRev += 1;
+  }
   const real = paintCanvas();
   if (real) {
     if (paintSeen !== real) {
