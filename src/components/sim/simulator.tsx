@@ -4240,7 +4240,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
               collectElisionFrame({
                 now,
                 editor: editorState().on,
-                day: atmoStateRef.current.dp,
+                day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
                 camX: cam.x,
                 camY: cam.y,
                 yaw: camYawRef.current,

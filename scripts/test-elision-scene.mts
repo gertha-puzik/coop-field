@@ -12,6 +12,8 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
   elisionCameraDown,
+  elisionCameraPose,
+  elisionTerrainGeometry,
   elisionCameraRight,
   elisionCameraUp,
   elisionOrtho,
@@ -66,7 +68,7 @@ const up = elisionCameraUp(0);
 assert(up.x === 0 && up.y === 0 && up.z === -1, 'yaw 0: верх экрана = −z');
 
 const ortho = elisionOrtho(200, 100, 2);
-assert(ortho.left === -50 && ortho.right === 50 && ortho.top === 25 && ortho.bottom === -25, 'грани орто: ширина вида / zoom, без отражения X');
+assert(ortho.left === -50 && ortho.right === 50 && Math.abs(ortho.top - 25 * Math.SQRT1_2) < 1e-9 && ortho.bottom === -ortho.top, 'грани орто: ширина вида / zoom, без отражения X');
 
 const engine = new NullEngine();
 const world = new Scene(engine);
@@ -79,9 +81,10 @@ camera.updateUpVectorFromRotation = true;
 const prop = CreatePlane('visible-tree', { width: 30, height: 60 }, world);
 prop.rotation.x = -Math.PI / 2;
 
-function project(wx, wy, camX, camY, yawRad, zoom, vw, vh) {
-  camera.position.set(camX, 800, camY);
-  camera.rotation.set(-Math.PI / 2, yawRad, 0);
+function project(wx, wy, camX, camY, yawRad, zoom, vw, vh, lift = 0) {
+  const eye = elisionCameraPose(camX, camY, yawRad, 800);
+  camera.position.set(eye.x, eye.y, eye.z);
+  camera.rotation.set(eye.pitch, eye.yaw, 0);
   const box = elisionOrtho(vw, vh, zoom);
   camera.orthoLeft = box.left;
   camera.orthoRight = box.right;
@@ -92,7 +95,7 @@ function project(wx, wy, camX, camY, yawRad, zoom, vw, vh) {
   prop.position.set(camX, 2, camY);
   prop.computeWorldMatrix(true);
   assert(prop.isInFrustum(Frustum.GetPlanes(transform)), 'объект в центре виден frustum');
-  const p = Vector3.TransformCoordinates(new Vector3(wx, 0, wy), transform);
+  const p = Vector3.TransformCoordinates(new Vector3(wx, lift, wy), transform);
   return { sx: (p.x * 0.5 + 0.5) * vw, sy: (1 - (p.y * 0.5 + 0.5)) * vh };
 }
 
@@ -107,7 +110,20 @@ for (const [wx, wy, camX, camY, yawRad, zoom, vw, vh] of samples) {
   const got = project(wx, wy, camX, camY, yawRad, zoom, vw, vh);
   const back = screenToWorld(got.sx, got.sy, vw, vh, camX, camY, zoom, yawRad);
   assert(Math.abs(back.x - wx) < 1e-3 && Math.abs(back.y - wy) < 1e-3, `проекция не совпала с screenToWorld (${wx}, ${wy})`);
+  const raised = project(wx, wy, camX, camY, yawRad, zoom, vw, vh, 52);
+  assert(Math.abs(raised.sx - got.sx) < 1e-3, 'подъём не сдвигает кота вбок');
+  assert(Math.abs(raised.sy - got.sy + 52 * zoom) < 1e-3, 'подъём 2 уровня виден на 52px выше земли');
 }
+
+const terrain = elisionTerrainGeometry(4, 3, 100, 150, { '1,1': 2, '2,1': 2 }, 26);
+assert(terrain.tops.positions.length === 2 * 4 * 3, 'две поднятые поверхности');
+assert(terrain.walls.positions.length === 6 * 4 * 3, 'шесть внешних стен, общей стены нет');
+assert(terrain.tops.positions.filter((_, i) => i % 3 === 1).every(y => y === 52), 'верх соответствует высоте карты');
+assert(terrain.tops.uvs[0] === 1/4 && terrain.tops.uvs[1] === 1/3, 'UV верха берёт свою клетку из атласа');
+const stepped = elisionTerrainGeometry(4, 3, 100, 150, { '1,1': 2, '2,1': 1 }, 26);
+assert(stepped.walls.positions.length === 7 * 4 * 3, 'перепад высот добавляет одну стену');
+const empty = elisionTerrainGeometry(4, 3, 100, 150, {}, 26);
+assert(empty.tops.positions.length === 0 && empty.walls.positions.length === 0, 'плоская карта без стен');
 
 world.dispose();
 engine.dispose();

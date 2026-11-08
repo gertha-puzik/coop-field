@@ -7,12 +7,13 @@
 import type { DummyConfig, SpriteId } from '@/lib/sim/settings';
 import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
-import { currentTestMap, elevLevelAt, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
-import { grassPattern } from '@/lib/sim/textures';
+import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, elevLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
+import { grassPattern, packRevision } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
   objectBase,
   objectMir,
+  objectPosOffset,
   objectRotDeg,
   objectScale,
   objectSprite,
@@ -75,73 +76,102 @@ function remoteHop(jpUntil: number | undefined, now: number): number {
   return Math.sin(Math.PI * Math.min(1, Math.max(0, t))) * TERRAIN_LIFT_PX;
 }
 
-let islandCv: HTMLCanvasElement | null = null;
-let islandKey = '';
-let islandReady = false;
+let surface: HTMLCanvasElement | null = null;
+let surfaceMap: ReturnType<typeof currentTestMap> | null = null;
+let surfacePaint: HTMLCanvasElement | null = null;
+let surfacePack = -1;
 let paintRev = 0;
-let paintSeen: HTMLCanvasElement | null = null;
-let mapSeen: ReturnType<typeof currentTestMap> | null = null;
+let wasEditor = false;
 
-/** Нет рисунка кисти — остров травы на прозрачном холсте, как 2D-заливка geo.path. */
-function islandPaint(cols: number, rows: number, cellW: number, cellH: number): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
-  const key = `${cols}x${rows}@${cellW}x${cellH}`;
+/** Полный атлас поверхности: кисть/трава, покрытия, заходы и сетка на всех уровнях. */
+function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean) {
+  // Редактор рисует свой 2D-кадр; атлас GPU обновляется один раз при выходе.
+  if (editor) {
+    wasEditor = true;
+    return { paint: surface, paintRev };
+  }
+  const map = currentTestMap();
+  const real = paintCanvas();
+  const revision = packRevision();
   const w = Math.max(1, Math.round(cols * cellW));
   const h = Math.max(1, Math.round(rows * cellH));
-  if (!islandCv || islandCv.width !== w || islandCv.height !== h) {
-    islandCv = document.createElement('canvas');
-    islandCv.width = w;
-    islandCv.height = h;
-    islandKey = '';
-    islandReady = false;
+  if (!surface) surface = document.createElement('canvas');
+  if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
+      surface.width === w && surface.height === h && !wasEditor) {
+    return { paint: surface, paintRev };
   }
-  if (islandKey === key && islandReady) return islandCv;
-  const g = islandCv.getContext('2d');
-  if (!g) return islandCv;
-  g.clearRect(0, 0, w, h);
+  wasEditor = false;
+  surfaceMap = map;
+  surfacePaint = real;
+  surfacePack = revision;
+  surface.width = w;
+  surface.height = h;
+  const g = surface.getContext('2d');
+  if (!g) return { paint: null, paintRev };
   g.imageSmoothingEnabled = false;
   const geo = testFieldGeometry(cellW, cellH);
-  const pat = grassPattern(g);
-  g.fillStyle = pat ?? '#2a461c';
-  g.fill(geo.path);
+  if (real) g.drawImage(real, 0, 0, w, h);
+  else {
+    g.fillStyle = grassPattern(g) ?? '#2a461c';
+    g.fill(geo.path);
+  }
   g.save();
   g.clip(geo.path);
-  const elev = currentTestMap().elev ?? {};
-  for (const cell of Object.keys(elev)) {
-    const lv = elev[cell];
-    if (!lv) continue;
-    const [c, r] = cell.split(',').map(Number);
-    if (!Number.isFinite(c) || !Number.isFinite(r)) continue;
-    g.fillStyle = `rgba(232, 214, 150, ${Math.min(0.28, 0.06 + lv * 0.03)})`;
+  if (!real) {
+    for (const o of map.objects ?? []) {
+      if (o.kind === 'ground') drawGroundCover(g, o, cellW, cellH);
+      if (o.kind === 'dirt') {
+        const po = objectPosOffset(o);
+        drawDirtPatch(g, cellW, cellH, (o.c + 0.5 + po.dx) * cellW,
+          (o.r + 0.5 + po.dy) * cellH, hashStr(o.id) & 7);
+      }
+    }
+  }
+  for (const [key, lv] of Object.entries(map.elev ?? {})) {
+    if (lv < 1) continue;
+    const [c, r] = key.split(',').map(Number);
+    g.fillStyle = `rgba(255, 238, 176, ${Math.min(0.4, 0.055 * Math.max(0, lv - 1))})`;
     g.fillRect(c * cellW, r * cellH, cellW, cellH);
+    g.strokeStyle = '#3a2a1c';
+    g.lineWidth = 2;
+    g.beginPath();
+    for (const [dc, dr, x0, y0, x1, y1] of [
+      [0, -1, c*cellW, r*cellH, (c+1)*cellW, r*cellH],
+      [1, 0, (c+1)*cellW, r*cellH, (c+1)*cellW, (r+1)*cellH],
+      [0, 1, c*cellW, (r+1)*cellH, (c+1)*cellW, (r+1)*cellH],
+      [-1, 0, c*cellW, r*cellH, c*cellW, (r+1)*cellH],
+    ]) {
+      if ((map.elev?.[`${c+dc},${r+dr}`] ?? 0) >= lv) continue;
+      g.moveTo(x0, y0);
+      g.lineTo(x1, y1);
+    }
+    g.stroke();
+  }
+  const battle = new Set<string>();
+  for (const zone of map.zones) {
+    if (zone.kind !== 'cells') continue;
+    for (let r = zone.r0; r <= zone.r1; r++)
+      for (let c = zone.c0; c <= zone.c1; c++) battle.add(`${c},${r}`);
+  }
+  for (const o of map.objects ?? []) {
+    if (o.kind === 'battle') battle.add(`${o.c},${o.r}`);
+    if (o.kind === 'entry' && o.dir)
+      drawEntryMark(g, cellW, cellH, (o.c + 0.5) * cellW, (o.r + 0.5) * cellH, o.dir);
+  }
+  if (!real) {
+    for (const decor of geo.decor) drawTestDecorItem(g, decor, cellW, cellH);
+  }
+  g.fillStyle = 'rgba(250, 214, 80, 0.1)';
+  g.strokeStyle = 'rgba(233, 196, 61, 0.8)';
+  g.lineWidth = 1;
+  for (const key of battle) {
+    const [c, r] = key.split(',').map(Number);
+    g.fillRect(c * cellW, r * cellH, cellW, cellH);
+    g.strokeRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
   }
   g.restore();
-  const becameReady = !!pat && !islandReady;
-  islandReady = !!pat;
-  if (islandKey !== key || becameReady) paintRev += 1;
-  islandKey = key;
-  return islandCv;
-}
-
-function framePaint(cols: number, rows: number, cellW: number, cellH: number): { paint: HTMLCanvasElement | null; paintRev: number } {
-  const map = currentTestMap();
-  if (mapSeen !== map) {
-    mapSeen = map;
-    islandKey = '';
-    islandReady = false;
-    paintSeen = null;
-    paintRev += 1;
-  }
-  const real = paintCanvas();
-  if (real) {
-    if (paintSeen !== real) {
-      paintSeen = real;
-      paintRev += 1;
-    }
-    return { paint: real, paintRev };
-  }
-  paintSeen = null;
-  return { paint: islandPaint(cols, rows, cellW, cellH), paintRev };
+  paintRev += 1;
+  return { paint: surface, paintRev };
 }
 
 function pushActor(out: ElisionActor[], actor: ElisionActor | null) {
@@ -222,7 +252,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
         input.selfScale,
         self,
         self.lift,
-        input.peace && input.engine.face === 1,
+        input.peace && input.engine.face === -1,
         input,
         true,
       ),
@@ -255,7 +285,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
       const lift = elevLevelAt(Math.floor(col), Math.floor(row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
       pushActor(
         decals,
-        catActor(remote.id, remote.sprite, remote.scale, top, lift, free?.face === 1, input, true),
+        catActor(remote.id, remote.sprite, remote.scale, top, lift, free?.face === -1, input, true),
       );
     }
     if (input.rab) {
@@ -275,7 +305,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     }
     for (const object of input.objects) pushActor(decals, propActor(object, input.cellW, input.cellH));
   }
-  const painted = framePaint(input.cols, input.rows, input.cellW, input.cellH);
+  const painted = framePaint(input.cols, input.rows, input.cellW, input.cellH, input.editor);
   return {
     camX: input.camX,
     camY: input.camY,
@@ -288,6 +318,8 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     cols: input.cols,
     rows: input.rows,
     editor: input.editor,
+    elev: currentTestMap().elev ?? {},
+    terrainLiftStep: TERRAIN_LIFT_PX,
     day: input.day,
     decals,
     paint: painted.paint,

@@ -16,6 +16,7 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Material } from '@babylonjs/core/Materials/material';
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
@@ -23,6 +24,8 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import {
   elisionOrtho,
+  elisionCameraPose,
+  elisionTerrainGeometry,
   worldPxToScene,
   type ElisionActor,
   type ElisionDay,
@@ -75,7 +78,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   camera.maxZ = 5000;
   // Публичный механизм Babylon обновляет upVector из того же поворота.
   camera.updateUpVectorFromRotation = true;
-  camera.rotation.set(-Math.PI / 2, 0, 0);
+  camera.rotation.set(-Math.PI / 4, 0, 0);
   scene.activeCamera = camera;
 
   const groundMat = new StandardMaterial('elision-ground', scene);
@@ -86,6 +89,28 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
 
   let ground: ReturnType<typeof CreateGround> | null = null;
   let groundTex: RawTexture | null = null;
+  let terrainTop: Mesh | null = null;
+  let terrainWalls: Mesh | null = null;
+  const wallMat = new StandardMaterial('elision-cliff', scene);
+  wallMat.disableLighting = true;
+  wallMat.specularColor = Color3.Black();
+  wallMat.backFaceCulling = false;
+  wallMat.transparencyMode = Material.MATERIAL_ALPHATEST;
+  // Разрез грунта: тёмное основание, светлый дёрн у верхней кромки.
+  const wallPixels = new Uint8Array(4 * 32 * 4);
+  for (let row = 0; row < 32; row++) {
+    for (let col = 0; col < 4; col++) {
+      const t = row / 31;
+      const color = row > 29 ? [45, 33, 18] : [56 + 53*t, 42 + 42*t, 26 + 30*t];
+      const i = (row * 4 + col) * 4;
+      wallPixels.set([...color.map(Math.round), 255], i);
+    }
+  }
+  const wallTex = RawTexture.CreateRGBATexture(wallPixels, 4, 32, scene, false, false,
+    Constants.TEXTURE_NEAREST_SAMPLINGMODE);
+  wallTex.coordinatesIndex = 1;
+  wallMat.diffuseTexture = wallTex;
+  wallMat.emissiveColor = Color3.White();
   let paintKey = '';
   let groundMode: ElisionView['ground'] = 'boot';
   let wasEditor = false;
@@ -107,6 +132,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
 
   const applyTint = (day: ElisionDay, textured: boolean) => {
     const [r, g, b] = DAY_TINT[day];
+    wallMat.emissiveColor.set(r, g, b);
     if (textured) groundMat.emissiveColor.set(r, g, b);
     else groundMat.emissiveColor.set(GRASS.r * r, GRASS.g * g, GRASS.b * b);
   };
@@ -120,17 +146,45 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     ground.isPickable = false;
   };
 
+  const syncTerrain = (frame: ElisionFrame) => {
+    terrainTop?.dispose(false, false);
+    terrainWalls?.dispose(false, false);
+    terrainTop = null;
+    terrainWalls = null;
+    const geo = elisionTerrainGeometry(frame.cols, frame.rows, frame.cellW, frame.cellH, frame.elev, frame.terrainLiftStep);
+    const make = (name: string, part: typeof geo.tops, material: StandardMaterial) => {
+      if (!part.positions.length) return null;
+      const mesh = new Mesh(name, scene);
+      const data = new VertexData();
+      data.positions = part.positions;
+      data.indices = part.indices;
+      data.uvs = part.uvs;
+      data.uvs2 = part.uvs2;
+      const normals: number[] = [];
+      VertexData.ComputeNormals(part.positions, part.indices, normals);
+      data.normals = normals;
+      data.applyToMesh(mesh);
+      mesh.material = material;
+      mesh.isPickable = false;
+      return mesh;
+    };
+    terrainTop = make('elision-plateau-tops', geo.tops, groundMat);
+    terrainWalls = make('elision-cliff-walls', geo.walls, wallMat);
+    wallMat.opacityTexture = groundTex;
+  };
+
   const syncGround = (frame: ElisionFrame) => {
     const worldW = Math.max(1, frame.cols * frame.cellW);
     const worldH = Math.max(1, frame.rows * frame.cellH);
     const src = frame.paint;
     const key = `${worldW}x${worldH}:${src ? `${src.width}x${src.height}` : 'flat'}:${frame.paintRev}`;
     if (key === paintKey && ground) {
-      applyTint(frame.day, groundMat.emissiveTexture != null);
+      applyTint(frame.day, groundMat.diffuseTexture != null);
       return;
     }
     paintKey = key;
     placeGround(worldW, worldH);
+    wallMat.opacityTexture = null;
     groundTex?.dispose();
     groundTex = null;
     groundMat.emissiveTexture = null;
@@ -156,6 +210,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(frame.day, false);
+      syncTerrain(frame);
       return;
     }
     groundMode = 'paint';
@@ -171,12 +226,12 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       Constants.TEXTURE_NEAREST_SAMPLINGMODE,
     );
     groundTex.hasAlpha = true;
-    groundMat.emissiveTexture = groundTex;
     groundMat.diffuseTexture = groundTex;
     groundMat.opacityTexture = groundTex;
     groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
     groundMat.alphaCutOff = 0.15;
     applyTint(frame.day, true);
+    syncTerrain(frame);
   };
 
   const textureFor = (url: string): Texture => {
@@ -194,7 +249,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     return tex;
   };
 
-  const syncDecals = (list: ElisionActor[]) => {
+  const syncDecals = (list: ElisionActor[], day: ElisionDay) => {
     const seen = new Set<string>();
     for (const actor of list) {
       if (!actor.url || actor.w < 1 || actor.h < 1) continue;
@@ -212,7 +267,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         mat.specularColor = new Color3(0, 0, 0);
         const tex = textureFor(actor.url);
         mat.emissiveColor = Color3.White();
-        mat.emissiveTexture = tex;
         mat.diffuseTexture = tex;
         mat.opacityTexture = tex;
         mat.useAlphaFromDiffuseTexture = true;
@@ -233,6 +287,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         node = { mesh, mat, sig };
         decals.set(actor.id, node);
       }
+      node.mat.emissiveColor.set(...DAY_TINT[day]);
       const place = worldPxToScene(actor.x + actor.w / 2, actor.y + actor.h / 2, actor.lift + 2);
       node.mesh.position.set(place.x, place.y, place.z);
     }
@@ -246,9 +301,11 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   };
 
   const placeCamera = (frame: ElisionFrame) => {
-    const eye = worldPxToScene(frame.camX, frame.camY, 800);
+    const distance = Math.max(800, frame.cols * frame.cellW + frame.rows * frame.cellH);
+    const eye = elisionCameraPose(frame.camX, frame.camY, frame.yaw, distance);
     camera.position.set(eye.x, eye.y, eye.z);
-    camera.rotation.set(-Math.PI / 2, frame.yaw, 0);
+    camera.rotation.set(eye.pitch, eye.yaw, 0);
+    camera.maxZ = distance * 4;
     const ortho = elisionOrtho(frame.viewW, frame.viewH, frame.zoom);
     camera.orthoLeft = ortho.left;
     camera.orthoRight = ortho.right;
@@ -277,7 +334,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       fitCanvas();
       placeCamera(frame);
       syncGround(frame);
-      syncDecals(frame.decals);
+      syncDecals(frame.decals, frame.day);
       scene.render();
     },
     destroy() {
@@ -293,6 +350,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       textures.clear();
       groundTex?.dispose();
       ground?.dispose(false, false);
+      terrainTop?.dispose(false, false);
+      terrainWalls?.dispose(false, false);
+      wallTex.dispose();
+      wallMat.dispose(false, false);
       scene.dispose();
       engine.dispose();
     },
