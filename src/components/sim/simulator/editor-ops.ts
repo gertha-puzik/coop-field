@@ -10,7 +10,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Engine } from './sim-model';
 import type { SimSettings } from '@/lib/sim/settings';
-import { EDITOR_PASS_KEY, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
+import { EDITOR_PASS_KEY, SETMAP_MIN_GAP_MS, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
 import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync } from '@/lib/sim/paint';
 import { createCoopClient } from '@/lib/net/coop';
 import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap, testObstacleBodies, testObjectAt } from '@/lib/sim/test-field';
@@ -712,6 +712,18 @@ export function buildEditorOps(params: EditorOpsParams) {
           return;
         }
         setEditorSave({ phase: 'send', bytes: paint.length, t0 });
+        // Предгейт троттлинга сервера (setmap — раз в 10 с на сокет): кадр,
+        // отправленный раньше срока, сервер молча отбрасывает — прогресс гас,
+        // черновик оставался «не сохранён», и правка выглядела потерянной
+        // при повторном открытии редактора. Честно не отправляем и объясняем.
+        const nowMs = Date.now();
+        const since = nowMs - (d.lastSaveSentAt ?? 0);
+        if (since < SETMAP_MIN_GAP_MS) {
+          setEditorSave(null);
+          setEditorMsg(`Сервер принимает сохранения не чаще раза в 10 секунд — подождите ${Math.ceil((SETMAP_MIN_GAP_MS - since) / 1000)} с и сохраните снова (правка осталась в черновике).`);
+          return;
+        }
+        d.lastSaveSentAt = nowMs;
         net.emit('setmap', { pass: editorPass, map: draftMap(d) });
         setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
       })
