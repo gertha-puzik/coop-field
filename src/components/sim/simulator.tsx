@@ -266,6 +266,23 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /** roomsinfo не приходит дольше 5 с (старый сервер без протокола) — предупреждение в карточках. */
   const [roomsStale, setRoomsStale] = useState(false);
   const [whoami, setWhoami] = useState<CoopWhoami | null>(null);
+  /**
+   * Фонический WS-кадр whoami (use-network) не должен затирать только что
+   * показанный пользователю HTTP-отказ входа ({ok:false, reason:'bad'} и др.)
+   * — иначе при реконнекте сокета ошибка «Неверный логин или пароль» мигала
+   * и мгновенно исчезала, сменяясь гостем. Окно 8 с; ok:true пишется всегда
+   * (реальная сессия важнее), как и httpMe-восстановление (:4579 ok-only).
+   */
+  const whoamiFailUntilRef = useRef(0);
+  const setWhoamiGuarded = useCallback((row: CoopWhoami) => {
+    if (row.ok) {
+      whoamiFailUntilRef.current = 0;
+      setWhoami(row);
+      return;
+    }
+    if (Date.now() < whoamiFailUntilRef.current) return;
+    setWhoami(row);
+  }, []);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   /** HTTP-запрос аккаунта (вход/регистрация/выход) в полёте — кнопки выключены. */
   const [authBusy, setAuthBusy] = useState(false);
@@ -1085,7 +1102,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     setRoomCode,
     setRoomsRows,
     setRoomsStale,
-    setWhoami,
+    setWhoami: setWhoamiGuarded,
     setSettings,
     aimSyncRef,
     battleEntryRef,
@@ -4563,7 +4580,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       }
       setWhoami(row);
       // Отказ показывается из whoami.reason (тексты — в AuthPanel);
-      // authMessage остаётся для сетевых ошибок.
+      // authMessage остаётся для сетевых ошибок. Свежий отказ защищаем от
+      // фонового WS-кадра whoami (см. setWhoamiGuarded, окно 8 с).
+      if (!row.ok) whoamiFailUntilRef.current = Date.now() + 8000;
+      else whoamiFailUntilRef.current = 0;
       if (row.ok) rebindSocket();
       setAuthBusy(false);
     },
