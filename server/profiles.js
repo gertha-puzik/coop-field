@@ -3,12 +3,15 @@
  *
  *   GET    /profiles/me    200 { ok, ...publicProfile, sp? } | гость → 401
  *   PATCH  /profiles/me    200 { ok, ...publicProfile, sp? } — по cookie-сессии,
- *                          только своей записи; правятся profile.displayName,
- *                          profile.bio, avatarCharacterId и sp (скрытые
- *                          параметры: periodSec/damageLevel/armorLevel —
- *                          partial, отсутствие поля не трогает сохранённое);
- *                          никакой идентификации из body (id/логин/роль —
- *                          unknown_keys)
+ *                          только своей записи; правятся profile.displayName
+ *                          (он же — «ник на поле», синхронизируется в имя
+ *                          активного персонажа), profile.bio, avatarCharacterId,
+ *                          sprite/scale (скин и рост активного персонажа —
+ *                          канонический сеттер accounts.applyProfileAppearance)
+ *                          и sp (скрытые параметры: periodSec/damageLevel/
+ *                          armorLevel — partial, отсутствие поля не трогает
+ *                          сохранённое); никакой идентификации из body
+ *                          (id/логин/роль — unknown_keys)
  *   GET    /profiles       200 { ok:true, items, total, nextCursor } — каталог
  *                          публичных карточек с серверной пагинацией/поиском:
  *                          ?limit (default 24; выше 48 — клэмп, НЕ 400;
@@ -50,8 +53,16 @@
  */
 import { isAllowedOrigin } from "./config.js";
 import { sessionFromRequest, lastSeenByAccount } from "./auth.js";
-import { publicProfile, findById, loadStore, flushAccounts } from "./accounts.js";
+import {
+  publicProfile,
+  findById,
+  loadStore,
+  flushAccounts,
+  activeCharacter,
+  applyProfileAppearance,
+} from "./accounts.js";
 import { catSeenAt } from "./persist.js";
+import { spriteIdAllowed } from "./sprites.js";
 
 const NAME_MIN = 1;
 const NAME_MAX = 24;
@@ -257,7 +268,11 @@ function parseQuery(raw) {
 
 /* ------------------------- PATCH: валидация тела ------------------------- */
 
-const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId"];
+/* Внешность из профиля: спрайт и размер персистятся в АКТИВНОМ персонаже
+ * (accounts.applyProfileAppearance — канонический сеттер вне room-join).
+ * Спрайт — только id из живого каталога (whitelist, как attachSprite);
+ * размер — проценты роста 60–100, зажим и округление как в room-join. */
+const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId", "sprite", "scale"];
 
 /** СП профиля для владельца — читанье из стора (только честные значения:
  *  мусор молча прячется, битые поля не отдаются). None → ключа нет вовсе. */
@@ -367,6 +382,26 @@ function sanitizePatch(body, account) {
       values.avatarCharacterId = raw;
       return;
     }
+    if (key === "sprite") {
+      // Whitelist живого каталога (как attachSprite): сохранение чужого id —
+      // видимая 400-ошибка, а не молчаливый старый спрайт.
+      const want = typeof raw === "string" ? raw.trim() : "";
+      if (!want || !spriteIdAllowed(want)) {
+        invalid.push({ key, error: "неизвестный скин" });
+        return;
+      }
+      values.sprite = want;
+      return;
+    }
+    if (key === "scale") {
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        invalid.push({ key, error: "число от 60 до 100" });
+        return;
+      }
+      // Зажим в 60–100 и округление — как рост в room-join (room.js).
+      values.scale = Math.min(100, Math.max(60, Math.round(raw)));
+      return;
+    }
     unknown.push(key);
   };
 
@@ -474,6 +509,15 @@ export async function handleProfilesHttp(req, res) {
             ? acc.profile.sp
             : {};
         acc.profile.sp = { ...cur, ...values.sp };
+      }
+      // Внешность (скин/рост) и «ник на поле» — канонический сеттер активного
+      // персонажа: displayName синхронизируется в его имя даже без смены скина.
+      if (values.sprite !== undefined || values.scale !== undefined || values.displayName !== undefined) {
+        if (!activeCharacter(acc)) {
+          json(res, 400, { ok: false, reason: "invalid", invalid: [{ key: "sprite", error: "у аккаунта нет персонажа" }] });
+          return true;
+        }
+        applyProfileAppearance(acc, { sprite: values.sprite, scale: values.scale, name: values.displayName });
       }
       flushAccounts(true); // форс-проход: markDirty внутри accounts не экспортирован
       json(res, 200, { ok: true, ...publicProfile(acc), sp: spView(acc) });

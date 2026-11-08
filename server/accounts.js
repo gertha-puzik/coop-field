@@ -345,6 +345,38 @@ function attachSprite(acc, sprite, size) {
 }
 
 /**
+ * Внешность из профиля (PATCH /profiles/me): канонический сеттер активного
+ * персонажа ВНЕ room-join — спрайт, размер и имя. Спрайт — тот же whitelist
+ * динамического каталога, что и attachSprite (невалидный id сюда не попадает:
+ * пути profiles.js валидирует его раньше и отвечает 400). Размер — проценты
+ * роста 60–100, зажим и округление как в room-join и newCharacter. Имя
+ * персонажа синхронно с displayName профиля — «ник на поле» берётся из
+ * профиля, а не из легаси-логина регистрации (newCharacter(login)).
+ * Отсутствующий ключ не трогает поле (partial), как в остальном PATCH.
+ * Обратная совместимость сериализации — normalizeCharacter при загрузке: он
+ * дочинит недостающие поля дефолтами (name — clipChars(LOGIN_MAX), sprite→"",
+ * size→100) и не сломается от новых значений.
+ */
+function applyProfileAppearance(acc, patch = {}) {
+  const ch = activeCharacter(acc);
+  if (!ch) return false;
+  if (patch.sprite !== undefined) {
+    const want = String(patch.sprite).trim();
+    if (!spriteIdAllowed(want)) return false;
+    ch.sprite = want;
+  }
+  if (patch.scale !== undefined) {
+    if (!Number.isFinite(Number(patch.scale))) return false;
+    ch.size = Math.min(100, Math.max(60, Math.round(Number(patch.scale))));
+  }
+  if (typeof patch.name === "string" && patch.name.trim()) {
+    ch.name = clipChars(patch.name.trim(), LOGIN_MAX);
+  }
+  markDirty();
+  return true;
+}
+
+/**
  * Кто носит спрайт (менеджер спрайтов, DELETE /admin/sprites/:id): полный проход
  * по стору аккаунтов — characters И activeCharacterId (одетым считаем любой
  * персонаж с c.sprite === id; активный одет всегда, неактивный — тоже занимает
@@ -398,6 +430,7 @@ export {
   promoteToAdmin,
   loginAccount,
   attachSprite,
+  applyProfileAppearance,
   spriteWearers,
   verifyPassword,
   hashPassword,

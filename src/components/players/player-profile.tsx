@@ -27,8 +27,11 @@ import type { ProfileCard, ProfileMe, ProfilePatch, ProfileSp, PublicProfile } f
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
+  MALYSHOCHKI_SET,
   SP_PROFILE_PERIOD_MAX,
   SP_PROFILE_PERIOD_MIN,
+  SPRITES,
+  SPRITE_GROUPS,
   damageLevelLabel,
   persistProfileSp,
 } from '@/lib/sim/settings';
@@ -350,6 +353,29 @@ function SpChip({ active, onClick, children: label }: { active: boolean; onClick
   );
 }
 
+/* ——— выбор скина для своей карточки: статичный каталог движка, те же
+   колонки-группы, что на карусели экрана входа (compact tiles, без карусели) ——— */
+
+const spriteById = new Map(SPRITES.map((sp) => [sp.id, sp] as const));
+const metasOf = (ids: readonly string[]) =>
+  ids.map((id) => spriteById.get(id)).filter((sp): sp is (typeof SPRITES)[number] => Boolean(sp));
+
+/** Группы плиток: общие персонажи + набор «Малышочки» отдельной секцией. */
+const SKIN_GROUPS: { id: string; name: string; sprites: (typeof SPRITES)[number][] }[] = [
+  ...SPRITE_GROUPS.map((g) => ({ id: g.id, name: g.name, sprites: metasOf(g.spriteIds) })),
+  { id: MALYSHOCHKI_SET.id ?? 'malyshochki', name: MALYSHOCHKI_SET.name, sprites: metasOf(MALYSHOCHKI_SET.spriteIds) },
+].filter((g) => g.sprites.length > 0);
+
+/** Активный персонаж карточки: тот же выбор, что делает сервер при входе
+ *  (activeCharacterId, иначе первый) — поле/аватар/профиль показывают его. */
+function activeCharOf(profile: ProfileMe | PublicProfile) {
+  return (
+    profile.characters.find((c) => c.id === profile.activeCharacterId) ??
+    profile.characters[0] ??
+    null
+  );
+}
+
 function humanEditError(reason: string | undefined): string {
   switch (reason) {
     case 'auth_required':
@@ -374,6 +400,14 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
   const [draftBio, setDraftBio] = useState(profile.bio);
   const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
   const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
+  const originChar = activeCharOf(profile);
+  const originSprite = originChar?.sprite || '';
+  const originScale =
+    originChar && Number.isFinite(originChar.size)
+      ? Math.min(100, Math.max(60, Math.round(originChar.size)))
+      : 100;
+  const [draftSprite, setDraftSprite] = useState(originSprite);
+  const [draftScale, setDraftScale] = useState(originScale);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -383,6 +417,11 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
     setDraftBio(profile.bio);
     setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
+    const ch = activeCharOf(profile);
+    setDraftSprite(ch?.sprite || '');
+    setDraftScale(
+      ch && Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : 100,
+    );
   }, [profile]);
 
   /** СП едут в PATCH только если игрок их реально тронул: неточно равные
@@ -392,6 +431,10 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
     draftSp.periodSec !== spOrigin.periodSec ||
     draftSp.damageLevel !== spOrigin.damageLevel ||
     draftSp.armorLevel !== spOrigin.armorLevel;
+
+  /** Внешность (скин/рост) — та же дисциплина: менять — только тронутое,
+   *  пустой скин не сохраняем (сервер требует валидный id). */
+  const appearanceChanged = draftSprite !== originSprite || draftScale !== originScale;
 
   const save = async () => {
     setFail(null);
@@ -408,6 +451,10 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
       avatarCharacterId: draftAvatar || null,
     };
     if (spChanged) patch.sp = { ...draftSp };
+    // скин и рост персонажа — плоские поля активной записи; сервер валидирует
+    // id по каталогу и зажимает рост в 60–100
+    if (appearanceChanged && draftSprite) patch.sprite = draftSprite;
+    if (appearanceChanged) patch.scale = draftScale;
     const res = await httpPatchProfile(patch);
     if (!res.ok) {
       setFail({ title: humanEditError(res.reason), details: res.details || undefined });
@@ -430,7 +477,9 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
   };
 
   return (
+    // id="settings" — якорь ссылок «Настройки» в шапке сайта: /players/?id=…#settings
     <form
+      id="settings"
       className={styles.edBox}
       onSubmit={(ev) => {
         ev.preventDefault();
@@ -472,6 +521,63 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
           maxLength={BIO_MAX}
           onChange={(e) => setDraftBio(e.target.value)}
         />
+      </label>
+
+      {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
+          и применяется на поле сам; плитки те же группы, что на карусели входа. */}
+      <h3 className={`${styles.edTitle} mt-4`}>Внешность</h3>
+      <div className={styles.edField}>
+        <span className={styles.edLabel}>Скин{originSprite ? '' : ' (не выбран — на поле будет обычный)'}</span>
+        <div className="mt-1.5 max-h-44 overflow-y-auto rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+          {SKIN_GROUPS.map((g) => (
+            <div key={g.id} className="mb-2 last:mb-0">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[var(--sim-text-soft)]">
+                {g.name}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {g.sprites.map((sp) => {
+                  const active = draftSprite === sp.id;
+                  return (
+                    <button
+                      key={sp.id}
+                      type="button"
+                      title={sp.name}
+                      aria-pressed={active}
+                      onClick={() => setDraftSprite(sp.id)}
+                      className={`flex w-16 flex-col items-center rounded-lg border px-1 pb-1 pt-1 transition-colors ${
+                        active
+                          ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
+                          : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                      }`}
+                    >
+                      <img src={sp.src} alt={sp.name} className="h-10 w-auto object-contain" draggable={false} />
+                      <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
+                        {sp.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <label className={styles.edField}>
+        <span className={styles.edLabel}>Рост ({draftScale}%)</span>
+        <div className="mt-1.5 flex items-center gap-2">
+          <Slider
+            className="flex-1"
+            value={[draftScale]}
+            min={60}
+            max={100}
+            step={1}
+            aria-label="Рост персонажа"
+            onValueChange={(vals) => {
+              const v = vals[0];
+              if (typeof v === 'number') setDraftScale(Math.round(v));
+            }}
+          />
+        </div>
       </label>
 
       {/* Игровые параметры: приватные настройки владельца — применяются на

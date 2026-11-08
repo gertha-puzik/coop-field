@@ -198,6 +198,7 @@ export function EntryScreen({
    *  Динамический импорт внутри свёрнутой IS_ELYRIA-ветки: /profiles-код в
    *  grotto-бандл не попадает (изоляция сайтов, §10.4). */
   const [me, setMe] = useState<{ accountId: string; profile: ProfileMe } | null>(null);
+  const [meFailed, setMeFailed] = useState(false);
   const meProfile = IS_ELYRIA && me && whoami?.ok && whoami.accountId && me.accountId === whoami.accountId
     ? me.profile
     : null;
@@ -216,11 +217,18 @@ export function EntryScreen({
     if (!IS_ELYRIA) return;
     if (!whoami?.ok || !whoami.accountId) return;
     let dead = false;
+    setMeFailed(false);
     void (async () => {
       const { httpMyProfile } = await import('@/lib/net/http-profiles');
       const res = await httpMyProfile();
       if (dead) return;
-      if (!res.ok || !res.profile) return;
+      // Фетч не удался — профиль не держит игрока на входе: выбор комнаты
+      // открывается на стартовых значениях движка (внешность применит
+      // сервер по сессии, пустой скин профиля не перезапишет).
+      if (!res.ok || !res.profile) {
+        setMeFailed(true);
+        return;
+      }
       setMe({ accountId: whoami.accountId!, profile: res.profile });
       const sp = res.profile.sp;
       if (!sp) return;
@@ -260,9 +268,28 @@ export function EntryScreen({
   const damageDone = damageOk !== null && damageOk === damageVal;
   const armorDone = armorOk !== null && armorOk === armorVal;
   const doneCount = [speedDone, damageDone, armorDone].filter(Boolean).length;
-  // Элизия: СП применяются молча из профиля — подтверждений нет, комнаты
-  // открываются с именем. Гроты — прежний флоу с тремя подтверждениями.
-  const roomsOpen = IS_ELYRIA ? !!trimmed : !!trimmed && doneCount === 3;
+
+  /** Кто идёт на поле (Элизия): всё из профиля — ник на поле, скин и рост
+   *  активного персонажа. Пока профиль не пришёл (или фетч не удался) —
+   *  стартовые значения движка: сервер всё равно применяет сохранённую
+   *  внешность по cookie-сессии, а пустой скин сохранённое не перезапишет. */
+  const elyWho = () => {
+    const ch = meProfile
+      ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
+      : null;
+    return {
+      name: (meProfile?.displayName || accountName || name).trim(),
+      sprite: (ch?.sprite || '') as SpriteId,
+      scale: ch && Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : initialScale,
+    };
+  };
+
+  // Элизия: СП и внешность применяются молча из профиля — ручных блоков нет;
+  // комнаты ждут профиль (миллисекунды того же fetch), фетч не удался — не
+  // держим игрока. Гроты — прежний флоу с тремя подтверждениями.
+  const roomsOpen = IS_ELYRIA
+    ? !!trimmed && (meProfile !== null || meFailed)
+    : !!trimmed && doneCount === 3;
 
   /* --- карусель скинов: колонки-персонажи («общее имя» → спрайты), крутится в стороны.
      У одного игрока могут быть разные персонажи — все спрайты персонажа стоят
@@ -337,13 +364,11 @@ export function EntryScreen({
         </nav>
       </header>
 
-      <div
-        className={
-          IS_ELYRIA
-            ? 'mt-5 grid items-start gap-4'
-            : 'mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]'
-        }
-      >
+      {/* Элизия: блоков выбора нет — скин, рост и имя берутся из профиля,
+          экран остаётся только выбором комнаты. Гроты — прежние три блока
+          с ручным выбором. */}
+      {IS_ELYRIA ? null : (
+      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]">
         {/* Блок 1: имя сверху, под ним карусель скинов в 2 ряда */}
         <section aria-label="Кот" className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
           <label className="flex flex-col gap-1.5" htmlFor="entry-name">
@@ -521,8 +546,6 @@ export function EntryScreen({
           </div>
         </section>
 
-        {IS_ELYRIA ? null : (
-          <>
         {/* Средний блок: записанный выбор СП — стрела, дамаг, броня. Значения обновляются
             сразу при выборе; ✓ отмечает уже подтверждённые пункты. */}
         <section
@@ -625,9 +648,8 @@ export function EntryScreen({
             </ParamCard>
           </div>
         </section>
-          </>
-        )}
       </div>
+      )}
 
       {IS_ELYRIA && onLogin && onRegister && onLogout ? (
         <section aria-label="Аккаунт" className="mt-4">
@@ -657,6 +679,10 @@ export function EntryScreen({
               if (gate?.access === 'registered' && !(whoami?.ok && whoami.accountId)) {
                 return;
               }
+              if (IS_ELYRIA) {
+                onPickRoom(id, elyWho());
+                return;
+              }
               onPickRoom(id, { name: trimmed, sprite, scale });
             }}
           />
@@ -669,7 +695,7 @@ export function EntryScreen({
                   ? 'Войдите в аккаунт — здесь появится выбор комнаты.'
                   : 'Введите имя слева — без него на поле не пустят.'
                 : IS_ELYRIA
-                  ? '' /* в Элизии с именем комнаты открыты — ветка страховки */
+                  ? 'Готовим ваш профиль — выбор комнаты откроется сразу.'
                   : `Подтвердите три скрытых параметра справа (${doneCount} из 3) — здесь откроется выбор комнаты.`}
             </p>
           </div>

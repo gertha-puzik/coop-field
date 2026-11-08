@@ -55,6 +55,11 @@ export type ProfilePatch = {
   displayName?: string;
   bio?: string;
   avatarCharacterId?: string | null;
+  /** Скин активного персонажа — id из каталога спрайтов (GET /sprites/catalog);
+   *  сервер валидирует по live-whitelist и отвечает 400 при чужом id. */
+  sprite?: string;
+  /** Рост модельки, % (60–100): сервер зажимает и округляет, как room-join. */
+  scale?: number;
   sp?: ProfileSp;
 };
 
