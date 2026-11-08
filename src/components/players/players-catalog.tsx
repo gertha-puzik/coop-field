@@ -26,7 +26,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // Ночная оболочка каталога — родная P5-редизайна (Starscape/styles.sky);
 // сайд-эффект админ-люка: компакт-селект темы в шапке каталога.
-import { ThemeSelect } from '@/components/site/theme-select';
+// Пересводка W2 (2026-11-08): селект/«Мой профиль»/бейдж входа переехали
+// в общую шапку сайта — pageHead-ряд демонтирован, тема и профиль несёт SiteHeader.
+import { SiteHeader } from '@/components/site/site-header';
 import {
   httpMyProfile,
   httpProfileById,
@@ -549,6 +551,9 @@ export default function PlayersCatalog() {
   return (
     <div className={styles.sky}>
       <Starscape />
+      {/* Пересводка W2 (2026-11-08): общая шапка сайта вверху страницы
+          (sticky-полоса); заголовок и BrandRow каталога ниже — как были. */}
+      <SiteHeader />
       <div className={styles.page}>
         <BrandRow />
 
@@ -570,9 +575,6 @@ export default function PlayersCatalog() {
               ← Главное меню
             </a>
           </p>
-          {/* Компакт-селект темы в шапке каталога (админ-люк волна 2026-11-08):
-              попросили «выбор темы вынести сверху» — на этой странице он и живёт. */}
-          <ThemeSelect />
         </header>
 
         <form

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Simulator from "@/components/sim/simulator";
 import { AuthGate } from "@/components/menu/auth-gate";
-import { ThemeSelect } from "@/components/site/theme-select";
-import slotStyles from "@/components/site/theme-select.module.css";
+// Пересводка W2 (2026-11-08): общая шапка сайта над симулятором — тонкая
+// стеклянная полоса сверху (экран входа и поле; слот селекта темы и
+// «Мой профиль» из пересводки-предшественницы демонтированы: их несёт шапка).
+import { SiteHeader } from "@/components/site/site-header";
 
 export const metadata: Metadata = {
   title: "Wanderpaws: Elysiae",
@@ -12,15 +14,8 @@ export const metadata: Metadata = {
 export default function ElisionPage() {
   return (
     <AuthGate>
+      <SiteHeader />
       <Simulator mode="elision" />
-      {/* Компакт-селект темы поверх симулятора: фиксированный слот в правом
-          верхнем углу экрана входа. На самом поле селект уже есть в хроме
-          симулятора — слот прячет себя через CSS (body:has(header.shrink-0)),
-          чтобы не дублировать и не перекрывать кнопки хрома. Под гейтом
-          оверлей входа выше — визуально селект только у вошедших. */}
-      <div className={slotStyles.elisionThemeSlot}>
-        <ThemeSelect />
-      </div>
     </AuthGate>
   );
 }

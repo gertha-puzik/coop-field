@@ -20,6 +20,25 @@
 import { httpOrigin } from "./coop";
 import { isCoopWhoami, type CoopWhoami } from "./protocol";
 
+/**
+ * W2 2026-11-08: снимок /auth/me кэшируется на вкладку («one fetch per tab»,
+ * прецедент cfg-live.ts): все потребители страницы (AuthGate, каталог,
+ * админ-панель, шапки «Мой профиль») делят один и тот же промис. Смена
+ * сессии (успешный register|login|logout) сбрасывает кэш и рассылает
+ * ME_EVENT — шапки обновляются без перезагрузки. ME_EVENT — браузерный
+ * CustomEvent клиента, НЕ WS-имя протокола (литералы EV.* не трогаем).
+ */
+
+/** Браузерное событие «сессия изменилась, вот свежий кадр» (detail: CoopWhoami). */
+export const ME_EVENT = "coop:me";
+
+let meMemo: Promise<CoopWhoami> | null = null;
+
+function emitMe(row: CoopWhoami): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(ME_EVENT, { detail: row }));
+}
+
 async function post(path: string, body: Record<string, unknown>): Promise<CoopWhoami> {
   const res = await fetch(`${httpOrigin()}${path}`, {
     method: "POST",
@@ -28,7 +47,13 @@ async function post(path: string, body: Record<string, unknown>): Promise<CoopWh
     body: JSON.stringify(body),
   });
   const row = (await res.json().catch(() => null)) as unknown;
-  return isCoopWhoami(row) ? row : { ok: false, reason: "error" };
+  const out = isCoopWhoami(row) ? row : { ok: false, reason: "error" };
+  if (out.ok) {
+    // register|login|logout сменили куку — закэшированный снимок протух.
+    meMemo = null;
+    emitMe(out);
+  }
+  return out;
 }
 
 /** Имя на поле отправляем ТОЛЬКО заданным и непустым: без поля сервер зовёт
@@ -46,8 +71,8 @@ export async function httpLogout(): Promise<CoopWhoami> {
   return post("/auth/logout", {});
 }
 
-/** Снимок сессии (восстановление после перезагрузки страницы). */
-export async function httpMe(): Promise<CoopWhoami> {
+/** Сырой ходок GET /auth/me (использован только httpMe-кэшем). */
+async function meRequest(): Promise<CoopWhoami> {
   try {
     const res = await fetch(`${httpOrigin()}/auth/me`, { credentials: "include" });
     const row = (await res.json().catch(() => null)) as unknown;
@@ -55,6 +80,21 @@ export async function httpMe(): Promise<CoopWhoami> {
   } catch {
     return { ok: false, reason: "error" };
   }
+}
+
+/**
+ * Снимок сессии (восстановление после перезагрузки страницы). Кэш на вкладку:
+ * повторные вызовы (AuthGate + шапки «Мой профиль» + каталог/админка одной
+ * страницы) получают один и тот же промис — второй запрос не отправляется.
+ */
+export function httpMe(): Promise<CoopWhoami> {
+  meMemo ??= meRequest();
+  return meMemo;
+}
+
+/** Говорящий синоним httpMe() для шапок: подчёркивает общий кэш вкладки. */
+export function meCached(): Promise<CoopWhoami> {
+  return httpMe();
 }
 
 /* ===== Общие низкоуровневые хелперы (этот модуль в графе обоих сайтов) ===== */

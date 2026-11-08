@@ -1,5 +1,5 @@
 /* Compact theme capsule ("тема" + select) and the fixed entry-screen slot.
-   Consumed by theme-select.tsx and the /elision page wrapper — elyria-only. */
+   Consumed by theme-select.tsx and the site-header capsule. */
 
 .themeCompact {
   display: inline-flex;
@@ -26,15 +26,3 @@
   cursor: pointer;
 }
 
-.elisionThemeSlot {
-  position: fixed;
-  top: 0.7rem;
-  right: 0.7rem;
-  z-index: 30;
-}
-
-/* On the joined field the simulator header already carries its own theme
-   select — the duplicate hides itself so nothing overlaps the chromes. */
-:global(body:has(header.shrink-0)) .elisionThemeSlot {
-  display: none;
-}
