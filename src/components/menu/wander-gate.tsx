@@ -302,6 +302,18 @@ export function WanderMenu() {
             </a>
           );
         })}
+        {!IS_ELYRIA ? (
+          <a className="wander-window" href="https://elisium.miew.ru/">
+            <span className="wander-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="wander-name">Wanderpaws: Elysiae</span>
+            <span className="wander-blurb">Закрытый мир — вход по аккаунту, отдельный сайт</span>
+            <span className="wander-count">отдельный сайт →</span>
+          </a>
+        ) : null}
       </div>
       {IS_ELYRIA ? (
         <nav className="wander-note" aria-label="Аккаунты и администрация">
