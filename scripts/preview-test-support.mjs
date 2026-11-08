@@ -95,6 +95,27 @@ export function sceneGone(vDir, mode, url) {
   rmSync(join(vDir, `${mode}.${key}`), { force: true });
 }
 
+/** Сцена WS-пробы (§9.3): upgrade-рука GET /ws отвечает 101 — точка сокета
+ * обязана быть живой; health по голому HTTP не достаточен (conn refused/
+ * TLS-fail не должны проходить молча — шим без сцены темнит 000). */
+export function wsScene(vDir, host, scheme = "https") {
+  httpScene(vDir, "get", `${scheme}://${host}/ws`, "101", "");
+}
+
+/** Сцены функционального смоука §9.3b (проверяются только в dual-режиме):
+ * grotto-класс — /auth/me 404 (API Элизии не живут на публичном хосте,
+ * 200 = течь зоны); elyria-класс — register/login 400 на пустое тело (не
+ * 404), POST /cfg не-админу 403. Шим ключевает сцену по URL, не по методу. */
+export function smokeScenes(vDir, host, kind, scheme = "https") {
+  if (kind === "grotto") {
+    httpScene(vDir, "get", `${scheme}://${host}/auth/me`, "404", '{"ok":false}');
+  } else {
+    httpScene(vDir, "get", `${scheme}://${host}/auth/register`, "400", '{"ok":false}');
+    httpScene(vDir, "get", `${scheme}://${host}/auth/login`, "400", '{"ok":false}');
+    httpScene(vDir, "get", `${scheme}://${host}/cfg`, "403", '{"ok":false}');
+  }
+}
+
 export const GROTTO_INDEX = "<html>grotto</html>\n";
 export const ELYRIA_INDEX = "<html>elyria</html>\n";
 export const HEALTH_OK = '{"ok":true,"rooms":0,"maxPlayers":50}';

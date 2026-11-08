@@ -22,6 +22,9 @@ import {
   makeVerifyShims,
   httpScene,
   sceneGone,
+  wsScene,
+  smokeScenes,
+  fillIncomingLegacy,
   script,
   GROTTO_INDEX,
   ELYRIA_INDEX,
@@ -353,6 +356,12 @@ httpScene(vDir, "get", `https://${PR41_E}/health`, "200", HEALTH_OK);
 httpScene(vDir, "get", `https://${PR41_E}/profiles`, "200", '{"ok":true,"items":[],"total":0}');
 httpScene(vDir, "head", `http://${PR41_G}/`, "301", `location: https://${PR41_G}/`);
 httpScene(vDir, "head", `http://${PR41_E}/`, "301", `location: https://${PR41_E}/`);
+// §9.3: WS-проба обязана видеть живую upgrade-точку (101 на руку RFC 6455);
+// §9.3b: функциональный смоук обеих Host-зон dual-артефакта.
+wsScene(vDir, PR41_G);
+wsScene(vDir, PR41_E);
+smokeScenes(vDir, PR41_G, "grotto");
+smokeScenes(vDir, PR41_E, "elyria");
 const v1 = run({ ...verifyBase, PREVIEW_SLUG: "pr-41" });
 dump("verify live dual", v1);
 eq("verify dual live exit", v1.status, 0);
@@ -413,6 +422,8 @@ for (const h of [PR41_G, PR41_E]) {
   httpScene(vDir, "get", `http://${h}/`, "200", h === PR41_G ? GROTTO_INDEX : ELYRIA_INDEX);
   httpScene(vDir, "get", `http://${h}/health`, "200", HEALTH_OK);
   httpScene(vDir, "get", `http://${h}/profiles`, h === PR41_G ? "404" : "200", h === PR41_G ? '{"ok":false,"reason":"not_found"}' : '{"ok":true,"items":[]}');
+  wsScene(vDir, h, "http");
+  smokeScenes(vDir, h, h === PR41_G ? "grotto" : "elyria", "http");
 }
 const v6 = run({ ...verifyBase, PREVIEW_SLUG: "pr-41" });
 eq("needs-tls exit 5", v6.status, 5);
@@ -480,6 +491,9 @@ httpScene(vDir, "get", "https://mirror1.elisium.miew.ru/health", "200", HEALTH_O
 httpScene(vDir, "get", "https://mirror1.elisium.miew.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
 httpScene(vDir, "head", "http://mirror1.abnocw.miew.ru/", "301", "location: https://mirror1.abnocw.miew.ru/");
 httpScene(vDir, "head", "http://mirror1.elisium.miew.ru/", "301", "location: https://mirror1.elisium.miew.ru/");
+//mirror: единый движок без Host-политики — WS жив на обоих, смоук не честится.
+wsScene(vDir, "mirror1.abnocw.miew.ru");
+wsScene(vDir, "mirror1.elisium.miew.ru");
 const v9 = run({
   ...verifyBase,
   PREVIEW_SLUG: "mirror1",
@@ -524,6 +538,10 @@ httpScene(vDir, "get", "https://marked.elisium.miew.ru/profiles", "200", '{"ok":
 httpScene(vDir, "get", "https://marked.elisium.miew.ru/site.marker", "200", "elyria\n");
 httpScene(vDir, "head", "http://marked.abnocw.miew.ru/", "301", "location: https://marked.abnocw.miew.ru/");
 httpScene(vDir, "head", "http://marked.elisium.miew.ru/", "301", "location: https://marked.elisium.miew.ru/");
+wsScene(vDir, "marked.abnocw.miew.ru");
+wsScene(vDir, "marked.elisium.miew.ru");
+smokeScenes(vDir, "marked.abnocw.miew.ru", "grotto");
+smokeScenes(vDir, "marked.elisium.miew.ru", "elyria");
 const v10 = run({
   ...verifyBase,
   PREVIEW_SLUG: "marked",
@@ -585,6 +603,10 @@ writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
   httpScene(vDir, "get", "https://shastale.elisium.miew.ru/profiles", "200", '{"ok":true,"items":[]}');
   httpScene(vDir, "head", "http://shastale.abnocw.miew.ru/", "301", "location: https://shastale.abnocw.miew.ru/");
   httpScene(vDir, "head", "http://shastale.elisium.miew.ru/", "301", "location: https://shastale.elisium.miew.ru/");
+  wsScene(vDir, "shastale.abnocw.miew.ru");
+  wsScene(vDir, "shastale.elisium.miew.ru");
+  smokeScenes(vDir, "shastale.abnocw.miew.ru", "grotto");
+  smokeScenes(vDir, "shastale.elisium.miew.ru", "elyria");
   const v11 = run({
     ...verifyBase,
     PREVIEW_SLUG: "shastale",
@@ -603,6 +625,124 @@ writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
     PREVIEW_TRUSTED_SHA: "aaa111",
   });
   eq("matching sha verifies live", v11b.status, 0);
+}
+
+// Сцена 11b: legacy-single вход-контракт (порядок мерджа PR #49/#50 не
+// гарантирован: до продуктового PR артефакт честно одно-сайтовый; это НЕ
+// фейк и НЕ ослабление — второй хост не заявляем и не верифицируем).
+// Смена формата артефакта на живом слаге + полный легаси verify-цикл,
+// включая §9.3а WS-пробу и честный отказ по чужой зоне хоста.
+{
+  // Инвентарь: janitor перед легаси-сценой — отработавшие окружения сносим
+  // (сами же тесты учат: staging — не свалка), иначе legone упрётся в лимит 8.
+  for (const spent of ["tlsapex", "psec2"]) {
+    const r = run({ ...base, PREVIEW_SLUG: spent, PREVIEW_ACTION: "destroy" });
+    eq(`janitor cleanup ${spent} before legacy scene`, r.status, 0);
+    eq(`janitor ${spent} gone`, existsSync(join(t.previewRoot, spent)), false);
+  }
+}
+{
+  const LEG = "legone.abnocw.miew.ru";
+  fillIncoming(t.incoming, "legone");
+  const dualFirst = run({
+    ...base,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_IN: join(t.incoming, "legone"),
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_PORT: "41071",
+  });
+  eq("legone starts as dual (variant roots)", dualFirst.status, 0);
+  eq("legone dual grotto root live", existsSync(join(t.previewRoot, "legone/www-grotto/index.html")), true);
+  // Легаси-вход поверх ТОГО ЖЕ слага: www/ без вариантных корней (форма
+  // артефакта старого main-билда до продуктового PR).
+  fillIncomingLegacy(t.incoming, "legone-legacy");
+  writeFileSync(join(t.incoming, "legone-legacy/metadata.json"), '{"mode":"legacy-single","sha":"fff999"}\n');
+  const legacyOver = run({
+    ...base,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_IN: join(t.incoming, "legone-legacy"),
+    PREVIEW_HOST: LEG,
+    PREVIEW_PORT: "41071",
+  });
+  dump("legone legacy over dual", legacyOver);
+  eq("legacy apply over dual slug succeeds", legacyOver.status, 0);
+  eq("legacy single root deployed", existsSync(join(t.previewRoot, "legone/www/index.html")), true);
+  eq("legacy wipes variant grotto root", existsSync(join(t.previewRoot, "legone/www-grotto")), false);
+  eq("legacy wipes variant elyria root", existsSync(join(t.previewRoot, "legone/www-elyria")), false);
+  eq("legacy metadata copied to app", readFileSync(join(t.previewRoot, "legone/metadata.json"), "utf8").includes("legacy-single"), true);
+  const legEnv = readFileSync(join(t.previewRoot, "legone/env"), "utf8");
+  eq("legacy env sites mode honest", legEnv.includes("PREVIEW_SITES_MODE=legacy-single"), true);
+  eq("legacy env has no elyria hosts key", legEnv.includes("ELYRIA_HOSTS="), false);
+  eq("legacy env single public host", legEnv.includes("PUBLIC_HOSTS=legone.abnocw.miew.ru"), true);
+  eq("legacy env origins single host", legEnv.includes(`ALLOWED_ORIGINS=http://${LEG},https://${LEG}`), true);
+  const legFrag = readFileSync(join(t.nginxD, "preview-legone.conf"), "utf8");
+  eq("legacy fragment single server block", legFrag.includes(`server_name ${LEG};`), true);
+  eq("legacy fragment has no elisium block", legFrag.includes("elisium.miew.ru"), false);
+  eq("legacy fragment roots app www", /root [^\n]*\/legone\/www;/.test(legFrag), true);
+  // Легаси-артефакт с главным именем чужой зоны — отказ, выкладки нет.
+  const legBad = run({
+    ...base,
+    PREVIEW_SLUG: "legbad",
+    PREVIEW_IN: join(t.incoming, "legone-legacy"),
+    PREVIEW_HOST: "legbad.elisium.miew.ru",
+    PREVIEW_HOST2: "legbad.abnocw.miew.ru",
+    PREVIEW_PORT: "41072",
+  });
+  dump("legbad foreign-zone legacy", legBad);
+  eq("legacy refuses foreign-zone host", legBad.status === 0 ? "ok" : "fail", "fail");
+  eq("legacy refusal names single-site rule", (legBad.stderr || "").includes("один abnocw-хост"), true);
+  eq("legbad never deployed", existsSync(join(t.previewRoot, "legbad")), false);
+  // Полный честный verify легаси: ОДИН хост, WS-проба, health, profiles.
+  writeFileSync(dnsOk, `${LEG}\n`);
+  httpScene(vDir, "get", `https://${LEG}/`, "200", GROTTO_INDEX);
+  httpScene(vDir, "get", `https://${LEG}/health`, "200", HEALTH_OK);
+  httpScene(vDir, "get", `https://${LEG}/profiles`, "404", '{"ok":false,"reason":"not_found"}');
+  wsScene(vDir, LEG);
+  httpScene(vDir, "head", `http://${LEG}/`, "301", `location: https://${LEG}/`);
+  const legV = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  dump("verify legacy live", legV);
+  eq("legacy verify live exit", legV.status, 0);
+  eq("legacy verify overall live", legV.stdout.includes("PREVIEW-RESULT overall=live"), true);
+  eq("legacy verify grotto ok", legV.stdout.includes("grotto=ok reasons=none"), true);
+  eq("legacy verify mode legacy-single", legV.stdout.includes("mode=legacy-single"), true);
+  eq("legacy verify honest note", legV.stdout.includes("note=legacy single-site preview (dual-host появится после мерджа PR #49)"), true);
+  eq("legacy verify no elyria claim", legV.stdout.includes("elyria="), false);
+  eq("legacy verify sha honest none", legV.stdout.includes("sha=none"), true);
+  // §9.3а: WS-точка мертва (connection-refused/TLS-fail сортов 000) — не
+  // молчит: grotto broken с точной причиной ws-000, overall failed, exit 4.
+  sceneGone(vDir, "get", `https://${LEG}/ws`);
+  const legWsDead = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  dump("verify legacy ws dead", legWsDead);
+  eq("legacy ws-dead not live (exit 4)", legWsDead.status, 4);
+  eq("legacy ws-dead reason named", legWsDead.stdout.includes("grotto=broken reasons=ws-000"), true);
+  eq("legacy ws-dead overall failed", legWsDead.stdout.includes("PREVIEW-RESULT overall=failed"), true);
+  wsScene(vDir, LEG);
+  // DNS не резолвится — needs-dns как в dual, exit 6, без спекуляций live.
+  writeFileSync(dnsOk, "");
+  const legDns = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  eq("legacy needs-dns exit 6", legDns.status, 6);
+  eq("legacy needs-dns honest", legDns.stdout.includes("grotto=needs-dns reasons=dns"), true);
+  writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
+  // Инвентарь: слаг отработал — снос, финальные сцены идут чисто.
+  const legoneGone = run({ ...base, PREVIEW_SLUG: "legone", PREVIEW_ACTION: "destroy" });
+  eq("legone self-cleanup after scene", legoneGone.status, 0);
+  eq("legone data gone after scene", existsSync(join(t.previewRoot, "legone")), false);
 }
 
 // Сцена 12: PR head-свежесть против workflow_run: артефакт, собранный с
