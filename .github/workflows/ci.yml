@@ -40,6 +40,15 @@ jobs:
           cache: npm
       - name: Установка зависимостей
         run: npm ci
+      # Gate (2026-11 incident follow-up): `bash -n` over every workflow
+      # run-block (with ${{ }} substituted) plus the shell scripts of
+      # scripts/ and deploy/vps/. The preview-deploy status step once died at
+      # PARSE time from a single stray `)` — after a successful rollout, with
+      # a stale failure marker left on the PR. This gate stops that class of
+      # bug at PR time; the checker is regression-proven against the very
+      # broken main revision it was born from.
+      - name: Синтаксис bash в workflow-скриптах
+        run: node scripts/check-bash-syntax.mjs
       # C W1 build проверяет типы сам (next.config.ts больше не глушит ошибки),
       # но typecheck остаётся быстрой отдельной проверкой и главным гейтом CI.
       - name: Проверка типов
@@ -118,5 +127,18 @@ jobs:
         run: npm run test:preview-build-contract
       - name: Preview link (шапка PR)
         run: npm run test:preview-pr-link
+      # Marker-comment step of preview-deploy.yml, extracted from the inline
+      # shell into scripts/preview-comment.mjs: create-or-update the ONE
+      # marker (paginated search, no duplicates), deployment badges
+      # best-effort, honest body for every PREVIEW-RESULT status, header
+      # block via preview-pr-link.mjs apply semantics. Fetch-stub suite.
+      - name: Preview комментарий (маркер/бейджи/шапка)
+        run: node scripts/test-preview-comment.mjs
+      # Production web-root switch transaction (deploy-frontend.yml
+      # promotion): both-or-nothing switch of /opt/coop-field/www and
+      # www-elyria, .prev never deleted up front, injected rename failures
+      # roll both roots back, broken staging refused before any mutation.
+      - name: Прод-переключатель www (транзакция)
+        run: node scripts/test-prod-switch.mjs
       - name: OpenSSH PEM из однострочного секрета
         run: npm run test:write-openssh-key
