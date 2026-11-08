@@ -115,6 +115,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
   } = props;
   return (
   <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
+    {testField ? <span aria-label="Игроков на поле" className="text-xs text-[var(--sim-text-muted)]">{peerCount} на поле</span> : <>
     <div>
       <h1 className="text-base font-bold leading-tight">abnocw</h1>
       <p className="text-[11px] text-[var(--sim-text-faint)]">
@@ -158,8 +159,9 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
       ) : null}
       <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
     </div>
+    </>}
     <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
+      {!testField ? <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
         тема
         <select
           value={theme}
@@ -172,7 +174,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
             </option>
           ))}
         </select>
-      </label>
+      </label> : null}
       {fieldFormat === 'test' ? (
         <Button
           size="sm"

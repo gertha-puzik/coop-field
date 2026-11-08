@@ -230,7 +230,7 @@ import {
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
-import { drawFieldHud, drawElisionJumpHud } from './simulator/hud-canvas';
+import { drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
@@ -243,7 +243,7 @@ import { useSimNet } from './simulator/hooks/use-network';
 import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
 import { useElisionView } from './simulator/hooks/use-elision-view';
 import { collectElisionFrame } from './simulator/elision-present';
-import type { ElisionView } from '@/lib/sim/elision-scene';
+import { elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
 
 
 
@@ -1418,6 +1418,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     if (!ctx) return;
     let raf = 0;
     let prev = performance.now();
+    let jumpMarker: ElisionFrame['jumpTarget'] = null;
 
     // Колесо мыши над полем «теста» — зум вида: вверх — приблизить, вниз — отдалить.
     // Множитель живёт в camUserZoomRef, камера сама плавно доезжает до нового зума.
@@ -2117,8 +2118,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           // нарисованы», поэтому бег вправо зеркалит модельку (flip=-1), бег влево —
           // нет. Разворот триггерит лёгкое «желе» — качнётся и успокоится (см.
           // drawChar). Чисто локальная картинка, по сети не ходит.
-          if (e.pvx > 14 || e.pvx < -14) {
-            const f: 1 | -1 = e.pvx > 0 ? -1 : 1;
+          const screenVx = elisionScreenX(e.pvx, e.pvy, camYawRef.current);
+          if (Math.abs(screenVx) > 14) {
+            const f: 1 | -1 = screenVx > 0 ? -1 : 1;
             if (f !== e.face) {
               e.face = f;
               jellyRef.current.main = Math.max(jellyRef.current.main ?? 0, 0.5);
@@ -2193,12 +2195,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       if (remoteFreeRef.current.size > 0) {
         const kf = 1 - Math.exp(-dt / 80);
         for (const [idF, fr] of remoteFreeRef.current) {
-          const before = fr.x;
+          const before = fr.x, beforeY = fr.y;
           fr.x += (fr.tx - fr.x) * kf;
           fr.y += (fr.ty - fr.y) * kf;
-          if (fr.tx - before > 0.015 || fr.tx - before < -0.015) {
+          const screenDx = elisionScreenX((fr.tx-before)*s.field.cellW, (fr.ty-beforeY)*s.field.cellH, camYawRef.current);
+          if (Math.abs(screenDx) > 1.5) {
             // Чужой кот бежит вправо — зеркалим (flip=-1), влево — как нарисован (1).
-            const f: 1 | -1 = fr.tx >= before ? -1 : 1;
+            const f: 1 | -1 = screenDx >= 0 ? -1 : 1;
             if (f !== (fr.face ?? 1)) {
               fr.face = f;
               jellyRef.current[idF] = Math.max(jellyRef.current[idF] ?? 0, 0.4);
@@ -2250,7 +2253,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           // ≤1 — обзор всей карты, как раньше.
           const bbE = testFieldGeometry(cellW, cellH).bboxPx;
           const pad = 90;
-          const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw / (bbE.x1 - bbE.x0 + pad), vh / (bbE.y1 - bbE.y0 + pad))));
+          const rotated = elisionRotatedSize(bbE.x1-bbE.x0, bbE.y1-bbE.y0, camYawRef.current);
+          const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw/(rotated.w+pad), vh/(rotated.h+pad))));
           const zT = Math.max(0.1, Math.min(1.15 * CAM_USER_ZOOM_MAX, fitZ * camUserZoomRef.current));
           camFxRef.current.z += (zT - camFxRef.current.z) * kz;
           let cxT = (bbE.x0 + bbE.x1) / 2;
@@ -2655,6 +2659,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     };
 
     const draw = (now: number) => {
+      jumpMarker = null;
       const s = settingsRef.current;
       const e = engineRef.current;
       const W = s.field.cols * s.field.cellW;
@@ -2827,6 +2832,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             }
           }
           if (mx >= 0) {
+            jumpMarker = { x: mx, y: my, lift: mlift, ok: !shortM };
             const pulse = 0.75 + 0.25 * Math.sin(now * 0.012);
             const rrM = 9 * pulse;
             ctx.save();
@@ -4276,6 +4282,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 remoteSpace: remoteSpaceRef.current,
                 editor: editorState().on,
                 day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
+                dayProgress: dayTintOnRef.current && atmoAnchorRef.current.pl > 0 ? dayProgressAt(atmoAnchorRef.current.cs, atmoAnchorRef.current.pl, Date.now()) : 1.5,
+                jumpTarget: jumpMarker,
                 camX: cam.x,
                 camY: cam.y,
                 yaw: camYawRef.current,
@@ -4305,6 +4313,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });
             elision.frame(frame);
+            drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
           } catch (error) {
             console.warn('[elision] WebGL-вид упал — остаётся прежний холст', error);
@@ -4746,9 +4755,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
 
   if (stage === 'entry') {
     return (
-      <div className="app-bg relative h-dvh text-[var(--sim-text)]">
+      <div className="app-bg relative h-dvh text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
         <ThemeBackdrop theme={theme} />
-        <div className="relative z-10 h-dvh overflow-y-auto">
+        <div className="relative z-10 h-full overflow-y-auto">
           {loaded ? (
             <EntryScreen
               initialSprite={settings.character.sprite}
@@ -4795,7 +4804,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   }
 
   return (
-    <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]">
+    <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
       <ThemeBackdrop theme={theme} />
       <SimulatorHeader
         settings={settings}
@@ -4859,6 +4868,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           editorOverlay={
             editorOpen && editorView ? (
               <EditorOverlay
+                rotateCamera={(direction) => { camYawTargetRef.current += direction*Math.PI/2; }}
                 editorRef={editorRef}
                 syncEditorView={syncEditorView}
                 editorView={editorView}

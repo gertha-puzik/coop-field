@@ -39,6 +39,8 @@ export type ElisionPresentInput = {
   remoteSpace: Map<string, ElisionSpace>;
   editor: boolean;
   day: ElisionDay;
+  dayProgress: number;
+  jumpTarget: ElisionFrame['jumpTarget'];
   camX: number;
   camY: number;
   yaw: number;
@@ -331,6 +333,8 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     elev: currentTestMap().elev ?? {},
     terrainLiftStep: TERRAIN_LIFT_PX,
     day: input.day,
+    dayProgress: input.dayProgress,
+    jumpTarget: input.jumpTarget,
     decals,
     controlledId: input.controlled,
     paint: painted.paint,

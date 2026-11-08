@@ -5,8 +5,8 @@
  * listener set (deps array stays `[]`) and owns the semantics of every
  * gameplay key: WASD/QEZX steps, J/L arrow rotation, K block, I strike,
  * Space jelly/leap charge, B battle toggle, Enter chat focus, Escape editor,
- * [ ] editor tool size (same as Alt+wheel); outside the editor [ ] snaps the
- * camera by a quarter turn (ignore key repeat).
+ * [ ] rotates the camera by a quarter turn, including the editor.
+ * Alt+[ ] changes editor tool size (same as Alt+wheel).
  * All mutable state stays in the caller's refs (SimKeyboardDeps); the effect
  * closes over the first-render `closeEditor`, one-to-one with the inline form.
  */
@@ -70,7 +70,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       if (!enteredRef.current) return;
       if (isForm(ev.target)) return;
       // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
-      // [ ] — размер инструмента (кисть/объект), как Alt+колесо; ловим по code,
+      // [ ] — камера; Alt+[ ] — размер инструмента, как Alt+колесо; ловим по code,
       // чтобы скобки работали на любой раскладке.
       if (editorOpenRef.current) {
         if (ev.key === 'Escape') {
@@ -79,13 +79,14 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
           if (!editorEsc()) closeEditor();
         } else if (ev.code === 'BracketLeft' || ev.code === 'BracketRight') {
           ev.preventDefault();
-          editorSizeStepRef.current?.(ev.code === 'BracketRight' ? 1 : -1);
+          if (ev.altKey) editorSizeStepRef.current?.(ev.code === 'BracketRight' ? 1 : -1);
+          else if (!ev.repeat) camYawTargetRef.current += ev.code === 'BracketRight' ? Math.PI/2 : -Math.PI/2;
         }
         return;
       }
       // [ ] поворачивают обзор на 90°: [ против часовой, ] по часовой.
       // Одно нажатие — один квадрант, автоповтор не копит обороты.
-      // code — на любой раскладке. В редакторе эти клавиши уже ушли в размер кисти.
+      // code — на любой раскладке. В редакторе размер кисти меняется с Alt.
       if (ev.code === 'BracketLeft' || ev.code === 'BracketRight') {
         ev.preventDefault();
         if (!ev.repeat) {

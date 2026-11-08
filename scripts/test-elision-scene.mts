@@ -11,6 +11,7 @@ import { Frustum } from '@babylonjs/core/Maths/math.frustum.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
+  elisionScreenX, elisionDayTint, elisionRotatedSize,
   elisionSpritePose,
   elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha,
   elisionCameraDown,
@@ -159,3 +160,16 @@ assert(release.scaleY > 1 && release.lift > 0, 'отпускание пробе�
 const wobble = elisionSpritePose(115,0.5,140);
 assert(wobble.scaleX !== 1 && wobble.scaleY !== 1 && wobble.rot !== 0, 'поворот даёт желе');
 assert(wobble.scaleX > 0.8 && wobble.scaleY > 0.8, 'поворот не схлопывает спрайт в ноль');
+
+for(const yaw of [0,Math.PI/2,Math.PI,Math.PI*1.5]) {
+  // Правая клавиша преобразована из экрана в мир; обратная проекция всегда вправо.
+  assert(Math.abs(elisionScreenX(Math.cos(yaw),-Math.sin(yaw),yaw)-1)<1e-9,'разворот вправо одинаков во всех квадрантах');
+  assert(Math.abs(elisionScreenX(Math.sin(yaw),Math.cos(yaw),yaw))<1e-9,'вертикальная ходьба не переворачивает кота');
+}
+for(const boundary of [0,1,2,3,4]) {
+  const a=elisionDayTint(boundary-1e-5),b=elisionDayTint(boundary+1e-5);
+  assert(a.every((v,i)=>Math.abs(v-b[i])<1e-4),'цвет суток непрерывен на границе фазы');
+}
+assert(elisionDayTint(NaN).every(Number.isFinite),'нет NaN до сетевого якоря суток');
+const rotated=elisionRotatedSize(1200,600,Math.PI/2);
+assert(Math.abs(rotated.w-600)<1e-8&&Math.abs(rotated.h-1200)<1e-8,'редактор вписывает повёрнутую карту');

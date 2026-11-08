@@ -7,6 +7,7 @@
  * tree position (absolute panel over the field frame). All mutations go
  * through the original callbacks and `editorRef` (panel-only ghost state).
  */
+import { Button } from '@/components/ui';
 import { useEffect, useState } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/lib/sim/test-map';
 
 export interface EditorOverlayProps {
+  rotateCamera: (direction: -1 | 1) => void;
   editorRef: RefObject<EditorDraft | null>;
   syncEditorView: () => void;
   editorView: EditorDraft;
@@ -98,6 +100,13 @@ export function EditorOverlay(props: EditorOverlayProps) {
                     >
                       ✕
                     </button>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
+                    <span className="text-[11px] text-[var(--sim-text-muted)]">Камера · [ ]</span>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" className="h-8 w-8 border-[var(--sim-line-strong)] bg-[var(--sim-inset)] p-0 text-base text-[var(--sim-text)]" aria-label="Повернуть камеру влево" onClick={() => props.rotateCamera(-1)}>↶</Button>
+                      <Button variant="outline" size="sm" className="h-8 w-8 border-[var(--sim-line-strong)] bg-[var(--sim-inset)] p-0 text-base text-[var(--sim-text)]" aria-label="Повернуть камеру вправо" onClick={() => props.rotateCamera(1)}>↷</Button>
+                    </div>
                   </div>
                   <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 text-[11px]">
                     <div>
@@ -315,7 +324,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
                           </button>
                           <p className="mt-1 leading-snug text-[10px] text-[var(--sim-text-faint)]">
                             Кисть рисует саму локацию в пикселях: закрашенное — земля, по ней ходят в мирном режиме;
-                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, Alt+колесо или [ ] — размер
+                            стёртое — пустота за кромкой. ЛКМ — материал, ПКМ — ластик, Alt+колесо или Alt+[ ] — размер
                             круглой кисти. Пресеты «150×100» и «75×50» — готовые области с привязкой к сетке: боевая клетка ставится
                             только на место, закрашенное областью «150×100» целиком. Росчерк можно отменить.
                           </p>
@@ -387,7 +396,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
                               </button>
                             ))}
                           </div>
-                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]" title="Размер также меняют Alt+колесо и клавиши [ ]">
+                          <div className="mt-2 mb-1 font-semibold text-[var(--sim-text-muted)]" title="Размер также меняют Alt+колесо и Alt+[ ]">
                             Размер и поворот
                           </div>
                           <div className="flex items-center gap-1.5">

@@ -50,6 +50,8 @@ export type ElisionFrame = {
   elev: Record<string, number>;
   terrainLiftStep: number;
   day: ElisionDay;
+  dayProgress: number;
+  jumpTarget: { x: number; y: number; lift: number; ok: boolean } | null;
   /** Коты и камни/деревья. Редактор прячет вид: список может быть пустым. */
   decals: ElisionActor[];
   controlledId: string;
@@ -283,4 +285,23 @@ export function elisionSpritePose(now: number, amp: number, h: number, sp?: Elis
   const wob = Math.sin(now*0.045);
   return {scaleX:scaleX*(1+amp*0.22*wob),scaleY:scaleY*(1-amp*0.22*wob),
     rot:rot+amp*0.08*Math.cos(now*0.045),sway,lift};
+}
+
+/** Горизонтальная составляющая мирового движения в текущем виде камеры. */
+export function elisionScreenX(x: number, y: number, yaw: number) {
+  return x*Math.cos(yaw)-y*Math.sin(yaw);
+}
+
+/** Цвета заданы в серединах фаз; циклическая интерполяция непрерывна в том числе ночью→утром. */
+export function elisionDayTint(progress: number): [number, number, number] {
+  if (!Number.isFinite(progress)) progress = 1.5;
+  const colors = [[1,0.94,0.82],[1,1,1],[1,0.8,0.66],[0.42,0.5,0.72]];
+  const p = ((progress-0.5)%4+4)%4, i = Math.floor(p), t0 = p-i;
+  const t = t0*t0*(3-2*t0);
+  return colors[i].map((v,c)=>v+(colors[(i+1)%4][c]-v)*t) as [number,number,number];
+}
+
+export function elisionRotatedSize(w: number, h: number, yaw: number) {
+  const c=Math.abs(Math.cos(yaw)),s=Math.abs(Math.sin(yaw));
+  return {w:w*c+h*s,h:w*s+h*c};
 }
