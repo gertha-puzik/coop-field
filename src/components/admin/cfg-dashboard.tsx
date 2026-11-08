@@ -587,6 +587,29 @@ export default function CfgDashboard() {
               {registryKeys.map((key) => {
                 const def = snap.registry[key];
                 const [section, field] = def.key.split('.');
+                if (section === 'atmo' && def.kind === 'bool') {
+                  const savedB = Number(snap.values.atmo[field]) > 0;
+                  const valueB = Number(draft.atmo[field]) > 0;
+                  return (
+                    <FieldShell key={key} def={def}>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <select
+                          className={SELECT_CLS}
+                          value={valueB ? 'on' : 'off'}
+                          onChange={(e) =>
+                            setDraft((prev) =>
+                              prev ? { ...prev, atmo: { ...prev.atmo, [field]: e.target.value === 'on' ? 1 : 0 } } : prev
+                            )
+                          }
+                        >
+                          <option value="on">Разрешено</option>
+                          <option value="off">Запрещено</option>
+                        </select>
+                        {savedB !== valueB ? <span className="text-[11px] text-amber-300/90">не сохранено — сейчас {savedB ? 'разрешено' : 'запрещено'}</span> : null}
+                      </div>
+                    </FieldShell>
+                  );
+                }
                 if (section === 'atmo') {
                   return (
                     <RangeFieldRow

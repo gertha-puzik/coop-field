@@ -189,13 +189,17 @@ export function draftFromSnapshot(snap: CfgAdminSnapshot): CfgDraft {
  *  ЯВНЫЙ playerSelectable — §4). Пустой список не отправляется никогда —
  *  UI блокирует такую кнопку. */
 export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
-  const atmo: Record<string, number> = {};
+  const atmo: Record<string, number | boolean> = {};
   const universes: Record<string, CfgUniversesValues> = {};
   for (const def of Object.values(snap.registry)) {
     const [section, field] = def.key.split(".");
     if (section === "atmo") {
       const v = draft.atmo[field];
-      if (Number.isFinite(v)) atmo[field] = v;
+      if (def.kind === "bool") {
+        // Гейт atmoset §3.4: в снапшоте живёт как 1/0-число, POST /cfg ждёт строго boolean.
+        if (typeof v === "boolean") atmo[field] = v;
+        else if (Number.isFinite(v)) atmo[field] = v > 0;
+      } else if (Number.isFinite(v)) atmo[field] = v;
     } else {
       const arr = draft.lists[field] || [];
       if (!arr.length) continue;
@@ -310,7 +314,7 @@ export async function httpCfgAdmin(): Promise<CfgAction> {
 
 /** Применение патча значений/дефолтов (POST /cfg). 400-я ошибка (unknown_keys/
  * invalid) отдаётся в details целиком — дашборд показывает её без обрезки. */
-export async function httpCfgApply(patch: { atmo?: Record<string, number>; universes?: Record<string, CfgUniversesValues> }): Promise<CfgAction> {
+export async function httpCfgApply(patch: { atmo?: Record<string, number | boolean>; universes?: Record<string, CfgUniversesValues> }): Promise<CfgAction> {
   const { status, row, text } = await apiFetch("/cfg", { method: "POST", body: patch });
   if (status === 200 && row?.ok === true) return { ok: true };
   return { ok: false, reason: cfgErrorReason(status, row), details: text };
