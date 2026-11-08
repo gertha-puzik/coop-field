@@ -19,9 +19,10 @@ export interface CfgRange {
   step: number;
 }
 
-/** Тип параметра: kind задаёт и валидатор, и имя списка в values-файле. */
-export type CfgKind = 'range' | 'levels' | 'tenths' | 'periods';
-export type CfgApplyPolicy = 'new-room' | 'on-next-event' | 'new-session';
+/** Тип параметра: kind задаёт и валидатор, и имя списка в values-файле.
+ *  bool — per-room гейт atmoset (F2 §3.4): юниверса значений нет (values/engineCap null). */
+export type CfgKind = 'range' | 'levels' | 'tenths' | 'periods' | 'bool';
+export type CfgApplyPolicy = 'new-room' | 'on-next-event' | 'new-session' | 'live-gate';
 
 /** Метаданные одного параметра (зеркало серверного REGISTRY). */
 export interface CfgFieldDef {
@@ -30,13 +31,14 @@ export interface CfgFieldDef {
   description: string;
   unit: string;
   kind: CfgKind;
-  values: CfgRange | number[];
-  default: number;
-  engineCap: CfgRange | number[];
+  values: CfgRange | number[] | null;
+  /** Число (диапазоны/уровни) или boolean (гейт atmoset). */
+  default: number | boolean;
+  engineCap: CfgRange | number[] | null;
   applyPolicy: CfgApplyPolicy;
   applyHint: string;
   visibility: 'public' | 'admin-only';
-  scope: 'global' | 'beer' | 'elyria';
+  scope: 'global' | 'beer' | 'elyria' | 'room';
 }
 
 /** Реестр: ключ — точечный путь «секция.поле». Движковые капы (engineCap)
@@ -72,6 +74,21 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
     applyHint: 'Применимо к новым комнатам; уже открытая комната едет на своём цикле.',
     visibility: 'public',
     scope: 'global',
+  },
+  'atmo.allowPlayerAtmosphereControl': {
+    key: 'atmo.allowPlayerAtmosphereControl',
+    label: 'Игроки крутят атмосферу',
+    description:
+      'Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки» — кадры atmo/atmoset). Управление per-room: отключается на конкретную комнату; по умолчанию (без переопределения) разрешено, как сейчас.',
+    unit: 'вкл/выкл',
+    kind: 'bool',
+    values: null,
+    default: true,
+    engineCap: null,
+    applyPolicy: 'live-gate',
+    applyHint: 'Действует сразу на живую комнату: при «выкл» сервер молча отбрасывает кадры atmo/atmoset игроков; якорь суток/погоды не перезапускается.',
+    visibility: 'admin-only',
+    scope: 'room',
   },
   'universes.strikeDamage': {
     key: 'universes.strikeDamage',
@@ -123,16 +140,18 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
 /** Ключи реестра в каноническом порядке. */
 export const CFG_KEYS: readonly string[] = Object.keys(CFG_REGISTRY);
 
-/** Дефолты всех параметров в формате публичного GET /cfg (v, atmo, universes). */
-export function cfgDefaults(): { v: number; atmo: Record<string, number>; universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number }> } {
-  const atmo: Record<string, number> = {};
-  const universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number }> = {};
+/** Дефолты всех параметров в формате публичного GET /cfg (v, atmo, universes).
+ *  F2: bool-ключ — в atmo (юниверсов нет); universes несут явный playerSelectable. */
+export function cfgDefaults(): { v: number; atmo: Record<string, number | boolean>; universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number; playerSelectable: boolean }> } {
+  const atmo: Record<string, number | boolean> = {};
+  const universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number; playerSelectable: boolean }> = {};
   for (const def of Object.values(CFG_REGISTRY)) {
     const [sec, field] = def.key.split('.');
-    if (def.kind === 'range') {
+    if (def.kind === 'range' || def.kind === 'bool') {
       atmo[field] = def.default;
     } else if (Array.isArray(def.values)) {
-      universes[field] = { [def.kind]: [...def.values], default: def.default };
+      // kind ∈ {levels,tenths,periods} ⇒ default числовой; сужение для TS.
+      universes[field] = { [def.kind]: [...def.values], default: def.default as number, playerSelectable: true };
     }
   }
   return { v: 1, atmo, universes };

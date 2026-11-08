@@ -20,7 +20,8 @@ export type CfgFieldMeta = {
   description: string;
   unit: string;
   kind: string;
-  values: number[] | { min: number; max: number; step: number };
+  /** null — у bool-ключа (гейт atmoset F2 §3.4) юниверса значений нет. */
+  values: number[] | { min: number; max: number; step: number } | null;
   default: number;
   applyPolicy: string;
   applyHint: string;
@@ -29,11 +30,14 @@ export type CfgFieldMeta = {
   scope: string;
 };
 
+/** F2 §4: universes-поля читаются тройкой allowedValues (массив kind),
+ *  defaultValue и ЯВНЫМ playerSelectable (toggle не режет список). */
 export type CfgUniversesValues = {
   levels?: number[];
   tenths?: number[];
   periods?: number[];
   default: number;
+  playerSelectable?: boolean;
 };
 
 export type CfgAdminSnapshot = {
@@ -60,6 +64,7 @@ const asStrMap = (raw: unknown): Record<string, string> => {
 const metaOf = (raw: unknown): CfgFieldMeta | null => {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as ApiRow;
+  const isBoolGate = typeof row.default === "boolean";
   const values = Array.isArray(row.values)
     ? (row.values as number[])
     : row.values && typeof row.values === "object"
@@ -68,18 +73,19 @@ const metaOf = (raw: unknown): CfgFieldMeta | null => {
           max: Number((row.values as ApiRow).max),
           step: Number((row.values as ApiRow).step || 1),
         }
-      : null;
+      : null; // bool-ключ (гейт atmoset F2 §3.4): юниверса нет
   const label = asText(row.label);
   const key = asText(row.key);
-  if (!key || !label || values === null) return null;
+  if (!key || !label || (!isBoolGate && values === null && !Array.isArray(row.engineCap))) return null;
   return {
     key,
     label,
     description: asText(row.description),
     unit: asText(row.unit),
     kind: asText(row.kind),
-    values,
-    default: Number(row.default),
+    // Гейт atmoset (bool): default сохраняем как 1/0-число; UI тракует как вкл/выкл.
+    values: isBoolGate ? null : values,
+    default: isBoolGate ? (row.default ? 1 : 0) : Number(row.default),
     applyPolicy: asText(row.applyPolicy),
     applyHint: asText(row.applyHint),
     visibility: asText(row.visibility),
@@ -106,6 +112,7 @@ function parseAdminSnapshot(row: ApiRow): CfgAdminSnapshot | null {
       tenths: numList(row.tenths),
       periods: numList(row.periods),
       default: Number.isFinite(Number(row.default)) ? Number(row.default) : 0,
+      playerSelectable: typeof row.playerSelectable === "boolean" ? row.playerSelectable : undefined,
     };
   }
   const registry: Record<string, CfgFieldMeta> = {};
@@ -134,6 +141,10 @@ export type CfgDraft = {
   atmo: Record<string, number>;
   defaults: Record<string, number>;
   lists: Record<string, number[]>;
+  /** F2 §4: явный флаг «игроки могут выбирать» per universes-поле.
+   *  Выключение НЕ режет список: allowedValues живёт на сервере, повторное
+   *  включение возвращает кураторский список (а не весь движковый юниверс). */
+  selectable: Record<string, boolean>;
 };
 
 /** Диф по одному ключу реестра — для предпросмотра «было → станет». */
@@ -153,28 +164,36 @@ export type CfgFieldDiff = {
     defAfter: number;
     unit: string;
   };
+  /** §4: флип «выбор игроками» без изменения списка (off-then-on фикс). */
+  choice?: { before: boolean; after: boolean; kept: number };
 };
 
-/** Черновик из админ-снапшота: значения сервера, готовые к редактированию. */
+/** Черновик из админ-снапшота: значения сервера, готовые к редактированию.
+ *  Списки — ПОЛНЫЕ кураторские (playerView=false), флаг выбора — явный
+ *  (§4.3: старый файл без флага мигрируется выводом из списка). */
 export function draftFromSnapshot(snap: CfgAdminSnapshot): CfgDraft {
   const atmo: Record<string, number> = { ...snap.values.atmo };
   const defaults: Record<string, number> = {};
   const lists: Record<string, number[]> = {};
+  const selectable: Record<string, boolean> = {};
   for (const [field, val] of Object.entries(snap.values.universes)) {
+    const list = val.levels || val.tenths || val.periods || [];
     defaults[field] = val.default;
-    lists[field] = val.levels || val.tenths || val.periods || [];
+    lists[field] = list;
+    selectable[field] = typeof val.playerSelectable === "boolean" ? val.playerSelectable : list.length > 1;
   }
-  return { atmo, defaults, lists };
+  return { atmo, defaults, lists, selectable };
 }
 
-/** Патч тела POST /cfg из черновика: atmo-числа + юниверсы (список+дефолт).
- * Пустой список не отправляется никогда — UI блокирует такую кнопку. */
+/** Патч тела POST /cfg из черновика: atmo-числа + юниверсы (список+дефолт+
+ *  ЯВНЫЙ playerSelectable — §4). Пустой список не отправляется никогда —
+ *  UI блокирует такую кнопку. */
 export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
   const atmo: Record<string, number> = {};
   const universes: Record<string, CfgUniversesValues> = {};
   for (const def of Object.values(snap.registry)) {
-    const [section, field] = def.key.split('.');
-    if (section === 'atmo') {
+    const [section, field] = def.key.split(".");
+    if (section === "atmo") {
       const v = draft.atmo[field];
       if (Number.isFinite(v)) atmo[field] = v;
     } else {
@@ -183,6 +202,7 @@ export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
       universes[field] = {
         [def.kind]: arr,
         default: Number.isFinite(draft.defaults[field]) ? draft.defaults[field] : arr[0],
+        playerSelectable: draft.selectable[field] ?? arr.length > 1,
       } as CfgUniversesValues;
     }
   }
@@ -247,13 +267,19 @@ export function buildCfgDiff(snap: CfgAdminSnapshot, draft: CfgDraft): CfgFieldD
     const defBefore = stored?.default ?? 0;
     const defAfter = draft.defaults[field];
     const { added, removed } = listDiff(before, after);
-    if (!added.length && !removed.length && defBefore === defAfter) continue;
+    // §4: флаг «выбор игроками» — самостоятельная часть диффа: список при
+    // флипе НЕ трогаем (allowedValues сохранены на сервере).
+    const selBefore = typeof stored?.playerSelectable === "boolean" ? stored.playerSelectable : before.length > 1;
+    const selAfter = draft.selectable[field] ?? after.length > 1;
+    const choiceChanged = selBefore !== selAfter;
+    if (!added.length && !removed.length && defBefore === defAfter && !choiceChanged) continue;
     out.push({
       key: def.key,
       label: def.label,
       policy: def.applyPolicy,
       hint: def.applyHint,
       list: { kind: def.kind, before, after, added, removed, defBefore, defAfter, unit: def.unit },
+      choice: choiceChanged ? { before: selBefore, after: selAfter, kept: after.length } : undefined,
     });
   }
   return out;
@@ -332,4 +358,164 @@ function cfgErrorReason(status: number, row: ApiRow | null): string {
   if (typeof row?.reason === "string" && row.reason) return row.reason;
   if (status === 403) return "auth_required";
   return "error";
+}
+
+/* ============ F2 per-room конфиг: слои engine ← global ← room (§3) ============ */
+
+/** Whitelist per-room v1 — зеркало SUPPORTED_ROOM_KEYS сервера. */
+export type RoomConfigKey =
+  | "atmo.phaseMin"
+  | "atmo.weatherMin"
+  | "atmo.allowPlayerAtmosphereControl";
+
+export type RoomConfigValue = number | boolean;
+
+/** Вид одного ключа комнаты: глобальный слой, override (если есть), effective. */
+export type RoomKeyView = {
+  state: "overridden" | "inherited";
+  global: RoomConfigValue;
+  override: RoomConfigValue | null;
+  effective: RoomConfigValue;
+  applyHint: string;
+};
+
+/** Ответ GET /cfg/rooms/<id> (эффективные слои + маркеры per-key). */
+export type RoomConfigView = {
+  id: string;
+  title: string;
+  mode: string;
+  access: string;
+  overrides: Record<string, RoomConfigValue>;
+  overrideCount: number;
+  hasOverrides: boolean;
+  effective: { phaseMin: number; weatherMin: number; allowPlayerAtmosphereControl: boolean };
+  keys: Record<string, RoomKeyView>;
+  supportedKeys: RoomConfigKey[];
+};
+
+/** Элемент GET /cfg/rooms. */
+export type RoomListItem = {
+  id: string;
+  title: string;
+  mode: string;
+  access: string;
+  hasOverrides: boolean;
+  overrideCount: number;
+  supportedKeys: RoomConfigKey[];
+};
+
+export type RoomConfigAction = {
+  ok: boolean;
+  reason?: string;
+  details?: string;
+  room?: RoomConfigView;
+  rooms?: RoomListItem[];
+  history?: string[];
+  keep?: number;
+  restoredFrom?: string;
+  inherited?: RoomConfigValue;
+  reset?: string;
+};
+
+const roomViewOf = (row: ApiRow): RoomConfigView | null => {
+  if (!row || typeof row !== "object") return null;
+  const keys = (row.keys as Record<string, ApiRow>) || {};
+  const view: Record<string, RoomKeyView> = {};
+  for (const [key, raw] of Object.entries(keys)) {
+    const k = raw as ApiRow;
+    const num = (v: unknown) => (typeof v === "boolean" ? v : Number.isFinite(Number(v)) ? Number(v) : null);
+    view[key] = {
+      state: k?.state === "overridden" ? "overridden" : "inherited",
+      global: (num(k.global) as RoomConfigValue),
+      override: k.override === null || k.override === undefined ? null : (num(k.override) as RoomConfigValue),
+      effective: (num(k.effective) as RoomConfigValue),
+      applyHint: typeof k.applyHint === "string" ? k.applyHint : "",
+    };
+  }
+  const eff = (row.effective as ApiRow) || {};
+  return {
+    id: asText(row.id),
+    title: asText(row.title),
+    mode: asText(row.mode),
+    access: asText(row.access),
+    overrides: (row.overrides as Record<string, RoomConfigValue>) || {},
+    overrideCount: Number(row.overrideCount) || 0,
+    hasOverrides: row.hasOverrides === true,
+    effective: {
+      phaseMin: Number(eff.phaseMin),
+      weatherMin: Number(eff.weatherMin),
+      allowPlayerAtmosphereControl: eff.allowPlayerAtmosphereControl !== false,
+    },
+    keys: view,
+    supportedKeys: (row.supportedKeys as RoomConfigKey[]) || [],
+  };
+};
+
+const roomListRow = (raw: unknown): RoomListItem | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as ApiRow;
+  return {
+    id: asText(row.id),
+    title: asText(row.title),
+    mode: asText(row.mode),
+    access: asText(row.access),
+    hasOverrides: row.hasOverrides === true,
+    overrideCount: Number(row.overrideCount) || 0,
+    supportedKeys: (row.supportedKeys as RoomConfigKey[]) || [],
+  };
+};
+
+/** Каталог комнат + бейджи overrides (GET /cfg/rooms). */
+export async function httpRoomList(): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch("/cfg/rooms");
+  if (status === 200 && row?.ok === true) {
+    const rooms = Array.isArray(row?.rooms) ? row.rooms.map(roomListRow).filter((r): r is RoomListItem => !!r) : [];
+    return { ok: true, rooms };
+  }
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** Слои конкретной комнаты (GET /cfg/rooms/<id>): global/override/effective. */
+export async function httpRoomConfig(id: string): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}`);
+  if (status === 200 && row?.ok === true) return { ok: true, room: roomViewOf((row as ApiRow).room as ApiRow) || undefined };
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** Merge validated overrides (PUT /cfg/rooms/<id> {values:{key:value}} ONLY). */
+export async function httpRoomUpdate(id: string, values: Record<RoomConfigKey, RoomConfigValue>): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}`, { method: "PUT", body: { values } });
+  if (status === 200 && row?.ok === true) return { ok: true, room: roomViewOf((row as ApiRow).room as ApiRow) || undefined };
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** Сброс одного override (DELETE /cfg/rooms/<id>/<key>) → комната наследует. */
+export async function httpRoomResetKey(id: string, key: RoomConfigKey): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}/${encodeURIComponent(key)}`, { method: "DELETE" });
+  if (status === 200 && row?.ok === true) return { ok: true, room: roomViewOf((row as ApiRow).room as ApiRow) || undefined, inherited: (row.inherited as RoomConfigValue) ?? undefined, reset: key };
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** Сброс всех overrides комнаты (DELETE /cfg/rooms/<id>/all). */
+export async function httpRoomResetAll(id: string): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}/all`, { method: "DELETE" });
+  if (status === 200 && row?.ok === true) return { ok: true, room: roomViewOf((row as ApiRow).room as ApiRow) || undefined };
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** История бэкапов room-configs.json (GET /cfg/rooms/<id>/history). */
+export async function httpRoomHistory(id: string): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}/history`);
+  if (status === 200 && row?.ok === true) {
+    const history = Array.isArray(row?.history) ? (row.history as unknown[]).filter((n): n is string => typeof n === "string") : [];
+    return { ok: true, history, keep: Number(row?.keep) || 0 };
+  }
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
+}
+
+/** Restore overrides комнаты из бэкапа (POST /cfg/rooms/<id>/restore). */
+export async function httpRoomRestore(id: string, name: string): Promise<RoomConfigAction> {
+  const { status, row, text } = await apiFetch(`/cfg/rooms/${encodeURIComponent(id)}/restore`, { method: "POST", body: { name } });
+  if (status === 200 && row?.ok === true) return { ok: true, room: roomViewOf((row as ApiRow).room as ApiRow) || undefined, restoredFrom: name };
+  return { ok: false, reason: cfgErrorReason(status, row), details: text };
 }

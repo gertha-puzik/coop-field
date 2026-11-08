@@ -16,10 +16,10 @@
  *   - редактор списков — чекбоксы по движковому юнису из меты (registry.values,
  *     KIND-юниверсы levels/tenths/periods сервер знает; формат WS-протокола и
  *     правила авторизации — НЕ конфиг, тут их нет);
- *   - «выбор игроками вкл/выкл» — серверная disabled-модель НЕ существует и
- *     контракт заморожен, поэтому переключатель сериализуется тем же POST /cfg
- *     как список из одного дефолта: off = списку {default}, on = восстановление
- *     прежнего списка/юнивера (решение зафиксировано в коммите);
+ *   - «выбор игроками вкл/выкл» (F2 §4) — ЯВНЫЙ флаг playerSelectable в том же
+ *     POST /cfg: выключение НЕ режет allowedValues (не «в никуда»), повторное
+ *     включение возвращает кураторский список, а не весь движковый юниверс;
+ *     миграция старых файлов — вывод флага из длины списка (read-time);
  *   - дефолт обязан входить в список: сервер валидирует (400), UI не даёт
  *     сохранить иначе (кнопка заблокирована + подсказка у поля);
  *   - предпросмотр диффов «было → станет» (+N/−M) до отправки; сужение списка
@@ -28,9 +28,10 @@
  *   - честные статусы применения по applyPolicy: «применено немедленно» — только
  *     on-next-event; new-room/new-session НЕ показываются как «применено»
  *     (спек §4.6);
- *   - «Комнатные настройки»: per-room-хранилища у движка нет (жёстко: room.atmo
- *     in-memory, atmoset крутит любой игрок), поэтому фейковых per-room
- *     контролов НЕ рисуем — только честная сводка атмосферных параметров.
+ *   - «Комнатные настройки» (F2 §3) — per-room контрак ЕСТЬ (server/room-config.js,
+ *     /cfg/rooms*): панель вынесена в room-config-panel.tsx (этот файл держим
+ *     под лимитом 800 строк); слои движок ← глобал ← комната, override только
+ *     явный, applyHint new-rooms-only честно, гейт atmoset per-room.
  *
  * Доступ: панель рендерится только при role==='admin' (GET /auth/me); не-админ
  * получает вежливую заглушку без раскрытия данных (сервер тоже отдаёт 403).
@@ -61,6 +62,8 @@ import {
   type CfgFieldMeta,
 } from '@/lib/net/http-cfg';
 import { httpMe } from '@/lib/net/http-auth';
+
+import { RoomConfigPanel } from './room-config-panel';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -175,15 +178,19 @@ function RangeFieldRow({
   );
 }
 
-/** Редактор СПИСКА разрешённых значений (§4.2): чекбоксы по движковому юнису
- * (registry.values), вкл/выкл выбора игроками (off = список из одного
- * дефолта), дефолт — селектом из списка. */
+/** Редактор СПИСКА разрешённых значений (§4.2): чекбоксы по движковому
+ * юнису (registry.values) + ЯВНЫЙ флаг «игроки могут выбирать» (F2 §4):
+ * флип флага НЕ мутирует список — allowedValues и playerSelectable
+ * хранятся на сервере раздельно (off-then-on возвращает кураторский список,
+ * а не движковый юниверс). */
 function ListFieldRow({
   def,
   list,
   saved,
+  savedChoice,
   draftDefault,
   universe,
+  choiceOn,
   onToggleValue,
   onToggleChoice,
   onDefault,
@@ -191,14 +198,15 @@ function ListFieldRow({
   def: CfgFieldMeta;
   list: number[];
   saved: { list: number[]; def: number };
+  savedChoice: boolean;
   draftDefault: number;
   universe: number[];
+  choiceOn: boolean;
   onToggleValue: (v: number, on: boolean) => void;
   onToggleChoice: (on: boolean) => void;
   onDefault: (v: number) => void;
 }) {
   const issue = listIssue(list, draftDefault);
-  const choiceOn = list.length > 1;
   return (
     <FieldShell def={def}>
       <label className="mt-2 flex items-center gap-2 text-xs text-[var(--sim-text-soft)]">
@@ -208,7 +216,7 @@ function ListFieldRow({
       <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
         {choiceOn
           ? `Разрешено значений: ${list.length} из ${universe.length} (в ${def.unit}).`
-          : 'Выбор выключен: игроку доступно только дефолтное значение.'}
+          : `Выбор выключен: игроку отдаётся только дефолт (${fmtNum(draftDefault)} ${def.unit}). Сохранённый список (${list.length}) не трогаем.`}
       </p>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
         {universe.map((v) => (
@@ -235,7 +243,8 @@ function ListFieldRow({
       </div>
       {issue ? <p className="mt-1 text-[11px] font-semibold text-red-300">{issue}</p> : null}
       <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
-        На сервере сейчас: {saved.list.map(fmtNum).join(' / ') || '—'}, дефолт {fmtNum(saved.def)}.
+        На сервере сейчас: {saved.list.map(fmtNum).join(' / ') || '—'}, дефолт {fmtNum(saved.def)}, выбор игроками:{' '}
+        {savedChoice ? 'вкл' : 'выкл'}.
       </p>
     </FieldShell>
   );
@@ -275,6 +284,14 @@ function DiffRow({ d }: { d: FieldDiff }) {
           ) : null}
         </div>
       ) : null}
+      {d.choice ? (
+        <p className="mt-1">
+          Выбор игроками: {d.choice.before ? 'вкл' : 'выкл'} → <b>{d.choice.after ? 'вкл' : 'выкл'}</b>
+          {d.choice.after
+            ? ` — список из ${d.choice.kept} зн. вернётся игрокам целиком`
+            : ` — игрокам отдаётся только дефолт, список из ${d.choice.kept} зн. сохраняется на сервере`}
+        </p>
+      ) : null}
       <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">{d.hint}</p>
     </li>
   );
@@ -291,15 +308,12 @@ export default function CfgDashboard() {
   /** Предпросмотр «было → станет», ждёт второго подтверждения (Отмена = ничего не отправлено). */
   const [pending, setPending] = useState<FieldDiff[] | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  /** Списки «до выключения выбора» — на случай повторного включения в той же сессии. */
-  const multiBackup = useRef<Record<string, number[]>>({});
 
   const refresh = useCallback(async () => {
     const res = await httpCfgAdmin();
     if (res.ok && res.snapshot) {
       setSnap(res.snapshot);
       setDraft(draftFromSnapshot(res.snapshot));
-      multiBackup.current = {};
       setPhase('ready');
     } else {
       setStatus({ kind: 'err', text: 'Не удалось загрузить панель конфига.', details: res.details || undefined });
@@ -368,20 +382,14 @@ export default function CfgDashboard() {
     });
   }, []);
 
-  /** Вкл/выкл выбора игроками: серверной «disabled»-модели нет и контракт
-   * заморожен — переключатель сериализуется списком из одного дефолта (off);
-   * on возвращает запомненный список либо весь движковый юниверс. */
-  const toggleChoice = useCallback((field: string, def: CfgFieldMeta, on: boolean) => {
+  /** Вкл/выкл выбора игроками (F2 §4): флипает ТОЛЬКО явный флаг
+   * playerSelectable черновика. Список allowedValues не мутируется
+   * «в никуда»: он живёт и в черновике, и на сервере; повторное
+   * включение показывает прежний кураторский список, а не юниверс. */
+  const toggleChoice = useCallback((field: string, _def: CfgFieldMeta, on: boolean) => {
     setDraft((prev) => {
       if (!prev) return prev;
-      if (!on) {
-        multiBackup.current[field] = prev.lists[field] || [];
-        return { ...prev, lists: { ...prev.lists, [field]: [prev.defaults[field]] } };
-      }
-      const universe = Array.isArray(def.values) ? def.values : [];
-      const remembered = multiBackup.current[field];
-      const next = remembered && remembered.length > 1 ? remembered : universe;
-      return { ...prev, lists: { ...prev.lists, [field]: [...next] } };
+      return { ...prev, selectable: { ...prev.selectable, [field]: on } };
     });
   }, []);
 
@@ -507,7 +515,6 @@ export default function CfgDashboard() {
   };
 
   const registryKeys = snap ? Object.keys(snap.registry) : [];
-  const atmoDefs = snap ? Object.values(snap.registry).filter((d) => d.key.startsWith('atmo.')) : [];
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
@@ -561,17 +568,19 @@ export default function CfgDashboard() {
                   );
                 }
                 const stored = snap.values.universes[field];
+                const storedList = stored?.levels || stored?.tenths || stored?.periods || [];
+                const savedChoice =
+                  typeof stored?.playerSelectable === 'boolean' ? stored.playerSelectable : storedList.length > 1;
                 return (
                   <ListFieldRow
                     key={key}
                     def={def}
                     list={draft.lists[field] || []}
-                    saved={{
-                      list: stored?.levels || stored?.tenths || stored?.periods || [],
-                      def: stored?.default ?? 0,
-                    }}
+                    saved={{ list: storedList, def: stored?.default ?? 0 }}
+                    savedChoice={savedChoice}
                     draftDefault={draft.defaults[field]}
                     universe={Array.isArray(def.values) ? def.values : []}
+                    choiceOn={draft.selectable[field] ?? savedChoice}
                     onToggleValue={(v, on) => toggleValue(field, def.kind, v, on)}
                     onToggleChoice={(on) => toggleChoice(field, def, on)}
                     onDefault={(v) =>
@@ -638,19 +647,12 @@ export default function CfgDashboard() {
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <h2 className="text-base font-bold text-[var(--sim-text)]">Комнатные настройки</h2>
             <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-              Движок не хранит отдельные конфигурации комнат (per-room): параметры ниже — глобальные
-              стартовые значения для всех НОВЫХ комнат. Живую комнату можно подкрутить на месте —
-              ползунок «Сутки» в панели (кадр atmoset), повернуть его может любой игрок внутри комнаты.
-              Админского per-room API нет, поэтому фейковых «комнатных» полей здесь не показываем.
+              F2 §3: слоеная модель — движковые дефолты ← глобальный runtime ← явный per-room override.
+              Комната без override наследует глобальные значения; эффективный слой считается на сервере.
+              Override применяется при (пере)создании объекта комнаты (new-rooms-only) и НЕ ломает живую
+              атмосферу. Гейт «игроки могут крутить atmoset» — per-room, по умолчанию разрешён.
             </p>
-            <ul className="mt-2 space-y-1 text-xs text-[var(--sim-text-soft)]">
-              {atmoDefs.map((def) => (
-                <li key={def.key}>
-                  «{def.label}» ({def.unit}) — сейчас {fmtNum(snap ? snap.values.atmo[def.key.split('.')[1]] : 0)};
-                  применяется глобально, только для новых комнат.
-                </li>
-              ))}
-            </ul>
+            <RoomConfigPanel registry={snap.registry} />
           </section>
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
