@@ -130,21 +130,34 @@ S4: `loopback` на прод-классе хоста = темп-лимиты aut
 ## 6. Конфиг: registry whitelist (P2) + runtime-config v2
 
 `DATA_DIR/runtime-config.json` хранит ТОЛЬКО значения `{ v:1, atmo, universes }`. Что можно
-менять, определяет реестр `server/cfg-registry.js` — whitelist из **5 ключей** (заморожен,
-deepFreeze): `atmo.phaseMin`, `atmo.weatherMin`, `universes.strikeDamage`,
-`universes.armor`, `universes.arrowSpeed`. Формат WS-протокола, события, авторизация,
+менять, определяет реестр `server/cfg-registry.js` — whitelist из **6 ключей** (заморожен,
+deepFreeze): 5 числовых `atmo.phaseMin`, `atmo.weatherMin`, `universes.strikeDamage`,
+`universes.armor`, `universes.arrowSpeed` + bool-гейт `atmo.allowPlayerAtmosphereControl`
+(F2 §3.4: room-scope, default TRUE — не в юниорсах, валидация true/false only).
+Формат WS-протокола, события, авторизация,
 rate-limits, ARMOR_CURVE/STRIKE_ZONES (канон protocol.js) сюда НЕ входят в принципе —
 панель админа редактирует разрешённые ЗНАЧЕНИЯ, не константы движка.
 
 По каждому ключу: подпись, описание, юниверс разрешённых значений, движковый кап, дефолт,
-**apply-политика**, видимость (все `public`, `scope: global`):
+**apply-политика**, видимость (числовые — `public`, `scope: global`; гейт — `admin-only`,
+`scope: room`):
 
 | Ключ | Apply | Смысл |
 | --- | --- | --- |
 | `atmo.phaseMin` / `atmo.weatherMin` | `new-room` — стартовые длины новых комнат; живую крутит atmoset | минуты части суток / интервал погоды |
+| `atmo.allowPlayerAtmosphereControl` | `live-gate` (F2) — НЕ новое значение, а per-room гейт atmoset-кадров игроков; отсутствие override = TRUE (default preserves current gameplay); управляется через per-room §6a, глобальным POST /cfg НЕ пишется | «игроки могут крутить сутки» в конкретной комнате |
 | `universes.strikeDamage` (уровни 0–9) | `on-next-event` — каждый входящий удар клэмпится сверху | список уровней урона на экране входа + дефолт |
 | `universes.armor` (десятые 0–0.9) | `on-next-event` — кадр брони снапится | список десятых брони + дефолт |
 | `universes.arrowSpeed` (периоды 1.8–5 c) | `new-session` — игрок увидит в новой сессии | периоды оборота стрелы (чисто клиентская механика, серверного клэмпа нет) |
+
+**F2 §4 — playerSelectable (снятие части заморозки B2):** у universes-ключей ТРИ понятия
+хранятся раздельно: `allowedValues` (кураторский список ⊆ юниверса, длины bounded),
+`defaultValue` (∈ allowedValues, инвариант проверяется на каждом write) и ЯВНЫЙ флаг
+`playerSelectable`. При selectable=false игроку отдаётся только дефолт — список НЕ режется
+«в никуда»: off-then-on возвращает кураторский список, а не движковый юниверс. Миграция
+старых файлов — read-time (вывод флага из длины списка: >1 → true, {default}-only → false),
+файл не переписывается; restore из старых снапшотов тоже мигрирует. Гейт WS/бой:
+вне-списочное значение игрока снапится сервером (клиент не авторитетен, тест есть).
 
 Серверные клэмпы боя (только сервер, клиенту зеркала формул нет): `maxStrikeDamage(zone, level)` —
 верхняя граница урона удара по формуле горла (база зоны 42 + 3,67·уровень; рост масштабирует
@@ -159,7 +172,7 @@ HTTP (роли — по cookie-сессии, `adminFromReq`):
 | --- | --- | --- |
 | `GET /cfg` | публичный | значения v/atmo/universes + apply-подсказки; **без истории** |
 | `GET /cfg/admin` | admin | значения + метаданные реестра (подписи/типы/капы) + apply + история бэкапов |
-| `POST /cfg` | admin, CSRF | патч по ключам реестра (всё-или-ничего: unknown_keys/invalid), значения И списочные мутации universes (B2 — редактирование списков разрешённых значений; тумблер «выбор игроками вкл/выкл» = сжатие списка к {default}-only, серверной disabled-модели нет) или `{reset:true}` — дефолты |
+| `POST /cfg` | admin, CSRF | патч по ключам реестра (всё-или-ничего: unknown_keys/invalid), значения И списочные мутации universes (B2+B2§4: редактирование списков разрешённых значений; тумблер «выбор игроками» = ЯВНЫЙ playerSelectable, список не режется; старое тело без флага = прежняя косвенная семантика list>1, backward-compat) или `{reset:true}` — дефолты |
 | `POST /cfg/restore` | admin | восстановить бэкап; имя обязано быть в свежем listHistory (path-guard), мусор не читается |
 | `GET /cfg/export` | admin | текущие значения одним JSON |
 | `POST /cfg/import` | admin | принять экспорт через sanitizeValues, всё или ничего |
@@ -167,17 +180,35 @@ HTTP (роли — по cookie-сессии, `adminFromReq`):
 Файл: атомарная запись + 8 вращаемых бэкапов (`DATA_DIR/cfg-backups/`). Старый v1-файл
 (atmo-only) читается с read-time миграцией — universes добираются дефолтами реестра, файл не
 перезаписывается до первого admin-POST. Дашборд `/admin` (cfg-dashboard.tsx) — только
-elyria-вариант, рендер при `role==='admin'`; комнатные конфиги (per-room atmoset) сюда не
-входят — для них нет HTTP API.
+elyria-вариант, рендер при `role==='admin'`.
+
+**F2 §6a — per-room слой (`/cfg/rooms*`, только elyria-хост):** слоеная модель
+движковые дефолты ← глобальный runtime ← ЯВНЫЙ per-room override; effective считает
+сервер (resolveEffective), explicit overrides only. Файл `DATA_DIR/room-configs.json`
+{v:1, rooms:{[id]:{[key]:value}}} — атомарная запись 0600, 8 бэкапов, corrupt →
+`.corrupt-<ts>.json` + warn + пустое состояние; restore валидирует id/ключи/значения.
+Whitelist v1: `atmo.phaseMin`, `atmo.weatherMin`, `atmo.allowPlayerAtmosphereControl`
+(universes — v2 после боевой интеграции). Роуты: `GET /cfg/rooms` (каталог с бейджами
+overrides), `GET/PUT/DELETE /cfg/rooms/:id` (слои global/override/effective; PUT — merge
+validated), `DELETE /cfg/rooms/:id/:key` (reset one), `DELETE /cfg/rooms/:id/all`
+(reset all), `GET /cfg/rooms/:id/history`, `POST /cfg/rooms/:id/restore`. Те же
+admin/CSRF/origin-гейты, что /cfg; на public-хосте — 404. Политика new-rooms-only:
+override вступает при (пере)создании объекта комнаты, живая атмосфера НЕ трогается;
+**WS-broadcast per-room конфига НЕ нужен** (F2 §3.6) — клиенты получают effective
+через якорь в `field` при создании комнаты, новых протокол-событий нет.
+Atmoset-кадры игроков гейтятся в atmo.js (per-room, молчаливый drop, существующий
+формат) и НИКОГДА не пишут room-configs.json.
 
 Клиентское зеркало реестра — `src/lib/cfg-registry.ts` (подписи/юниверсы/дефолты; формул
 клэмпа нет). Паритет «сервер == зеркало == golden» держит `test:protocol-parity`
-(`test:cfg` — 65 юнит-чеков реестра: значения, списочные мутации B2, S1-эскалация
-через стоп→make-admin→рестарт-цикл). Дашборд `/admin` (cfg-dashboard.tsx, 736) — только
-elyria-вариант, рендер при `role==='admin'`: редакторы списков разрешённых значений,
+(`test:cfg` — 80 юнит-чеков реестра: значения, §4-мутации/миграция, списочные мутации B2,
+S1-эскалация через стоп→make-admin→рестарт-цикл; F2-комнатный слой — `test:room-config`,
+69 чеков). Дашборд `/admin` (cfg-dashboard.tsx + room-config-panel.tsx) — только
+elyria-вариант, рендер при `role==='admin'`: редакторы списков разрешённых значений
+с ЯВНЫМ тумблером «выбор игроками» (§4, список сохраняется),
 предпросмотр «было → станет» с предупреждением сужения, restore/export/import;
-комнатные конфиги (per-room atmoset) сюда не входят — для них нет HTTP API, секция
-«Комнатные настройки» честно помечает глобальность правок.
+секция «Комнатные настройки» — per-room селект комнаты, слои, гейт atmoset,
+reset/restore с подтверждением.
 
 ## 7. Профили игроков (P4)
 
@@ -207,6 +238,7 @@ elyria-вариант, рендер при `role==='admin'`: редакторы 
 | `sessions.json` | `{v:1, sessions: {[token]: {accountId, createdAt, expiresAt}}}`; токен 32 hex-байта, TTL 14 дней, отзыв = удаление записи |
 | `test-cats.json` / `test-map.json` | как раньше; ключ позиций = имя персонажа |
 | `runtime-config.json` | значения whitelist-ключей (см. §6); v1-atmo-only читается миграцией |
+| `room-configs.json` | F2 §6a per-room overrides {v:1, rooms:{[id]:{[key]:value}}}; corrupt → `.corrupt-<ts>.json`, бэкапы `room-configs.backup.<ts>[-N].json` |
 | `cfg-backups/` | 8 последних версий конфига (restore по имени отсюда) |
 
 Записи атомарные (`writeFileAtomic`), JSON, один event loop — без SQLite. Зависимости из

@@ -85,13 +85,13 @@ Deploy of a PR serves both hosts `pr-<N>.abnocw.miew.ru` (grottoes) and
 | `src/lib/net/protocol.ts` | 367 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
 | `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 93 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — auth-only core: `/auth/register\|login\|logout\|me` + shared low-level helpers `apiFetch/asText/asId/ApiRow`; WS auth frames go through `auth.ts` |
 | `src/lib/net/http-profiles.ts` | 152 | Profiles catalog client: `httpProfileCatalog` (?q search, ?limit def. 24, ?cursor keyset pagination), `httpProfileById`, `httpMyProfile`, `httpPatchProfile` |
-| `src/lib/net/http-cfg.ts` | 335 | Admin cfg client: /cfg fetch wrappers (apply/reset/restore/export/import) + PURE draft/diff helpers (`draftFromSnapshot`, `cfgPatchFromDraft`, `canonByKind`, `buildCfgDiff`, `narrowingWarning`, `listIssue`, `successText`, `applyBadgeText`); React UI stays in cfg-dashboard.tsx. Split for bundle isolation: the simulator-graph donor module must not pull Elysiae HTTP routes into the grotto bundle |
-| `src/lib/net/cfg-live.ts` + `src/lib/cfg-registry.ts` | 122 + 139 | Live universes from public `GET /cfg` (one fetch per tab; registry defaults on failure; a dropped saved value snaps to DEFAULT); client mirror of the 5-key config registry (parity gate) |
+| `src/lib/net/http-cfg.ts` | 335→521 | Admin cfg client: /cfg fetch wrappers (apply/reset/restore/export/import) + F2 `/cfg/rooms*` room-fetchers (list/config/update/reset/reset-all/history/restore) + PURE draft/diff helpers (`draftFromSnapshot` carries §4 playerSelectable flags, `cfgPatchFromDraft` sends them explicitly, `canonByKind`, `buildCfgDiff` — §4 choice-aspect, `narrowingWarning`, `listIssue`, `successText`, `applyBadgeText`); React UI stays in cfg-dashboard.tsx / room-config-panel.tsx. Split for bundle isolation: the simulator-graph donor module must not pull Elysiae HTTP routes into the grotto bundle |
+| `src/lib/net/cfg-live.ts` + `src/lib/cfg-registry.ts` | 122 + 157 | Live universes from public `GET /cfg` (one fetch per tab; registry defaults on failure; a dropped saved value snaps to DEFAULT); client mirror of the 6-key config registry (5 numeric + bool atmoset gate, parity gate) |
 | `src/lib/net/modes.ts` | 163 | Client room catalogue mirroring `server/modes.js`; the grotto build contains no Elision room at all. PlayMode: hub/beer/elision/hunger — the standalone "combat" mode is retired (server aliases room code `combat` → `grot-1`). Variant hrefs/cards sit in dead IS_ELYRIA ternaries (COMBAT_HREF/HUNGER_HREF :38–:39, NAMED_ROOMS :84, MODE_COPY :117) — a dead branch dies at build |
 | `src/lib/net/move-book.ts` | 89 | Step prediction (≤1 unconfirmed). **The reference module — copy its style for new files** |
 | `src/components/players/players-catalog.tsx` | 628 | `/players` catalog (elyria build only): public cards, server-side `?q` search (300 ms debounce) + keyset pagination via `nextCursor`, `?id=` deep links, inline edit of your own card |
-| `src/components/admin/cfg-dashboard.tsx` | 736 | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies, editors for allowed-value LISTS (the «players choose» toggle = {default}-only list; NO server-side disabled model exists), was→will-become diff preview, narrowing warning, collapsible tech details, honest ok/err statuses, reset, restore by history name, export/import JSON, «Комнатные настройки» section with an honest global-scope note |
-| `server.js` + `server/*.js` | 10 + 19 | Room server: config 386 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; ADMIN_PASS fail-closed — S2; WS_MAX_PER_IP def. 8 / ROOMS_MAX def. 32 — S5), protocol 284 (canon), net 388 (HTTP host gate, per-destination Origin/CSRF B1, per-IP socket cap S5a, `/health` `clientIpMode` S4), room 460 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias, live-rooms cap → `rooms_full`), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 118, persist 134, sanitize 95, testmap 502 (fail-closed without ADMIN_PASS), world 663, modes 45, accounts 372 (S1: admin ONLY via `scripts/make-admin.mjs`; `MAX_ACCOUNTS` def. 2000), auth 538 (sessions/cookies/token matrix; host-only cookie), profiles 430 (catalog with ?q/?limit/?cursor), runtime-config 357, cfg-registry 295 (5-key whitelist), hunger 11 (skeleton) |
+| `src/components/admin/cfg-dashboard.tsx` + `room-config-panel.tsx` | 736 + — | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies (6 keys), editors for allowed-value LISTS with an EXPLICIT playerSelectable toggle (F2 §4: flip does NOT cut the list; off-then-on returns the curated list), was→will-become diff preview (incl. choice flip line), narrowing warning, collapsible tech details, honest ok/err statuses, reset, restore by history name, export/import JSON; «Комнатные настройки» section (F2 §3) — room select, layer table global/override/effective, per-key badges, atmoset gate, reset/restore with confirm |
+| `server.js` + `server/*.js` | 10 + 20 | Room server: config 386 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; ADMIN_PASS fail-closed — S2; WS_MAX_PER_IP def. 8 / ROOMS_MAX def. 32 — S5), protocol 284 (canon), net 401 (HTTP host gate, per-destination Origin/CSRF B1, per-IP socket cap S5a, `/health` `clientIpMode` S4; room-роуты /cfg/rooms* ПЕРЕД глобальным /cfg-хендлером), room 466 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias, live-rooms cap → `rooms_full`; F2: стартовый якорь atmo из per-room initialRoomAtmo), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 128 (якорь + F2 per-room гейт allowPlayerAtmosphereControl: atmoset-кадры игроков молчаливо дропаются), persist 134, sanitize 95, testmap 502 (fail-closed without ADMIN_PASS), world 663, modes 45, accounts 372 (S1: admin ONLY via `scripts/make-admin.mjs`; `MAX_ACCOUNTS` def. 2000), auth 538 (sessions/cookies/token matrix; host-only cookie), profiles 430 (catalog with ?q/?limit/?cursor), runtime-config 375, cfg-registry 431 (6-key whitelist: 5 numeric + bool atmoset gate; §4 playerSelectable), room-config 589 (F2 per-room layer: /cfg/rooms*, layers, room-configs.json), hunger 11 (skeleton) |
 
 Docs: `docs/ARCHITECTURE.md` — data flows, client↔server mirrors, THREE coordinate
 systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singleton contract.
@@ -135,9 +135,12 @@ Plus two platform rules:
    routes and must contain signs of live Elysiae; chunk links must resolve. Server-side,
    the Host class (`hostClassOf`) gates whole API zones — never mark a hidden route
    "deprecated but working" on the public site.
-7. **The config registry is a whitelist.** `server/cfg-registry.js` (5 keys) is the only
+7. **The config registry is a whitelist.** `server/cfg-registry.js` (6 keys: 5 numeric +
+   F2 bool atmoset gate) is the only
    way admin-tunable values exist; protocol constants, events, auth or frame limits are
    NOT admin-editable — do not "just add one more key" without the owner's say-so.
+   F2 per-room layer is a separate whitelist (`SUPPORTED_ROOM_KEYS` in
+   `server/room-config.js`) on top of the same registry — also explicit-only.
 
 Audit canons (Z.AI security audit 2026-11-08, follow-up waves B/C — hard rules):
 
@@ -179,7 +182,8 @@ npm run check:protocol       # doc tables == protocol registries
 npm run test:protocol-parity # client == server == golden values
 npm run check:landmarks      # doc sizes == wc -l
 npm run test:auth            # accounts, cookies/CSRF, host gate
-npm run test:cfg             # config registry (65 checks: list mutations + S1 escalation cycle)
+npm run test:cfg             # config registry (80 checks: 6 keys, §4 playerSelectable + list mutations + S1 escalation cycle)
+npm run test:room-config     # F2 per-room layer (layers, atmoset gate, persistence/restore, 69 checks)
 npm run test:cross-origin    # per-destination Origin/CSRF/CORS matrix (B1)
 npm run test:profiles        # HTTP profiles (catalog/patch)
 npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www-elyria/ (after npm run build:variants)
@@ -224,9 +228,14 @@ npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www
   `server/profiles.js` (catalog/card/`PATCH /profiles/me`).
 - **Admin config:** `server/cfg-registry.js` + `server/runtime-config.js` (routes:
   `GET /cfg` public values, `GET /cfg/admin`, `POST /cfg` (patch/reset — incl. allowed-value
-  LIST mutations, B2), `POST /cfg/restore` (name from history), `GET /cfg/export`,
+  LIST mutations + explicit `playerSelectable` flags, B2/F2 §4; old bodies without the flag
+  keep the legacy list>1 semantics), `POST /cfg/restore` (name from history), `GET /cfg/export`,
   `POST /cfg/import`; all admin ones need the admin session + Origin check) +
   `src/components/admin/cfg-dashboard.tsx`.
+  F2 per-room layer: `server/room-config.js` (`/cfg/rooms*`: layers, overrides, reset,
+  history/restore; `room-configs.json` atomic; new-rooms-only — no WS broadcast needed;
+  atmoset player frames gated per room in `server/atmo.js`, never persisted) +
+  `src/components/admin/room-config-panel.tsx`.
 - Known hand-synced mirrors WITHOUT CI coverage (check both in one PR):
   sprite whitelist — `server/config.js:314` ↔ `src/lib/sim/settings.ts:96` (31 entries
   each side); room catalogue — `server/modes.js` ↔ `src/lib/net/modes.ts` (grotto build
