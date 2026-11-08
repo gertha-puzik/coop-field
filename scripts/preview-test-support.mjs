@@ -668,6 +668,21 @@ export function makeVerifyShims(root) {
   ].join("\n");
   writeFileSync(join(fakeTools, "nslookup"), fakeNsSh + "\n");
   chmodSync(join(fakeTools, "nslookup"), 0o755);
+  // getent-шим: на linux-раннерах getent существует системно — без шима он
+  // реактивно резолвит wildcard pr-*.abnocw.miew.ru через /etc/resolv.conf,
+  // и сцены needs-dns видят «DNS есть» (ран #42434980408/#42434980453).
+  // macOS getent нет вовсе — поэтому локально сцены зелёные, CI падал.
+  // Политика та же, что у dig/nslookup: имя в FAKE_DNS_OK → 127.0.0.127,
+  // иначе пусто (needs-dns).
+  const fakeGetentSh = [
+    "#!/bin/bash",
+    'name="${@: -1}"',
+    '[ -n "${FAKE_DNS_OK:-}" ] && [ -f "$FAKE_DNS_OK" ] && grep -qx "$name" "$FAKE_DNS_OK" || exit 2',
+    'echo "127.0.0.127	$name"',
+    "exit 0",
+  ].join("\n");
+  writeFileSync(join(fakeTools, "getent"), fakeGetentSh + "\n");
+  chmodSync(join(fakeTools, "getent"), 0o755);
   const fakeCurlSh = [
     "#!/bin/bash",
     'url="${@: -1}"',
