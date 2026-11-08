@@ -8,6 +8,17 @@
  * подмножества/числа ПОВЕРХ них. Публичного админ-мета (имён бэкапов и путей)
  * здесь нет — только значения и их метаданные.
  *
+ * F2 §3.4 (мандат владелицы 2026-11-08): 6-й ключ atmo.allowPlayerAtmosphereControl —
+ * per-room boolean-гейт живых atmoset/atmo-кадров игроков. Юниверса значений у него
+ * НЕТ (bool, strict true/false); глобальный слой его НЕ принимает (scope: "room") —
+ * отсутствие per-room override = true (текущий геймплей сохраняется без миграции).
+ *
+ * F2 §4 (частичное снятие заморозки B2): у universes-ключей выбор игрока хранится
+ * ЯВНО — playerSelectable (boolean) отдельно от allowedValues (список kind) и
+ * defaultValue (default). Старые тела без playerSelectable интерпретируются по
+ * прежней косвенной семантике (список длиннее одного значения = выбор разрешён);
+ * миграция на чтении выводит флаг из списка, значения и списки не теряются.
+ *
  * Зеркало клиенту: src/lib/cfg-registry.ts (данные те же, формул клэмпа на
  * клиенте нет) — паритет списков/дефолтов/подписей держит test:protocol-parity.
  */
@@ -76,6 +87,26 @@ export const REGISTRY = deepFreeze({
     visibility: "public",
     scope: "global",
   }),
+  // F2 §3.4: per-room boolean-гейт atmoset. Юниверса значений нет (bool);  values/
+  // engineCap — null (реестровые юниверсы к bool неприменимы). Глобальный слой
+  // ключ НЕ принимает (scope: "room" отсекается в sanitizeValues) — поэтому
+  // «нет override» всегда означает true, и существующий геймплей не меняется
+  // без явного решения админа по конкретной комнате.
+  "atmo.allowPlayerAtmosphereControl": deepFreeze({
+    key: "atmo.allowPlayerAtmosphereControl",
+    label: "Игроки крутят атмосферу",
+    description:
+      "Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки» — кадры atmo/atmoset). Управление per-room: отключается на конкретную комнату; по умолчанию (без переопределения) разрешено, как сейчас.",
+    unit: "вкл/выкл",
+    kind: "bool",
+    values: null,
+    default: true,
+    engineCap: null,
+    applyPolicy: "live-gate",
+    applyHint: "Действует сразу на живую комнату: при «выкл» сервер молча отбрасывает кадры atmo/atmoset игроков; якорь суток/погоды не перезапускается.",
+    visibility: "admin-only",
+    scope: "room",
+  }),
   "universes.strikeDamage": deepFreeze({
     key: "universes.strikeDamage",
     label: "Удары: уровни урона",
@@ -127,14 +158,19 @@ export const KEYS = Object.freeze(Object.keys(REGISTRY));
 /** Легальные секции записи — производные от ключей реестра (литералов нет). */
 const SECTIONS = Object.freeze(new Set(KEYS.map((k) => k.split(".")[0])));
 
-/** Дефолты всех параметров в формате хранения (значения, не метаданные). */
+/** Дефолты всех параметров в формате хранения (значения, не метаданные).
+ *  F2 §3.4: bool-ключи живут в atmo (единственное значение true/false);
+ *  F2 §4: universes-поля несут ЯВНЫЙ playerSelectable: true (полный движковый
+ *  юниверс = выбор разрешён), чтобы миграция старых списков была выводимой. */
 export function defaultsFor() {
   const atmo = {};
   const universes = {};
   for (const def of Object.values(REGISTRY)) {
     const [sec, field] = def.key.split(".");
-    if (def.kind === "range") atmo[field] = def.default;
-    else universes[field] = { [def.kind]: [...def.values], default: def.default };
+    if (def.kind === "range" || def.kind === "bool") atmo[field] = def.default;
+    else if (def.kind === "levels" || def.kind === "tenths" || def.kind === "periods") {
+      universes[field] = { [def.kind]: [...def.values], default: def.default, playerSelectable: true };
+    }
   }
   return { v: 1, atmo, universes };
 }
@@ -154,10 +190,25 @@ function sanitizeRange(def, raw) {
 }
 
 /** Список: массив обязан быть непустым подмножеством движкового юниверса,
- * дефолт — член списка. Остальное — ошибка, «доводить» ничего не будем. */
-function sanitizeList(def, raw) {
+ * дефолт — член списка. Остальное — ошибка, «доводить» ничего не будем.
+ *
+ * F2 §4 — хранение ТРЁХ понятий раздельно (PlayerParameterConfig):
+ *   allowedValues — массив kind (кураторский список, НЕ режется при выключении
+ *     выбора), defaultValue — default (обязан входить в финальный список),
+ *     playerSelectable — boolean (строго true/false, строка/число → ошибка).
+ * Правила миграции §4.3 (только на чтении, файл не переписываем):
+ *   - в хранилище нет playerSelectable → флаг выводим из списка: >1 значения =
+ *     true, {default}-only = false (прежняя косвенная семантика дословно);
+ *   - новое тело БЕЗ playerSelectable — прежний контракт: флаг выводится из
+ *     НОВОГО списка (off = список из одного дефолта);
+ *   - тело ТОЛЬКО с playerSelectable (список/дефолт не тронуты) — флип флага
+ *     поверх сохранённых allowedValues/defaultValue: кураторский список живёт
+ *     на сервере и восстанавливается после reload (фикс «off-then-on»). */
+const deriveSelectable = (arr) => arr.length > 1;
+
+function sanitizeList(def, raw, stored) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { error: `ожидается объект { ${def.kind}: [...], default: N }` };
+    return { error: `ожидается объект { ${def.kind}: [...], default: N, playerSelectable: true|false }` };
   }
   const arr = raw[def.kind];
   if (!Array.isArray(arr) || arr.length === 0) return { error: `список ${def.kind} пуст или не массив` };
@@ -175,25 +226,79 @@ function sanitizeList(def, raw) {
   if (!Number.isFinite(Number(dvRaw)) || !seen.has(dv)) {
     return { error: "дефолт вне разрешённого списка" };
   }
-  return { value: { [def.kind]: [...seen].sort((a, b) => a - b), default: dv } };
+  const selectableRaw = raw.playerSelectable;
+  // Список материализуем ДО деривации: seen — Set (.size, не .length).
+  const list = [...seen].sort((a, b) => a - b);
+  const playerSelectable =
+    selectableRaw === undefined
+      ? /* старое тело: косвенная семантика на месте */ deriveSelectable(list)
+      : typeof selectableRaw === "boolean"
+        ? selectableRaw
+        : null;
+  if (playerSelectable === null) {
+    return { error: "playerSelectable — строго true/false" };
+  }
+  return { value: { [def.kind]: list, default: dv, playerSelectable } };
+}
+
+/** Флаг-only патч (§4): список/дефолт не тронуты — кураторские allowedValues/
+ *  default наследуются от stored, меняется только playerSelectable. */
+function sanitizeSelectableOnly(def, raw, stored) {
+  if (typeof raw.playerSelectable !== "boolean") {
+    return { error: "playerSelectable — строго true/false" };
+  }
+  const prev = stored?.[def.kind] ?? [];
+  const baseList = Array.isArray(prev) && prev.length ? [...new Set(prev.map((v) => canonOf(def, v)))].sort((a, b) => a - b) : [];
+  if (!baseList.length) return { error: `список ${def.kind} пуст или не массив` };
+  const dv = canonOf(def, stored.default);
+  if (!baseList.includes(dv)) return { error: "дефолт вне разрешённого списка" };
+  return { value: { [def.kind]: baseList, default: dv, playerSelectable: raw.playerSelectable } };
+}
+
+const canonOf = (def, v) => (def.kind === "levels" ? asInt : tenth)(v);
+
+/** Bool-ключ (F2 §3.4, юниверса значений нет): строго true/false. */
+function sanitizeBool(def, raw) {
+  if (typeof raw !== "boolean") return { error: "значение — строго true/false" };
+  return { value: raw };
 }
 
 /**
- * Прогнать патч {atmo?: {phaseMin, weatherMin}, universes?: {strikeDamage,
- * armor, arrowSpeed}} через реестр. Неизвестная секция/поле → error.unknown_keys
- * (с перечислением разрешённых), невалидное значение → error.invalid — всё или
- * ничего, частичного применения нет. base — слой под патчем (текущие значения
- * при POST /cfg, дефолты при импорте/восстановлении). v — штамп схемы, не параметр.
+ * Прогнать патч {atmo?: {...}, universes?: {...}} через реестр. Неизвестная
+ * секция/поле → error.unknown_keys (с перечислением разрешённых), невалидное
+ * значение → error.invalid — всё или ничего, частичного применения нет.
+ * base — слой под патчем (текущие значения при POST /cfg, дефолты при
+ * импорте/восстановлении). v — штамп схемы, не параметр.
+ *
+ * F2 §3.4 opts.room=true принимает scope:"room"-ключи (вызывает per-room
+ * слой); без него room-ключи считаются неизвестными для ГЛОБАЛЬНОГО слоя —
+ * глобальный файл их не хранит и POST /cfg их отвергает.
+ * F2 §4: universes-поля читаются/пишутся тройкой allowedValues/defaultValue/
+ * playerSelectable; отсутствие флага в хранилище мигрируется выводом из
+ * списка (read-time, файл не переписывается до первого admin-POST — прежний
+ * контракт дословно).
  */
-export function sanitizeValues(patch, base = defaultsFor()) {
+export function sanitizeValues(patch, base = defaultsFor(), opts = {}) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     return { error: { reason: "not_object", allowed: [...KEYS] } };
   }
-  const out = { v: 1, atmo: { ...base.atmo } };
+  // База atmo копируется МИНУС room-scoped ключи (глобальный файл их не
+  // хранит); per-room слой (opts.room) видит полный набор.
+  const out = { v: 1, atmo: {} };
+  for (const [field, val] of Object.entries(base.atmo)) {
+    const def = REGISTRY["atmo." + field];
+    if (def && def.scope === "room" && !opts.room) continue;
+    out.atmo[field] = val;
+  }
   out.universes = {};
   for (const [field, stored] of Object.entries(base.universes)) {
     const def = REGISTRY["universes." + field];
-    out.universes[field] = { [def.kind]: [...stored[def.kind]], default: stored.default };
+    // §4.3: нет явного флага в хранилище — выводим из списка (>1 значения = true)
+    const playerSelectable =
+      typeof stored.playerSelectable === "boolean"
+        ? stored.playerSelectable
+        : deriveSelectable(stored[def.kind] ?? []);
+    out.universes[field] = { [def.kind]: [...stored[def.kind]], default: stored.default, playerSelectable };
   }
   const unknown = [];
   const invalid = [];
@@ -215,14 +320,34 @@ export function sanitizeValues(patch, base = defaultsFor()) {
         unknown.push(key);
         continue;
       }
+      if (fieldDef.scope === "room" && !opts.room) {
+        unknown.push(key);
+        continue;
+      }
       if (raw === undefined) continue;
+      if (fieldDef.kind === "bool") {
+        const res = sanitizeBool(fieldDef, raw);
+        if (res.error) invalid.push({ key, error: res.error });
+        else out.atmo[field] = res.value;
+        continue;
+      }
+      if (fieldDef.kind === "range") {
+        const res = sanitizeRange(fieldDef, raw);
+        if (res.error) invalid.push({ key, error: res.error });
+        else out.atmo[field] = res.value;
+        continue;
+      }
+      // Списочные: полный патч {kind + default (+ флаг)} либо флаг-only поверх
+      // сохранённых allowedValues/defaultValue (фикс «off-then-on», §4).
+      const stored = out.universes[field];
       const res =
-        fieldDef.kind === "range"
-          ? sanitizeRange(fieldDef, raw)
-          : sanitizeList(fieldDef, raw);
+        raw && typeof raw === "object" && !Array.isArray(raw) &&
+        raw[fieldDef.kind] === undefined && raw.default === undefined &&
+        raw.playerSelectable !== undefined
+          ? sanitizeSelectableOnly(fieldDef, raw, stored)
+          : sanitizeList(fieldDef, raw, stored);
       if (res.error) invalid.push({ key, error: res.error });
-      else if (sec === "universes") out.universes[field] = res.value;
-      else out.atmo[field] = res.value;
+      else out.universes[field] = res.value;
     }
   }
   if (unknown.length) {
@@ -234,13 +359,24 @@ export function sanitizeValues(patch, base = defaultsFor()) {
   return { values: out };
 }
 
-/** Публичный блок universes: только разрешённые списки + дефолты, без меты. */
-export function universesForPublic(values = defaultsFor()) {
-  const u = values.universes;
+/** Публичный блок universes: только разрешённые списки + дефолты + ЯВНЫЙ флаг
+ * playerSelectable, без меты. F2 §4: playerView=true (публичный GET /cfg для
+ * игроков) при playerSelectable=false отдаёт только defaultValue — «игроку
+ * доступен дефолт» реализуется в самом wire-формате, кривой клиент показать
+ * выбор не может; playerView=false (admin-дашборд, export) отдаёт полный
+ * кураторский список — иначе выключение выбора стёрло бы его навсегда. */
+export function universesForPublic(values = defaultsFor(), { playerView = true } = {}) {
+  const pick = (field, kind) => {
+    const stored = values.universes[field];
+    const playerSelectable =
+      typeof stored.playerSelectable === "boolean" ? stored.playerSelectable : deriveSelectable(stored[kind] ?? []);
+    const list = playerView && playerSelectable === false ? [stored.default] : [...stored[kind]];
+    return { [kind]: list, default: stored.default, playerSelectable };
+  };
   return {
-    strikeDamage: { levels: [...u.strikeDamage.levels], default: u.strikeDamage.default },
-    armor: { tenths: [...u.armor.tenths], default: u.armor.default },
-    arrowSpeed: { periods: [...u.arrowSpeed.periods], default: u.arrowSpeed.default },
+    strikeDamage: pick("strikeDamage", "levels"),
+    armor: pick("armor", "tenths"),
+    arrowSpeed: pick("arrowSpeed", "periods"),
   };
 }
 

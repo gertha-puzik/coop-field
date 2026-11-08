@@ -96,12 +96,15 @@ function publicConfig() {
   return { v: current.v, atmo: { ...current.atmo }, universes: universesForPublic(current), apply: applyMap() };
 }
 
-/** Админ-блок: значения + история бэкапов + метаданные реестра. */
+/** Админ-блок: значения + история бэкапов + метаданные реестра. F2 §4:
+ *  админ видит ПОЛНЫЙ кураторский список (playerView: false) — выключение
+ *  выбора игроков не стирает allowedValues, повторное включение восстанавливает
+ *  список (а не весь движковый юниверс). */
 function adminConfig() {
   return {
     ok: true,
     v: current.v,
-    values: { atmo: { ...current.atmo }, universes: universesForPublic(current) },
+    values: { atmo: { ...current.atmo }, universes: universesForPublic(current, { playerView: false }) },
     registry: mutationsForAdmin(),
     apply: applyMap(),
     history: listHistory(),
@@ -109,10 +112,15 @@ function adminConfig() {
   };
 }
 
-/** Кэпсы боя для combat.js (читаются на каждом событии — on-next-event). */
+/** Кэпсы боя для combat.js (читаются на каждом событии — on-next-event).
+ *  F2 §4: капы считаются по списку, ВИДИМОМУ игроку: playerSelectable=false →
+ *  [defaultValue] — сервер продолжает отвергать выбор вне видимого списка
+ *  даже для самодельных клиентов (клиент не авторитетен), поведение старого
+ *  {default}-only-списка сохранено дословно. */
 function combatCaps() {
   const u = current.universes;
-  return { maxDamageLevel: Math.max(...u.strikeDamage.levels), armorTenths: u.armor.tenths };
+  const visible = (field, kind) => (u[field].playerSelectable === false ? [u[field].default] : u[field][kind]);
+  return { maxDamageLevel: Math.max(...visible("strikeDamage", "levels")), armorTenths: visible("armor", "tenths") };
 }
 
 function atmoLengths() {
@@ -263,13 +271,15 @@ async function handleCfgHttp(req, res) {
     return true;
   }
   // Администратор: экспорт текущих значений одним JSON (для переноса).
+  //  F2 §4: экспорт несёт полный кураторский список + явные флаги — перенос
+  //  честен в обе стороны (импорт/re-валидация на приёмнике).
   if (p === "/cfg/export" && req.method === "GET") {
     if (!requireAdmin(req, res)) return true;
     json(res, 200, {
       ok: true,
       v: current.v,
       atmo: { ...current.atmo },
-      universes: universesForPublic(current),
+      universes: universesForPublic(current, { playerView: false }),
     });
     return true;
   }
@@ -354,4 +364,12 @@ export {
   defaults,
   handleCfgHttp,
   listHistory,
+  // F2: ре-экспорт хелперов для per-room-модуля (server/room-config.js) — те же
+  // механика ответа, лимит тела и гейт admin-роли, что у /cfg-роутов; сами
+  // хелперы и формат существующих ответов НЕ изменены.
+  adminFromReq,
+  requireAdmin,
+  readJson,
+  json,
+  setCors,
 };

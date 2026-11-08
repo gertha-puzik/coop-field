@@ -15,6 +15,10 @@ import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition } from "./persist.js";
 import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
 import { requiresAccount, RETIRED_ROOMS } from "./modes.js";
+// F2 (спек §3): per-room overrides атмосферных параметров — начальный якорь
+// НОВОЙ комнаты из effective-слоёв (нет overrides → null → прежняя ленивая
+// инициализация глобальным слоем, поведение неизменно).
+import { initialRoomAtmo } from "./room-config.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
@@ -60,7 +64,9 @@ function roomOf(code) {
       rab: null,
       // Атмосфера комнаты — общая для всех: непрерывный цикл суток + погода.
       // Инициализируется лениво (atmoState): якорь уходит в снапшоте и событиями.
-      atmo: null,
+      // F2: у комнаты с admin-override atmo.* стартовый якорь строится сразу
+      // из effective (движок ← глобал ← комната); без overrides — null.
+      atmo: initialRoomAtmo(key),
     });
   }
   return rooms.get(key);

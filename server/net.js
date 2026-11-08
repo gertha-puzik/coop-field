@@ -27,6 +27,9 @@ import { setMap, testMap, MAP_FILE, saveTestMap } from "./testmap.js";
 import { flushCatBook } from "./persist.js";
 import { handleAuthHttp, handleAuthFrame, handshake, flushAuth, COOKIE } from "./auth.js";
 import { handleCfgHttp } from "./runtime-config.js";
+// F2: per-room admin-роуты (те же гейты /cfg-зоны: роль admin на сервере,
+// host-гейт public ниже прячет /cfg/rooms* целиком, CSRF-щит — общий apiZone).
+import { handleRoomCfgHttp } from "./room-config.js";
 import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
@@ -190,6 +193,10 @@ export function startServer() {
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
+        // F2: per-room конфиг — admin-маршрут, на public-фронте его нет
+        // (как /cfg/admin): и чтение, и запись отвечают «не существует».
+        p === "/cfg/rooms" ||
+        p.startsWith("/cfg/rooms/") ||
         (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
       if (hidden) {
         notFoundJson(res);
@@ -250,11 +257,17 @@ export function startServer() {
     }
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
-      return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
-        if (cfgHit) return;
-        return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
-          if (profHit) return;
-          serveStatic(req, res, url);
+      // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ: глобальный
+      // /cfg-хендлер заявляет всё /cfg-подпространство (fetch фолбэк-404),
+      // а room-роуты отвечают false на всё, что не /cfg/rooms*.
+      return Promise.resolve(handleRoomCfgHttp(req, res)).then((roomCfgHit) => {
+        if (roomCfgHit) return;
+        return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
+          if (cfgHit) return;
+          return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
+            if (profHit) return;
+            serveStatic(req, res, url);
+          });
         });
       });
     }).catch(() => {
