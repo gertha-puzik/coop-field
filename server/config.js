@@ -3,7 +3,8 @@
  * Origin whitelist, payload/frame caps and every static registry a domain
  * module needs (palette, sprite whitelist, spawn cells, object dims). Values
  * are singletons for the whole process; nothing here is ever reassigned after
- * boot. Owner of ADMIN_PASS (legacy default; override via env) and DATA_DIR.
+ * boot. Owner of ADMIN_PASS (env-only с S2: устранённый дефолт, fail-closed)
+ * and DATA_DIR.
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +43,10 @@ function isAllowedOrigin(origin) {
   try {
     const { hostname, protocol } = new URL(origin);
     if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return true;
-    return protocol === "https:" && /^coop-field(-[a-z0-9-]+)?\.vercel\.app$/.test(hostname);
+    // S3 (аудит Z.AI 2026-11-08): легаси-шаблон *.vercel.app УДАЛЁН из любой
+    // ветки — хосты превью/прода перечисляются ТОЧНО через env ALLOWED_ORIGINS
+    // (запасной выход для явных строк) и свои списки классов хостов выше.
+    return false;
   } catch {
     return false;
   }
@@ -339,9 +343,26 @@ const OBJECT_SCALE_MAX = 3.5;
  * логическую клетку — ближайшую проходимую — для ударов и препятствий).
  */
 const TEST_ROOM = 'test';
-/** Пароль редактора локации (событие setmap). */
-// legacy default; смена значения — через env ADMIN_PASS на VPS (см. аудит SRV-01), решение заказчицы 2026-11-05: пока оставить.
-const ADMIN_PASS = process.env.ADMIN_PASS || '1946';
+/** Пароль редактора локации (событие setmap). S2 (аудит Z.AI 2026-11-08):
+ * устранивший дефолт '1946' — теперь fail-closed: БЕЗ env ADMIN_PASS парольный
+ * путь setmap мёртв (обработчик в server/testmap.js отвечает «редактор
+ * локации закрыт»), с env — прежний проход. На проде значение задаёт
+ * systemd-юнит (deploy/vps/coop-field.service). Тесты передают env явно. */
+const ADMIN_PASS = process.env.ADMIN_PASS || null;
+
+/** S5 (аудит Z.AI 2026-11-08): ресурсные лимиты процесса против исчерпания
+ * сокетов/памяти гостевым флудом. WS_MAX_PER_IP — потолок ОДНОВРЕМЕННЫХ
+ * WS-соединений с одного клиентского IP (сверх — close с info
+ * 'too_many_sockets', server/net.js); ROOMS_MAX — потолок ЖИВЫХ (занятых
+ * игроками) комнат на процесс, новая комната сверх даёт noplace 'rooms_full'
+ * (server/room.js), существующим комнатам и алиасам RETIRED_ROOMS лимит
+ * не мешает. Формат: целое >= 1; мусор/пусто → дефолт. */
+const intEnv = (name, def) => {
+  const n = parseInt(process.env[name] || "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : def;
+};
+const WS_MAX_PER_IP = intEnv("WS_MAX_PER_IP", 8);
+const ROOMS_MAX = intEnv("ROOMS_MAX", 32);
 /** Конфиг локации «теста» живёт в data/test-map.json рядом с server.js: правится
  *  редактором локации и переживает перезапуски (apply.sh копирует только server.js
  *  и package*.json — каталог data не трогает). Переопределяется переменной
@@ -361,5 +382,5 @@ export {
   STRIKE_COOLDOWN_MS,
   // location objects (sanitize + geometry)
   OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
-  ADMIN_PASS, DATA_DIR,
+  ADMIN_PASS, DATA_DIR, WS_MAX_PER_IP, ROOMS_MAX,
 };

@@ -1094,8 +1094,13 @@ function handshake(origin) {
 const originCases = [
   ["https://abnocw.89-232-184-77.sslip.io", true],
   ["https://coop.89-232-184-77.sslip.io", true],
-  ["https://coop-field.vercel.app", true],
-  ["https://coop-field-git-foo.vercel.app", true],
+  // S3 (аудит Z.AI 2026-11-08): легаси-шаблон *.vercel.app удалён из
+  // server/config.js isAllowedOrigin — vercel-хосты не «свои» ни в одном
+  // классе; осознанно проверяем теперь ОТКАЗ (смысл теста — «чужой origin
+  // не пускают», а не конкретный vercel-хост). Свои хосты перечисляются
+  // точно через env ALLOWED_ORIGINS на сервере.
+  ["https://coop-field.vercel.app", false],
+  ["https://coop-field-git-foo.vercel.app", false],
   ["https://evil.example", false],
 ];
 for (const [origin, expectOpen] of originCases) {

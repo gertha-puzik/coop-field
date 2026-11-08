@@ -439,6 +439,14 @@ function setMap(ws, payload = {}) {
     return;
   }
   ws.lastSetmap = now;
+  // S2 (аудит Z.AI): fail-closed — без env ADMIN_PASS парольный путь мёртв.
+  // Информативный отказ (не «неверный пароль»): любой кадр, даже с прежним
+  // устранённым дефолтом '1946', ничего не применяет. Роль admin (назначается
+  // CLI make-admin) по-прежнему открывает редактор без пароля.
+  if (!ADMIN_PASS) {
+    send(ws, EV.INFO, 'Редактор: редактор локации закрыт — пароль не задан на сервере (ADMIN_PASS).');
+    return;
+  }
   const asAdmin = ws.account && ws.account.role === 'admin';
   if (!asAdmin && String(payload?.pass || '') !== ADMIN_PASS) {
     send(ws, EV.INFO, 'Редактор: неверный пароль.');
