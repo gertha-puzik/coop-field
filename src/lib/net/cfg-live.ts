@@ -2,20 +2,29 @@
  * Живые universes-параметры для UI (P3, спек §6A): какие уровни урона/брони
  * и периоды стрелы игроку предлагать. Ценности — публичный GET /cfg (P2),
  * подписи/юниверс/дефолты — зеркало ./../../cfg-registry.ts (импортируем,
- * не дублируем). Ответ кэшируется на вкладку: два потребителя (экран входа
- * и панель настроек) ходят одним fetch-ом.
+ * не дублируем). Ответ кэшируется на вкладку: потребители (экран входа,
+ * панель настроек) ходят одним fetch-ом.
+ *
+ * Мандат владелицы 2026-11-08: сюда же приезжает ЖИВАЯ кривая брони
+ * (реестровый ключ combat.armorCurve, блок combat публичного GET /cfg —
+ * игроки видят прогноз урона на HUD, ключ не приватный). Кривая проходит
+ * валидацию armorCurveOrCanon: битая/отсутствующая — канон W3, сборка
+ * безопасна при оффлайне.
  *
  * Формат GET /cfg (server/runtime-config.js через cfg-registry):
  *   { ok, v, atmo:{phaseMin,weatherMin},
  *     universes: { strikeDamage:{levels,default}, armor:{tenths,default},
- *                 arrowSpeed:{periods,default} } }
+ *                 arrowSpeed:{periods,default} },
+ *     combat: { armorCurve: [[броня, урон%], …] } }
  * Любая битая часть молча падает в реестровые дефолты: UI не ломается, если
- * старый сервер не отдал universes-блок.
+ * старый сервер не отдал universes/combat-блок.
  */
 import { cfgDefaults } from "@/lib/cfg-registry";
+import { armorCurveOrCanon, type ArmorCurve } from "@/lib/sim/armor-curve";
 import { httpOrigin } from "./coop";
 
-/** Universes в терминах UI: уровни урона/брони (целые), периоды стрелы, дефолты. */
+/** Universes в терминах UI: уровни урона/брони (целые), периоды стрелы, дефолты,
+ *  живая кривая брони (для прогноза урона). */
 export type Universes = {
   /** Разрешённые уровни урона (0–9). */
   damage: number[];
@@ -23,6 +32,8 @@ export type Universes = {
   armor: number[];
   /** Разрешённые периоды оборота стрелы, сек. */
   arrowPeriods: number[];
+  /** Живая кривая брони (мандат 2026-11-08): пары [броня, урон%]. */
+  armorCurve: ArmorCurve;
   damageDefault: number;
   armorDefault: number;
   arrowDefault: number;
@@ -39,6 +50,7 @@ export function universesDefaults(): Universes {
     damage: (dmg.levels ?? [0]).map(num),
     armor: (arm.tenths ?? [0]).map((t) => Math.round(num(t) * 10)),
     arrowPeriods: (arrow.periods ?? []).map(num),
+    armorCurve: armorCurveOrCanon(def.combat?.armorCurve),
     damageDefault: num(dmg.default),
     armorDefault: Math.round(num(arm.default) * 10),
     arrowDefault: num(arrow.default),
@@ -59,6 +71,9 @@ function parseUniverses(raw: unknown): Universes {
   const strike = u.strikeDamage as { levels?: unknown; default?: unknown } | undefined;
   const armor = u.armor as { tenths?: unknown; default?: unknown } | undefined;
   const arrow = u.arrowSpeed as { periods?: unknown; default?: unknown } | undefined;
+  // Кривая брони: блок combat того же ответа (мандат 2026-11-08) —
+  // валидация общая (armorCurveOrCanon), битое молча = канон.
+  const combatBlock = (raw as { combat?: { armorCurve?: unknown } }).combat;
   const strikeLevels = list(strike?.levels);
   const armorTenths = list(armor?.tenths);
   const arrowPeriods = list(arrow?.periods);
@@ -66,6 +81,7 @@ function parseUniverses(raw: unknown): Universes {
     damage: strikeLevels.length ? strikeLevels : def.damage,
     armor: armorTenths.length ? armorTenths.map((t) => Math.round(t * 10)) : def.armor,
     arrowPeriods: arrowPeriods.length ? arrowPeriods : def.arrowPeriods,
+    armorCurve: armorCurveOrCanon(combatBlock?.armorCurve),
     damageDefault: Number.isFinite(num(strike?.default)) ? num(strike?.default) : def.damageDefault,
     armorDefault: Number.isFinite(num(armor?.default)) ? Math.round(num(armor?.default) * 10) : def.armorDefault,
     arrowDefault: Number.isFinite(num(arrow?.default)) ? num(arrow?.default) : def.arrowDefault,

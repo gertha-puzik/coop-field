@@ -23,7 +23,7 @@
  *
  * Запуск: node scripts/test-cfg-registry.mjs (npm-раннер: npm run test:cfg).
  */
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -51,8 +51,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------- Юнит: реестр (без сети) ---------- */
 check(
   JSON.stringify(reg.KEYS) ===
-    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "atmo.playerControl", "atmo.allowPlayerAtmosphereControl", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
-  "unit: 7 ключей реестра в каноническом порядке (мастер-гейт atmoset сразу после погоды, потом per-room гейт, мандат владелицы 2026-11-08)",
+    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "atmo.playerControl", "atmo.allowPlayerAtmosphereControl", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed", "combat.armorCurve"]),
+  "unit: 8 ключей реестра в каноническом порядке (master-гейт atmoset после погоды, потом per-room гейт — мандат 2026-11-08; points-кривая брони в хвосте)",
 );
 const defs = reg.defaultsFor();
 check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12 && defs.atmo.playerControl === true && defs.atmo.allowPlayerAtmosphereControl === true, "unit: дефолтальные длительности 7/12; оба гейта atmoset default=true (прежний геймплей без миграции)");
@@ -70,7 +70,7 @@ check(
   unknown.error?.reason === "unknown_keys" && JSON.stringify(unknown.error.unknown) === JSON.stringify(["marja", "atmo.marja"]),
   "unit: неизвестная секция/поле → unknown_keys",
 );
-check(unknown.error?.allowed?.length === 7, "unit: отказ перечисляет разрешённые ключи (полный список, 7 шт)");
+check(unknown.error?.allowed?.length === 8, "unit: отказ перечисляет разрешённые ключи (полный список, 8 шт)");
 const badLevel = reg.sanitizeValues({ universes: { strikeDamage: { levels: [0, 27], default: 0 } } });
 check(badLevel.error?.reason === "invalid" && badLevel.error.invalid[0].key === "universes.strikeDamage", "unit: уровень вне движкового юниверса → invalid");
 const emptyList = reg.sanitizeValues({ universes: { armor: { tenths: [], default: 0 } } });
@@ -111,6 +111,42 @@ check(
 );
 const roomBadBool = reg.sanitizeValues({ atmo: { allowPlayerAtmosphereControl: "выкл" } }, reg.defaultsFor(), { room: true });
 check(roomBadBool.error?.reason === "invalid", "unit: гейт atmoset — строго true/false (строка → invalid)");
+
+/* ---------- Юнит: кривая брони combat.armorCurve (мандат владелицы 2026-11-08) ----------
+ * Дефолт = канон W3 (ARMOR_CURVE из protocol.js — замеры владелицы); валидатор
+ * жёсткий — только отказ с reason, «доводить» кривую нельзя (по ней считается
+ * урон живых ударов). Здесь же fail-safe armorCurveFor: мусор → канон W3. */
+const proto = await import("../server/protocol.js");
+const canonCurve = proto.ARMOR_CURVE.map((p) => [p[0], p[1]]);
+check(
+  JSON.stringify(defs.combat.armorCurve) === JSON.stringify(canonCurve),
+  "unit: дефолт кривой брони = канон W3 (7 замеров владелицы, побайтово ARMOR_CURVE)",
+);
+const curveOk = reg.sanitizeValues({ combat: { armorCurve: [[0.1, 35], [0.45, 30], [0.9, 20]] } }).values;
+check(
+  JSON.stringify(curveOk.combat.armorCurve) === JSON.stringify([[0.1, 35], [0.45, 30], [0.9, 20]]),
+  "unit: отсортированная points-кривая принимается как есть (клиент сортирует сам, сервер только валидирует)",
+);
+const curveOne = reg.sanitizeValues({ combat: { armorCurve: [[0.2, 30]] } });
+check(curveOne.error?.reason === "invalid", "unit: кривая < 2 точек → invalid");
+const curveMany = reg.sanitizeValues({ combat: { armorCurve: Array.from({ length: 17 }, (_, i) => [i * 0.05, 55 - i]) } });
+check(curveMany.error?.reason === "invalid", "unit: кривая > 16 точек → invalid");
+const curveUnsorted = reg.sanitizeValues({ combat: { armorCurve: [[0.2, 30], [0.9, 20], [0.1, 35]] } });
+check(curveUnsorted.error?.reason === "invalid", "unit: несортированный x (0,2 < 0,9 > 0,1) → invalid без доводки");
+const curveDup = reg.sanitizeValues({ combat: { armorCurve: [[0.1, 35], [0.1, 30]] } });
+check(curveDup.error?.reason === "invalid", "unit: дубликат x 0,1 → invalid");
+const curveXOut = reg.sanitizeValues({ combat: { armorCurve: [[0.95, 20], [0.1, 35]] } });
+check(curveXOut.error?.reason === "invalid", "unit: x вне [0; 0,9] → invalid");
+const curveYOut = reg.sanitizeValues({ combat: { armorCurve: [[0.1, 35], [0.9, 61]] } });
+check(curveYOut.error?.reason === "invalid", "unit: урон% вне [5; 60] → invalid");
+const curveGarbage = reg.sanitizeValues({ combat: { armorCurve: [["ноль", 35], [0.1, "тридцать"]] } });
+check(curveGarbage.error?.reason === "invalid", "unit: не-числа в точках → invalid");
+const curveRise = reg.sanitizeValues({ combat: { armorCurve: [[0.1, 20], [0.2, 30]] } });
+check(curveRise.error?.reason === "invalid", "unit: урон% растёт по кривой защиты → invalid (кривая не усиливает урон)");
+const canonBack = reg.armorCurveFor({ combat: { armorCurve: [["мусор"]] } });
+check(JSON.stringify(canonBack) === JSON.stringify(canonCurve), "unit: fail-safe armorCurveFor — битая кривая → канон W3, не фантазия");
+const canonAbsent = reg.armorCurveFor({});
+check(JSON.stringify(canonAbsent) === JSON.stringify(canonCurve), "unit: armorCurveFor без значения → канон W3 (дефолт реестра)");
 
 /* ---------- HTTP: sandbox со старым atmo-only файлом ---------- */
 mkdirSync(DATA, { recursive: true });
@@ -277,6 +313,11 @@ try {
 
   const adminCfg = await httpJson("/cfg/admin", { token: adminTok });
   check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 7, "cfg: GET /cfg/admin отдаёт метаданные реестра (7 параметров)");
+  check(
+    adminCfg.json?.registry?.["combat.armorCurve"]?.kind === "points" &&
+      JSON.stringify(adminCfg.json?.values?.combat?.armorCurve) === JSON.stringify(canonCurve),
+    "cfg: админ-снапшот несёт kind points и канон W3 в values.combat (дефолт-состояние)",
+  );
   check(Array.isArray(adminCfg.json?.history) && adminCfg.json.history.length >= 1, "cfg: админ видит историю бэкапов");
   const hist = adminCfg.json.history;
   // Самый старый бэкап — снимок засеянного старого файла ( rotated at first POST).
@@ -287,6 +328,51 @@ try {
   check(restored.status === 200 && restored.json?.restored === oldest && restored.json?.atmo?.phaseMin === 5, "cfg: restore по имени из истории вернул phaseMin 5");
   check(restored.json?.universes?.armor?.tenths?.length === 10 && restored.json?.universes?.armor?.playerSelectable === true, "cfg: restore старого формата восстанавливает universes дефолтами (миграция, флаг выведен из списка = true)");
   check(restored.json?.universes?.arrowSpeed?.playerSelectable === false && JSON.stringify(restored.json?.universes?.arrowSpeed?.periods) === "[5]", "cfg: restore наследует legacy-снапшот [5]-only стрелы без резетов (мигрировано playerSelectable=false)");
+
+  // (д′) Кривая брони combat.armorCurve (мандат владелицы 2026-11-08):
+  // POST points-кривой → публичный GET /cfg несёт её игрокам (канал cfg-live) →
+  // серверный расчёт удара реально идёт по новой кривой (живой стенд ниже),
+  // отказные кривые → 400 без доводки, канон в файле не трогается.
+  const curveHttpPost = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: [[0, 40], [0.5, 20], [0.9, 5]] } }, token: adminTok });
+  check(
+    curveHttpPost.status === 200 && JSON.stringify(curveHttpPost.json?.combat?.armorCurve) === JSON.stringify([[0, 40], [0.5, 20], [0.9, 5]]),
+    "cfg-кривая: POST 3-точечной кривой принят и отражён в ответе",
+  );
+  const curvePub = await httpJson("/cfg");
+  check(
+    JSON.stringify(curvePub.json?.combat?.armorCurve) === JSON.stringify([[0, 40], [0.5, 20], [0.9, 5]]),
+    "cfg-кривая: публичный GET /cfg отдаёт кривую игрокам (HUD-прогноз по ней же)",
+  );
+  const curveHttpBad = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: [[0.5, 20], [0.1, 35]] } }, token: adminTok });
+  check(curveHttpBad.status === 400 && curveHttpBad.json?.reason === "invalid", "cfg-кривая: несортированный x в POST → 400 invalid (валидатор не доводит)");
+  const curveHttpDup = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: [[0.1, 35], [0.1, 30]] } }, token: adminTok });
+  check(curveHttpDup.status === 400 && curveHttpDup.json?.reason === "invalid", "cfg-кривая: дубликат x в POST → 400 invalid");
+  const curveHttpFew = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: [[0.1, 35]] } }, token: adminTok });
+  check(curveHttpFew.status === 400 && curveHttpFew.json?.reason === "invalid", "cfg-кривая: 1 точка в POST → 400 invalid");
+  const curveHttpMany = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: Array.from({ length: 17 }, (_, i) => [i * 0.05, 55 - i]) } }, token: adminTok });
+  check(curveHttpMany.status === 400 && curveHttpMany.json?.reason === "invalid", "cfg-кривая: 17 точек в POST → 400 invalid");
+  const curveHttpRise = await httpJson("/cfg", { method: "POST", body: { combat: { armorCurve: [[0.1, 20], [0.2, 30]] } }, token: adminTok });
+  check(curveHttpRise.status === 400 && curveHttpRise.json?.reason === "invalid", "cfg-кривая: растущий урон% в POST → 400 invalid");
+  const curveHttpStill = await httpJson("/cfg");
+  check(
+    JSON.stringify(curveHttpStill.json?.combat?.armorCurve) === JSON.stringify([[0, 40], [0.5, 20], [0.9, 5]]),
+    "cfg-кривая: после отказов кривая НЕ изменилась (всё или ничего)",
+  );
+
+  // Живой стенд расчёта удара: СВЕЖИЙ процесс серверных модулей читает
+  // runtime-config (файл с POST-нутой кривой) и считает armorMultiplier.
+  // Кривая [[0,40],[0.5,20],[0.9,5]]: урон% при броне 0,45 = 40 + (20−40)·(0,45/0,5)
+  // = 22 → множитель 22/40 = 0,55 (первая точка — масштаб, её урон% = 100%).
+  const stand = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", 'const m = await import("./server/combat.js"); console.log(m.armorMultiplier(0.45));'],
+    { cwd: ROOT, encoding: "utf8", env: { ...process.env, DATA_DIR: DATA } },
+  );
+  const standMul = Number(String(stand.stdout || "").trim());
+  check(
+    stand.status === 0 && Math.abs(standMul - 0.55) < 1e-9,
+    "cfg-кривая: серверный armorMultiplier(0,45) = 0,55 по POST-нутой кривой (живой расчёт удара), не по канону",
+  );
 
   // (е) Reset.
   const resetRes = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });

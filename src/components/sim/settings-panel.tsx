@@ -14,11 +14,11 @@ import {
   SPRITE_GROUPS,
   WEATHERS,
   WEATHER_LABEL,
-  armorLevelMultiplier,
   damageLevelLabel,
   throatDamageFor,
   wrap360,
 } from '@/lib/sim/settings';
+import { armorLevelMultiplierOn } from '@/lib/sim/armor-curve';
 import type { CoopAtmo } from '@/lib/net/coop';
 import { GertaHandbook } from './gerta-handbook';
 import { loadUniverses, snapPeriodToAllowed, universesNow, type Universes } from '@/lib/net/cfg-live';
@@ -1030,7 +1030,7 @@ export function SettingsPanel(props: Props) {
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <span className="text-[11px] font-medium text-[var(--sim-text-soft)]">Броня — готовые пресеты:</span>
             <span className="text-[10px] text-[var(--sim-text-faint)]">
-              урон по вам проходит: {Math.round(armorLevelMultiplier(s.combat.armorLevel) * 100)}%
+              урон по вам проходит: {Math.round(armorLevelMultiplierOn(universes.armorCurve, s.combat.armorLevel) * 100)}%
             </span>
           </div>
           <div className="flex flex-wrap gap-1">
@@ -1054,8 +1054,8 @@ export function SettingsPanel(props: Props) {
             })}
           </div>
           <div className="mt-1 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-            Броня режет получаемый урон по замерам владельца: 0,0 — проходит весь урон, 0,8 — половина,
-            0,9 — {Math.round(armorLevelMultiplier(9) * 100)}%. Режет любой входящий удар, включая хвост:
+            Броня режет получаемый урон по кривой сервера: 0,0 — проходит весь урон, а при 0,9 через вас идёт{' '}
+            {Math.round(armorLevelMultiplierOn(universes.armorCurve, 9) * 100)}%. Режет любой входящий удар, включая хвост:
             блок хвост не ловит, а броня — режет.
           </div>
         </div>

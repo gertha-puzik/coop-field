@@ -12,6 +12,7 @@
  */
 import { httpOrigin } from "./coop";
 import { apiFetch, asText, type ApiRow } from "./http-auth";
+import { armorCurveOrCanon, type ArmorCurve } from "@/lib/sim/armor-curve";
 
 /** Мета ключа реестра (зеркало cfg-registry, сервер отдаёт всю подпись). */
 export type CfgFieldMeta = {
@@ -22,7 +23,11 @@ export type CfgFieldMeta = {
   kind: string;
   /** null — у bool-ключа (гейт atmoset F2 §3.4) юниверса значений нет. */
   values: number[] | { min: number; max: number; step: number } | null;
-  default: number;
+  /** Число; у гейта atmoset — 1/0; у kind points — defaultValue-кривая
+   *  (канон W3 для combat.armorCurve, мандат владелицы 2026-11-08). */
+  default: number | number[][];
+  /** Границы точек [x, y] — только у kind points. */
+  points?: { xMin: number; xMax: number; xStep: number; yMin: number; yMax: number };
   applyPolicy: string;
   applyHint: string;
   /** «public» — параметр виден игрокам; «global» — охват (не per-room). */
@@ -42,7 +47,11 @@ export type CfgUniversesValues = {
 
 export type CfgAdminSnapshot = {
   v: number;
-  values: { atmo: Record<string, number>; universes: Record<string, CfgUniversesValues> };
+  values: {
+    atmo: Record<string, number>;
+    universes: Record<string, CfgUniversesValues>;
+    combat: { armorCurve: ArmorCurve };
+  };
   registry: Record<string, CfgFieldMeta>;
   apply: Record<string, string>;
   history: string[];
@@ -76,7 +85,20 @@ const metaOf = (raw: unknown): CfgFieldMeta | null => {
       : null; // bool-ключ (гейт atmoset F2 §3.4): юниверса нет
   const label = asText(row.label);
   const key = asText(row.key);
+  // kind points: default — канон-кривая (массив пар), не число; границы
+  // осей приезжают отдельным полем points.
+  const isPoints = asText(row.kind) === "points";
+  const defaultCurve = isPoints && Array.isArray(row.default)
+    ? (row.default as unknown[]).filter(
+        (p): p is [number, number] =>
+          Array.isArray(p) &&
+          p.length === 2 &&
+          Number.isFinite(Number(p[0])) &&
+          Number.isFinite(Number(p[1])),
+      ) as number[][]
+    : undefined;
   if (!key || !label || (!isBoolGate && values === null && !Array.isArray(row.engineCap))) return null;
+  const pts = row.points && typeof row.points === "object" ? (row.points as ApiRow) : null;
   return {
     key,
     label,
@@ -85,7 +107,16 @@ const metaOf = (raw: unknown): CfgFieldMeta | null => {
     kind: asText(row.kind),
     // Гейт atmoset (bool): default сохраняем как 1/0-число; UI тракует как вкл/выкл.
     values: isBoolGate ? null : values,
-    default: isBoolGate ? (row.default ? 1 : 0) : Number(row.default),
+    default: isBoolGate ? (row.default ? 1 : 0) : defaultCurve ?? Number(row.default),
+    points: pts
+      ? {
+          xMin: Number(pts.xMin),
+          xMax: Number(pts.xMax),
+          xStep: Number(pts.xStep) || 0.01,
+          yMin: Number(pts.yMin),
+          yMax: Number(pts.yMax),
+        }
+      : undefined,
     applyPolicy: asText(row.applyPolicy),
     applyHint: asText(row.applyHint),
     visibility: asText(row.visibility),
@@ -94,7 +125,7 @@ const metaOf = (raw: unknown): CfgFieldMeta | null => {
 };
 
 function parseAdminSnapshot(row: ApiRow): CfgAdminSnapshot | null {
-  const values = row.values as { atmo?: unknown; universes?: unknown } | undefined;
+  const values = row.values as { atmo?: unknown; universes?: unknown; combat?: unknown } | undefined;
   if (!values || typeof values !== "object") return null;
   const atmoNum: Record<string, number> = {};
   for (const [k, v] of Object.entries((values.atmo as Record<string, unknown>) || {})) {
@@ -120,10 +151,11 @@ function parseAdminSnapshot(row: ApiRow): CfgAdminSnapshot | null {
     const meta = metaOf(raw);
     if (meta) registry[k] = meta;
   }
+  const combatRaw = (values.combat as { armorCurve?: unknown } | undefined) || undefined;
   const history = Array.isArray(row.history) ? (row.history as unknown[]).filter((n): n is string => typeof n === "string") : [];
   return {
     v: Number(row.v) || 1,
-    values: { atmo: atmoNum, universes },
+    values: { atmo: atmoNum, universes, combat: { armorCurve: armorCurveOrCanon(combatRaw?.armorCurve) } },
     registry,
     apply: asStrMap(row.apply),
     history,
@@ -136,7 +168,8 @@ function parseAdminSnapshot(row: ApiRow): CfgAdminSnapshot | null {
  * серверную asInt/tenth из cfg-registry.js, диффы и статусы — honest-семантика
  * applyPolicy (спек §4). Реакта здесь нет — только значения и строки. */
 
-/** Черновик дашборда: значения atmo, разрешённые списки юниверсов и их дефолты. */
+/** Черновик дашборда: значения atmo, разрешённые списки юниверсов и их дефолты,
+ *  кривые kind points (мандат владелицы 2026-11-08: combat.armorCurve). */
 export type CfgDraft = {
   atmo: Record<string, number>;
   defaults: Record<string, number>;
@@ -145,6 +178,8 @@ export type CfgDraft = {
    *  Выключение НЕ режет список: allowedValues живёт на сервере, повторное
    *  включение возвращает кураторский список (а не весь движковый юниверс). */
   selectable: Record<string, boolean>;
+  /** Кривые kind points (уже отсортированы/canonизированы normalizePoints). */
+  points: Record<string, number[][]>;
 };
 
 /** Диф по одному ключу реестра — для предпросмотра «было → станет». */
@@ -168,11 +203,19 @@ export type CfgFieldDiff = {
   choice?: { before: boolean; after: boolean; kept: number };
   /** Глобальный bool-ключ (master-гейт atmoset): «разрешено/запрещено». */
   bool?: { before: boolean; after: boolean };
+  /** kind points: сколько точек добавилось/убавилось (по x). */
+  curve?: {
+    before: number[][];
+    after: number[][];
+    added: number[];
+    removed: number[];
+  };
 };
 
 /** Черновик из админ-снапшота: значения сервера, готовые к редактированию.
  *  Списки — ПОЛНЫЕ кураторские (playerView=false), флаг выбора — явный
- *  (§4.3: старый файл без флага мигрируется выводом из списка). */
+ *  (§4.3: старый файл без флага мигрируется выводом из списка).
+ *  Кривые points — из блока combat (armorCurveOrCanon уже отфильтровал мусор). */
 export function draftFromSnapshot(snap: CfgAdminSnapshot): CfgDraft {
   const atmo: Record<string, number> = { ...snap.values.atmo };
   const defaults: Record<string, number> = {};
@@ -184,27 +227,88 @@ export function draftFromSnapshot(snap: CfgAdminSnapshot): CfgDraft {
     lists[field] = list;
     selectable[field] = typeof val.playerSelectable === "boolean" ? val.playerSelectable : list.length > 1;
   }
-  return { atmo, defaults, lists, selectable };
+  const points: Record<string, number[][]> = {};
+  for (const def of Object.values(snap.registry)) {
+    if (def.kind !== "points") continue;
+    const [field] = def.key.split(".").slice(1);
+    points[field] = normalizePoints(
+      ((snap.values.combat as unknown) as Record<string, unknown>)[field],
+      def.points,
+    ) ??
+      (Array.isArray(def.default) ? (def.default as number[][]).map((p) => [...p]) : []);
+  }
+  return { atmo, defaults, lists, selectable, points };
+}
+
+/** Канонизация точек кривой ПО ХОДУ РЕДАКТИРОВАНИЯ (сервер валидирует всё
+ *  равно — это UX-зеркало валидатора sanitizePoints): числа к двум знакам,
+ *  сортировка по x («сортируем сами при отправке»), мусорные строки
+ *  отбрасываются (вход ещё не набран). Возвращает null, если точек нет. */
+export function normalizePoints(raw: unknown, bounds?: CfgFieldMeta["points"]): number[][] | null {
+  if (!Array.isArray(raw)) return null;
+  const b = bounds;
+  const pts: number[][] = [];
+  for (const item of raw) {
+    if (!Array.isArray(item)) continue;
+    const x = Number(item[0]);
+    const y = Number(item[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const rx = Math.round(x * 100) / 100;
+    const ry = Math.round(y * 100) / 100;
+    if (b && (rx < b.xMin || rx > b.xMax || ry < b.yMin || ry > b.yMax)) continue;
+    if (!pts.some((p) => p[0] === rx)) pts.push([rx, ry]);
+    else {
+      const hit = pts.find((p) => p[0] === rx);
+      if (hit) hit[1] = ry;
+    }
+  }
+  pts.sort((p, q) => p[0] - q[0]);
+  return pts.length ? pts : null;
+}
+
+/** Валидация у поля (§4-образец listIssue): правила сервера для kind points —
+ *  2..16 точек, x в границах и строго возрастает (после normalizePoints дубли
+ *  уже сняты), y в границах и не растёт. null = кривая готова к отправке. */
+export function curveIssue(points: number[][] | undefined, meta: CfgFieldMeta): string | null {
+  const b = meta.points ?? { xMin: 0, xMax: 0.9, xStep: 0.01, yMin: 5, yMax: 60 };
+  const countDef = meta.values && !Array.isArray(meta.values) ? meta.values : { min: 2, max: 16, step: 1 };
+  if (!Array.isArray(points) || !points.length) return 'Кривая пуста — нужны хотя бы две точки.';
+  if (points.length < countDef.min) return `Точек меньше ${countDef.min}.`;
+  if (points.length > countDef.max) return `Точек больше ${countDef.max}.`;
+  let prevX = -Infinity;
+  let prevY = Infinity;
+  for (const p of points) {
+    if (p[0] < b.xMin || p[0] > b.xMax) return `Броня вне ${fmtNum(b.xMin)}–${fmtNum(b.xMax)}: ${fmtNum(p[0])}.`;
+    if (p[1] < b.yMin || p[1] > b.yMax) return `Урон% вне ${b.yMin}–${b.yMax}: ${fmtNum(p[1])}.`;
+    if (!(p[0] > prevX)) return `Броня обязана строго возрастать: ${fmtNum(p[0])} после ${fmtNum(prevX)}.`;
+    if (p[1] > prevY) return `Урон% не растёт (кривая защиты): ${fmtNum(p[1])} после ${fmtNum(prevY)}.`;
+    prevX = p[0];
+    prevY = p[1];
+  }
+  return null;
 }
 
 /** Патч тела POST /cfg из черновика: atmo-числа + юниверсы (список+дефолт+
- *  ЯВНЫЙ playerSelectable — §4). Пустой список не отправляется никогда —
- *  UI блокирует такую кнопку. Глобальные bool-ключи (kind="bool" + scope
- *  "global", master-гейт atmoset) уходят СТРОГИМ boolean: черновик/снапшот
- *  несут их как 1/0-число, контракт POST /cfg заморожен. */
+ *  ЯВНЫЙ playerSelectable — §4) + combat-кривые (kind points, мандат
+ *  2026-11-08). Пустой список/кривая не отправляется никогда — UI
+ *  блокирует такую кнопку. Глобальные bool-ключи (kind="bool" + scope
+ *  "global", master-гейт atmoset) уходят СТРОГИМ boolean (черновик/снапшот
+ *  несут их как 1/0-число); scope-room ключи глобальным POST не пишутся. */
 export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
   const atmo: Record<string, number | boolean> = {};
   const universes: Record<string, CfgUniversesValues> = {};
+  const combat: Record<string, number[][]> = {};
   for (const def of Object.values(snap.registry)) {
     const [section, field] = def.key.split(".");
+    if (def.scope === "room") continue;
     if (section === "atmo") {
-      // scope-room ключи (гейт atmoset §3.4 per-room) глобальным POST /cfg не
-      // пишутся — их слой живёт в /cfg/rooms* (панель «Комнатные настройки»).
-      if (def.scope === "room") continue;
       const v = draft.atmo[field];
       if (def.kind === "bool") {
         if (Number.isFinite(v)) atmo[field] = v > 0;
       } else if (Number.isFinite(v)) atmo[field] = v;
+    } else if (def.kind === "points") {
+      const pts = draft.points[field] || [];
+      if (pts.length) combat[field] = pts.map((p) => [...p]);
     } else {
       const arr = draft.lists[field] || [];
       if (!arr.length) continue;
@@ -215,7 +319,7 @@ export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
       } as CfgUniversesValues;
     }
   }
-  return { atmo, universes };
+  return combat && Object.keys(combat).length ? { atmo, universes, combat } : { atmo, universes };
 }
 
 /** Канонизация значения по kind-у (levels → int, tenths → десятые, периоды — как есть). */
@@ -277,6 +381,24 @@ export function buildCfgDiff(snap: CfgAdminSnapshot, draft: CfgDraft): CfgFieldD
       }
       continue;
     }
+    if (def.kind === 'points') {
+      const before = (((snap.values.combat as unknown) as Record<string, unknown>)[field] as number[][] | undefined) ?? [];
+      const after = draft.points[field] || [];
+      const { added, removed } = listDiff(before.map((p) => p[0]), after.map((p) => p[0]));
+      const same =
+        !added.length &&
+        !removed.length &&
+        JSON.stringify(before.map((p) => [p[0], p[1]])) === JSON.stringify(after.map((p) => [p[0], p[1]]));
+      if (same) continue;
+      out.push({
+        key: def.key,
+        label: def.label,
+        policy: def.applyPolicy,
+        hint: def.applyHint,
+        curve: { before: before.map((p) => [p[0], p[1]]), after: after.map((p) => [p[0], p[1]]), added, removed },
+      });
+      continue;
+    }
     const stored = snap.values.universes[field];
     const before = stored?.levels || stored?.tenths || stored?.periods || [];
     const after = draft.lists[field] || [];
@@ -329,8 +451,9 @@ export async function httpCfgAdmin(): Promise<CfgAction> {
 
 /** Применение патча значений/дефолтов (POST /cfg). 400-я ошибка (unknown_keys/
  * invalid) отдаётся в details целиком — дашборд показывает её без обрезки.
- * atmo несёт числа и ГЛОБАЛЬНЫЕ bool-ключи (boolean, master-гейт atmoset). */
-export async function httpCfgApply(patch: { atmo?: Record<string, number | boolean>; universes?: Record<string, CfgUniversesValues> }): Promise<CfgAction> {
+ * atmo несёт числа и ГЛОБАЛЬНЫЕ bool-ключи (boolean, master-гейт atmoset),
+ * combat — кривые (kind points). */
+export async function httpCfgApply(patch: { atmo?: Record<string, number | boolean>; universes?: Record<string, CfgUniversesValues>; combat?: Record<string, number[][]> }): Promise<CfgAction> {
   const { status, row, text } = await apiFetch("/cfg", { method: "POST", body: patch });
   if (status === 200 && row?.ok === true) return { ok: true };
   return { ok: false, reason: cfgErrorReason(status, row), details: text };

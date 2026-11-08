@@ -28,12 +28,22 @@
  * прежней косвенной семантике (список длиннее одного значения = выбор разрешён);
  * миграция на чтении выводит флаг из списка, значения и списки не теряются.
  *
+ * Мандат владелицы 2026-11-08 («Броня: уровни защиты и тп — сделай чтоб можно
+ * было добавлять значения»): 8-й ключ combat.armorCurve — первый kind "points".
+ * Значение — редактируемая кривая брони: пары [броня 0..0,9 (шаг 0,01),
+ * урон% 5..60], от 2 до 16 точек, x строго возрастает (дублей x нет), урон%
+ * не растёт (кривая защиты). defaultValue — побайтовый канон W3 из
+ * protocol.js ARMOR_CURVE (замеры владелицы, 7 точек): дефолт и есть канон.
+ * Живой расчёт ударов (server/combat.js) идёт по runtime-значениям с
+ * fail-safe на канон W3 (armorCurveFor) — не на фантазию.
+ *
  * Зеркало клиенту: src/lib/cfg-registry.ts (данные те же, формул клэмпа на
  * клиенте нет) — паритет списков/дефолтов/подписей держит test:protocol-parity.
  */
 import {
-  STRIKE_ZONES, ATMO_PHASE_MS_DEF, ATMO_WEATHER_MS_DEF,
-  ATMO_PHASE_MS_MIN, ATMO_PHASE_MS_MAX, ATMO_WEATHER_MS_MIN, ATMO_WEATHER_MS_MAX,
+  ARMOR_CURVE, STRIKE_ZONES,
+  ATMO_PHASE_MS_DEF, ATMO_PHASE_MS_MIN, ATMO_PHASE_MS_MAX,
+  ATMO_WEATHER_MS_DEF, ATMO_WEATHER_MS_MIN, ATMO_WEATHER_MS_MAX,
 } from "./protocol.js";
 
 /** Прибавка урона в горло за каждые 0,1 уровня — константа движка, зеркало
@@ -181,6 +191,26 @@ export const REGISTRY = deepFreeze({
     visibility: "public",
     scope: "global",
   }),
+  // Мандат владелицы 2026-11-08: редактируемая кривая брони — единственный ключ
+  // kind "points". Канон W3 (protocol.js ARMOR_CURVE) остаётся дефолтом;
+  // реестр хранит ПОВЕРХ него разрешённую замену. values — юниверс ЧИСЛА точек,
+  // axis-границы — points; валидатор sanitizePoints внизу.
+  "combat.armorCurve": deepFreeze({
+    key: "combat.armorCurve",
+    label: "Броня: кривая защиты",
+    description:
+      "Как броня (0,0–0,9) режет входящий урон: пары «броня → проходящий урон %» от эталонного удара. Между точками — линейная интерполяция, после последней — экстраполяция по её наклону до 0,9. Первая точка — масштаб кривой: её урон% считается за 100%.",
+    unit: "точек",
+    kind: "points",
+    values: range(2, 16),
+    default: ARMOR_CURVE.map((p) => [p[0], p[1]]),
+    engineCap: range(2, 16),
+    points: { xMin: 0, xMax: 0.9, xStep: 0.01, yMin: 5, yMax: 60 },
+    applyPolicy: "on-next-event",
+    applyHint: "Действует на следующий удар: урон по бронированной цели сразу считается по новой кривой (и игроки видят прогноз по ней).",
+    visibility: "public",
+    scope: "global",
+  }),
 });
 
 export const KEYS = Object.freeze(Object.keys(REGISTRY));
@@ -194,14 +224,16 @@ const SECTIONS = Object.freeze(new Set(KEYS.map((k) => k.split(".")[0])));
 export function defaultsFor() {
   const atmo = {};
   const universes = {};
+  const combat = {};
   for (const def of Object.values(REGISTRY)) {
     const [sec, field] = def.key.split(".");
     if (def.kind === "range" || def.kind === "bool") atmo[field] = def.default;
+    else if (def.kind === "points") combat[field] = def.default.map((p) => [p[0], p[1]]);
     else if (def.kind === "levels" || def.kind === "tenths" || def.kind === "periods") {
       universes[field] = { [def.kind]: [...def.values], default: def.default, playerSelectable: true };
     }
   }
-  return { v: 1, atmo, universes };
+  return { v: 1, atmo, universes, combat };
 }
 
 /* ---------------- Валидация (whitelist: принять или отказать) ---------------- */
@@ -292,6 +324,58 @@ function sanitizeBool(def, raw) {
   return { value: raw };
 }
 
+/** Кривая брони (kind "points", мандат владелицы 2026-11-08): массив пар
+ *  [броня, урон%]. 2..16 точек (values — юниверс числа точек), x из 0..0,9
+ *  канонизируется к шагу 0,01, y из 5..60 — оба к двум знакам (точность канона
+ *  W3). x строго возрастает (дубли x — отказ), урон% не растёт (кривая
+ *  защиты не усиливает урон: множитель обязан оставаться ≤1). Отказ — с
+ *  reason, «доводить» кривую нельзя: по ней считается урон живых ударов. */
+function sanitizePoints(def, raw) {
+  const b = def.points;
+  if (!Array.isArray(raw)) return { error: "кривая — массив пар [[броня, урон%], …]" };
+  const { min: countMin, max: countMax } = def.values;
+  if (raw.length < countMin) return { error: `точек меньше ${countMin}` };
+  if (raw.length > countMax) return { error: `точек больше ${countMax}` };
+  const pts = [];
+  let prevX = -Infinity;
+  let prevY = Infinity;
+  for (const item of raw) {
+    if (!Array.isArray(item) || item.length !== 2) {
+      return { error: `точка — пара [броня, урон%]: ${String(item)}` };
+    }
+    const xn = Number(item[0]);
+    const yn = Number(item[1]);
+    if (!Number.isFinite(xn) || !Number.isFinite(yn)) {
+      return { error: `броня/урон — числа: ${String(item)}` };
+    }
+    const x = Math.round(xn * 100) / 100;
+    const y = Math.round(yn * 100) / 100;
+    if (x < b.xMin || x > b.xMax) return { error: `броня вне ${b.xMin}–${b.xMax}: ${x}` };
+    if (y < b.yMin || y > b.yMax) return { error: `урон% вне ${b.yMin}–${b.yMax}: ${y}` };
+    if (!(x > prevX)) return { error: `броня строго возрастает: ${x} после ${prevX}` };
+    if (y > prevY) return { error: `урон% не растёт (кривая защиты): ${y} после ${prevY}` };
+    prevX = x;
+    prevY = y;
+    pts.push([x, y]);
+  }
+  return { value: pts };
+}
+
+/**
+ * Живая кривая брони из runtime-значений: валидная — как есть, отсутствие/
+ *  мусор/битый файл — побайтовый канон W3 (defaultValue реестра = ARMOR_CURVE
+ *  protocol.js). Fail-safe всегда на канон, не на фантазию: удар без
+ *  валидной кривой не должен менять урон. Живой паттерн как у combatCaps:
+ *  чистая функция здесь (значения → кривая), геттер текущего состояния — в
+ *  server/runtime-config.js (armorCurve), потребитель — server/combat.js.
+ */
+export function armorCurveFor(values) {
+  const raw = values?.combat?.armorCurve;
+  const res = raw === undefined ? null : sanitizePoints(REGISTRY["combat.armorCurve"], raw);
+  if (!res || res.error) return REGISTRY["combat.armorCurve"].default.map((p) => [p[0], p[1]]);
+  return res.value;
+}
+
 /**
  * Прогнать патч {atmo?: {...}, universes?: {...}} через реестр. Неизвестная
  * секция/поле → error.unknown_keys (с перечислением разрешённых), невалидное
@@ -329,6 +413,16 @@ export function sanitizeValues(patch, base = defaultsFor(), opts = {}) {
         : deriveSelectable(stored[def.kind] ?? []);
     out.universes[field] = { [def.kind]: [...stored[def.kind]], default: stored.default, playerSelectable };
   }
+  // Кривая брони (kind points): база копируется как прочие секции — сам
+  // хранитель валидности она же (файл прошёл sanitizePoints на входе;
+  // прямой saveConfig — обязанность вызывающего, потребитель читает
+  // через armorCurveFor с fail-safe на канон).
+  out.combat = {};
+  for (const [field, val] of Object.entries(base.combat ?? {})) {
+    const def = REGISTRY["combat." + field];
+    if (def && def.scope === "room" && !opts.room) continue;
+    out.combat[field] = val;
+  }
   const unknown = [];
   const invalid = [];
   for (const [sec, body] of Object.entries(patch)) {
@@ -364,6 +458,12 @@ export function sanitizeValues(patch, base = defaultsFor(), opts = {}) {
         const res = sanitizeRange(fieldDef, raw);
         if (res.error) invalid.push({ key, error: res.error });
         else out.atmo[field] = res.value;
+        continue;
+      }
+      if (fieldDef.kind === "points") {
+        const res = sanitizePoints(fieldDef, raw);
+        if (res.error) invalid.push({ key, error: res.error });
+        else out.combat[field] = res.value;
         continue;
       }
       // Списочные: полный патч {kind + default (+ флаг)} либо флаг-only поверх
