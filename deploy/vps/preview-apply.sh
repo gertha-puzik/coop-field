@@ -325,6 +325,39 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
+    # Менеджер спрайтов (server/sprites.js): те же правила «только реальные
+    # API-префиксы» — админские CRUD /admin/sprites* уходят в Node, страница
+    # /admin остаётся статикой варианта (как /admin/players выше).
+    location /admin/sprites {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    # Публичный каталог спрайтов ОБЕИМ сайтам (карусель выбора скина): без
+    # прокси изолированный билд отдал бы try_files→index.html и карусель
+    # молча деградировала на статичный список.
+    location /sprites/catalog {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    # Файлы ЗАГРУЖЕННЫХ спрайтов (не-builtin): префикс ДЛИННЕЕ статики
+    # /sprites/, поэтому nginx выбирает этот location, а базовые PNG
+    # (www*/sprites/<id>.png) остаются на try_files своего root. Порядок в
+    # конфиге для наглядности до статических location — у префиксов nginx и
+    # так берёт самое длинное совпадение.
+    location /sprites/file {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
     location /ws {
         proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;

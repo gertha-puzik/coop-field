@@ -67,6 +67,7 @@ import { RoomConfigPanel } from './room-config-panel';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
 import { PlayersFieldTab } from './players-field-tab';
+import { SpritesTab } from './sprites-tab';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -304,8 +305,9 @@ function DiffRow({ d }: { d: FieldDiff }) {
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию) и «Игроки на поле». */
-  const [tab, setTab] = useState<'cfg' | 'field'>('cfg');
+  /** Вкладка панели: реестр конфига (по умолчанию), «Игроки на поле» и
+   *  «Спрайты» (менеджер спрайтов: загрузка/категории/удаление). */
+  const [tab, setTab] = useState<'cfg' | 'field' | 'sprites'>('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -573,10 +575,23 @@ export default function CfgDashboard() {
         >
           Игроки на поле
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('sprites')}
+          className={`h-8 rounded-md border px-3 text-sm ${
+            tab === 'sprites'
+              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
+              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
+          }`}
+        >
+          Спрайты
+        </button>
       </nav>
 
       {tab === 'field' ? (
         <PlayersFieldTab />
+      ) : tab === 'sprites' ? (
+        <SpritesTab />
       ) : snap && draft ? (
         <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">

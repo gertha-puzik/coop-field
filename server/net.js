@@ -34,6 +34,10 @@ import { handleRoomCfgHttp } from "./room-config.js";
 // Админ-операции «Игроки на поле» (GET/POST /admin/players*): гейт session
 // + role=admin + общий apiZone-CSRF — сам домен в room.js (W4-граница).
 import { handleAdminOpsHttp } from "./admin-ops.js";
+// Менеджер спрайтов (server/sprites.js): публичный каталог + файлы загруженных
+// (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
+// админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
+import { handleSpritesHttp } from "./sprites.js";
 import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
@@ -225,7 +229,11 @@ export function startServer() {
       // Админ-операции «Игроки на поле» (/admin/players*): тот же CSRF-щит
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
       // в зону попадают ТОЛЬКО эти два API-пути.
-      p === "/admin/players" || p.startsWith("/admin/players/");
+      p === "/admin/players" || p.startsWith("/admin/players/") ||
+      // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
+      // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
+      // и в зоне не нуждается: безопасный метод, сессию не несёт).
+      p === "/admin/sprites" || p.startsWith("/admin/sprites/");
     if (apiZone) {
       if (originHeader) res.setHeader("Vary", "Origin");
       if (originAllowed) {
@@ -282,7 +290,14 @@ export function startServer() {
           if (cfgHit) return;
           return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
             if (profHit) return;
-            serveStatic(req, res, url);
+            // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
+            // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
+            // в handler не попадают (маршруты длиннее и точнее), файловые 404
+            // отдаёт сам домен.
+            return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+              if (spritesHit) return;
+              serveStatic(req, res, url);
+            });
           });
         });
       });

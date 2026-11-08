@@ -109,9 +109,12 @@ eq(
 );
 // Полный набор проксируемых маршрутов в ОБОИХ блоках. /admin как ПРЕФИКС
 // здесь быть НЕ должно: страница — статика варианта (www-elyria/admin);
-// из /admin в Node уходит ТОЛЬКО API-префикс «Игроки на поле» (/admin/players
-// со слэш-суффиксом), он и перечислен отдельной точной локацией.
-for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/ws"]) {
+// из /admin в Node уходят ТОЛЬКО реальные API-префиксы «Игроки на поле»
+// (/admin/players) и «Менеджер спрайтов» (/admin/sprites) — оба с
+// слэш-суффиксом, отдельными точными локациями. Спрайтовые: /sprites/catalog
+// (публичный каталог карусели, обоим сайтам) и /sprites/file (файлы
+// загруженных; длиннее статики /sprites/, базовые PNG остаются в root).
+for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/admin/sprites", "/sprites/catalog", "/sprites/file", "/ws"]) {
   eq(
     `both blocks proxy ${loc}`,
     blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`location ${loc} `) &&
@@ -119,6 +122,14 @@ for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/
     true,
   );
 }
+// Статические PNG базовых спрайтов остаются в root варианта: «широких»
+// location /sprites в конфиге нет — /sprites/<id>.png не матчится ни одним
+// проксируемым префиксом (проверяем, что никто не добавил такое location).
+eq(
+  "no broad /sprites location (basic PNG stays static)",
+  /location \/sprites \{/.test(alphaFrag),
+  false,
+);
 // Страница панели остаётся статикой: цельного «location /admin » в блоке нет,
 // значит /admin и /admin/ отдаются try_files от root варианта (как на проде).
 eq(
