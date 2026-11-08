@@ -119,10 +119,15 @@ export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
   /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
    *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив).
-   *  Стартует лениво с сохранённой (readSavedTab: на SSR/export-ветке и для
-   *  мусора в хранилище — дефолт 'cfg'); старт на сохранённой 'field'
-   *  поведением не отличается от ручного клика — вкладка просто рендерится. */
-  const [tab, setTab] = useState(() => readSavedTab());
+   *  Стартует с дефолта 'cfg' (SSR/export и первый рендер совпадают — без
+   *  hydration-варнингов), эффектом подхватывает сохранённую вкладку, если
+   *  она есть (мусор/чужой id в хранилище → дефолт); переход на сохранённую
+   *  'field' поведением не отличается от ручного клика — вкладка просто
+   *  рендерится. */
+  const [tab, setTabState] = useState<(typeof TAB_IDS)[number]>(TAB_DEFAULT);
+  useEffect(() => {
+    setTabState(readSavedTab());
+  }, []);
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -577,7 +582,7 @@ export default function CfgDashboard() {
     } catch {
       /* приватный режим/квота — переключаем и без персиста */
     }
-    setTab(id as (typeof TAB_IDS)[number]);
+    setTabState(id as (typeof TAB_IDS)[number]);
   }, []);
 
   return (

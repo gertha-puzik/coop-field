@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function Home() {
   return (
-    <AuthGate live chrome>
+    <AuthGate live>
       <WanderMenu />
     </AuthGate>
   );
