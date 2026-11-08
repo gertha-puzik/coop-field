@@ -38,13 +38,32 @@ export type PublicProfile = {
 /** Карточка каталога: DTO + accountId (для deep-link /players?id=). */
 export type ProfileCard = PublicProfile & { accountId: string };
 
+/** СП профиля (скрытые параметры): сервер хранит их у записи и отдаёт
+ *  ТОЛЬКО владельцу (/profiles/me) — в карточки каталога и чужие профили
+ *  sp не входит. Все поля необязательны: partial-сохранение (PATCH без
+ *  поля не трогает сохранённое) — частичный объект это честный ответ. */
+export type ProfileSp = {
+  periodSec?: number;
+  damageLevel?: number;
+  armorLevel?: number;
+};
+
+/** Свой профиль (/profiles/me): публичный DTO + приватные СП. */
+export type ProfileMe = PublicProfile & { sp?: ProfileSp };
+
 export type ProfilePatch = {
   displayName?: string;
   bio?: string;
   avatarCharacterId?: string | null;
+  /** Скин активного персонажа — id из каталога спрайтов (GET /sprites/catalog);
+   *  сервер валидирует по live-whitelist и отвечает 400 при чужом id. */
+  sprite?: string;
+  /** Рост модельки, % (60–100): сервер зажимает и округляет, как room-join. */
+  scale?: number;
+  sp?: ProfileSp;
 };
 
-export type ProfileResult = { ok: boolean; reason?: string; details?: string; profile?: PublicProfile };
+export type ProfileResult = { ok: boolean; reason?: string; details?: string; profile?: ProfileMe };
 
 function parseCharacters(raw: unknown): ProfileCharacter[] {
   if (!Array.isArray(raw)) return [];
@@ -62,7 +81,23 @@ function parseCharacters(raw: unknown): ProfileCharacter[] {
     .filter((c) => c.id);
 }
 
-function parseProfile(row: ApiRow): PublicProfile {
+/** Разбор приватных СП из ответа /profiles/me: мусор молча отбрасывается,
+ *  пустой объект → sp нет вовсе (владелец их ещё не сохранял). */
+function parseSp(raw: unknown): ProfileSp | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  const sp: ProfileSp = {};
+  if (typeof row.periodSec === "number" && Number.isFinite(row.periodSec)) {
+    sp.periodSec = Math.round(row.periodSec * 10) / 10;
+  }
+  for (const key of ["damageLevel", "armorLevel"] as const) {
+    const n = row[key];
+    if (typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 9) sp[key] = n;
+  }
+  return Object.keys(sp).length ? sp : undefined;
+}
+
+function parseProfile(row: ApiRow): ProfileMe {
   return {
     displayName: asText(row.displayName),
     bio: asText(row.bio),
@@ -74,6 +109,8 @@ function parseProfile(row: ApiRow): PublicProfile {
     // «неизвестно» (0/null), чтобы UI не рисовал выдуманное время.
     lastSeenAt: Number.isFinite(Number(row.lastSeenAt)) ? Number(row.lastSeenAt) : 0,
     lastSeenRoom: typeof row.lastSeenRoom === "string" && row.lastSeenRoom ? row.lastSeenRoom : null,
+    // СП — только из ответа своего /profiles/me (владелец).
+    sp: parseSp(row.sp),
   };
 }
 
@@ -154,8 +191,9 @@ export async function httpMyProfile(): Promise<ProfileResult> {
 }
 
 /**
- * Правка своего профиля: displayName/bio/avatarCharacterId. Серверную ошибку
- * (unknown_keys/invalid/…) отдаём целиком в details — панель её показывает.
+ * Правка своего профиля: displayName/bio/avatarCharacterId и sp (скрытые
+ * параметры; partial — отсутствие поля не трогает сохранённое). Серверную
+ * ошибку (unknown_keys/invalid/…) отдаём целиком в details — панель её показывает.
  */
 export async function httpPatchProfile(patch: ProfilePatch): Promise<ProfileResult> {
   const { status, row, text } = await apiFetch("/profiles/me", { method: "PATCH", body: patch });

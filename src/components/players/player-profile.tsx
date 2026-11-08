@@ -12,7 +12,9 @@
  * Чего в аккаунтах нет — того на странице нет: боевые счётчики («убито
  * мышей» и пр.) сервер не собирает, поэтому достижения и статистика —
  * только вычислимые факты карточки, без выдуманных чисел.
- * Свою карточку можно править инлайн (PATCH /profiles/me, P4) — поток тот же.
+ * Свою карточку можно править инлайн (PATCH /profiles/me, P4) — поток тот же;
+ * там же «Игровые параметры» (скрытые настройки: скорость стрелы, урон,
+ * броня) — только владелец, сервер хранит их в записи профиля.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -20,7 +22,19 @@ import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { ProfileCard, PublicProfile } from '@/lib/net/http-profiles';
+import { Slider } from '@/components/ui/slider';
+import type { ProfileCard, ProfileMe, ProfilePatch, ProfileSp, PublicProfile } from '@/lib/net/http-profiles';
+import {
+  DAMAGE_LEVELS,
+  DEFAULT_SETTINGS,
+  MALYSHOCHKI_SET,
+  SP_PROFILE_PERIOD_MAX,
+  SP_PROFILE_PERIOD_MIN,
+  SPRITES,
+  SPRITE_GROUPS,
+  damageLevelLabel,
+  persistProfileSp,
+} from '@/lib/sim/settings';
 import {
   ACTIVITY_TEXT,
   STATUS_TEXT,
@@ -307,6 +321,61 @@ function Portrait({ card, name }: { card: ProfileCard; name: string }) {
 
 /* ——— инлайн-редактор своей карточки (P4, поток прежний) ——— */
 
+/** Черновик СП: все три значения заполнены (незаданное в профиле берётся из
+ *  дефолтов движка) — контролам всегда есть что показать. */
+type SpDraft = { periodSec: number; damageLevel: number; armorLevel: number };
+
+const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
+
+/** Стартовые СП редактора: сохранённые в профиле, недостающее — дефолты
+ *  симулятора (те же значения, с которых начинался экран входа). */
+const spDefaults = (sp: ProfileSp | undefined): SpDraft => ({
+  periodSec: typeof sp?.periodSec === 'number' ? sp.periodSec : DEFAULT_SETTINGS.arrow.periodSec,
+  damageLevel: typeof sp?.damageLevel === 'number' ? sp.damageLevel : DEFAULT_SETTINGS.combat.damageLevel,
+  armorLevel: typeof sp?.armorLevel === 'number' ? sp.armorLevel : DEFAULT_SETTINGS.combat.armorLevel,
+});
+
+/** Кнопка-пресет урона/брони: как чипы экрана входа, компактная. */
+function SpChip({ active, onClick, children: label }: { active: boolean; onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      onClick={onClick}
+      className={
+        active
+          ? 'h-6 shrink-0 rounded bg-[var(--sim-accent)] px-2 text-[10px] font-semibold leading-none text-black'
+          : 'h-6 shrink-0 rounded border border-[var(--sim-line-strong)] px-2 text-[10px] font-semibold leading-none text-[var(--sim-text)] hover:border-[var(--sim-line-hover)]'
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
+/* ——— выбор скина для своей карточки: статичный каталог движка, те же
+   колонки-группы, что на карусели экрана входа (compact tiles, без карусели) ——— */
+
+const spriteById = new Map(SPRITES.map((sp) => [sp.id, sp] as const));
+const metasOf = (ids: readonly string[]) =>
+  ids.map((id) => spriteById.get(id)).filter((sp): sp is (typeof SPRITES)[number] => Boolean(sp));
+
+/** Группы плиток: общие персонажи + набор «Малышочки» отдельной секцией. */
+const SKIN_GROUPS: { id: string; name: string; sprites: (typeof SPRITES)[number][] }[] = [
+  ...SPRITE_GROUPS.map((g) => ({ id: g.id, name: g.name, sprites: metasOf(g.spriteIds) })),
+  { id: MALYSHOCHKI_SET.id ?? 'malyshochki', name: MALYSHOCHKI_SET.name, sprites: metasOf(MALYSHOCHKI_SET.spriteIds) },
+].filter((g) => g.sprites.length > 0);
+
+/** Активный персонаж карточки: тот же выбор, что делает сервер при входе
+ *  (activeCharacterId, иначе первый) — поле/аватар/профиль показывают его. */
+function activeCharOf(profile: ProfileMe | PublicProfile) {
+  return (
+    profile.characters.find((c) => c.id === profile.activeCharacterId) ??
+    profile.characters[0] ??
+    null
+  );
+}
+
 function humanEditError(reason: string | undefined): string {
   switch (reason) {
     case 'auth_required':
@@ -326,10 +395,19 @@ function humanEditError(reason: string | undefined): string {
   }
 }
 
-function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSaved: (fresh: PublicProfile) => void }) {
+function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (fresh: PublicProfile) => void }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
   const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
+  const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
+  const originChar = activeCharOf(profile);
+  const originSprite = originChar?.sprite || '';
+  const originScale =
+    originChar && Number.isFinite(originChar.size)
+      ? Math.min(100, Math.max(60, Math.round(originChar.size)))
+      : 100;
+  const [draftSprite, setDraftSprite] = useState(originSprite);
+  const [draftScale, setDraftScale] = useState(originScale);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -338,7 +416,25 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
     setDraftAvatar(profile.avatarCharacterId || '');
+    setDraftSp(spDefaults(profile.sp));
+    const ch = activeCharOf(profile);
+    setDraftSprite(ch?.sprite || '');
+    setDraftScale(
+      ch && Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : 100,
+    );
   }, [profile]);
+
+  /** СП едут в PATCH только если игрок их реально тронул: неточно равные
+   *  наборы не перезаписывают профиль (и не мешают правке имени/био). */
+  const spOrigin = spDefaults(profile.sp);
+  const spChanged =
+    draftSp.periodSec !== spOrigin.periodSec ||
+    draftSp.damageLevel !== spOrigin.damageLevel ||
+    draftSp.armorLevel !== spOrigin.armorLevel;
+
+  /** Внешность (скин/рост) — та же дисциплина: менять — только тронутое,
+   *  пустой скин не сохраняем (сервер требует валидный id). */
+  const appearanceChanged = draftSprite !== originSprite || draftScale !== originScale;
 
   const save = async () => {
     setFail(null);
@@ -349,11 +445,17 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     }
     setBusy(true);
     const { httpPatchProfile, httpMyProfile } = await import('@/lib/net/http-profiles');
-    const res = await httpPatchProfile({
+    const patch: ProfilePatch = {
       displayName: name,
       bio: draftBio.trim(),
       avatarCharacterId: draftAvatar || null,
-    });
+    };
+    if (spChanged) patch.sp = { ...draftSp };
+    // скин и рост персонажа — плоские поля активной записи; сервер валидирует
+    // id по каталогу и зажимает рост в 60–100
+    if (appearanceChanged && draftSprite) patch.sprite = draftSprite;
+    if (appearanceChanged) patch.scale = draftScale;
+    const res = await httpPatchProfile(patch);
     if (!res.ok) {
       setFail({ title: humanEditError(res.reason), details: res.details || undefined });
       setBusy(false);
@@ -363,6 +465,9 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     const fresh = await httpMyProfile();
     setBusy(false);
     if (fresh.ok && fresh.profile) {
+      // применяем подтверждённые сервером СП к локальным настройкам сессии —
+      // тот же стор, что и панель настроек; вход Элизии применит их при входе
+      if (spChanged) persistProfileSp({ ...draftSp, ...(fresh.profile.sp ?? {}) });
       onSaved(fresh.profile);
       setNote('Сохранено.');
       window.setTimeout(() => setNote(null), 2500);
@@ -372,7 +477,9 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
   };
 
   return (
+    // id="settings" — якорь ссылок «Настройки» в шапке сайта: /players/?id=…#settings
     <form
+      id="settings"
       className={styles.edBox}
       onSubmit={(ev) => {
         ev.preventDefault();
@@ -415,6 +522,119 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
           onChange={(e) => setDraftBio(e.target.value)}
         />
       </label>
+
+      {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
+          и применяется на поле сам; плитки те же группы, что на карусели входа. */}
+      <h3 className={`${styles.edTitle} mt-4`}>Внешность</h3>
+      <div className={styles.edField}>
+        <span className={styles.edLabel}>Скин{originSprite ? '' : ' (не выбран — на поле будет обычный)'}</span>
+        <div className="mt-1.5 max-h-44 overflow-y-auto rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+          {SKIN_GROUPS.map((g) => (
+            <div key={g.id} className="mb-2 last:mb-0">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[var(--sim-text-soft)]">
+                {g.name}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {g.sprites.map((sp) => {
+                  const active = draftSprite === sp.id;
+                  return (
+                    <button
+                      key={sp.id}
+                      type="button"
+                      title={sp.name}
+                      aria-pressed={active}
+                      onClick={() => setDraftSprite(sp.id)}
+                      className={`flex w-16 flex-col items-center rounded-lg border px-1 pb-1 pt-1 transition-colors ${
+                        active
+                          ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
+                          : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                      }`}
+                    >
+                      <img src={sp.src} alt={sp.name} className="h-10 w-auto object-contain" draggable={false} />
+                      <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
+                        {sp.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <label className={styles.edField}>
+        <span className={styles.edLabel}>Рост ({draftScale}%)</span>
+        <div className="mt-1.5 flex items-center gap-2">
+          <Slider
+            className="flex-1"
+            value={[draftScale]}
+            min={60}
+            max={100}
+            step={1}
+            aria-label="Рост персонажа"
+            onValueChange={(vals) => {
+              const v = vals[0];
+              if (typeof v === 'number') setDraftScale(Math.round(v));
+            }}
+          />
+        </div>
+      </label>
+
+      {/* Игровые параметры: приватные настройки владельца — применяются на
+          поле в этой игре; меняются отсюда и на входе больше не спрашиваются. */}
+      <h3 className={`${styles.edTitle} mt-4`}>Игровые параметры</h3>
+      <div className={styles.edRow}>
+        <label className={styles.edField}>
+          <span className={styles.edLabel}>Скорость стрелы ({fmtSec(SP_PROFILE_PERIOD_MIN)}–{fmtSec(SP_PROFILE_PERIOD_MAX)})</span>
+          <div className="mt-2 flex items-center gap-2">
+            <Slider
+              className="flex-1"
+              value={[draftSp.periodSec]}
+              min={SP_PROFILE_PERIOD_MIN}
+              max={SP_PROFILE_PERIOD_MAX}
+              step={0.1}
+              aria-label="Скорость стрелы"
+              onValueChange={(vals) => {
+                const v = vals[0];
+                if (typeof v === 'number') setDraftSp((d) => ({ ...d, periodSec: Math.round(v * 10) / 10 }));
+              }}
+            />
+            <span className="w-14 text-right text-sm tabular-nums text-[var(--sim-text-soft)]">
+              {fmtSec(draftSp.periodSec)}
+            </span>
+          </div>
+        </label>
+      </div>
+      <div className={styles.edRow}>
+        <div className={styles.edField}>
+          <span className={styles.edLabel}>Урон</span>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {DAMAGE_LEVELS.map((k) => (
+              <SpChip
+                key={k}
+                active={draftSp.damageLevel === k}
+                onClick={() => setDraftSp((d) => ({ ...d, damageLevel: k }))}
+              >
+                {damageLevelLabel(k)}
+              </SpChip>
+            ))}
+          </div>
+        </div>
+        <div className={styles.edField}>
+          <span className={styles.edLabel}>Броня</span>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {DAMAGE_LEVELS.map((k) => (
+              <SpChip
+                key={k}
+                active={draftSp.armorLevel === k}
+                onClick={() => setDraftSp((d) => ({ ...d, armorLevel: k }))}
+              >
+                {damageLevelLabel(k)}
+              </SpChip>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className={styles.edActions}>
         <Button
           type="submit"
@@ -447,7 +667,7 @@ export default function PlayerProfile({
 }: {
   card: ProfileCard;
   mine: boolean;
-  myProfile: PublicProfile | null;
+  myProfile: ProfileMe | null;
   onSaved: (fresh: PublicProfile) => void;
   onClose: () => void;
 }) {
