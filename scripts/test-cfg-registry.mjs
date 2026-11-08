@@ -312,7 +312,7 @@ try {
   check(restoreGhost.status === 404, "cfg: restore по незнакомому имени → отказ");
 
   const adminCfg = await httpJson("/cfg/admin", { token: adminTok });
-  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 7, "cfg: GET /cfg/admin отдаёт метаданные реестра (7 параметров)");
+  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 8, "cfg: GET /cfg/admin отдаёт метаданные реестра (8 параметров)");
   check(
     adminCfg.json?.registry?.["combat.armorCurve"]?.kind === "points" &&
       JSON.stringify(adminCfg.json?.values?.combat?.armorCurve) === JSON.stringify(canonCurve),
