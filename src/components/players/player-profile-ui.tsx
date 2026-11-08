@@ -9,6 +9,7 @@
 
 import type { ReactNode } from 'react';
 
+import { Chip } from '@/components/ui';
 import type { ProfileCard, ProfileMe, PublicProfile } from '@/lib/net/http-profiles';
 import {
   MALYSHOCHKI_SET,
@@ -157,21 +158,14 @@ export function Portrait({ card, name }: { card: ProfileCard; name: string }) {
   );
 }
 
-/** Кнопка-пресет урона/брони: как чипы экрана входа, компактная. */
+/** Кнопка-пресет урона/брони: ui-kit Chip (документация — docs/UI-KIT.md),
+ *  активный — акцентная пара --uk-accent-*, неактивный — тихая обводка.
+ *  Публичная сигнатура W1 не меняется — потребитель один и тот же. */
 export function SpChip({ active, onClick, children: label }: { active: boolean; onClick: () => void; children: string }) {
   return (
-    <button
-      type="button"
-      title={label}
-      onClick={onClick}
-      className={
-        active
-          ? 'h-6 shrink-0 rounded bg-[var(--sim-accent)] px-2 text-[10px] font-semibold leading-none text-black'
-          : 'h-6 shrink-0 rounded border border-[var(--sim-line-strong)] px-2 text-[10px] font-semibold leading-none text-[var(--sim-text)] hover:border-[var(--sim-line-hover)]'
-      }
-    >
+    <Chip type="button" size="sm" tone={active ? 'active' : 'default'} onClick={onClick} title={label}>
       {label}
-    </button>
+    </Chip>
   );
 }
 
