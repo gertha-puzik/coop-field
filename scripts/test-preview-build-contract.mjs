@@ -183,7 +183,7 @@ eq("CLI detect: сломанный package.json — громкий отказ", 
   eq("metadata отсутствует: www-grotto+www-elyria честно → dual", cli(["artifact-mode", dualNoMeta]).out, MODE_DUAL);
 
   const weird = copyDist("dist-weird-mode", dist);
-  writeFileSync(join(weird, "metadata.json"), '{"mode":"f este","sha":"x"}');
+  writeFileSync(join(weird, "metadata.json"), '{"mode":"feste","sha":"x"}');
   eq("metadata с чужим mode → громкий отказ", cli(["artifact-mode", weird]).status, 1);
 
   const lieDual = copyDist("dist-lie-dual", dist);

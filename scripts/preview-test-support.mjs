@@ -519,6 +519,127 @@ export function sectionSystemdSecurity(t, base) {
 
 /** Шимы верификации: fake dig/nslookup (список FAKE_DNS_OK) + scripted curl
  *  (файлы сцен get.<url>/head.<url>: строка 1 — код, остальное — тело). */
+/** Сцена 11b: legacy single-site вход-контракт (порядок мерджа PR #49/#50
+ * не гарантирован: до продуктового PR артефакт честно одно-сайтовый; НЕ фейк и
+ * НЕ ослабление — второй хост не заявляем и не верифицируем). Смена формата
+ * артефакта на живом слаге + полный легаси verify-цикл, включая §9.3а WS-пробу
+ * и честный отказ по чужой зоне хоста. Тело проверено на ветке: см. git log. */
+export function sectionLegacyContract(P) {
+  const { t, base, verifyBase, vDir, dnsOk, pr41G, pr41E } = P;
+{
+  // Инвентарь: janitor перед легаси-сценой — отработавшие окружения сносим
+  // (сами же тесты учат: staging — не свалка), иначе legone упрётся в лимит 8.
+  for (const spent of ["tlsapex", "psec2"]) {
+    const r = run({ ...base, PREVIEW_SLUG: spent, PREVIEW_ACTION: "destroy" });
+    eq(`janitor cleanup ${spent} before legacy scene`, r.status, 0);
+    eq(`janitor ${spent} gone`, existsSync(join(t.previewRoot, spent)), false);
+  }
+}
+{
+  const LEG = "legone.abnocw.miew.ru";
+  fillIncoming(t.incoming, "legone");
+  const dualFirst = run({
+    ...base,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_IN: join(t.incoming, "legone"),
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_PORT: "41071",
+  });
+  eq("legone starts as dual (variant roots)", dualFirst.status, 0);
+  eq("legone dual grotto root live", existsSync(join(t.previewRoot, "legone/www-grotto/index.html")), true);
+  // Легаси-вход поверх ТОГО ЖЕ слага: www/ без вариантных корней (форма
+  // артефакта старого main-билда до продуктового PR).
+  fillIncomingLegacy(t.incoming, "legone-legacy");
+  writeFileSync(join(t.incoming, "legone-legacy/metadata.json"), '{"mode":"legacy-single","sha":"fff999"}\n');
+  const legacyOver = run({
+    ...base,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_IN: join(t.incoming, "legone-legacy"),
+    PREVIEW_HOST: LEG,
+    PREVIEW_PORT: "41071",
+  });
+  dump("legone legacy over dual", legacyOver);
+  eq("legacy apply over dual slug succeeds", legacyOver.status, 0);
+  eq("legacy single root deployed", existsSync(join(t.previewRoot, "legone/www/index.html")), true);
+  eq("legacy wipes variant grotto root", existsSync(join(t.previewRoot, "legone/www-grotto")), false);
+  eq("legacy wipes variant elyria root", existsSync(join(t.previewRoot, "legone/www-elyria")), false);
+  eq("legacy metadata copied to app", readFileSync(join(t.previewRoot, "legone/metadata.json"), "utf8").includes("legacy-single"), true);
+  const legEnv = readFileSync(join(t.previewRoot, "legone/env"), "utf8");
+  eq("legacy env sites mode honest", legEnv.includes("PREVIEW_SITES_MODE=legacy-single"), true);
+  eq("legacy env has no elyria hosts key", legEnv.includes("ELYRIA_HOSTS="), false);
+  eq("legacy env single public host", legEnv.includes("PUBLIC_HOSTS=legone.abnocw.miew.ru"), true);
+  eq("legacy env origins single host", legEnv.includes(`ALLOWED_ORIGINS=http://${LEG},https://${LEG}`), true);
+  const legFrag = readFileSync(join(t.nginxD, "preview-legone.conf"), "utf8");
+  eq("legacy fragment single server block", legFrag.includes(`server_name ${LEG};`), true);
+  eq("legacy fragment has no elisium block", legFrag.includes("elisium.miew.ru"), false);
+  eq("legacy fragment roots app www", /root [^\n]*\/legone\/www;/.test(legFrag), true);
+  // Легаси-артефакт с главным именем чужой зоны — отказ, выкладки нет.
+  const legBad = run({
+    ...base,
+    PREVIEW_SLUG: "legbad",
+    PREVIEW_IN: join(t.incoming, "legone-legacy"),
+    PREVIEW_HOST: "legbad.elisium.miew.ru",
+    PREVIEW_HOST2: "legbad.abnocw.miew.ru",
+    PREVIEW_PORT: "41072",
+  });
+  dump("legbad foreign-zone legacy", legBad);
+  eq("legacy refuses foreign-zone host", legBad.status === 0 ? "ok" : "fail", "fail");
+  eq("legacy refusal names single-site rule", (legBad.stderr || "").includes("один abnocw-хост"), true);
+  eq("legbad never deployed", existsSync(join(t.previewRoot, "legbad")), false);
+  // Полный честный verify легаси: ОДИН хост, WS-проба, health, profiles.
+  writeFileSync(dnsOk, `${LEG}\n`);
+  httpScene(vDir, "get", `https://${LEG}/`, "200", GROTTO_INDEX);
+  httpScene(vDir, "get", `https://${LEG}/health`, "200", HEALTH_OK);
+  httpScene(vDir, "get", `https://${LEG}/profiles`, "404", '{"ok":false,"reason":"not_found"}');
+  wsScene(vDir, LEG);
+  httpScene(vDir, "head", `http://${LEG}/`, "301", `location: https://${LEG}/`);
+  const legV = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  dump("verify legacy live", legV);
+  eq("legacy verify live exit", legV.status, 0);
+  eq("legacy verify overall live", legV.stdout.includes("PREVIEW-RESULT overall=live"), true);
+  eq("legacy verify grotto ok", legV.stdout.includes("grotto=ok reasons=none"), true);
+  eq("legacy verify mode legacy-single", legV.stdout.includes("mode=legacy-single"), true);
+  eq("legacy verify honest note", legV.stdout.includes("note=legacy single-site preview (dual-host появится после мерджа PR #49)"), true);
+  eq("legacy verify no elyria claim", legV.stdout.includes("elyria="), false);
+  eq("legacy verify sha honest none", legV.stdout.includes("sha=none"), true);
+  // §9.3а: WS-точка мертва (connection-refused/TLS-fail сортов 000) — не
+  // молчит: grotto broken с точной причиной ws-000, overall failed, exit 4.
+  sceneGone(vDir, "get", `https://${LEG}/ws`);
+  const legWsDead = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  dump("verify legacy ws dead", legWsDead);
+  eq("legacy ws-dead not live (exit 4)", legWsDead.status, 4);
+  eq("legacy ws-dead reason named", legWsDead.stdout.includes("grotto=broken reasons=ws-000"), true);
+  eq("legacy ws-dead overall failed", legWsDead.stdout.includes("PREVIEW-RESULT overall=failed"), true);
+  wsScene(vDir, LEG);
+  // DNS не резолвится — needs-dns как в dual, exit 6, без спекуляций live.
+  writeFileSync(dnsOk, "");
+  const legDns = run({
+    ...verifyBase,
+    PREVIEW_SLUG: "legone",
+    PREVIEW_HOST: LEG,
+    PREVIEW_HOST2: "legone.elisium.miew.ru",
+  });
+  eq("legacy needs-dns exit 6", legDns.status, 6);
+  eq("legacy needs-dns honest", legDns.stdout.includes("grotto=needs-dns reasons=dns"), true);
+  writeFileSync(dnsOk, `${pr41G}\n${pr41E}\n`);
+  // Инвентарь: слаг отработал — снос, финальные сцены идут чисто.
+  const legoneGone = run({ ...base, PREVIEW_SLUG: "legone", PREVIEW_ACTION: "destroy" });
+  eq("legone self-cleanup after scene", legoneGone.status, 0);
+  eq("legone data gone after scene", existsSync(join(t.previewRoot, "legone")), false);
+}
+}
+
 export function makeVerifyShims(root) {
   const fakeTools = join(root, "verify-bin");
   mkdirSync(fakeTools, { recursive: true });
