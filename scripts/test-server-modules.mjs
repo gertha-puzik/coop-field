@@ -40,6 +40,7 @@ const accounts = await import("../server/accounts.js");
 const auth = await import("../server/auth.js");
 const hunger = await import("../server/hunger.js");
 const runtimeConfig = await import("../server/runtime-config.js");
+const roomConfig = await import("../server/room-config.js");
 
 let failed = 0;
 let passed = 0;
@@ -230,6 +231,70 @@ eq("auth cookie name", auth.COOKIE, "coop_session");
 eq("accounts PASS_MIN", accounts.PASS_MIN, 8);
 eq("cfg sanitize phase clamp", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 999, weatherMin: 12 } }).config.atmo.phaseMin, 120);
 eq("cfg sanitize weather floor", runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 7, weatherMin: 0 } }).config.atmo.weatherMin, 2);
+
+/* ---------- F2 §7: MAX_ACCOUNTS — значение владелицы 2000, env bounded ----------
+ * Фактический код server/accounts.js: maxAccounts() = env-число (>0) или
+ * дефолт 2000; потолок достижим ('full'). Проверяем через ПУБЛИЧНЫЙ
+ * createAccount — контракт {account}|{error}, без правок модуля. */
+{
+  const stamp = Date.now();
+  process.env.MAX_ACCOUNTS = "0"; // 0/мусор → дефолт 2000 (bounded override)
+  const zeroRes = await accounts.createAccount(`мх-0-${stamp}`, "password123");
+  eq("MAX_ACCOUNTS env=0/мусор → дефолт 2000 (регистрация проходит)", zeroRes.error, undefined);
+  process.env.MAX_ACCOUNTS = "3"; // в песочнице уже есть 1 аккаунт (мх-0)
+  const a1 = await accounts.createAccount(`мх-1-${stamp}`, "password123");
+  const a2 = await accounts.createAccount(`мх-2-${stamp}`, "password123");
+  const a3 = await accounts.createAccount(`мх-3-${stamp}`, "password123");
+  delete process.env.MAX_ACCOUNTS;
+  eq("MAX_ACCOUNTS: env-потолок достижим — лишний аккаунт 'full', лимитные созданы", [!!a1.account, !!a2.account, a3.error], [true, true, "full"]);
+  eq("MAX_ACCOUNTS: env снят — дефолт 2000, регистрация снова свободна", (await accounts.createAccount(`мх-4-${stamp}`, "password123")).error, undefined);
+}
+
+/* ---------- F2: room-config.js — per-room модель (слой поверх B2) ---------- */
+eq(
+  "room-config: 3 поддержанных per-room ключа",
+  roomConfig.SUPPORTED_ROOM_KEYS,
+  ["atmo.phaseMin", "atmo.weatherMin", "atmo.allowPlayerAtmosphereControl"],
+);
+eq("room-config: RETIRED-алиас combat → grot-1", roomConfig.canonicalRoomId("combat"), "grot-1");
+eq("room-config: path traversal '../etc/passwd' → null (не зарегистрирована)", roomConfig.canonicalRoomId("../etc/passwd"), null);
+eq("room-config: незарегистрированный код → null", roomConfig.canonicalRoomId("marja-room"), null);
+eq(
+  "room-config: гейт atmoset default true (комната без overrides)",
+  roomConfig.isPlayerAtmoControlAllowed("grot-1"),
+  true,
+);
+eq(
+  "room-config: init без overrides → прежняя ленивая инициализация (null)",
+  roomConfig.initialRoomAtmo("grot-1"),
+  null,
+);
+
+/* ---------- F2 §4: сервер — авторитет выбора игрока (combat.armor) ----------
+ * Канал фактический: WS-кадр "armor" → combat.armor → снап к ВИДИМОМУ игроку
+ * списку (combatCaps читает runtime-состояние). Прогоняем чистую функцию
+ * через saveConfig с явным playerSelectable=false. */
+{
+  const cur = runtimeConfig.combatCaps();
+  eq("§4 combatCaps: дефолт — 10 десятых, потолок урона 9", [cur.armorTenths.length, cur.maxDamageLevel], [10, 9]);
+  const saved = runtimeConfig.sanitizeConfig({ atmo: { phaseMin: 7, weatherMin: 12 } });
+  runtimeConfig.saveConfig({ ...saved.config, universes: { strikeDamage: { levels: [0, 1, 2, 3], default: 1, playerSelectable: false }, armor: { tenths: [0.3, 0.5, 0.9], default: 0.5, playerSelectable: false }, arrowSpeed: { periods: [1.8, 2.5, 3.5, 4, 4.5, 5], default: 5, playerSelectable: true } } });
+  const caps = runtimeConfig.combatCaps();
+  eq(
+    "§4 combatCaps: playerSelectable=false → игроку виден только defaultValue",
+    [caps.maxDamageLevel, caps.armorTenths],
+    [1, [0.5]],
+  );
+  // WS-гейт: мусорная броня вне видимого списка => снап к дефолту 0.5.
+  const fakeCat = { armor: 0.9 };
+  const fakeWs = {};
+  fakeWs.room = { sockets: new Map([[fakeWs, fakeCat]]) };
+  combat.armor(fakeWs, { armor: 0.9 });
+  eq("§4 combat.armor: 0.9 при выключенном выборе → снап к defaultValue 0.5", fakeCat.armor, 0.5);
+  runtimeConfig.saveConfig(runtimeConfig.defaults());
+  const back = runtimeConfig.combatCaps();
+  eq("§4 combatCaps: сброс к дефолтному реестру после теста", [back.armorTenths.length, back.maxDamageLevel], [10, 9]);
+}
 
 // ---------- отчёт ----------
 if (failed > 0) {

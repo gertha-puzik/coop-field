@@ -51,11 +51,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------- Юнит: реестр (без сети) ---------- */
 check(
   JSON.stringify(reg.KEYS) ===
-    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
-  "unit: 5 ключей реестра в каноническом порядке",
+    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "atmo.allowPlayerAtmosphereControl", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
+  "unit: 6 ключей реестра в каноническом порядке (5 числовых + bool-гейт atmoset, F2 §3.4)",
 );
 const defs = reg.defaultsFor();
-check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12, "unit: дефолтальные длительности 7/12");
+check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12 && defs.atmo.allowPlayerAtmosphereControl === true, "unit: дефолтальные длительности 7/12; гейт atmoset default=true (прежний геймплей без миграции)");
 check(defs.universes.arrowSpeed.periods.length === 6 && defs.universes.arrowSpeed.default === 5, "unit: пресеты стрелы 6 шт, дефолт 5");
 const clamped = reg.sanitizeValues({ atmo: { phaseMin: 999, weatherMin: 0 } }).values;
 check(clamped.atmo.phaseMin === 120 && clamped.atmo.weatherMin === 2, "unit: диапазон клэмпится 999→120, 0→2 (толерантность прежняя)");
@@ -64,7 +64,7 @@ check(
   unknown.error?.reason === "unknown_keys" && JSON.stringify(unknown.error.unknown) === JSON.stringify(["marja", "atmo.marja"]),
   "unit: неизвестная секция/поле → unknown_keys",
 );
-check(unknown.error?.allowed?.length === 5, "unit: отказ перечисляет разрешённые ключи (whitelist)");
+check(unknown.error?.allowed?.length === 6, "unit: отказ перечисляет разрешённые ключи (whitelist, 6 шт)");
 const badLevel = reg.sanitizeValues({ universes: { strikeDamage: { levels: [0, 27], default: 0 } } });
 check(badLevel.error?.reason === "invalid" && badLevel.error.invalid[0].key === "universes.strikeDamage", "unit: уровень вне движкового юниверса → invalid");
 const emptyList = reg.sanitizeValues({ universes: { armor: { tenths: [], default: 0 } } });
@@ -74,7 +74,7 @@ check(badDefault.error?.reason === "invalid", "unit: дефолт не из сп
 const goodList = reg.sanitizeValues({ universes: { strikeDamage: { levels: [1, 0, 1], default: 1 } } }).values;
 check(JSON.stringify(goodList.universes.strikeDamage.levels) === "[0,1]", "unit: дубликаты уровней снимаются, список сортируется");
 const halfFields = reg.universesForPublic(goodList);
-check(JSON.stringify(halfFields.strikeDamage) === '{"levels":[0,1],"default":1}', "unit: universesForPublic отдаёт только списки+дефолты");
+check(JSON.stringify(halfFields.strikeDamage) === '{"levels":[0,1],"default":1,"playerSelectable":true}', "unit: universesForPublic отдаёт списки+дефолт+явный флаг выбора");
 check(
   reg.maxStrikeDamage("throat", 0) === 42 && reg.maxStrikeDamage("throat", 9) === 75 &&
     reg.maxStrikeDamage("muzzle", 9) === 32 && reg.maxStrikeDamage("paws", 4) === 8,
@@ -91,10 +91,26 @@ check(
     reg.snapArmorToUniverse(0.30000000000004, reg.defaultsFor().universes.armor.tenths) === 0.3,
   "unit: снап не квантует вверх по полному списку (0,55/0,56→0,5; float-пыль→0,3)",
 );
+// F2 §3.4 в реестре: 6-й ключ — room-scope, глобальный слой его НЕ принимает
+// (заморозка POST /cfg), слой per-room (opts.room) принимает строго bool.
+const roomKeyGlobal = reg.sanitizeValues({ atmo: { allowPlayerAtmosphereControl: false } });
+check(
+  roomKeyGlobal.error?.reason === "unknown_keys" && JSON.stringify(roomKeyGlobal.error?.unknown) === JSON.stringify(["atmo.allowPlayerAtmosphereControl"]),
+  "unit: гейт atmoset глобальным POST /cfg отвергнут (scope room — per-room only)",
+);
+const roomKeyRoom = reg.sanitizeValues({ atmo: { allowPlayerAtmosphereControl: false } }, reg.defaultsFor(), { room: true });
+check(
+  roomKeyRoom.values?.atmo?.allowPlayerAtmosphereControl === false && roomKeyRoom.values?.atmo?.phaseMin === 7 && roomKeyRoom.values?.atmo?.weatherMin === 12,
+  "unit: opts.room принимает гейт atmoset поверх движковых дефолтов (остальные поля целы)",
+);
+const roomBadBool = reg.sanitizeValues({ atmo: { allowPlayerAtmosphereControl: "выкл" } }, reg.defaultsFor(), { room: true });
+check(roomBadBool.error?.reason === "invalid", "unit: гейт atmoset — строго true/false (строка → invalid)");
 
 /* ---------- HTTP: sandbox со старым atmo-only файлом ---------- */
 mkdirSync(DATA, { recursive: true });
-writeFileSync(FILE, JSON.stringify({ v: 1, atmo: { phaseMin: 5, weatherMin: 12 } }, null, 2));
+// Сид: «старый» persisted-формат ДО §4: playerSelectable нет; arrowSpeed
+// сужен до {default}-only — прежняя косвенная семантика «выбор выключен».
+writeFileSync(FILE, JSON.stringify({ v: 1, atmo: { phaseMin: 5, weatherMin: 12 }, universes: { arrowSpeed: { periods: [5], default: 5 } } }, null, 2));
 
 let server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
@@ -166,11 +182,15 @@ try {
   check(pub0.json?.universes?.strikeDamage?.levels?.length === 10, "cfg: universes добирается дефолтами реестра");
   check(!("history" in (pub0.json || {})), "cfg: публичный GET /cfg больше НЕ отдаёт history (имён бэкапов игрокам не видно)");
   check(
-    JSON.stringify(Object.keys(pub0.json.universes.strikeDamage)) === JSON.stringify(["levels", "default"]),
-    "cfg: публичный блок universes — только списки и дефолты",
+    JSON.stringify(Object.keys(pub0.json.universes.strikeDamage)) === JSON.stringify(["levels", "default", "playerSelectable"]),
+    "cfg: публичный блок universes — списки, дефолт и флаг выбора (меты нет)",
   );
+  // F2 §4.3: read-time миграция старого persisted-формата (без флага) —
+  // флаг выводится из списка; узкий [5]-only => выбор выключен, полный => true.
+  check(pub0.json?.universes?.arrowSpeed?.playerSelectable === false && JSON.stringify(pub0.json?.universes?.arrowSpeed?.periods) === "[5]", "cfg: legacy [5]-only стрелы мигрируется как playerSelectable=false (деривация из списка)");
+  check(pub0.json?.universes?.strikeDamage?.playerSelectable === true && pub0.json?.universes?.strikeDamage?.levels?.length === 10, "cfg: полномасштабный юниверса урона мигрируется как playerSelectable=true");
   check(pub0.json?.apply?.["atmo.phaseMin"] === "new-room" && pub0.json?.apply?.["universes.strikeDamage"] === "on-next-event", "cfg: apply-политики приходят по ключам реестра");
-  check(readFileSync(FILE, "utf8").includes('"phaseMin": 5') && !readFileSync(FILE, "utf8").includes('"universes"'), "cfg: файл на диске НЕ переписан до первого admin-POST");
+  check(readFileSync(FILE, "utf8").includes('"phaseMin": 5') && !readFileSync(FILE, "utf8").includes('"playerSelectable"'), "cfg: файл на диске НЕ переписан до первого admin-POST (миграция только на чтении)");
 
   // (б) Роли: гость и юзер не пишут и не видят админ-данные.
   const guestPost = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 3 } } });
@@ -211,7 +231,7 @@ try {
 
   // (в) POST /cfg: whitelist-патч.
   const saved = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 9 } }, token: adminTok });
-  check(saved.status === 200 && saved.json?.atmo?.phaseMin === 9 && saved.json?.atmo?.weatherMin === 12, "cfg: админ-патч применён (условные клэмпы), второе поле не потеряно");
+  check(saved.status === 200 && saved.json?.atmo?.phaseMin === 9 && saved.json?.atmo?.weatherMin === 12 && !("allowPlayerAtmosphereControl" in saved.json.atmo), "cfg: админ-патч применён (условные клэмпы), room-ключ глобальному слою не виден");
   check(readFileSync(FILE, "utf8").includes('"universes"'), "cfg: первый admin-POST переписал файл расширенной схемой (v:1 + universes)");
   check(!("history" in (saved.json || {})), "cfg: ответ POST /cfg без history");
 
@@ -227,7 +247,7 @@ try {
 
   // (г) Сужение юниверса брони + экспорт/импорт roundtrip.
   const armorPatch = await httpJson("/cfg", { method: "POST", body: { universes: { armor: { tenths: [0.3, 0.5], default: 0.5 } } }, token: adminTok });
-  check(armorPatch.status === 200 && JSON.stringify(armorPatch.json?.universes?.armor) === '{"tenths":[0.3,0.5],"default":0.5}', "cfg: сужение брони до [0.3,0.5]");
+  check(armorPatch.status === 200 && JSON.stringify(armorPatch.json?.universes?.armor) === '{"tenths":[0.3,0.5],"default":0.5,"playerSelectable":true}', "cfg: сужение брони до [0.3,0.5] (флаг выбора выведен из списка — старое тело, косвенная семантика)");
 
   const exportRes = await httpJson("/cfg/export", { token: adminTok });
   check(exportRes.status === 200 && exportRes.json?.atmo?.phaseMin === 9 && exportRes.json?.universes?.armor?.tenths?.length === 2 && !("apply" in (exportRes.json || {})), "cfg: GET /cfg/export — значения одним JSON");
@@ -250,7 +270,7 @@ try {
   check(restoreGhost.status === 404, "cfg: restore по незнакомому имени → отказ");
 
   const adminCfg = await httpJson("/cfg/admin", { token: adminTok });
-  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 5, "cfg: GET /cfg/admin отдаёт метаданные реестра (5 параметров)");
+  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 6, "cfg: GET /cfg/admin отдаёт метаданные реестра (6 параметров)");
   check(Array.isArray(adminCfg.json?.history) && adminCfg.json.history.length >= 1, "cfg: админ видит историю бэкапов");
   const hist = adminCfg.json.history;
   // Самый старый бэкап — снимок засеянного старого файла ( rotated at first POST).
@@ -259,7 +279,8 @@ try {
   check(oldestText.includes('"phaseMin": 5'), "cfg: старейший бэкап — исходный atmo-only файл");
   const restored = await httpJson("/cfg/restore", { method: "POST", body: { name: oldest }, token: adminTok });
   check(restored.status === 200 && restored.json?.restored === oldest && restored.json?.atmo?.phaseMin === 5, "cfg: restore по имени из истории вернул phaseMin 5");
-  check(restored.json?.universes?.armor?.tenths?.length === 10, "cfg: restore старого формата восстанавливает universes дефолтами (миграция)");
+  check(restored.json?.universes?.armor?.tenths?.length === 10 && restored.json?.universes?.armor?.playerSelectable === true, "cfg: restore старого формата восстанавливает universes дефолтами (миграция, флаг выведен из списка = true)");
+  check(restored.json?.universes?.arrowSpeed?.playerSelectable === false && JSON.stringify(restored.json?.universes?.arrowSpeed?.periods) === "[5]", "cfg: restore наследует legacy-снапшот [5]-only стрелы без резетов (мигрировано playerSelectable=false)");
 
   // (е) Reset.
   const resetRes = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
@@ -271,7 +292,7 @@ try {
   //     одного дефолта (серверной disabled-модели нет — контракт заморожен).
   const narrow = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 2, 3, 2], default: 2 } } }, token: adminTok });
   check(
-    narrow.status === 200 && JSON.stringify(narrow.json?.universes?.strikeDamage) === '{"levels":[0,2,3],"default":2}',
+    narrow.status === 200 && JSON.stringify(narrow.json?.universes?.strikeDamage) === '{"levels":[0,2,3],"default":2,"playerSelectable":true}',
     "cfg-список: сужение уровней урона до [0,2,3] (дубликат снят сервером)",
   );
   const pubNarrow = await httpJson("/cfg");
@@ -292,13 +313,13 @@ try {
   check(JSON.stringify(stillWide.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2, 3]), "cfg-список: после отказов значения НЕ изменились (всё или ничего)");
   const removeOne = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 1, 2], default: 0 } } }, token: adminTok });
   check(
-    removeOne.status === 200 && JSON.stringify(removeOne.json?.universes?.strikeDamage) === '{"levels":[0,1,2],"default":0}',
+    removeOne.status === 200 && JSON.stringify(removeOne.json?.universes?.strikeDamage) === '{"levels":[0,1,2],"default":0,"playerSelectable":true}',
     "cfg-список: точечное удаление значения со сдвигом дефолта ([0,1,2,3]→[0,1,2])",
   );
   const toggleOff = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { periods: [5], default: 5 } } }, token: adminTok });
   check(
-    toggleOff.status === 200 && JSON.stringify(toggleOff.json?.universes?.arrowSpeed) === '{"periods":[5],"default":5}',
-    "cfg-список: «выбор выключен» = список из одного дефолта (toggle БЕЗ серверной disabled-модели)",
+    toggleOff.status === 200 && JSON.stringify(toggleOff.json?.universes?.arrowSpeed) === '{"periods":[5],"default":5,"playerSelectable":false}',
+    "cfg-список: старое тело [5]-only → playerSelectable=false (косвенная семантика сохранена)",
   );
   const expNarrow = await httpJson("/cfg/export", { token: adminTok });
   check(
@@ -324,12 +345,69 @@ try {
       restoreNarrow.json?.universes?.arrowSpeed?.periods?.length === 1,
     "cfg-список: restore последнего бэкапа жив поверх списочных мутаций",
   );
+
+  // (з) F2 §4: явный playerSelective поверх сохранённого allowedValues.
+  //     Кураторский список живёт на сервере отдельно от флага: выключение
+  //     выбора НЕ режет список, повторное включение возвращает его (не юниверс).
+  const curated = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { periods: [2.5, 3.5, 4, 5], default: 5 } } }, token: adminTok });
+  check(
+    curated.status === 200 &&
+      JSON.stringify(curated.json?.universes?.arrowSpeed?.periods) === JSON.stringify([2.5, 3.5, 4, 5]) &&
+      curated.json?.universes?.arrowSpeed?.playerSelectable === true,
+    "cfg-§4: кураторский список [2.5,3.5,4,5] сохранён (список>1 => выбор включён)",
+  );
+  const flagOff = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { playerSelectable: false } } }, token: adminTok });
+  check(
+    flagOff.status === 200 &&
+      JSON.stringify(flagOff.json?.universes?.arrowSpeed?.periods) === "[5]" &&
+      flagOff.json?.universes?.arrowSpeed?.playerSelectable === false,
+    "cfg-§4: тело-только-флаг: ответ — замороженная публичная проекция (игроку [default]), allowedValues живёт в файле/admin-виде",
+  );
+  const pubOff = await httpJson("/cfg");
+  check(
+    JSON.stringify(pubOff.json?.universes?.arrowSpeed?.periods) === "[5]" && pubOff.json?.universes?.arrowSpeed?.playerSelectable === false,
+    "cfg-§4: при выключенном выборе игроку отдаётся только defaultValue",
+  );
+  const storedNow = JSON.parse(readFileSync(FILE, "utf8"));
+  check(
+    storedNow?.universes?.arrowSpeed?.periods?.length === 4 && storedNow?.universes?.arrowSpeed?.playerSelectable === false,
+    "cfg-§4: persisted-файл хранит полный кураторский список + явный флаг (список не стирается)",
+  );
+  const badFlagStr = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { playerSelectable: "false" } } }, token: adminTok });
+  check(badFlagStr.status === 400 && badFlagStr.json?.reason === "invalid", "cfg-§4: playerSelectable строкой → 400 invalid (строго true/false)");
+  const badFlagNum = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { playerSelectable: 1 } } }, token: adminTok });
+  check(badFlagNum.status === 400 && badFlagNum.json?.reason === "invalid", "cfg-§4: playerSelectable числом → 400 invalid");
+  const flagOn = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { playerSelectable: true } } }, token: adminTok });
+  check(
+    flagOn.status === 200 &&
+      JSON.stringify(flagOn.json?.universes?.arrowSpeed?.periods) === JSON.stringify([2.5, 3.5, 4, 5]) &&
+      flagOn.json?.universes?.arrowSpeed?.playerSelectable === true,
+    "cfg-§4: повторное включение возвращает кураторский список [2.5,3.5,4,5], а НЕ весь юниверс (фикс off-then-on)",
+  );
+  const openAdmin = await httpJson("/cfg/admin", { token: adminTok });
+  check(
+    JSON.stringify(openAdmin.json?.values?.universes?.arrowSpeed?.periods) === JSON.stringify([2.5, 3.5, 4, 5]),
+    "cfg-§4: админ-дашборд видит полный список даже при выключенном/включённом выборе (playerView=false)",
+  );
+  // Рестарт сервера: custom list + флаг переживают процесс (persisted, не UI-состояние).
+  await stopServer();
+  startServer();
+  await waitReady();
+  const afterRestart = await httpJson("/cfg");
+  check(
+    JSON.stringify(afterRestart.json?.universes?.arrowSpeed?.periods) === JSON.stringify([2.5, 3.5, 4, 5]) &&
+      afterRestart.json?.universes?.arrowSpeed?.playerSelectable === true,
+    "cfg-§4: кураторский список цел после рестарта сервера (reload = новый fetch с сервера)",
+  );
+
   const finalReset = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
   check(
     finalReset.status === 200 &&
       finalReset.json?.universes?.strikeDamage?.levels?.length === 10 &&
-      finalReset.json?.universes?.arrowSpeed?.periods?.length === 6,
-    "cfg-список: финальный reset возвращает полные движковые юниверсы",
+      finalReset.json?.universes?.arrowSpeed?.periods?.length === 6 &&
+      finalReset.json?.universes?.strikeDamage?.playerSelectable === true &&
+      finalReset.json?.universes?.armor?.playerSelectable === true,
+    "cfg-список: финальный reset возвращает полные движковые юниверсы с выбором (дефолтное состояние реестра)",
   );
 } catch (e) {
   failures += 1;

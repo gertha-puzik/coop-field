@@ -197,7 +197,7 @@ checkGolden("DUMMY_DEFAULT.sprite", serverProtocol.DUMMY_DEFAULT.sprite, "puhlya
  *    урона (защита от «обе стороны уехали вместе»). ARMOR_CURVE и STRIKE_ZONES
  *    как константы движка уже запинены выше — реестр лежит ПОВЕРХ них. */
 const CFG_KEYS_EXPECTED = [
-  "atmo.phaseMin", "atmo.weatherMin",
+  "atmo.phaseMin", "atmo.weatherMin", "atmo.allowPlayerAtmosphereControl",
   "universes.strikeDamage", "universes.armor", "universes.arrowSpeed",
 ];
 if (!deepEq([...cfgReg.KEYS], CFG_KEYS_EXPECTED)) {
@@ -226,11 +226,14 @@ for (const key of cfgReg.KEYS) {
 }
 const GOLDEN_CFG_DEFAULTS = {
   v: 1,
-  atmo: { phaseMin: 7, weatherMin: 12 },
+  // F2 §3.4: bool-гейт atmoset живёт в atmo; отсутствие override = true
+  // (поведение комнат без миграции не меняется). F2 §4: universes несут
+  // явный playerSelectable (тройка allowedValues/defaultValue/selectable).
+  atmo: { phaseMin: 7, weatherMin: 12, allowPlayerAtmosphereControl: true },
   universes: {
-    strikeDamage: { levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], default: 0 },
-    armor: { tenths: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], default: 0 },
-    arrowSpeed: { periods: [1.8, 2.5, 3.5, 4, 4.5, 5], default: 5 },
+    strikeDamage: { levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], default: 0, playerSelectable: true },
+    armor: { tenths: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], default: 0, playerSelectable: true },
+    arrowSpeed: { periods: [1.8, 2.5, 3.5, 4, 4.5, 5], default: 5, playerSelectable: true },
   },
 };
 if (!deepEq(cfgReg.defaultsFor(), GOLDEN_CFG_DEFAULTS)) {

@@ -17,6 +17,7 @@
     "test:cross-origin": "node scripts/test-cross-origin.mjs",
     "test:profiles": "node scripts/test-profiles.mjs",
     "test:cfg": "node scripts/test-cfg-registry.mjs",
+    "test:room-config": "node scripts/test-room-config.mjs",
     "test:preview-slug": "node scripts/test-preview-slug.mjs",
     "test:preview-apply": "node scripts/test-preview-apply.mjs",
     "test:preview-pr-link": "node scripts/test-preview-pr-link.mjs",

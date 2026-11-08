@@ -74,10 +74,14 @@ jobs:
         run: node scripts/test-move-queue.mjs
       - name: Аккаунты и закрытая Элизия
         run: npm run test:auth
-      # Реестр конфига (P2): whitelist из 5 ключей, клэмпы урона/брони,
-      # админ-роуты /cfg (restore с path-guard, export/import).
+      # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
+      # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
       - name: Реестр конфига
         run: npm run test:cfg
+      # F2 per-room конфиг: слои engine←global←room, /cfg/rooms* admin-роуты,
+      # atmoset-гейт, persistence room-configs.json (бэкапы/restore), WS-ран.
+      - name: Per-room конфиг комнат
+        run: npm run test:room-config
       # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
       # строго по cookie-сессии.
       - name: HTTP-профили
