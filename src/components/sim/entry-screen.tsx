@@ -9,13 +9,13 @@ import {
   SPRITES,
   SPRITE_GROUPS,
   MALYSHOCHKI_SET,
-  armorLevelMultiplier,
   damageLevelLabel,
   spriteGroupOf,
   throatDamageFor,
   type SpriteId,
   type SpriteMeta,
 } from '@/lib/sim/settings';
+import { armorLevelMultiplierOn } from '@/lib/sim/armor-curve';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { AuthPanel } from './auth-panel';
 import type { CoopWhoami } from '@/lib/net/protocol';
@@ -586,7 +586,7 @@ export function EntryScreen({
               </div>
               <p className="mt-1.5 text-[10px] leading-snug text-[var(--sim-text-faint)]">
                 Броня режет получаемый урон: при {damageLevelLabel(armorVal)} по вам проходит{' '}
-                {Math.round(armorLevelMultiplier(armorVal) * 100)}% урона.
+                {Math.round(armorLevelMultiplierOn(universes.armorCurve, armorVal) * 100)}% урона.
               </p>
             </ParamCard>
           </div>

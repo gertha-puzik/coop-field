@@ -41,12 +41,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
-  applyBadgeText,
   buildCfgDiff as buildDiff,
   canonByKind,
   cfgPatchFromDraft,
+  curveIssue,
   draftFromSnapshot,
-  fmtNum,
   httpCfgAdmin,
   httpCfgApply,
   httpCfgExportText,
@@ -54,258 +53,48 @@ import {
   httpCfgReset,
   httpCfgRestore,
   listIssue,
-  narrowingWarning,
   successText,
   type CfgAdminSnapshot,
   type CfgDraft,
-  type CfgFieldDiff,
   type CfgFieldMeta,
 } from '@/lib/net/http-cfg';
 import { httpMe } from '@/lib/net/http-auth';
 
+// Строки-редакторы полей (Range/Bool/List/Diff + каркас) — вынесены в
+// cfg-fields.tsx: дашборд держим под лимитом 800 строк (как players-field-tab).
 import { RoomConfigPanel } from './room-config-panel';
+import { BoolFieldRow, DiffRow, FieldShell, ListFieldRow, RangeFieldRow } from './cfg-fields';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
 import { PlayersFieldTab } from './players-field-tab';
+// Вкладка «Броня» (мандат владелицы 2026-11-08): редактор кривой защиты
+// combat.armorCurve + предпросмотр «было → станет» — общие сателлиты.
+import { ArmorTab } from './armor-tab';
+import { ApplyPreview } from './cfg-apply-preview';
+// Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
+// загрузка/удаление/категории, динамический каталог сервера.
+import { SpritesTab } from './sprites-tab';
+// Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
+// вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
+import { DashShell, type DashTab } from './dash-shell';
+import { ThemeSelect } from '@/components/site/theme-select';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 /* Логика черновика (типы, канонизация, диффы, статусы) — в http-cfg.ts (B2);
  * здесь только локальные алиасы и React-обёртки. */
 type Draft = CfgDraft;
-type FieldDiff = CfgFieldDiff;
+type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
-
-function rangeOptions(def: { min: number; max: number; step: number }): number[] {
-  const out: number[] = [];
-  const step = def.step > 0 ? def.step : 1;
-  for (let v = def.min; v <= def.max + 1e-9; v += step) out.push(Number(v.toFixed(4)));
-  if (def.max > def.min && out[out.length - 1] !== def.max) out.push(def.max);
-  return out;
-}
-
-const SELECT_CLS = 'h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]';
-
-/** Сырой тех-ключ/kind/политика — в сворачиваемых «технических деталях» с
- * копированием (§4: русские подписи — primary, ключи — вторично). */
-function TechDetails({ def }: { def: CfgFieldMeta }) {
-  const [copied, setCopied] = useState(false);
-  const copyKey = () => {
-    const write = navigator.clipboard?.writeText(def.key);
-    if (!write) return;
-    write
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => undefined);
-  };
-  return (
-    <details className="mt-2">
-      <summary className="cursor-pointer select-none text-[11px] text-[var(--sim-text-faint)]">Технические детали</summary>
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--sim-text-faint)]">
-        <code className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)]">{def.key}</code>
-        <button
-          type="button"
-          className="rounded border border-[var(--sim-line-strong)] px-1.5 py-0.5 hover:bg-black/30"
-          onClick={copyKey}
-        >
-          {copied ? 'Скопировано' : 'Копировать ключ'}
-        </button>
-        <span>тип: {def.kind}</span>
-        <span>охват: {def.scope || 'global'}</span>
-        <span>политика: {def.applyPolicy}</span>
-      </div>
-    </details>
-  );
-}
-
-/** Каркас строки поля: русская подпись primary, бейдж apply-политики,
- * описание, дети-контролы, подсказка применения, тех-детали. */
-function FieldShell({ def, children }: { def: CfgFieldMeta; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-[var(--sim-line)] p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-sm font-bold text-[var(--sim-text)]">{def.label}</p>
-        <span className="rounded-full border border-[var(--sim-line-strong)] px-2 py-0.5 text-[10px] text-[var(--sim-text-soft)]">
-          когда вступает: {applyBadgeText(def.applyPolicy)}
-        </span>
-      </div>
-      <p className="mt-1 text-xs text-[var(--sim-text-soft)]">{def.description}</p>
-      {children}
-      <p className="mt-2 text-[11px] text-[var(--sim-text-faint)]">{def.applyHint}</p>
-      <TechDetails def={def} />
-    </div>
-  );
-}
-
-/** Числовой диапазон (§4.1): селектор по min/max/step + явные границы и юниты. */
-function RangeFieldRow({
-  def,
-  value,
-  saved,
-  onChange,
-}: {
-  def: CfgFieldMeta;
-  value: number;
-  saved: number;
-  onChange: (v: number) => void;
-}) {
-  const bounds = def.values as { min: number; max: number; step: number };
-  const dirty = Number.isFinite(saved) && Number.isFinite(value) && saved !== value;
-  return (
-    <FieldShell def={def}>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <select
-          className={SELECT_CLS}
-          value={Number.isFinite(value) ? value : bounds.min}
-          onChange={(e) => onChange(Number(e.target.value))}
-        >
-          {rangeOptions(bounds).map((v) => (
-            <option key={v} value={v}>
-              {v} {def.unit}
-            </option>
-          ))}
-        </select>
-        {dirty ? (
-          <span className="text-[11px] text-amber-300/90">
-            не сохранено — на сервере сейчас {fmtNum(saved)} {def.unit}
-          </span>
-        ) : null}
-      </div>
-      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
-        Границы: от {bounds.min} до {bounds.max} {def.unit}, шаг {bounds.step}.
-      </p>
-    </FieldShell>
-  );
-}
-
-/** Редактор СПИСКА разрешённых значений (§4.2): чекбоксы по движковому
- * юнису (registry.values) + ЯВНЫЙ флаг «игроки могут выбирать» (F2 §4):
- * флип флага НЕ мутирует список — allowedValues и playerSelectable
- * хранятся на сервере раздельно (off-then-on возвращает кураторский список,
- * а не движковый юниверс). */
-function ListFieldRow({
-  def,
-  list,
-  saved,
-  savedChoice,
-  draftDefault,
-  universe,
-  choiceOn,
-  onToggleValue,
-  onToggleChoice,
-  onDefault,
-}: {
-  def: CfgFieldMeta;
-  list: number[];
-  saved: { list: number[]; def: number };
-  savedChoice: boolean;
-  draftDefault: number;
-  universe: number[];
-  choiceOn: boolean;
-  onToggleValue: (v: number, on: boolean) => void;
-  onToggleChoice: (on: boolean) => void;
-  onDefault: (v: number) => void;
-}) {
-  const issue = listIssue(list, draftDefault);
-  return (
-    <FieldShell def={def}>
-      <label className="mt-2 flex items-center gap-2 text-xs text-[var(--sim-text-soft)]">
-        <input type="checkbox" checked={choiceOn} onChange={(e) => onToggleChoice(e.target.checked)} />
-        Игроки могут выбирать значение
-      </label>
-      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
-        {choiceOn
-          ? `Разрешено значений: ${list.length} из ${universe.length} (в ${def.unit}).`
-          : `Выбор выключен: игроку отдаётся только дефолт (${fmtNum(draftDefault)} ${def.unit}). Сохранённый список (${list.length}) не трогаем.`}
-      </p>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-        {universe.map((v) => (
-          <label key={v} className="flex items-center gap-1 text-xs text-[var(--sim-text-soft)]">
-            <input type="checkbox" checked={list.includes(v)} onChange={(e) => onToggleValue(v, e.target.checked)} />
-            {fmtNum(v)}
-          </label>
-        ))}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--sim-text-soft)]">
-        <span>Дефолт ({def.unit}):</span>
-        <select
-          className={`${SELECT_CLS} h-7`}
-          value={list.includes(draftDefault) ? draftDefault : ''}
-          onChange={(e) => onDefault(Number(e.target.value))}
-        >
-          {!list.includes(draftDefault) ? <option value="">— выберите —</option> : null}
-          {list.map((v) => (
-            <option key={v} value={v}>
-              {fmtNum(v)} {def.unit}
-            </option>
-          ))}
-        </select>
-      </div>
-      {issue ? <p className="mt-1 text-[11px] font-semibold text-red-300">{issue}</p> : null}
-      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
-        На сервере сейчас: {saved.list.map(fmtNum).join(' / ') || '—'}, дефолт {fmtNum(saved.def)}, выбор игроками:{' '}
-        {savedChoice ? 'вкл' : 'выкл'}.
-      </p>
-    </FieldShell>
-  );
-}
-
-/** Одна строка предпросмотра: «было → станет» (+N/−M) + предупреждение сужения. */
-function DiffRow({ d }: { d: FieldDiff }) {
-  return (
-    <li className="rounded border border-[var(--sim-line)] p-2 text-xs text-[var(--sim-text-soft)]">
-      <p className="font-semibold text-[var(--sim-text)]">{d.label}</p>
-      {d.range ? (
-        <p className="mt-1">
-          Было: {fmtNum(d.range.before)} {d.range.unit} → станет: <b>{fmtNum(d.range.after)} {d.range.unit}</b>
-        </p>
-      ) : d.list ? (
-        <div className="mt-1 space-y-1">
-          <p>
-            Список: {d.list.before.length} зн. → <b>{d.list.after.length} зн.</b> (+{d.list.added.length} / −{d.list.removed.length})
-          </p>
-          {d.list.added.length ? (
-            <p>
-              Добавляются: {d.list.added.map(fmtNum).join(', ')} {d.list.unit}
-            </p>
-          ) : null}
-          {d.list.removed.length ? (
-            <p>
-              Убраны: {d.list.removed.map(fmtNum).join(', ')} {d.list.unit}
-            </p>
-          ) : null}
-          {d.list.defBefore !== d.list.defAfter ? (
-            <p>
-              Дефолт: {fmtNum(d.list.defBefore)} → {fmtNum(d.list.defAfter)}
-            </p>
-          ) : null}
-          {d.list.removed.length ? (
-            <p className="font-semibold text-amber-300">⚠ {narrowingWarning(d.list.kind)}</p>
-          ) : null}
-        </div>
-      ) : null}
-      {d.choice ? (
-        <p className="mt-1">
-          Выбор игроками: {d.choice.before ? 'вкл' : 'выкл'} → <b>{d.choice.after ? 'вкл' : 'выкл'}</b>
-          {d.choice.after
-            ? ` — список из ${d.choice.kept} зн. вернётся игрокам целиком`
-            : ` — игрокам отдаётся только дефолт, список из ${d.choice.kept} зн. сохраняется на сервере`}
-        </p>
-      ) : null}
-      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">{d.hint}</p>
-    </li>
-  );
-}
 
 /* ================================ дашборд ================================ */
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию) и «Игроки на поле». */
-  const [tab, setTab] = useState<'cfg' | 'field'>('cfg');
+  /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
+   *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив). */
+  const [tab, setTab] = useState('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -398,15 +187,23 @@ export default function CfgDashboard() {
     });
   }, []);
 
-  /** Валидность черновика: все списки непустые, дефолты внутри списков. */
+  /** Валидность черновика: все списки непустые, дефолты внутри списков,
+   *  кривые points — без ошибок (curveIssue: счёт, границы, сортировка). */
   const hasListIssues = useMemo(() => {
     if (!snap || !draft) return false;
     for (const def of Object.values(snap.registry)) {
       const [sec, field] = def.key.split('.');
       if (sec === 'universes' && listIssue(draft.lists[field] || [], draft.defaults[field])) return true;
+      if (def.kind === 'points' && curveIssue(draft.points[field], def)) return true;
     }
     return false;
   }, [snap, draft]);
+
+  /** Черновик кривой брони (вкладка «Броня»): строки уже канонизированы
+   *  редактором (сортировка/2 знака), финальную валидацию делает сервер. */
+  const setPoints = useCallback((field: string, pts: number[][]) => {
+    setDraft((prev) => (prev ? { ...prev, points: { ...prev.points, [field]: pts } } : prev));
+  }, []);
 
   const diffCount = useMemo(() => (snap && draft ? buildDiff(snap, draft).length : 0), [snap, draft]);
 
@@ -415,7 +212,7 @@ export default function CfgDashboard() {
   const requestApply = useCallback(() => {
     if (!snap || !draft) return;
     if (hasListIssues) {
-      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка / кривая брони) — исправьте подсвеченное.' });
       return;
     }
     const diff = buildDiff(snap, draft);
@@ -433,7 +230,7 @@ export default function CfgDashboard() {
   const confirmApply = useCallback(() => {
     if (!snap || !draft) return;
     if (hasListIssues) {
-      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка / кривая брони) — исправьте подсвеченное.' });
       return;
     }
     const diff = buildDiff(snap, draft);
@@ -479,11 +276,11 @@ export default function CfgDashboard() {
   }
 
   const reset = () => {
-    if (!window.confirm('Сбросить ВСЕ параметры реестра на дефолты?')) return;
-    void runAction('reset', httpCfgReset, 'Значения сброшены на дефолты (момент вступления в силу — по подсказкам полей).');
+    if (!window.confirm('Сбросить ВСЕ настройки к исходным значениям?')) return;
+    void runAction('reset', httpCfgReset, 'Значения сброшены к исходным (когда вступят в силу — подсказки у полей).');
   };
   const restore = (name: string) => {
-    void runAction(name, () => httpCfgRestore(name), `Бэкап «${name}» восстановлен.`);
+    void runAction(name, () => httpCfgRestore(name), `Резервная копия «${name}» восстановлена.`);
   };
   const doExport = async () => {
     setBusy('export');
@@ -521,80 +318,51 @@ export default function CfgDashboard() {
 
   const registryKeys = snap ? Object.keys(snap.registry) : [];
 
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Панель управления</h1>
-        <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
-          ← Главное меню
-        </a>
-      </header>
-
-      {status ? (
-        <div
-          className={`rounded-lg border p-3 ${
-            status.kind === 'ok'
-              ? 'border-emerald-900/60 bg-emerald-950/40'
-              : 'border-red-900/60 bg-red-950/40'
-          }`}
-        >
-          <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
-            {status.text}
-          </p>
-          {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
-              {status.details}
-            </pre>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Разделы панели: реестр конфига и «Игроки на поле» (занятость + сброс). */}
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Разделы панели">
-        <button
-          type="button"
-          onClick={() => setTab('cfg')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'cfg'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Конфиг
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('field')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'field'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Игроки на поле
-        </button>
-      </nav>
-
-      {tab === 'field' ? (
-        <PlayersFieldTab />
-      ) : snap && draft ? (
-        <>
+  /* Вкладка «Конфиг»: главный редактор реестра (секция «Комнатные настройки»
+   * остаётся внутри, как раньше) + перенос значений + история бэкапов.
+   * Содержимое вкладки НЕ менялось — менялась только оболочка навигации. */
+  const renderCfg = () =>
+    snap && draft ? (
+      <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <p className="text-xs text-[var(--sim-text-faint)]">
-              Схема v{snap.v} · {registryKeys.length} ключей реестра · хранится {snap.historyKeep} последних бэкапов.
+              Формат настроек v{snap.v} · {registryKeys.length} ключей · хранится {snap.historyKeep} последних резервных копий.
             </p>
             <div className="mt-3 grid grid-cols-1 gap-3">
               {registryKeys.map((key) => {
                 const def = snap.registry[key];
                 const [section, field] = def.key.split('.');
-                if (section === 'atmo' && def.kind === 'bool') {
+                if (section === 'combat') {
+                  // Кривая брони живёт на своей вкладке «Броня» (мандат 2026-11-08);
+                  // здесь оставляем только консервативную ссылку.
+                  return null;
+                }
+                if (section === 'atmo' && def.kind === 'bool' && def.scope === 'room') {
+                  // Справочная плашка per-room гейта (глобальным POST /cfg не
+                  // пишется): главный выключатель — master-ключ глобального слоя,
+                  // он рендерится выше (реестр держит его перед per-room ключом).
                   return (
                     <FieldShell key={key} def={def}>
                       <p className="mt-2 text-[11px] text-[var(--sim-text-faint)]">
-                        Глобально не задаётся: управляется по комнатам в «Комнатных настройках» ниже. По умолчанию{' '}
+                        Тонкая настройка по комнатам: главный выключатель — «{snap.registry['atmo.playerControl']?.label ?? 'общий выключатель атмосферы'}» выше в этой секции, сама настройка комнаты — в «Комнатных настройках» ниже. По умолчанию{' '}
                         {def.default ? 'разрешено' : 'запрещено'}.
                       </p>
                     </FieldShell>
+                  );
+                }
+                if (section === 'atmo' && def.kind === 'bool') {
+                  // Глобальный bool (master-гейт atmoset, мандат владелицы
+                  // 2026-11-08): селект «Разрешено/Запрещено», черновик 1/0.
+                  return (
+                    <BoolFieldRow
+                      key={key}
+                      def={def}
+                      value={Number.isFinite(draft.atmo[field]) ? draft.atmo[field] : def.default ? 1 : 0}
+                      saved={Number.isFinite(snap.values.atmo[field]) ? snap.values.atmo[field] : def.default ? 1 : 0}
+                      onChange={(v) =>
+                        setDraft((prev) => (prev ? { ...prev, atmo: { ...prev.atmo, [field]: v } } : prev))
+                      }
+                    />
                   );
                 }
                 if (section === 'atmo') {
@@ -634,34 +402,10 @@ export default function CfgDashboard() {
               })}
             </div>
             {pending ? (
-              <div className="mt-3 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3">
-                <p className="text-sm font-bold text-amber-200">Предпросмотр изменений — пока ничего не отправлено</p>
-                <ul className="mt-2 space-y-2">
-                  {pending.map((d) => (
-                    <DiffRow key={d.key} d={d} />
-                  ))}
-                </ul>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                    disabled={busy !== null}
-                    onClick={confirmApply}
-                  >
-                    {busy === 'apply' ? 'Применяем…' : 'Подтверждаю — применить'}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    disabled={busy !== null}
-                    onClick={() => setPending(null)}
-                  >
-                    Отмена — ничего не отправлять
-                  </Button>
-                </div>
+              <div className="mt-3">
+                <p className="text-[11px] text-[var(--sim-text-faint)]">
+                  Предпросмотр и подтверждение — панелью над разделами (общая для вкладок).
+                </p>
               </div>
             ) : null}
 
@@ -690,10 +434,10 @@ export default function CfgDashboard() {
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <h2 className="text-base font-bold text-[var(--sim-text)]">Комнатные настройки</h2>
             <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-              F2 §3: слоеная модель — движковые дефолты ← глобальный runtime ← явный per-room override.
-              Комната без override наследует глобальные значения; эффективный слой считается на сервере.
-              Override применяется при (пере)создании объекта комнаты (new-rooms-only) и НЕ ломает живую
-              атмосферу. Гейт «игроки могут крутить atmoset» — per-room, по умолчанию разрешён.
+              Значения считаются так: сначала берутся встроенные значения игры, поверх — общие настройки сервера, и
+              последнее слово за явной настройкой комнаты. Комната без своей настройки берёт общие значения; итог считает
+              сервер. Настройка комнаты вступает в силу при создании новой комнаты и не трогает уже идущую игру.
+              Разрешение игрокам менять погоду и время суток настраивается по комнатам, по умолчанию оно включено.
             </p>
             <RoomConfigPanel registry={snap.registry} />
           </section>
@@ -729,7 +473,7 @@ export default function CfgDashboard() {
           </section>
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
-            <h2 className="text-base font-bold text-[var(--sim-text)]">История бэкапов</h2>
+            <h2 className="text-base font-bold text-[var(--sim-text)]">История резервных копий</h2>
             {snap.history.length ? (
               <ul className="mt-2 space-y-2">
                 {snap.history.map((name, i) => (
@@ -752,7 +496,7 @@ export default function CfgDashboard() {
               </ul>
             ) : (
               <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-                Бэкапов ещё нет — они появляются при первом изменении конфига.
+                Резервных копий ещё нет — они появляются при первом изменении настроек.
               </p>
             )}
           </section>
@@ -761,8 +505,80 @@ export default function CfgDashboard() {
         <p className="text-sm text-[var(--sim-text-soft)]">
           Панель не загрузилась. Обновите страницу или проверьте права администратора.
         </p>
-      )}
-    </main>
+      );
+
+  /* Дескрипторы вкладок панели — источник сайд-меню и контента. Все волны
+   * сведены (2026-11-08): «Броня» (кривая защиты) и «Спрайты» (менеджер
+   * скинов) — live-рендеры, рендер Брони гаснет без снапшота реестра. */
+  const tabs: DashTab[] = [
+    { id: 'field', title: 'Игроки на поле', render: () => <PlayersFieldTab /> },
+    { id: 'cfg', title: 'Конфиг', render: renderCfg },
+    {
+      id: 'armor',
+      title: 'Броня',
+      render: () =>
+        snap && draft && snap.registry['combat.armorCurve'] ? (
+          <ArmorTab
+            snap={snap}
+            meta={snap.registry['combat.armorCurve']}
+            points={draft.points.armorCurve || []}
+            issue={curveIssue(draft.points.armorCurve, snap.registry['combat.armorCurve'])}
+            busy={busy}
+            onPoints={(pts) => setPoints('armorCurve', pts)}
+            onApply={requestApply}
+          />
+        ) : null,
+    },
+    { id: 'sprites', title: 'Спрайты', render: () => <SpritesTab /> },
+  ];
+
+  const activeTab = tabs.find((t) => t.id === tab) ?? null;
+
+  return (
+    <DashShell
+      tabs={tabs}
+      active={tab}
+      onPick={setTab}
+      title="Панель управления"
+      headerExtra={
+        <>
+          <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
+            роль: админ
+          </span>
+          <ThemeSelect />
+          <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
+            ← Главное меню
+          </a>
+        </>
+      }
+      notice={
+        status ? (
+          <div
+            className={`rounded-lg border p-3 ${
+              status.kind === 'ok'
+                ? 'border-emerald-900/60 bg-emerald-950/40'
+                : 'border-red-900/60 bg-red-950/40'
+            }`}
+          >
+            <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
+              {status.text}
+            </p>
+            {status.details ? (
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+                {status.details}
+              </pre>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      {/* Предпросмотр «было → станет» — общий над контентом вкладки: apply-кнопки
+       *  «Конфига» и «Брони» открывают его, отправка — только вторым шагом. */}
+      {pending && snap && draft ? (
+        <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
+      ) : null}
+      {activeTab?.render ? activeTab.render() : null}
+    </DashShell>
   );
 }
 

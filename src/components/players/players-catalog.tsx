@@ -24,6 +24,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+// Ночная оболочка каталога — родная P5-редизайна (Starscape/styles.sky);
+// сайд-эффект админ-люка: компакт-селект темы в шапке каталога.
+import { ThemeSelect } from '@/components/site/theme-select';
 import {
   httpMyProfile,
   httpProfileById,
@@ -567,6 +570,9 @@ export default function PlayersCatalog() {
               ← Главное меню
             </a>
           </p>
+          {/* Компакт-селект темы в шапке каталога (админ-люк волна 2026-11-08):
+              попросили «выбор темы вынести сверху» — на этой странице он и живёт. */}
+          <ThemeSelect />
         </header>
 
         <form

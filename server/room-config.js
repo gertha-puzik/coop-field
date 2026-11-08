@@ -27,7 +27,10 @@
  *     прежний silent-drop невалидных кадров atmo.js); ПЕРСИСТЕНТНЫЕ конфиги
  *     atmoset-кадрами НЕ пишет никто (архитектурная изоляция слоёв); отсутствие
  *     override = true — существующий геймплей комнат не меняется без решения
- *     админа. Глобального слоя у ключа нет (scope: "room").
+ *     админа. Глобального слоя у ключа нет (scope: "room"); над ним —
+ *     ГЛОБАЛЬНЫЙ master-ключ atmo.playerControl (мандат владелицы 2026-11-08,
+ *     живёт в server/cfg-registry.js + runtime-слое): гейт =
+ *     master && (override ?? true), см. isPlayerAtmoControlAllowed.
  *   universes.* — ключи реестра известные, но per-room НЕ поддержаны в v1:
  *     их потребители (server/combat.js клэмпы через combatCaps) не получают
  *     контекст комнаты и вне зон этой волны; запись → 400 unsupported_combo
@@ -58,7 +61,7 @@ import path from "node:path";
 import { DATA_DIR } from "./config.js";
 import { REGISTRY } from "./cfg-registry.js";
 import { MODE_ROOMS, RETIRED_ROOMS, modeOf } from "./modes.js";
-import { publicConfig, requireAdmin, readJson, json, setCors } from "./runtime-config.js";
+import { publicConfig, requireAdmin, readJson, json, setCors, playerAtmoControl } from "./runtime-config.js";
 
 const FILE = path.join(DATA_DIR, "room-configs.json");
 const BACKUP_KEEP = 8;
@@ -265,25 +268,27 @@ function saveState(next) {
 
 /* ---------------- Resolver: слои на сервере ---------------- */
 
-/** Глобальный слой (atmo) из публичного блока runtime-config; дефолт bool-гейта
- *  — engine true (глобального слоя у ключа нет по построению). */
+/** Глобальный слой (atmo) из публичного блока runtime-config; master-гейт
+ *  atmoset — значение глобального ключа atmo.playerControl (мандат
+ *  владелицы 2026-11-08; в старых файлах до 7-го ключа — true). */
 function globalLayer() {
   return { atmo: { ...publicConfig().atmo } };
 }
 
-/** Слои движок ← глобал ← per-room по поддержанным ключам. Чистая. */
+/** Слои движок ← глобал ← per-room по поддержанным ключам. Чистая.
+ *  Гейт atmoset считается по master-модели: effective = глобальный &&
+ *  (per-room override ?? true) — глобальное ВЫКЛ глушит всех, ВКЛ возвращает
+ *  per-room ключу текущее поведение (семантика мандата владелицы 2026-11-08). */
 export function resolveRoomAtmo(globalAtmo, roomOverrides = {}) {
   const eng = engineLayer().atmo;
+  const master = globalAtmo.playerControl !== false;
   const out = {
     phaseMin: globalAtmo.phaseMin ?? eng.phaseMin,
     weatherMin: globalAtmo.weatherMin ?? eng.weatherMin,
-    allowPlayerAtmosphereControl: eng.allowPlayerAtmosphereControl,
+    allowPlayerAtmosphereControl: master && (roomOverrides["atmo.allowPlayerAtmosphereControl"] !== false),
   };
   if (Number.isFinite(roomOverrides["atmo.phaseMin"])) out.phaseMin = roomOverrides["atmo.phaseMin"];
   if (Number.isFinite(roomOverrides["atmo.weatherMin"])) out.weatherMin = roomOverrides["atmo.weatherMin"];
-  if (typeof roomOverrides["atmo.allowPlayerAtmosphereControl"] === "boolean") {
-    out.allowPlayerAtmosphereControl = roomOverrides["atmo.allowPlayerAtmosphereControl"];
-  }
   return out;
 }
 
@@ -291,8 +296,12 @@ function overridesOf(id) {
   return state.rooms[id] || {};
 }
 
-/** Живой гейт atmoset/atmo-кадров игроков комнаты (§3.4). */
+/** Живой гейт atmoset/atmo-кадров игроков комнаты (§3.4). MASTER-МОДЕЛЬ
+ *  (мандат владелицы 2026-11-08): сначала глобальный ключ atmo.playerControl
+ *  (live-значение из runtime-слоя) — его ВЫКЛ глушит ВСЕ комнаты даже при
+ *  per-room ВКЛ; поверх — per-room override (отсутствие = true). */
 export function isPlayerAtmoControlAllowed(roomCode) {
+  if (!playerAtmoControl()) return false;
   const id = canonicalRoomId(roomCode);
   if (!id) return true; // легаси-код вне каталога — настраивать нельзя, геймплей прежний
   return overridesOf(id)["atmo.allowPlayerAtmosphereControl"] !== false;
@@ -329,7 +338,11 @@ function roomState(id) {
   const keys = {};
   for (const key of SUPPORTED_ROOM_KEYS) {
     const overridden = Object.prototype.hasOwnProperty.call(ov, key);
-    const global = key === "atmo.allowPlayerAtmosphereControl" ? true : glob[key.split(".")[1]];
+    // «Глобально» для гейта = значение master-ключа atmo.playerControl
+    // (мандат владелицы 2026-11-08); effective resolveRoomAtmo уже считает
+    // master && (override ?? true) — панель показывает честный итог.
+    const gateGlobal = glob.playerControl !== false;
+    const global = key === "atmo.allowPlayerAtmosphereControl" ? gateGlobal : glob[key.split(".")[1]];
     keys[key] = {
       state: overridden ? "overridden" : "inherited",
       global,
@@ -435,7 +448,8 @@ export function resetRoomKey(rawId, key) {
   else delete rooms[id];
   saveState({ v: 1, rooms });
   const glob = globalLayer().atmo;
-  const inherited = key === "atmo.allowPlayerAtmosphereControl" ? true : glob[key.split(".")[1]];
+  // Наследуемое пер-room гейтом — значение master-ключа atmo.playerControl.
+  const inherited = key === "atmo.allowPlayerAtmosphereControl" ? glob.playerControl !== false : glob[key.split(".")[1]];
   return { room: roomState(id), reset: key, had, inherited };
 }
 

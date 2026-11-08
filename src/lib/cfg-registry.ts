@@ -9,8 +9,11 @@
 //
 // Назначение (фаза P3): единый источник для экрана входа и панели настроек —
 // какие уровни урона/брони и периоды стрелы предложить игроку, дефолты и
-// подписи к ним; сами ЦЕННОСТИ приходят из публичного GET /cfg (блок universes).
+// подписи к ним; сами ЦЕННОСТИ приходят из публичного GET /cfg (блок universes;
+// кривая брони — блок combat, мандат владелицы 2026-11-08).
 // ============================================================
+
+import { ARMOR_CURVE } from "./sim/settings.ts";
 
 /** Формат юниверса значений: непрерывный диапазон с шагом. */
 export interface CfgRange {
@@ -19,9 +22,22 @@ export interface CfgRange {
   step: number;
 }
 
+/** Границы точек кривой брони (kind 'points', ключ combat.armorCurve):
+ *  x — броня 0..0,9 с шагом 0,01, y — проходящий урон 5..60. */
+export interface CfgPointsBounds {
+  xMin: number;
+  xMax: number;
+  xStep: number;
+  yMin: number;
+  yMax: number;
+}
+
 /** Тип параметра: kind задаёт и валидатор, и имя списка в values-файле.
- *  bool — per-room гейт atmoset (F2 §3.4): юниверса значений нет (values/engineCap null). */
-export type CfgKind = 'range' | 'levels' | 'tenths' | 'periods' | 'bool';
+ *  bool — гейты atmoset (F2 §3.4): per-room override + ГЛОБАЛЬНЫЙ master-ключ
+ *  atmo.playerControl (мандат владелицы 2026-11-08); юниверса значений нет.
+ *  points — кривая брони (мандат владелицы 2026-11-08): values — юниверс
+ *  ЧИСЛА точек 2..16, границы осей — points. */
+export type CfgKind = 'range' | 'levels' | 'tenths' | 'periods' | 'bool' | 'points';
 export type CfgApplyPolicy = 'new-room' | 'on-next-event' | 'new-session' | 'live-gate';
 
 /** Метаданные одного параметра (зеркало серверного REGISTRY). */
@@ -32,9 +48,12 @@ export interface CfgFieldDef {
   unit: string;
   kind: CfgKind;
   values: CfgRange | number[] | null;
-  /** Число (диапазоны/уровни) или boolean (гейт atmoset). */
-  default: number | boolean;
+  /** Число (диапазоны/уровни), boolean (гейт atmoset) или канон W3-кривая
+   *  (kind points:defaultValue кривой = дефолт). */
+  default: number | boolean | number[][];
   engineCap: CfgRange | number[] | null;
+  /** Границы точек — только у kind points (иначе поля нет). */
+  points?: CfgPointsBounds;
   applyPolicy: CfgApplyPolicy;
   applyHint: string;
   visibility: 'public' | 'admin-only';
@@ -75,18 +94,33 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
     visibility: 'public',
     scope: 'global',
   },
-  'atmo.allowPlayerAtmosphereControl': {
-    key: 'atmo.allowPlayerAtmosphereControl',
-    label: 'Игроки крутят атмосферу',
+  'atmo.playerControl': {
+    key: 'atmo.playerControl',
+    label: 'Игроки крутят атмосферу — общий выключатель',
     description:
-      'Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки» — кадры atmo/atmoset). Управление per-room: отключается на конкретную комнату; по умолчанию (без переопределения) разрешено, как сейчас.',
+      'Разрешает игрокам во всех комнатах перематывать части суток и менять погоду (кнопки панели и слайдер «Сутки»). «Запрещено» выключает управление сразу везде — настройки отдельных комнат это не переопределяют. «Разрешено» возвращает комнатам их собственные настройки.',
     unit: 'вкл/выкл',
     kind: 'bool',
     values: null,
     default: true,
     engineCap: null,
     applyPolicy: 'live-gate',
-    applyHint: 'Действует сразу на живую комнату: при «выкл» сервер молча отбрасывает кадры atmo/atmoset игроков; якорь суток/погоды не перезапускается.',
+    applyHint: 'Действует сразу на все комнаты: при «запрещено» сервер молча отбрасывает смену суток/погоды от игроков; ход времени и погоды не перезапускается.',
+    visibility: 'admin-only',
+    scope: 'global',
+  },
+  'atmo.allowPlayerAtmosphereControl': {
+    key: 'atmo.allowPlayerAtmosphereControl',
+    label: 'Игроки крутят атмосферу',
+    description:
+      'Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки»). Тонкая настройка отдельной комнаты: без переопределения — разрешено, как сейчас. Общий выключатель на все комнаты сразу — ключ «Игроки крутят атмосферу — общий выключатель» выше в этой секции.',
+    unit: 'вкл/выкл',
+    kind: 'bool',
+    values: null,
+    default: true,
+    engineCap: null,
+    applyPolicy: 'live-gate',
+    applyHint: 'Действует сразу на живую комнату: при «выкл» сервер молча игнорирует попытки игроков сменить сутки или погоду; ход времени и погоды не перезапускается.',
     visibility: 'admin-only',
     scope: 'room',
   },
@@ -135,24 +169,55 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
     visibility: 'public',
     scope: 'global',
   },
+  // Мандат владелицы 2026-11-08: редактируемая кривая брони — единственный ключ
+  // kind 'points'. defaultValue — побайтовый канон W3 (ARMOR_CURVE settings.ts
+  // = server/protocol.js); дефолт и есть канон, замена — поверх него.
+  'combat.armorCurve': {
+    key: 'combat.armorCurve',
+    label: 'Броня: кривая защиты',
+    description:
+      'Как броня (0,0–0,9) режет входящий урон: пары «броня → проходящий урон %» от эталонного удара. Между точками — линейная интерполяция, после последней — экстраполяция по её наклону до 0,9. Первая точка — масштаб кривой: её урон% считается за 100%.',
+    unit: 'точек',
+    kind: 'points',
+    values: { min: 2, max: 16, step: 1 },
+    default: ARMOR_CURVE.map((p) => [p[0], p[1]]),
+    engineCap: { min: 2, max: 16, step: 1 },
+    points: { xMin: 0, xMax: 0.9, xStep: 0.01, yMin: 5, yMax: 60 },
+    applyPolicy: 'on-next-event',
+    applyHint: 'Действует на следующий удар: урон по бронированной цели сразу считается по новой кривой (и игроки видят прогноз по ней).',
+    visibility: 'public',
+    scope: 'global',
+  },
 };
 
 /** Ключи реестра в каноническом порядке. */
 export const CFG_KEYS: readonly string[] = Object.keys(CFG_REGISTRY);
 
-/** Дефолты всех параметров в формате публичного GET /cfg (v, atmo, universes).
- *  F2: bool-ключ — в atmo (юниверсов нет); universes несут явный playerSelectable. */
-export function cfgDefaults(): { v: number; atmo: Record<string, number | boolean>; universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number; playerSelectable: boolean }> } {
+/** Дефолты всех параметров в формате публичного GET /cfg (v, atmo, universes, combat).
+ *  F2: bool-ключ — в atmo (юниверсов нет); universes несут явный playerSelectable.
+ *  Кривая брони (мандат владелицы 2026-11-08) — в combat, defaultValue = канон W3. */
+export type CfgDefaultsSnapshot = {
+  v: number;
+  atmo: Record<string, number | boolean>;
+  universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number; playerSelectable: boolean }>;
+  combat: Record<string, number[][]>;
+};
+
+export function cfgDefaults(): CfgDefaultsSnapshot {
   const atmo: Record<string, number | boolean> = {};
   const universes: Record<string, { levels?: number[]; tenths?: number[]; periods?: number[]; default: number; playerSelectable: boolean }> = {};
+  const combat: Record<string, number[][]> = {};
   for (const def of Object.values(CFG_REGISTRY)) {
     const [sec, field] = def.key.split('.');
     if (def.kind === 'range' || def.kind === 'bool') {
-      atmo[field] = def.default;
+      // kind ∈ {range,bool} ⇒ default — число/бул; сужение для TS (как ниже для universes).
+      atmo[field] = def.default as number | boolean;
+    } else if (def.kind === 'points' && Array.isArray(def.default)) {
+      combat[field] = def.default.map((p) => [...p]);
     } else if (Array.isArray(def.values)) {
       // kind ∈ {levels,tenths,periods} ⇒ default числовой; сужение для TS.
       universes[field] = { [def.kind]: [...def.values], default: def.default as number, playerSelectable: true };
     }
   }
-  return { v: 1, atmo, universes };
+  return { v: 1, atmo, universes, combat };
 }

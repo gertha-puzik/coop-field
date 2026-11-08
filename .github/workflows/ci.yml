@@ -88,6 +88,13 @@ jobs:
       # freemove-точки из книги, повторный join без прежней точки).
       - name: Сброс положения игрока (admin)
         run: npm run test:admin-reset
+      # Менеджер спрайтов (ветка feature/elyria-admin-sprites-manager): сид
+      # каталога из config.SPRITES, upload PNG c категорией (валидация
+      # магии/лимита/имён), коллизия суффиксом, PATCH имя/категория,
+      # DELETE с защитой одетых (wornBy через WS-attachSprite) и builtin,
+      # двустороннее зеркало config.SPRITES для pickSprite/setSprite.
+      - name: Менеджер спрайтов (admin)
+        run: npm run test:sprites
       # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
       # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
       - name: Реестр конфига

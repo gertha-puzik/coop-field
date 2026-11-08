@@ -197,8 +197,11 @@ checkGolden("DUMMY_DEFAULT.sprite", serverProtocol.DUMMY_DEFAULT.sprite, "puhlya
  *    урона (защита от «обе стороны уехали вместе»). ARMOR_CURVE и STRIKE_ZONES
  *    как константы движка уже запинены выше — реестр лежит ПОВЕРХ них. */
 const CFG_KEYS_EXPECTED = [
-  "atmo.phaseMin", "atmo.weatherMin", "atmo.allowPlayerAtmosphereControl",
+  "atmo.phaseMin", "atmo.weatherMin", "atmo.playerControl", "atmo.allowPlayerAtmosphereControl",
   "universes.strikeDamage", "universes.armor", "universes.arrowSpeed",
+  // Мандат владелицы 2026-11-08 («Броня: уровни защиты и тп — сделай чтоб
+  // можно было добавлять значения»): 7-й ключ — points-кривая брони.
+  "combat.armorCurve",
 ];
 if (!deepEq([...cfgReg.KEYS], CFG_KEYS_EXPECTED)) {
   fail.push(`FAIL cfg-registry: набор ключей сервера = ${fmt([...cfgReg.KEYS])}, ожидается ${fmt(CFG_KEYS_EXPECTED)}.`);
@@ -226,15 +229,19 @@ for (const key of cfgReg.KEYS) {
 }
 const GOLDEN_CFG_DEFAULTS = {
   v: 1,
-  // F2 §3.4: bool-гейт atmoset живёт в atmo; отсутствие override = true
-  // (поведение комнат без миграции не меняется). F2 §4: universes несут
+  // Гейты atmoset живут в atmo (bool): глобальный master atmo.playerControl
+  // (мандат владелицы 2026-11-08) + per-room F2 §3.4; отсутствие override =
+  // true (поведение комнат без миграции не меняется). F2 §4: universes несут
   // явный playerSelectable (тройка allowedValues/defaultValue/selectable).
-  atmo: { phaseMin: 7, weatherMin: 12, allowPlayerAtmosphereControl: true },
+  atmo: { phaseMin: 7, weatherMin: 12, playerControl: true, allowPlayerAtmosphereControl: true },
   universes: {
     strikeDamage: { levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], default: 0, playerSelectable: true },
     armor: { tenths: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], default: 0, playerSelectable: true },
     arrowSpeed: { periods: [1.8, 2.5, 3.5, 4, 4.5, 5], default: 5, playerSelectable: true },
   },
+  // Мандат владелицы 2026-11-08: дефолт points-кривой брони = канон W3
+  // (GOLDEN.ARMOR_CURVE запинен выше — это ОДНИ и те же 7 замеров).
+  combat: { armorCurve: GOLDEN.ARMOR_CURVE.map((p) => [p[0], p[1]]) },
 };
 if (!deepEq(cfgReg.defaultsFor(), GOLDEN_CFG_DEFAULTS)) {
   fail.push(`FAIL cfg-registry defaults: server/cfg-registry.js = ${fmt(cfgReg.defaultsFor())}, ожидается ${fmt(GOLDEN_CFG_DEFAULTS)}.`);

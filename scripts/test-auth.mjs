@@ -763,8 +763,8 @@ try {
   });
   check(
     cfgAdminOk.status === 200 && cfgAdminOk.json?.ok === true &&
-      Object.keys(cfgAdminOk.json?.registry || {}).length === 6 && Array.isArray(cfgAdminOk.json?.history),
-    "cfg-admin: админ на /cfg/admin → 200 + registry (6 параметров: 5 глобальных + atmo.allowPlayerAtmosphereControl) + history",
+      Object.keys(cfgAdminOk.json?.registry || {}).length === 8 && Array.isArray(cfgAdminOk.json?.history),
+    "cfg-admin: админ на /cfg/admin → 200 + registry (8 параметров: 6 глобальных — в т.ч. мастер-гейт atmo.playerControl и points-кривая combat.armorCurve, мандаты 2026-11-08 — + per-room гейт atmo.allowPlayerAtmosphereControl) + history",
   );
 
   // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;

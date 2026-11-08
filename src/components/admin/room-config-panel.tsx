@@ -86,7 +86,7 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
       setView(res.room);
       if (!keepEdits) setEdits({});
     } else {
-      setStatus({ kind: 'err', text: `Не удалось прочитать слои комнаты «${id}».`, details: res.details });
+      setStatus({ kind: 'err', text: `Не удалось прочитать настройки комнаты «${id}».`, details: res.details });
     }
   }, []);
 
@@ -115,10 +115,10 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
         const meta = registry[key];
         setStatus({
           kind: 'ok',
-          text: `${meta ? meta.label : key}: override комнаты применён (${typeof value === 'boolean' ? (value ? 'вкл' : 'выкл') : `${fmtNum(value)}`}). Действует для НОВЫХ комнат этой локации.`,
+          text: `${meta ? meta.label : key}: настройка комнаты применена (${typeof value === 'boolean' ? (value ? 'вкл' : 'выкл') : `${fmtNum(value)}`}). Действует для НОВЫХ комнат этой локации.`,
         });
       } else {
-        setStatus({ kind: 'err', text: 'Сервер отклонил override.', details: res.details });
+        setStatus({ kind: 'err', text: 'Сервер отклонил изменение.', details: res.details });
       }
       setBusy(false);
     },
@@ -134,9 +134,9 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
       if (res.ok && res.room) {
         setView(res.room);
         setEdits((prev) => ({ ...prev, [key]: undefined }));
-        setStatus({ kind: 'ok', text: 'Override снят — комната наследует глобальное значение.' });
+        setStatus({ kind: 'ok', text: 'Своя настройка снята — комната снова берёт общее значение.' });
       } else {
-        setStatus({ kind: 'err', text: 'Не удалось снять override.', details: res.details });
+        setStatus({ kind: 'err', text: 'Не удалось вернуть наследование.', details: res.details });
       }
       setBusy(false);
     },
@@ -148,15 +148,15 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
     if (!picked) return;
     const room = view;
     if (!room || !room.hasOverrides) return;
-    if (!window.confirm(`Сбросить ВСЕ overrides комнаты «${room.title}» (${room.overrideCount} шт.)? Комната вернётся к глобальным значениям.`)) return;
+    if (!window.confirm(`Сбросить ВСЕ собственные настройки комнаты «${room.title}» (${room.overrideCount} шт.)? Комната вернётся к общим значениям.`)) return;
     setBusy(true);
     const res = await httpRoomResetAll(picked);
     if (res.ok && res.room) {
       setView(res.room);
       setEdits({});
-      setStatus({ kind: 'ok', text: 'Все overrides комнаты сняты.' });
+      setStatus({ kind: 'ok', text: 'Все собственные настройки комнаты сброшены.' });
     } else {
-      setStatus({ kind: 'err', text: 'Не удалось сбросить overrides.', details: res.details });
+      setStatus({ kind: 'err', text: 'Не удалось сбросить настройки комнаты.', details: res.details });
     }
     setBusy(false);
   }, [picked, view]);
@@ -165,13 +165,13 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
   const restore = useCallback(
     async (name: string) => {
       if (!picked) return;
-      if (!window.confirm(`Восстановить overrides комнаты из бэкапа «${name}»? Текущие overrides этой комнаты будут заменены.`)) return;
+      if (!window.confirm(`Восстановить настройки комнаты из резервной копии «${name}»? Текущие настройки этой комнаты будут заменены.`)) return;
       setBusy(true);
       const res = await httpRoomRestore(picked, name);
       if (res.ok && res.room) {
         setView(res.room);
         setEdits({});
-        setStatus({ kind: 'ok', text: `Overrides восстановлены из «${name}» (снапшот мигрирован на текущую схему).` });
+        setStatus({ kind: 'ok', text: `Настройки восстановлены из «${name}» (старая копия приведена к текущему формату).` });
       } else {
         setStatus({ kind: 'err', text: `Восстановление «${name}» не удалось.`, details: res.details });
       }
@@ -200,7 +200,7 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
             <option value="">— выберите комнату —</option>
             {rooms.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.title} [{r.mode}]{r.hasOverrides ? ` — overrides: ${r.overrideCount}` : ''}
+                {r.title} [{r.mode}]{r.hasOverrides ? ` — своих настроек: ${r.overrideCount}` : ''}
               </option>
             ))}
           </select>
@@ -245,8 +245,8 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
                   </span>
                 </div>
                 <p className="mt-1 text-[11px] text-[var(--sim-text-soft)]">
-                  Глобально: {typeof row.global === 'boolean' ? (row.global ? 'вкл' : 'выкл') : `${fmtNum(row.global)} ${meta.unit}`}
-                  {row.override === null ? '' : ` · override: ${typeof row.override === 'boolean' ? (row.override ? 'вкл' : 'выкл') : fmtNum(row.override)}`}
+                  Общее: {typeof row.global === 'boolean' ? (row.global ? 'вкл' : 'выкл') : `${fmtNum(row.global)} ${meta.unit}`}
+                  {row.override === null ? '' : ` · своя: ${typeof row.override === 'boolean' ? (row.override ? 'вкл' : 'выкл') : fmtNum(row.override)}`}
                   {' · '}действует: <b>{typeof row.effective === 'boolean' ? (row.effective ? 'вкл' : 'выкл') : `${fmtNum(row.effective)} ${meta.unit}`}</b>
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -258,7 +258,7 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
                         disabled={busy}
                         onChange={(e) => setEdits((prev) => ({ ...prev, [key]: e.target.checked }))}
                       />
-                      игроки в этой комнате могут крутить atmoset
+                      игроки в этой комнате могут менять погоду и время суток
                     </label>
                   ) : (
                     <select
@@ -282,7 +282,7 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
                     disabled={busy || !changed || candidate === null}
                     onClick={() => candidate !== null && void saveKey(key, candidate)}
                   >
-                    Применить override
+                    Применить для комнаты
                   </Button>
                   {badge(view, key) === 'overridden' ? (
                     <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => void resetKey(key)}>
@@ -296,12 +296,12 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
           })}
         </ul>
       ) : (
-        <p className="text-xs text-[var(--sim-text-soft)]">Выберите комнату — панель покажет слои значений и её overrides.</p>
+        <p className="text-xs text-[var(--sim-text-soft)]">Выберите комнату — панель покажет общие значения и её собственные настройки.</p>
       )}
 
       {picked && history.length ? (
         <div className="rounded-lg border border-[var(--sim-line)] p-2">
-          <p className="text-[11px] font-semibold text-[var(--sim-text-soft)]">История бэкапов room-configs ({history.length}):</p>
+          <p className="text-[11px] font-semibold text-[var(--sim-text-soft)]">История резервных копий настроек комнаты ({history.length}):</p>
           <ul className="mt-1 space-y-1">
             {history.map((name, i) => (
               <li key={name} className="flex flex-wrap items-center justify-between gap-2">

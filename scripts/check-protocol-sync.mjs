@@ -152,6 +152,7 @@ const allNames = new Set([...regClient, ...regServer]);
 const HOMONYM_CONFIG_KEYS = new Set([
   "server/cfg-registry.js:armor",   // pick("armor","tenths") — universesForPublic §4
   "server/runtime-config.js:armor", // visible("armor","tenths") — combatCaps §4
+  "server/sprites.js:sprite",       // slugify() фоллбек пустого транслит-слага — ИД каталога, не кадр протокола
 ]);
 const seen = new Map();
 let protocolImported = false;

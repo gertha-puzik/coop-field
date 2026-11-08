@@ -12,9 +12,12 @@ import {
 } from "./protocol.js";
 import { broadcast } from "./room.js";
 import { atmoLengths } from "./runtime-config.js";
-// F2 §3.4: per-room гейт atmoset/atmo (admin-конфиг комнаты, НЕ путать с
-// живым краевым механизмом: сам якорь и его трансляции не меняются — гейт
-// только молча отбрасывает кадры УПРАВЛЕНИЯ от игроков выключенной комнаты).
+// F2 §3.4 + мандат владелицы 2026-11-08: гейт atmoset/atmo — ДВА слоя. Глобальный
+// master-ключ atmo.playerControl (runtime-слой) глушит игроков во ВСЕХ комнатах;
+// per-room override atmo.allowPlayerAtmosphereControl настраивает отдельную комнату
+// (эффективность = глобальный && (override ?? true)). НЕ путать с живым краевым
+// механизмом: сам якорь и его трансляции не меняются — гейт только молча
+// отбрасывает кадры УПРАВЛЕНИЯ от игроков.
 import { isPlayerAtmoControlAllowed } from "./room-config.js";
 
 const ATMO_DAYPARTS = new Set(ATMO_PHASE_LIST);
@@ -75,9 +78,8 @@ function atmoBroadcast(room, now = Date.now()) {
 function atmo(ws, payload = {}) {
   const room = ws.room;
   if (!room || !room.sockets.get(ws)) return;
-  // F2 §3.4: админ может отключить игрокам управление атмосферой комнаты
-  // (per-room override atmo.allowPlayerAtmosphereControl; default — можно).
-  // Отказ — прежний механизм невалидных кадров: молчаливый drop без ответа.
+  // Гейт двух слоёв: глобальный master-ключ atmo.playerControl + per-room
+  // override. Отказ — прежний механизм невалидных кадров: молчаливый drop.
   if (!isPlayerAtmoControlAllowed(room.code)) return;
   const dp = String(payload.dp || "");
   const w = String(payload.w || "");
@@ -99,7 +101,8 @@ function atmo(ws, payload = {}) {
 function atmoset(ws, payload = {}) {
   const room = ws.room;
   if (!room || !room.sockets.get(ws)) return;
-  // F2 §3.4: тот же per-room гейт для слайдеров «Сутки»/«Погода» (atmoset).
+  // Тот же гейт для слайдеров «Сутки»/«Погода» (atmoset): глобальный master-
+  // ключ + per-room override, отказ — молчаливый drop.
   if (!isPlayerAtmoControlAllowed(room.code)) return;
   const plMin = Number(payload.pl);
   const wlMin = Number(payload.wl);

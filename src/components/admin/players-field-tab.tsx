@@ -39,7 +39,7 @@ function humanError(reason: string | undefined, fallback: string): string {
       return 'Раздел открыт только администраторам.';
     case 'csrf_origin_required':
     case 'csrf_origin_mismatch':
-      return 'Запрос отклонён защитой CSRF — обновите страницу и попробуйте снова.';
+      return 'Сервер отклонил запрос из соображений безопасности — обновите страницу и попробуйте снова.';
     case 'unknown_room':
       return 'Такой комнаты сейчас нет на сервере.';
     case 'unknown_cat':

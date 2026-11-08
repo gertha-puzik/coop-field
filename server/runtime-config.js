@@ -1,23 +1,28 @@
 /**
  * Runtime-конфиг v2 (P2, спек §6): в DATA_DIR/runtime-config.json лежат ТОЛЬКО
- * значения { v: 1, atmo, universes } — whitelist-модель: что можно менять,
- * определяет реестр server/cfg-registry.js (ключи atmo.phaseMin, atmo.weatherMin,
- * universes.strikeDamage, universes.armor, universes.arrowSpeed). Протокольные
- * константы, события авторизации и лимиты сюда НЕ входят и сюда не пишутся.
+ * значения { v: 1, atmo, universes, combat } — whitelist-модель: что можно
+ * менять, определяет реестр server/cfg-registry.js (ключи atmo.phaseMin,
+ * atmo.weatherMin, universes.strikeDamage, universes.armor,
+ * universes.arrowSpeed, combat.armorCurve — мандат владелицы 2026-11-08).
+ * Протокольные константы, события авторизации и лимиты сюда НЕ входят и сюда
+ * не пишутся.
  *
  * Файл остаётся схемы v:1 — обратная совместимость на чтение: старый файл
- * (только atmo) поднимается, universes добираются дефолтами реестра, файл НЕ
- * перезаписывается до первого admin-POST. Запись — атомарная (writeFileAtomic)
- * с вращением бэкапов (BACKUP_KEEP штук), механика без изменений.
+ * (только atmo) поднимается, universes и combat добираются дефолтами реестра
+ * (кривая брони — канон W3), файл НЕ перезаписывается до первого
+ * admin-POST. Запись — атомарная (writeFileAtomic) с вращением бэкапов
+ * (BACKUP_KEEP штук), механика без изменений.
  *
  * HTTP (роли проверяет adminFromReq по сессии; на public-хосте POST /cfg и
  * admin-маршруты прячет host-гейт в net.js; пишущие POST идут через CSRF
  * Origin-щит там же):
- *   GET  /cfg           — публичный: v, atmo, universes, apply-hint (БЕЗ истории).
+ *   GET  /cfg           — публичный: v, atmo, universes, combat (кривая
+ *                         брони видна игрокам — HUD прогноз урона), apply-hint
+ *                         (БЕЗ истории).
  *   GET  /cfg/admin     — admin: значения + история + метаданные реестра.
  *   POST /cfg           — admin: патч по ключам реестра; reset: true — дефолты.
  *   POST /cfg/restore   — admin: восстановить бэкап по имени ИЗ listHistory.
- *   GET  /cfg/export    — admin: текущие значения одним JSON.
+ *   GET  /cfg/export    — admin: текущие значения одним JSON (incl. combat).
  *   POST /cfg/import    — admin: принять экспорт (через sanitizeValues, всё или ничего).
  */
 import fs from "node:fs";
@@ -25,6 +30,7 @@ import path from "node:path";
 import { DATA_DIR, isAllowedOrigin } from "./config.js";
 import {
   REGISTRY, KEYS, defaultsFor, sanitizeValues, universesForPublic, mutationsForAdmin,
+  armorCurveFor,
 } from "./cfg-registry.js";
 import { findById } from "./accounts.js";
 
@@ -91,25 +97,45 @@ function applyMap() {
   return out;
 }
 
-/** Публичный блок: v, atmo, universes (только списки+дефолты), apply-hint. */
+/** Публичный блок: v, atmo, universes (только списки+дефолты), apply-hint.
+ *  F2 (мандат 2026-11-08): combat.armorCurve — публичная кривая брони — игроки
+ *  видят её прогноз урона на HUD, поэтому она НЕ admin-only и приходит ОБЕИМ
+ *  вариантам сайтов. Читается через fail-safe armorCurveFor (битое — канон). */
 function publicConfig() {
-  return { v: current.v, atmo: { ...current.atmo }, universes: universesForPublic(current), apply: applyMap() };
+  return {
+    v: current.v,
+    atmo: { ...current.atmo },
+    universes: universesForPublic(current),
+    combat: { armorCurve: armorCurveFor(current) },
+    apply: applyMap(),
+  };
 }
 
 /** Админ-блок: значения + история бэкапов + метаданные реестра. F2 §4:
  *  админ видит ПОЛНЫЙ кураторский список (playerView: false) — выключение
- *  выбора игроков не стирает allowedValues, повторное включение восстанавливает
- *  список (а не весь движковый юниверс). */
+ *  выбора игроков не стирает allowedValues, повторное включение возвращает
+ *  список (а не весь движковый юниверс). Кривая брони — в values.combat. */
 function adminConfig() {
   return {
     ok: true,
     v: current.v,
-    values: { atmo: { ...current.atmo }, universes: universesForPublic(current, { playerView: false }) },
+    values: {
+      atmo: { ...current.atmo },
+      universes: universesForPublic(current, { playerView: false }),
+      combat: { armorCurve: armorCurveFor(current) },
+    },
     registry: mutationsForAdmin(),
     apply: applyMap(),
     history: listHistory(),
     historyKeep: BACKUP_KEEP,
   };
+}
+
+/** Живая кривая брони для combat.js (on-next-event): значение реестра через
+ *  armorCurveFor из cfg-registry (любой мусор → канон W3, не фантазия).
+ *  Прецедент — combatCaps: читается на каждом событии. */
+function armorCurve() {
+  return armorCurveFor(current);
 }
 
 /** Кэпсы боя для combat.js (читаются на каждом событии — on-next-event).
@@ -128,6 +154,16 @@ function atmoLengths() {
     pl: current.atmo.phaseMin * 60_000,
     wl: current.atmo.weatherMin * 60_000,
   };
+}
+
+/**
+ * Live-значение глобального master-гейта atmo.playerControl (мандат
+ * владелицы 2026-11-08): читается ГЕЙТОМ atmoset/atmo на каждом кадре —
+ * тот же live-паттерн, что combatCaps в combat.js. Отсутствие ключа в
+ * старом файле (до 7-го ключа) трактуется как true — геймплей не меняется.
+ */
+function playerAtmoControl() {
+  return current.atmo.playerControl !== false;
 }
 
 function rotateBackup(cfgJson) {
@@ -280,6 +316,7 @@ async function handleCfgHttp(req, res) {
       v: current.v,
       atmo: { ...current.atmo },
       universes: universesForPublic(current, { playerView: false }),
+      combat: { armorCurve: armorCurveFor(current) },
     });
     return true;
   }
@@ -334,7 +371,7 @@ async function handleCfgHttp(req, res) {
     if (!requireAdmin(req, res)) return true;
     try {
       const body = await readJson(req);
-      const patch = { atmo: body?.atmo ?? {}, universes: body?.universes ?? {} };
+      const patch = { atmo: body?.atmo ?? {}, universes: body?.universes ?? {}, combat: body?.combat ?? {} };
       const out = sanitizeValues(patch, defaults());
       if (out.error) {
         json(res, 400, { ok: false, ...out.error });
@@ -358,7 +395,9 @@ export {
   publicConfig,
   adminConfig,
   combatCaps,
+  armorCurve,
   atmoLengths,
+  playerAtmoControl,
   saveConfig,
   loadConfig,
   defaults,

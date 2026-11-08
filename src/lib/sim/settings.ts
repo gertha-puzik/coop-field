@@ -51,45 +51,27 @@ export interface StrikeZone {
 
 export type WindowKey = '0' | '45' | '90' | '135' | '180' | '225' | '270' | '315';
 
-/** Идентификатор спрайта персонажа. */
-export type SpriteId =
-  | 'puhlyashik'
-  | 'puhlyashshshshshshshsh'
-  | 'blestyashka'
-  | 'puzatik'
-  | 'razdora'
-  | 'pohititel'
-  | 'syrstyashka'
-  | 'gromoryov'
-  | 'gremuchnik'
-  | 'ryzhiy'
-  | 'trehcvetny'
-  | 'negr'
-  | 'chis'
-  | 'lera'
-  | 'anya1'
-  | 'anya2'
-  | 'serebristyy'
-  | 'evr'
-  | 'drel'
-  | 'maslina'
-  | 'buran'
-  | 'sumrak'
-  | 'izya'
-  | 'kameshechek'
-  | 'klubochek'
-  | 'podushka'
-  | 'plyushik'
-  | 'rvanitse'
-  | 'puhlyashik-kit'
-  | 'blestyashka-kit'
-  | 'chistolapik-kit'
-  | 'rab';
+/**
+ * Идентификатор спрайта персонажа. ДО менеджера спрайтов был литеральным
+ * union 31 базового id (+ 'rab' — мишень); каталог стал динамическим
+ * (GET /sprites/catalog + админский менеджер загружает новые скины,
+ * server/sprites.js), серверные id новых — translit-slugs произвольных имён,
+ * поэтому тип расширён до строки осознанно. Все runtime-проверки строгие:
+ * валидатор сервера (манифест каталога) и валидатор join-пакета на клиенте.
+ * Базовые id перечислены массивом SPRITES ниже (каталог сида).
+ */
+export type SpriteId = string;
 
 export interface SpriteMeta {
   id: SpriteId;
   name: string;
   src: string;
+  /**
+   * Категория каталога (админский менеджер спрайтов, server/sprites.js):
+   * свободная строка, у записей статичного базового набора поля нет
+   * (undefined) — интерфейс только расширен, существующие свойства не менялись.
+   */
+  category?: string;
 }
 
 /** Доступные спрайты персонажа (экран выбора перед полем). */
