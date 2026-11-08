@@ -17,7 +17,7 @@ import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
 import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
+import { testWalkable, testEntryCell, cliffBetween, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -169,6 +169,8 @@ function freeMove(ws, payload = {}) {
   const foot = rawFoot && Number.isFinite(rawFoot.dx) && Number.isFinite(rawFoot.dy)
     && rawFoot.dx >= 0 && rawFoot.dx <= 4 && rawFoot.dy >= 0 && rawFoot.dy <= 2
     ? rawFoot : (cat.freeFoot || {dx:0,dy:0});
+  const rx = Number.isFinite(foot.rx) ? Math.min(1,Math.max(0,foot.rx)) : 0;
+  const ry = Number.isFinite(foot.ry) ? Math.min(1,Math.max(0,foot.ry)) : 0;
   const previousFoot = cat.freeFoot || foot;
   const nowGuard = Date.now();
   const jumping = payload.jp === 1 || payload.jp === true;
@@ -177,10 +179,16 @@ function freeMove(ws, payload = {}) {
   } else if (nowGuard >= (cat.freeJumpUntil || 0)) {
     const fromX = Number.isFinite(cat.fx) ? cat.fx : cat.x - 1;
     const fromY = Number.isFinite(cat.fy) ? cat.fy : cat.y - 1;
-    if (Math.abs(testElev(Math.floor(nx + foot.dx) + 1, Math.floor(ny + foot.dy) + 1)
-      - testElev(Math.floor(fromX + previousFoot.dx) + 1, Math.floor(fromY + previousFoot.dy) + 1)) > ELEV_STEP_MAX) return;
+    const x0 = fromX+previousFoot.dx, y0 = fromY+previousFoot.dy;
+    const x1 = nx+foot.dx, y1 = ny+foot.dy;
+    const levelAt = (c,r) => testElev(c+1,r+1);
+    const level = levelAt(Math.floor(x0),Math.floor(y0));
+    if (Math.abs(levelAt(Math.floor(x1),Math.floor(y1))-level) > ELEV_STEP_MAX) return;
+    const before = terrainBodyOverlap(x0,y0,rx,ry,level,levelAt);
+    const after = terrainBodyOverlap(x1,y1,rx,ry,level,levelAt);
+    if (after > Math.max(1e-7,before+1e-7)) return;
   }
-  cat.freeFoot = {dx:foot.dx,dy:foot.dy};
+  cat.freeFoot = {dx:foot.dx,dy:foot.dy,rx,ry};
   cat.fm = 1;
   cat.fx = nx; // Не округляем угол спрайта: округление могло перенести лапы через край.
   cat.fy = ny;

@@ -584,6 +584,23 @@ function inSouthWall(x, y) {
   return false;
 }
 
+/** Пересечение круглого тела у лап с клетками, отделёнными непроходимым перепадом.
+ * rx/ry — радиус в долях клетки; результат 0..1 — глубина проникновения.
+ * Переданный level фиксирует текущую опору, чтобы граница не меняла сторону проверки. */
+function terrainBodyOverlap(x,y,rx,ry,level,levelAt) {
+  if (!(rx > 0 && ry > 0)) return 0;
+  let overlap = 0;
+  for (let r = Math.floor(y-ry); r <= Math.floor(y+ry); r++) {
+    for (let c = Math.floor(x-rx); c <= Math.floor(x+rx); c++) {
+      if (Math.abs(levelAt(c,r)-level) <= ELEV_STEP_MAX) continue;
+      const dx = (x-Math.max(c,Math.min(c+1,x)))/rx;
+      const dy = (y-Math.max(r,Math.min(r+1,y)))/ry;
+      overlap = Math.max(overlap,1-Math.hypot(dx,dy));
+    }
+  }
+  return overlap;
+}
+
 function cliffBetween(x0, y0, x1, y1) {
   if (testEntryCell(x0 - 1, y0 - 1) || testEntryCell(x1 - 1, y1 - 1)) return false;
   return Math.abs(testElev(x1, y1) - testElev(x0, y0)) > ELEV_STEP_MAX;
@@ -657,7 +674,7 @@ export {
   decodePaintPng, paintPxOn, paintCellCoverage, tracePaintLoops, traceMaskOutline,
   buildIsland, testCellInIsland, buildCells, obstacleBodiesOf, obstacleBlockedCells,
   pointInPolygon, objectBase, objectSprite, objectScale, objectRotDeg, obstacleBodyPx,
-  testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
+  terrainBodyOverlap, testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
   paintPxMask, paintCellCoverageMask,
   hashStr, mulberry32, chaikin,
 };

@@ -165,6 +165,7 @@ import {
   testPeaceBattleBlocked,
   testPeaceBattleDepth,
   testPeaceObjectsFree,
+  testPeaceObjectDepth,
   testPeacePointFree,
   testPointInCellsZone,
   testPointInIsland,
@@ -190,6 +191,8 @@ import {
   TERRAIN_MAX_LEVEL,
   elevJumpOk,
   elevStepOk,
+  terrainBodyOverlap,
+  contactFraction,
   jumpFillOf,
   TEST_MAP_DEFAULT,
   TEST_MAP_LIMITS,
@@ -243,7 +246,7 @@ import { useSimNet } from './simulator/hooks/use-network';
 import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
 import { useElisionView } from './simulator/hooks/use-elision-view';
 import { collectElisionFrame } from './simulator/elision-present';
-import { elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
+import { elisionLeapClearance, elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
 
 
 
@@ -1297,7 +1300,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   function freeFoot() {
     const s = settingsRef.current;
     const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-    return { dx: hb.dx, dy: hb.dy * 2 };
+    const radius = peaceBodyRadius(hb.dx * 2 * s.field.cellW);
+    return { dx: hb.dx, dy: hb.dy * 2, rx: radius/s.field.cellW, ry: radius/s.field.cellH };
   }
 
   /** Короткая подсказка над полем (гаснет сама). */
@@ -1485,9 +1489,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const dist = Math.hypot(px - ax, py - ay);
           if (dist < 0.3 || dist > JUMP_MAX_CELLS) return false;
           if (!testPeacePointFree(px, py)) return false;
-          if (!testPeaceObjectsFree(px, py, s.field.cellW, s.field.cellH)) return false;
+          if (!testPeaceObjectsFree(px, py, s.field.cellW, s.field.cellH, peaceBodyRadius(hb.dx * 2 * s.field.cellW))) return false;
           if (strict && testPeaceBattleBlocked(px, py)) return false;
-          return elevJumpOk(curLevel, elevLevelAt(Math.floor(px), Math.floor(py)), fill);
+          const level = elevLevelAt(Math.floor(px),Math.floor(py));
+          const radius = peaceBodyRadius(hb.dx*2*s.field.cellW);
+          if (terrainBodyOverlap(px,py,radius/s.field.cellW,radius/s.field.cellH,level,elevLevelAt) > 1e-7) return false;
+          return elevJumpOk(curLevel, level, fill);
         };
         const packPeace = (px: number, py: number, ok: boolean, deg: number) => {
           const lvl = elevLevelAt(Math.floor(px), Math.floor(py));
@@ -1499,7 +1506,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             y1: py - hb.dy * 2,
             l1: lvl * TERRAIN_LIFT_PX,
             dur: 340 + dist * 130,
-            zH: 22 + dist * 18 + Math.abs(lvl - curLevel) * 10,
+            zH: ok ? elisionLeapClearance(ax,ay,px,py,e.liftV,lvl*TERRAIN_LIFT_PX,
+              22+dist*18+Math.abs(lvl-curLevel)*10,TERRAIN_LIFT_PX,elevLevelAt)
+              : 22+dist*18+Math.abs(lvl-curLevel)*10,
             deg,
             battle: false,
             cell: null,
@@ -1708,20 +1717,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         e.leapZ = Math.sin(Math.PI * t) * lp.zH;
       };
       stepLeap();
-
-      /** Сглаженный подъём земли под своим котом: цель — уровень его клетки
-       *  (в бою) или точки опоры (в миру). Шаг на уступ поднимает модельку
-       *  плавно, а не скачком; в прыжке высоту ведёт сама дуга. */
-      if (!e.leap) {
-        const hbL = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-        const targetLift = testMode
-          ? (s.arrow.battleMode
-              ? elevLevelAt(e.col, e.row)
-              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
-          : 0;
-        e.liftV += (targetLift - e.liftV) * (1 - Math.exp(-dt / 110));
-        if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
-      }
 
       const cx = (c: number) => c * s.field.cellW + s.field.cellW / 2;
       const cy = (r: number) => r * s.field.cellH + s.field.cellH / 2;
@@ -2050,8 +2045,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
             const [x0, y0] = stand(e.fx, e.fy);
             const [x1, y1] = stand(fxT, fyT);
-            return !elevStepOk(elevLevelAt(Math.floor(x0), Math.floor(y0)),
-              elevLevelAt(Math.floor(x1), Math.floor(y1)));
+            const level = elevLevelAt(Math.floor(x0), Math.floor(y0));
+            if (!elevStepOk(level, elevLevelAt(Math.floor(x1), Math.floor(y1)))) return true;
+            const rx = myR/cellW, ry = myR/cellH;
+            const before = terrainBodyOverlap(x0,y0,rx,ry,level,elevLevelAt);
+            const after = terrainBodyOverlap(x1,y1,rx,ry,level,elevLevelAt);
+            // После посадки/правки карты разрешаем выйти из наложения, но не углубляться.
+            return after > Math.max(1e-7,before+1e-7);
           };
           // Стенка боевых зон для мирной ходьбы — на кромке по обеим осям.
           const battleWall = (fxT: number, fyT: number, axis: 'x' | 'y') =>
@@ -2061,7 +2061,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             if (!testPeacePointFree(px, py)) return true;
             if (battleWall(px, py, axis)) return true;
             if (elevWalkBlocked(fxT, fyT)) return true;
-            if (!testPeaceObjectsFree(fxT + hb.dx, fyT + hb.dy * 2, cellW, cellH)) return true;
+            const objectBefore = testPeaceObjectDepth(e.fx+hb.dx,e.fy+hb.dy*2,cellW,cellH,myR);
+            const objectAfter = testPeaceObjectDepth(fxT+hb.dx,fyT+hb.dy*2,cellW,cellH,myR);
+            if (objectAfter > Math.max(1e-7,objectBefore+1e-7)) return true;
             const feetX = (fxT + hb.dx) * cellW;
             const feetY = (fyT + hb.dy * 2) * cellH;
             for (const b of bodies) {
@@ -2074,12 +2076,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             }
             return false;
           };
-          const nxT = e.fx + stepFx;
-          const nyT = e.fy + stepFy;
-          if (!blocked(nxT, e.fy, 'x')) e.fx = nxT;
-          else e.pvx = 0; // упёрлись — инерция по оси гасится, скольжение продолжается
-          if (!blocked(e.fx, nyT, 'y')) e.fy = nyT;
-          else e.pvy = 0;
+          const fx0=e.fx,fy0=e.fy;
+          const tx=stepFx===0?1:contactFraction(t=>blocked(fx0+stepFx*t,fy0,'x'));
+          e.fx=fx0+stepFx*tx;
+          if(tx<1) e.pvx=0;
+          const ty=stepFy===0?1:contactFraction(t=>blocked(e.fx,fy0+stepFy*t,'y'));
+          e.fy=fy0+stepFy*ty;
+          if(ty<1) e.pvy=0;
           // Расталкивание: если тела уже пересекаются (спавн рядом, телепорт с
           // клетки захода, правка локации под котами) — мягко выталкиваем своего
           // кота из чужого тела вдоль линии центров, по осям и с проверкой blocked,
@@ -2138,6 +2141,22 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           freeSyncRef.current.moving = false;
           net?.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, stop: true });
         }
+      }
+
+      /** Обновляем опору ПОСЛЕ ходьбы: в этом же кадре лапы уже стоят на новом
+       *  грунте. Вниз — мягкое опускание, вверх — без погружения в твёрдую землю.
+       *  Во время прыжка высоту ведёт дуга. */
+      if (!e.leap) {
+        const hbL = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+        const targetLift = testMode
+          ? (s.arrow.battleMode
+              ? elevLevelAt(e.col, e.row)
+              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
+          : 0;
+        // Твёрдый грунт не может оказаться выше лап даже на кадр анимации подъёма.
+        e.liftV = targetLift > e.liftV ? targetLift
+          : e.liftV + (targetLift - e.liftV) * (1 - Math.exp(-dt / 110));
+        if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
       }
 
       // Физика частиц спринта (даже когда бег кончился — комочки в полёте):
