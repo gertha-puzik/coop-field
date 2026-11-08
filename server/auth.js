@@ -105,6 +105,29 @@ function destroySession(token) {
 }
 
 /**
+ * P5-редизайн каталога (read-only вью): аккаунт → время свежайшей ЖИВОЙ
+ * сессии (createdAt последней сессии в пределах TTL). Единственный честный
+ * источник «последний вход» без записи новых полей в аккаунты: сессии уже
+ * пишутся при каждом входе, честнее просто смотреть на них. Просроченные
+ * записи не учитываются (после 14 дней неактивности значение исчезает —
+ * это честное «неизвестно», а не выдуманная дата). Ничего не мутирует.
+ */
+function lastSeenByAccount() {
+  const out = new Map();
+  const now = Date.now();
+  for (const rec of Object.values(sessions)) {
+    if (!rec || typeof rec !== "object") continue;
+    if (now > Number(rec.expiresAt)) continue;
+    const t = Number(rec.createdAt) || 0;
+    if (!t) continue;
+    const id = String(rec.accountId || "");
+    if (!id) continue;
+    if (t > (out.get(id) || 0)) out.set(id, t);
+  }
+  return out;
+}
+
+/**
  * Клиентский IP для темп-лимитов. X-Forwarded-For доверяем в ОДНОМ случае:
  * TCP-сокет пришёл с loopback (127.0.0.1/::1) — т.е. соединение терминировал
  * наш собственный nginx — и тогда берём ПОСЛЕДНЮЮ запись XFF: её дописал сам
@@ -532,6 +555,7 @@ export {
   whoamiBody,
   tokenFromRequest,
   sessionFromRequest,
+  lastSeenByAccount,
   flushAuth,
   COOKIE,
   TTL_MS,

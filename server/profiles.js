@@ -19,7 +19,12 @@
  *                          пустой после чистки — без фильтра); total — дёшево:
  *                          длина уже собранного отфильтрованного набора
  *                          (legacy, НЕ контрактное поле — не полагаться).
- *   GET    /profiles/:id   200 { ok, accountId, ...publicProfile } | 404 unknown
+ *                          Карточка каталога несёт lastSeenAt/lastSeenRoom
+ *                          (P5-редизайн: время последнего появления и комната
+ *                          последней записи кота; оба — честные read-only
+ *                          источники: сессии auth.js + книга позиций persist.js).
+ *   GET    /profiles/:id   200 { ok, accountId, ...publicProfile,
+ *                          lastSeenAt, lastSeenRoom } | 404 unknown
  *   прочие суб-пути/методы 404 not_found — статике ничего не проваливается.
  *
  * Идентичность строго из серверной сессии (auth.sessionFromRequest): ни один
@@ -36,8 +41,9 @@
  * до этого обработчика; сюда класс public дотянуться не может.
  */
 import { isAllowedOrigin } from "./config.js";
-import { sessionFromRequest } from "./auth.js";
+import { sessionFromRequest, lastSeenByAccount } from "./auth.js";
 import { publicProfile, findById, loadStore, flushAccounts } from "./accounts.js";
+import { catSeenAt } from "./persist.js";
 
 const NAME_MIN = 1;
 const NAME_MAX = 24;
@@ -112,9 +118,30 @@ function cleanText(raw) {
   return { text, len: Array.from(text).length };
 }
 
-/** Карточка каталога/страницы: accountId + публичный DTO без login/role/пароля. */
-function card(acc) {
-  return { accountId: String(acc.id || ""), ...publicProfile(acc) };
+/** Карточка каталога/страницы: accountId + публичный DTO без login/role/пароля.
+ *  P5-редизайн (аддитивно, только elyria-поверхность): lastSeenAt — время
+ *  последнего появления (максимум из свежайшей живой сессии аккаунта и
+ *  последней записи позиции кота в книге «теста»; 0 = данных нет — клиент
+ *  рисует «неизвестно», а не выдумывает), lastSeenRoom — комната последней
+ *  записи кота ("test"/Элизия; null = кота в поле не видели). Оба поля
+ *  только читают существующие источники: сессии (auth.js) и книгу позиций
+ *  (persist.js); никто ничего не дописывает. Книга позиций ключуется ИМЕНЕМ
+ *  персонажа — одноимённые коты неразличимы, это честно отражает источник. */
+function card(acc, sessionSeen) {
+  const chars = Array.isArray(acc.characters) ? acc.characters : [];
+  let catTs = 0;
+  for (const ch of chars) {
+    if (!ch || typeof ch !== "object") continue;
+    const ts = catSeenAt(ch.name);
+    if (ts > catTs) catTs = ts;
+  }
+  const seen = Math.max(catTs, sessionSeen.get(String(acc.id || "")) || 0);
+  return {
+    accountId: String(acc.id || ""),
+    ...publicProfile(acc),
+    lastSeenAt: seen,
+    lastSeenRoom: catTs > 0 ? "test" : null,
+  };
 }
 
 /** Стабильный порядок каталога: старейшие аккаунты впереди, при равных
@@ -382,13 +409,16 @@ export async function handleProfilesHttp(req, res) {
     // store перечитывается с диска (loadStore): все мутации аккаунтов пишут
     // файл синхронно (markDirty → flushAccounts), так что диск согласован с
     // памятью; перечисление store без расширения accounts.js недоступно.
+    // P5: карта «последний вход» считается один раз на запрос (read-only
+    // сессии) и раздаётся карточкам.
+    const seenMap = lastSeenByAccount();
     let rows = [];
     try {
       rows = Object.values(loadStore().accounts || {});
     } catch {
       rows = [];
     }
-    let items = rows.filter(hasPublicProfile).map(card).sort(bySeniority);
+    let items = rows.filter(hasPublicProfile).map((acc) => card(acc, seenMap)).sort(bySeniority);
     if (q) {
       // Подстрока по нормализованным displayName: разница регистра,
       // декомпозиции и пробелов не влияет на результат (NFC+trim+lower —
@@ -415,7 +445,7 @@ export async function handleProfilesHttp(req, res) {
       }
       const acc = findById(rest);
       if (acc && hasPublicProfile(acc)) {
-        json(res, 200, { ok: true, ...card(acc) });
+        json(res, 200, { ok: true, ...card(acc, lastSeenByAccount()) });
         return true;
       }
       // Не найден ИЛИ без публичного профиля: единый ответ без раскрытия

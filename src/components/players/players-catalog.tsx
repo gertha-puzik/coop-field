@@ -1,40 +1,174 @@
 'use client';
 
 /**
- * Каталог игроков (/players) — P4, только elyria-вариант. Маршрут вырезается
- * prune-export-ом из grotto-сборки, а на случай случайной сборки гейтимся
- * инлайном (const IS_ELYRIA — спек §2A: свёртка ветки сборщиком).
+ * Каталог игроков (/players) — P5-редизайн, только elyria-вариант. Маршрут
+ * вырезается prune-export-ом из grotto-сборки, а на случай случайной сборки
+ * гейтимся инлайном (const IS_ELYRIA — спек §2A: свёртка ветки сборщиком).
  *
- * Данные — публичные HTTP-профили (server/profiles.js):
+ * Ночная витрина по лучшим каталогам жанра: таблица-список и плитки, поиск
+ * по имени, сортировка колонок, ключет-догрузка. Клиентский контракт прежний:
  *   GET /profiles — серверная пагинация (?limit, ?cursor — кнопка «Ещё») и
- *   поиск по имени (?q, debounce 300 мс либо Enter/«Найти»); клиент НЕ тянет
- *   весь список и НЕ фильтрует его у себя. Deep-link /players?id=<accountId>
- *   открывает карточку напрямую (GET /profiles/:id) независимо от списка.
- * Своя карточка при активной сессии — инлайн-редактирование displayName/bio/
- * avatarCharacterId через PATCH /profiles/me с перечиткой GET /profiles/me;
+ *   поиск (?q, debounce 300 мс либо Enter); клиент НЕ тянет весь список и
+ *   НЕ фильтрует его у себя. total в ответе — legacy-поле, НЕ контракт:
+ *   подписи «Показано N из …» рисуем только по реально загруженному.
+ * Сортировка колонок — КЛИЕНТСКАЯ и только по загруженным карточкам:
+ * сервер отдаёт страницы по старшинству, пересортировка переставляет уже
+ * показанные строки. Статусы/активность вычисляются из lastSeenAt
+ * (players-format.ts) — честная эвристика свежего входа, сам HTTP-каталог
+ * живые сокеты не видит.
+ * Deep-link /players?id=<accountId> открывает ПОЛНУЮ страницу профиля
+ * (GET /profiles/:id) независимо от списка — компонент PlayerProfile;
+ * своя карточка редактируется инлайн (PATCH /profiles/me, P4), поток прежний:
  * ошибки сервера показываются целиком, без молчаливых no-op.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   httpMyProfile,
-  httpPatchProfile,
   httpProfileById,
   httpProfileCatalog,
   type ProfileCard,
-  type ProfileCharacter,
   type PublicProfile,
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
+import PlayerProfile, { BrandRow, Starscape, displayFont } from './player-profile';
+import {
+  ACTIVITY_TEXT,
+  STATUS_TEXT,
+  activityOf,
+  avatarOf,
+  homeRoomTitle,
+  moonsFromMs,
+  moonsText,
+  plural,
+  ruAgo,
+  ruDate,
+  ruStamp,
+  spriteUrl,
+  statusOf,
+  type ActivityTone,
+  type StatusTone,
+} from './players-format';
+import styles from './players-elyria.module.css';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
-const NAME_MAX = 24;
-const BIO_MAX = 280;
+const PAGE_SIZE = 24;
+const SEARCH_DEBOUNCE_MS = 300;
+
+/* ——— честная сортировка: ранги статуса/активности, «нет данных» ———
+ * Unknown-значения не выезжают наверх реверсом: неизвестное остаётся
+ * неизвестным внизу списка в любом направлении. */
+
+type SortKey = 'name' | 'status' | 'born' | 'seen' | 'home' | 'age' | 'act';
+
+const SORT_TITLE: Record<SortKey, string> = {
+  name: 'Персонаж',
+  status: 'Статус',
+  born: 'Дата рождения',
+  seen: 'Последний вход',
+  home: 'Дом',
+  age: 'Возраст',
+  act: 'Активность',
+};
+
+/** Стартовое направление при выборе колонки (как в каталоге-референсе). */
+const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, home: 1, age: -1, act: -1 };
+
+const RANK_STATUS: Record<StatusTone, number> = { online: 0, sleep: 1, recent: 2, away: 3, unknown: 4 };
+const RANK_ACT: Record<ActivityTone, number> = { shifting: 0, positive: 1, ideal: 2, unknown: 3 };
+
+const STATUS_PILL: Record<StatusTone, string> = {
+  online: styles.stOnline,
+  sleep: styles.stSleep,
+  recent: styles.stRecent,
+  away: styles.stAway,
+  unknown: styles.stUnknown,
+};
+
+const ACT_COLOR: Record<ActivityTone, string> = {
+  ideal: styles.actIdeal,
+  positive: styles.actPositive,
+  shifting: styles.actShifting,
+  unknown: styles.actUnknown,
+};
+
+/** Строка таблицы/плитки: производные поля карточки, вычисленные один раз
+ *  на загрузку страницы (clock = момент fetch) — статусы не «плывут»
+ *  между перерисовками и не расходятся с пререндером (данные — строго
+ *  после монтирования). */
+type RowModel = {
+  card: ProfileCard;
+  name: string;
+  shortId: string;
+  status: StatusTone;
+  activity: ActivityTone;
+  born: string;
+  bornTs: number | null;
+  seenAgo: string;
+  seenTs: number | null;
+  home: string | null;
+  moons: string;
+  moonsN: number | null;
+  sprite: string | null;
+};
+
+function makeRow(card: ProfileCard, clock: number): RowModel {
+  const seen = card.lastSeenAt ?? 0;
+  return {
+    card,
+    name: card.displayName || 'Безымянный',
+    shortId: `№${card.accountId.slice(0, 8)}`,
+    status: statusOf(seen, clock),
+    activity: activityOf(seen, clock),
+    born: ruDate(card.createdAt),
+    bornTs: card.createdAt > 0 ? card.createdAt : null,
+    seenAgo: seen > 0 ? ruAgo(seen, clock) : 'неизвестно',
+    seenTs: seen > 0 ? seen : null,
+    home: homeRoomTitle(card.lastSeenRoom),
+    moons: moonsText(card.createdAt, clock),
+    moonsN: moonsFromMs(card.createdAt, clock),
+    sprite: spriteUrl(avatarOf(card)),
+  };
+}
+
+function cmpModels(a: RowModel, b: RowModel, key: SortKey, dir: 1 | -1): number {
+  // null-пары («нет данных») сравниваются ДО умножения на направление:
+  // неизвестная дата/дом/вход не поднимается реверсом вверх.
+  const nullsLast = (x: unknown, y: unknown): number => {
+    if (x === null && y === null) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return 0;
+  };
+  switch (key) {
+    case 'name':
+      return a.name.localeCompare(b.name, 'ru') * dir;
+    case 'status':
+      return (RANK_STATUS[a.status] - RANK_STATUS[b.status]) * dir;
+    case 'act':
+      return (RANK_ACT[a.activity] - RANK_ACT[b.activity]) * dir;
+    case 'born': {
+      const n = nullsLast(a.bornTs, b.bornTs);
+      return n !== 0 ? n : ((a.bornTs ?? 0) - (b.bornTs ?? 0)) * dir;
+    }
+    case 'seen': {
+      const n = nullsLast(a.seenTs, b.seenTs);
+      return n !== 0 ? n : ((a.seenTs ?? 0) - (b.seenTs ?? 0)) * dir;
+    }
+    case 'age': {
+      const n = nullsLast(a.moonsN, b.moonsN);
+      return n !== 0 ? n : ((a.moonsN ?? 0) - (b.moonsN ?? 0)) * dir;
+    }
+    case 'home': {
+      const n = nullsLast(a.home, b.home);
+      return n !== 0 ? n : (a.home ?? '').localeCompare(b.home ?? '', 'ru') * dir;
+    }
+  }
+  return 0;
+}
 
 /** Человекочитаемое пояснение к reason из ответа сервера. */
 function humanError(reason: string | undefined, fallback: string): string {
@@ -60,258 +194,120 @@ function humanError(reason: string | undefined, fallback: string): string {
   }
 }
 
-/** Персонаж-аватар карточки: явный avatarCharacterId → активный → первый. */
-function avatarOf(card: { avatarCharacterId: string | null; characters: ProfileCharacter[]; activeCharacterId: string | null }): ProfileCharacter | null {
-  if (card.avatarCharacterId) {
-    const hit = card.characters.find((c) => c.id === card.avatarCharacterId);
-    if (hit) return hit;
-  }
-  return card.characters.find((c) => c.id === card.activeCharacterId) || card.characters[0] || null;
-}
-
-function spriteUrl(char: ProfileCharacter | null): string | null {
-  return char && char.sprite ? `/sprites/${char.sprite}.png` : null;
-}
-
-function joinedAt(ts: number): string {
-  if (!ts) return '';
-  try {
-    return new Date(ts).toLocaleDateString('ru-RU');
-  } catch {
-    return '';
-  }
-}
-
-/** Спрайт-аватар карточки: картинка персонажа или безликий placeholder. */
-function Avatar({ card, big }: { card: ProfileCard; big?: boolean }) {
-  const char = avatarOf(card);
-  const url = spriteUrl(char);
-  const size = big ? 120 : 72;
-  return (
-    <span
-      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] ${
-        big ? 'h-[120px] w-[120px] text-4xl' : 'h-[72px] w-[72px] text-2xl'
-      }`}
-      aria-hidden
-    >
-      {url ? (
-        <img
-          src={url}
-          alt=""
-          width={size}
-          height={size}
-          style={{ width: `${Math.min(120, Math.max(60, char?.size || 100))}%`, height: 'auto', imageRendering: 'pixelated' }}
-        />
-      ) : (
-        <span>{(card.displayName || '?').slice(0, 1).toUpperCase()}</span>
-      )}
-    </span>
-  );
-}
-
 /** Текст ошибки сервера, какой пришёл — таким и покажем (без раскройки). */
 function ServerError({ title, details }: { title: string; details?: string }) {
   return (
-    <div className="rounded-lg border border-red-900/60 bg-red-950/40 p-3">
-      <p className="text-sm font-semibold text-red-300">{title}</p>
-      {details ? (
-        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
-          {details}
-        </pre>
-      ) : null}
+    <div className={styles.errBox}>
+      <p className={styles.errTitle}>{title}</p>
+      {details ? <pre className={styles.errDetails}>{details}</pre> : null}
     </div>
   );
 }
 
-/* ============================ инлайн-редактор ============================ */
-
-/** Форма правки своей карточки: displayName/bio/avatar. Сохранение — PATCH
- * /profiles/me, после него — обязательная перечитка GET /profiles/me. */
-function OwnProfileEditor({
-  profile,
-  onSaved,
+/** Кнопка сортировки в шапке таблицы (стрелка показывается при hover/фокусе). */
+function SortHead({
+  label,
+  hint,
+  active,
+  dir,
+  cellClass,
+  onSort,
 }: {
-  profile: PublicProfile;
-  onSaved: (fresh: PublicProfile) => void;
+  label: string;
+  hint?: string;
+  active: boolean;
+  dir: 1 | -1;
+  cellClass?: string;
+  onSort: () => void;
 }) {
-  const [draftName, setDraftName] = useState(profile.displayName);
-  const [draftBio, setDraftBio] = useState(profile.bio);
-  const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
-
-  useEffect(() => {
-    setDraftName(profile.displayName);
-    setDraftBio(profile.bio);
-    setDraftAvatar(profile.avatarCharacterId || '');
-  }, [profile]);
-
-  const save = async () => {
-    setFail(null);
-    const name = draftName.replace(/\s+/g, ' ').trim();
-    if (!name) {
-      setFail({ title: 'Имя не может быть пустым (1–24 символа).' });
-      return;
-    }
-    setBusy(true);
-    const res = await httpPatchProfile({
-      displayName: name,
-      bio: draftBio.trim(),
-      avatarCharacterId: draftAvatar || null,
-    });
-    if (!res.ok) {
-      setFail({ title: humanError(res.reason, 'Не получилось сохранить.'), details: res.details || undefined });
-      setBusy(false);
-      return;
-    }
-    // Перечитка своим GET /profiles/me: свежий источник правды после PATCH.
-    const fresh = await httpMyProfile();
-    setBusy(false);
-    if (fresh.ok && fresh.profile) {
-      onSaved(fresh.profile);
-      setNote('Сохранено.');
-      window.setTimeout(() => setNote(null), 2500);
-    } else {
-      setFail({
-        title: humanError(fresh.reason, 'Изменения сохранились, но свежий профиль не прочитался — обновите страницу.'),
-      });
-    }
-  };
-
-  return (
-    <form
-      className="mt-3 space-y-3 border-t border-[var(--sim-line)] pt-3"
-      onSubmit={(ev) => {
-        ev.preventDefault();
-        void save();
-      }}
-    >
-      <div className="flex flex-wrap gap-3">
-        <label className="block min-w-56 flex-1">
-          <span className="block text-[11px] text-[var(--sim-text-faint)]">Имя (до {NAME_MAX} символов)</span>
-          <Input
-            className="mt-1 h-8 text-sm"
-            value={draftName}
-            maxLength={NAME_MAX}
-            onChange={(e) => setDraftName(e.target.value)}
-          />
-        </label>
-        <label className="block min-w-44 flex-1">
-          <span className="block text-[11px] text-[var(--sim-text-faint)]">Аватар (персонаж)</span>
-          <select
-            className="mt-1 h-8 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
-            value={draftAvatar}
-            onChange={(e) => setDraftAvatar(e.target.value)}
-          >
-            <option value="">Без аватара</option>
-            {profile.characters.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <label className="block">
-        <span className="block text-[11px] text-[var(--sim-text-faint)]">О себе (до {BIO_MAX} символов)</span>
-        <textarea
-          className="mt-1 min-h-20 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-2 text-sm text-[var(--sim-text)] outline-none focus-visible:border-[var(--sim-line-hover)]"
-          value={draftBio}
-          maxLength={BIO_MAX}
-          onChange={(e) => setDraftBio(e.target.value)}
-        />
-      </label>
-      <div className="flex items-center gap-3">
-        <Button
-          type="submit"
-          size="sm"
-          className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-          disabled={busy}
-        >
-          {busy ? 'Сохраняем…' : 'Сохранить'}
-        </Button>
-        {note ? <span className="text-xs font-semibold text-emerald-400">{note}</span> : null}
-      </div>
-      {fail ? <ServerError title={fail.title} details={fail.details} /> : null}
-    </form>
-  );
-}
-
-/* ============================ карточка/фокус ============================ */
-
-/** Карточка каталога (компакт): аватар, имя, кусок bio. */
-function CatalogCardView({ card, selected, onOpen }: { card: ProfileCard; selected: boolean; onOpen: () => void }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-        selected
-          ? 'border-[var(--sim-accent)] bg-[var(--sim-panel)]'
-          : 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] hover:border-[var(--sim-line-hover)]'
-      }`}
+      className={`${styles.sortBtn} ${active ? styles.sortOn : ''} ${cellClass || ''}`}
+      onClick={onSort}
+      aria-label={`Сортировать: ${label}`}
+      title={hint}
     >
-      <Avatar card={card} />
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-bold text-[var(--sim-text)]">{card.displayName || 'Безымянный'}</span>
-        <span className="mt-0.5 block truncate text-xs text-[var(--sim-text-soft)]">
-          {card.bio ? card.bio : 'Пока ничего не рассказал о себе.'}
-        </span>
-        <span className="mt-0.5 block text-[11px] text-[var(--sim-text-faint)]">
-          {card.characters.length > 0 ? `Персонажей: ${card.characters.length}` : 'Без персонажей'}
-        </span>
+      {label}
+      <span className={styles.arr} aria-hidden>
+        {active ? (dir === 1 ? '↑' : '↓') : '↕'}
       </span>
     </button>
   );
 }
 
-/** Развёрнутая карточка: публичные поля, своё — с редактором. */
-function FocusCardView({
-  card,
-  mine,
-  myProfile,
-  onSaved,
-  onClose,
-}: {
-  card: ProfileCard;
-  mine: boolean;
-  myProfile: PublicProfile | null;
-  onSaved: (fresh: PublicProfile) => void;
-  onClose: () => void;
-}) {
-  const when = joinedAt(card.createdAt);
+/** Мини-арена со спрайтом аватара и точкой «свежий вход» (пульс гасится
+ *  prefers-reduced-motion). Без спрайта — пустая сцена, без выдуманных лиц. */
+function MiniArena({ m, big }: { m: RowModel; big?: boolean }) {
   return (
-    <section className="rounded-xl border border-[var(--sim-accent)] bg-[var(--sim-panel)] p-4">
-      <div className="flex items-start gap-4">
-        <Avatar card={card} big />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-bold text-[var(--sim-text)]">{card.displayName || 'Безымянный'}</h2>
-          {when ? <p className="text-xs text-[var(--sim-text-faint)]">Здесь с {when}</p> : null}
-          <p className="mt-2 whitespace-pre-wrap text-sm text-[var(--sim-text-soft)]">
-            {card.bio || 'Пока ничего не рассказал о себе.'}
-          </p>
-          {card.characters.length ? (
-            <p className="mt-2 text-xs text-[var(--sim-text-faint)]">
-              Персонажи: {card.characters.map((c) => c.name).join(', ')}
-            </p>
-          ) : null}
-        </div>
-        <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={onClose}>
-          К списку
-        </Button>
-      </div>
-      {mine && myProfile ? (
-        <OwnProfileEditor profile={myProfile} onSaved={onSaved} />
-      ) : null}
-    </section>
+    <span className={`${styles.miniArena} ${big ? styles.tileArena : ''}`} aria-hidden>
+      {m.status === 'online' ? <span className={styles.onlineDot} /> : null}
+      {m.sprite ? <img src={m.sprite} alt="" /> : null}
+    </span>
+  );
+}
+
+/** Строка таблицы: клик открывает полную страницу профиля. */
+function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className={styles.row}
+      onClick={onOpen}
+      aria-label={`Открыть профиль: ${m.name}`}
+      title={`Профиль ${m.name} (${m.card.displayName ? 'карточка с сервера' : '—'})`}
+    >
+      <MiniArena m={m} />
+      <span className={styles.cName}>
+        <span className={styles.catName}>{m.name}</span>
+        <span className={styles.acc} title={m.card.accountId}>
+          {m.shortId}
+        </span>
+      </span>
+      <span className={`${styles.bornC} ${styles.cBorn}`} title={m.bornTs ? `дата регистрации — ${m.born}` : 'дата регистрации неизвестна'}>
+        {m.born}
+      </span>
+      <span
+        className={`${styles.bornC} ${styles.cSeen}`}
+        title={m.seenTs ? `последний вход — ${ruDate(m.seenTs)}` : 'записей о входе нет'}
+      >
+        {m.seenAgo}
+      </span>
+      <span className={`${styles.homeC} ${styles.cHome}`} title={m.home ? 'комната последней записи кота' : 'дом неизвестен — кота в поле не видели'}>
+        {m.home || '—'}
+      </span>
+      <span className={`${styles.ageC} ${styles.cAge}`} title="возраст карточки в лунах (1 луна = 30 дней с регистрации)">
+        {m.moons}
+      </span>
+      <span className={`${styles.actW} ${ACT_COLOR[m.activity]} ${styles.cAct}`}>
+        {m.activity === 'unknown' ? 'неизвестно' : `${ACTIVITY_TEXT[m.activity]} активность`}
+      </span>
+      <span className={styles.cStatus}>
+        <span className={`${styles.pill} ${STATUS_PILL[m.status]}`}>{STATUS_TEXT[m.status]}</span>
+      </span>
+    </button>
+  );
+}
+
+/** Плитка плиточного вида: те же честные данные, компактнее. */
+function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
+  return (
+    <button type="button" className={styles.tile} onClick={onOpen} aria-label={`Открыть профиль: ${m.name}`}>
+      <MiniArena m={m} big />
+      <span className={styles.catName}>{m.name}</span>
+      <span className={styles.acc} title={m.card.accountId}>
+        {m.shortId}
+      </span>
+      <span className={`${styles.pill} ${STATUS_PILL[m.status]}`}>{STATUS_TEXT[m.status]}</span>
+      <span className={styles.tAge}>
+        <b>{m.moons}</b>
+        {` · ${m.home || 'дом неизвестен'}`}
+      </span>
+    </button>
   );
 }
 
 /* ================================ страница ================================ */
-
-const PAGE_SIZE = 24;
-const SEARCH_DEBOUNCE_MS = 300;
 
 export default function PlayersCatalog() {
   const [session, setSession] = useState<CoopWhoami | null>(null);
@@ -328,9 +324,14 @@ export default function PlayersCatalog() {
   const [searchInput, setSearchInput] = useState('');
   const [query, setQuery] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'status', dir: 1 });
+  const [viewMode, setViewMode] = useState<'table' | 'tiles'>('table');
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
+  /** Момент последней успешной загрузки: от него считаются статусы и
+   *  «обновлено …» — «сейчас» фиксируется, а не тикает на каждом рендере. */
+  const [fetchedAt, setFetchedAt] = useState(0);
   /** Счётчик ходов за списком: ответ с устаревшим номером молча отбрасывается. */
   const seqRef = useRef(0);
 
@@ -355,6 +356,7 @@ export default function PlayersCatalog() {
       if (res.ok) {
         setCards(res.items);
         setNextCursor(res.nextCursor);
+        setFetchedAt(Date.now());
         return;
       }
       setCards(null);
@@ -419,6 +421,7 @@ export default function PlayersCatalog() {
     setLoadingMore(false);
     if (res.ok) {
       setNextCursor(res.nextCursor);
+      setFetchedAt(Date.now());
       setCards((prev) => {
         if (!prev) return res.items;
         const seen = new Set(prev.map((c) => c.accountId));
@@ -437,8 +440,8 @@ export default function PlayersCatalog() {
     });
   }, [nextCursor, loadingMore, query]);
 
-  /** Повтор неудачного хода: тот же курсор (сетевая/серверная ошибка),
-   *  либо первая страница заново (сбой первой страницы и битый курсор). */
+  /** Повтор неудачного хода: тот же курсор (сетевая ошибка), либо первая
+   *  страница заново (сбой первой страницы и битый курсор). */
   const retryLoad = useCallback(() => {
     if (!listFail) return;
     if (listFail.retryCursor) {
@@ -452,6 +455,10 @@ export default function PlayersCatalog() {
   const clearSearch = useCallback(() => {
     setSearchInput('');
     setQuery('');
+  }, []);
+
+  const applySort = useCallback((key: SortKey) => {
+    setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: DEF_DIR[key] }));
   }, []);
 
   const openCard = useCallback((card: ProfileCard) => {
@@ -486,7 +493,9 @@ export default function PlayersCatalog() {
         if (!prev) return prev;
         const me = session?.accountId;
         return prev.map((c) =>
-          me && c.accountId === me ? { ...c, displayName: fresh.displayName, bio: fresh.bio, avatarCharacterId: fresh.avatarCharacterId } : c,
+          me && c.accountId === me
+            ? { ...c, displayName: fresh.displayName, bio: fresh.bio, avatarCharacterId: fresh.avatarCharacterId }
+            : c,
         );
       });
       setFocused((prev) =>
@@ -498,6 +507,15 @@ export default function PlayersCatalog() {
     [session],
   );
 
+  /** Производные строки: статусы фиксированы моментом загрузки (fetchedAt),
+   *  сортировка — перестановка уже загруженных карточек, ничего выдуманного. */
+  const rows = useMemo<RowModel[]>(() => {
+    if (!cards) return [];
+    const models = cards.map((c) => makeRow(c, fetchedAt || 1));
+    const sorted = [...models].sort((a, b) => cmpModels(a, b, sort.key, sort.dir));
+    return sorted;
+  }, [cards, fetchedAt, sort]);
+
   if (!IS_ELYRIA) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-2 p-6 text-[var(--sim-text-soft)]">
@@ -506,123 +524,264 @@ export default function PlayersCatalog() {
     );
   }
 
-  const me = session?.ok ? session : null;
-  const focusedMine = !!(me?.accountId && focused?.accountId === me.accountId);
+  // Открытый профиль — ПОЛНАЯ страница профиля (свой небосвод и бренд внутри).
+  if (focused) {
+    const me = session?.ok ? session : null;
+    return (
+      <PlayerProfile
+        card={focused}
+        mine={!!(me?.accountId && focused.accountId === me.accountId)}
+        myProfile={myProfile}
+        onSaved={handleSaved}
+        onClose={closeCard}
+      />
+    );
+  }
+
+  const onlineNow = rows.filter((r) => r.status === 'online').length;
   const appliedQuery = query.trim();
+  const qPart = appliedQuery ? ` по запросу «${appliedQuery}»` : '';
+  const sortNote = `сортировка: ${SORT_TITLE[sort.key].toLowerCase()} ${sort.dir === 1 ? '↑' : '↓'} (по загруженным)`;
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Игроки</h1>
-        <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
-          ← Главное меню
-        </a>
-      </header>
+    <div className={styles.sky}>
+      <Starscape />
+      <div className={styles.page}>
+        <BrandRow />
 
-      <form
-        className="flex w-full max-w-md flex-col gap-1"
-        onSubmit={(ev) => {
-          ev.preventDefault();
-          setQuery(searchInput);
-        }}
-      >
-        <div className="flex items-center gap-2">
-          <Input
-            className="h-9 min-w-0 flex-1 text-sm"
-            type="text"
-            inputMode="search"
-            aria-label="Поиск игрока по имени"
-            maxLength={64}
-            value={searchInput}
-            placeholder="Поиск по имени"
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          {searchInput ? (
+        <header className={styles.pageHead}>
+          <h1 className={styles.h1}>
+            Игроки <span className={`${styles.lite} ${displayFont.className}`}>Elyria Eides</span>
+          </h1>
+          {cards && cards.length ? (
+            <p className={styles.sub}>
+              Загружено {rows.length} {plural(rows.length, 'карточка', 'карточки', 'карточек')}
+              {qPart} · <b>{onlineNow} {plural(onlineNow, 'кот', 'кота', 'котов')}</b> с активным входом · обновлено{' '}
+              {ruStamp(fetchedAt)}
+            </p>
+          ) : (
+            <p className={styles.sub}>Публичные карточки игроков закрытой локации.</p>
+          )}
+          <p className={styles.hint} style={{ marginTop: 10 }}>
+            <a className={styles.backLink} href="/">
+              ← Главное меню
+            </a>
+          </p>
+        </header>
+
+        <form
+          className={`${styles.panel} ${styles.controls}`}
+          aria-label="Поиск и вид списка"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            setQuery(searchInput);
+          }}
+        >
+          <div className={styles.search}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
+            <input
+              className={styles.searchInput}
+              type="search"
+              inputMode="search"
+              aria-label="Поиск игрока по имени"
+              maxLength={64}
+              value={searchInput}
+              placeholder="Поиск по имени"
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            {searchInput ? (
+              <button type="button" className={styles.clearBtn} aria-label="Очистить поиск" title="Очистить поиск" onClick={clearSearch}>
+                ×
+              </button>
+            ) : null}
+          </div>
+          <div className={styles.seg} role="group" aria-label="Вид списка">
             <button
               type="button"
-              aria-label="Очистить поиск"
-              title="Очистить поиск"
-              onClick={clearSearch}
-              className="h-9 shrink-0 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-base leading-none text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)]"
+              className={`${styles.segBtn} ${viewMode === 'table' ? styles.segOn : ''}`}
+              aria-pressed={viewMode === 'table'}
+              onClick={() => setViewMode('table')}
             >
-              ×
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="4" y="5" width="16" height="14" rx="2.5" />
+                <path d="M4 10h16" />
+                <path d="M10.5 10v9" />
+              </svg>
+              Таблица
             </button>
-          ) : null}
-          <Button
-            type="submit"
-            size="sm"
-            className="h-9 shrink-0 text-xs"
-            variant="outline"
-          >
-            Найти
-          </Button>
-        </div>
-      </form>
+            <button
+              type="button"
+              className={`${styles.segBtn} ${viewMode === 'tiles' ? styles.segOn : ''}`}
+              aria-pressed={viewMode === 'tiles'}
+              onClick={() => setViewMode('tiles')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+                <rect x="4" y="4" width="7" height="7" rx="1.5" />
+                <rect x="13" y="4" width="7" height="7" rx="1.5" />
+                <rect x="4" y="13" width="7" height="7" rx="1.5" />
+                <rect x="13" y="13" width="7" height="7" rx="1.5" />
+              </svg>
+              Плитки
+            </button>
+          </div>
+        </form>
 
-      {focused ? (
-        <FocusCardView
-          card={focused}
-          mine={focusedMine}
-          myProfile={myProfile}
-          onSaved={handleSaved}
-          onClose={closeCard}
-        />
-      ) : null}
-      {focusMissing ? <ServerError title={focusMissing} /> : null}
+        {focusMissing ? <ServerError title={focusMissing} /> : null}
 
-      {listFail ? (
-        <div className="space-y-2">
-          <ServerError title={listFail.message} details={listFail.details} />
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-            onClick={retryLoad}
-          >
-            Повторить
-          </Button>
-        </div>
-      ) : null}
+        {listFail ? (
+          <div style={{ marginBottom: 16 }} className={styles.errBox}>
+            <p className={styles.errTitle}>{listFail.message}</p>
+            {listFail.details ? <pre className={styles.errDetails}>{listFail.details}</pre> : null}
+            <button
+              type="button"
+              className={`${styles.pbtn} ${styles.pbtnGold}`}
+              style={{ marginTop: 10 }}
+              onClick={retryLoad}
+            >
+              Повторить
+            </button>
+          </div>
+        ) : null}
 
-      {loadingFirst && cards === null ? (
-        <p className="text-sm text-[var(--sim-text-soft)]">Загружаем каталог…</p>
-      ) : null}
-      {loadingFirst && cards !== null ? (
-        <p className="text-xs text-[var(--sim-text-faint)]">Обновляем список…</p>
-      ) : null}
+        {loadingFirst && !cards ? (
+          <div className={`${styles.panel} ${styles.empty}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
+            <div className={styles.eTitle}>Загружаем каталог…</div>
+            <p>Запрашиваем публичные карточки у сервера.</p>
+          </div>
+        ) : null}
 
-      {!loadingFirst && cards !== null && cards.length === 0 ? (
-        <p className="text-sm text-[var(--sim-text-soft)]">
-          {appliedQuery
-            ? `По запросу «${appliedQuery}» никто не нашёлся.`
-            : 'Пока ни одной публичной карточки. Зарегистрируйся и расскажи о себе — карточка появится здесь.'}
-        </p>
-      ) : null}
+        {!loadingFirst && cards && cards.length === 0 ? (
+          <div className={`${styles.panel} ${styles.empty}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
+            {appliedQuery ? (
+              <>
+                <div className={styles.eTitle}>Совпадений нет</div>
+                <p>
+                  По запросу <span className={styles.hl}>{appliedQuery}</span> не нашлось ни одного кота.
+                </p>
+                <p>Попробуйте другое имя либо очистите поиск.</p>
+              </>
+            ) : (
+              <>
+                <div className={styles.eTitle}>Карточек пока нет</div>
+                <p>Пока ни одной публичной карточки. Зарегистрируйся и расскажи о себе — карточка появится здесь.</p>
+              </>
+            )}
+          </div>
+        ) : null}
 
-      {cards && cards.length ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {cards.map((card) => (
-            <CatalogCardView
-              key={card.accountId}
-              card={card}
-              selected={focused?.accountId === card.accountId}
-              onOpen={() => openCard(card)}
-            />
-          ))}
-        </div>
-      ) : null}
+        {rows.length ? (
+          <section className={`${styles.panel} ${styles.listPanel}`} aria-label="Каталог игроков">
+            {viewMode === 'table' ? (
+              <div className={styles.tableWrap}>
+                <div className={styles.thead} role="row">
+                  <div aria-hidden />
+                  <SortHead
+                    label={SORT_TITLE.name}
+                    hint="имя карточки по алфавиту"
+                    active={sort.key === 'name'}
+                    dir={sort.dir}
+                    onSort={() => applySort('name')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.born}
+                    hint="дата регистрации аккаунта"
+                    cellClass={styles.cBorn}
+                    active={sort.key === 'born'}
+                    dir={sort.dir}
+                    onSort={() => applySort('born')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.seen}
+                    hint="последнее появление: сессия или запись кота на поле"
+                    cellClass={styles.cSeen}
+                    active={sort.key === 'seen'}
+                    dir={sort.dir}
+                    onSort={() => applySort('seen')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.home}
+                    hint="комната последней записи кота"
+                    cellClass={styles.cHome}
+                    active={sort.key === 'home'}
+                    dir={sort.dir}
+                    onSort={() => applySort('home')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.age}
+                    hint="луны с регистрации (1 луна = 30 дней)"
+                    cellClass={styles.cAge}
+                    active={sort.key === 'age'}
+                    dir={sort.dir}
+                    onSort={() => applySort('age')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.act}
+                    hint="активность выводится из времени последнего входа"
+                    cellClass={styles.cAct}
+                    active={sort.key === 'act'}
+                    dir={sort.dir}
+                    onSort={() => applySort('act')}
+                  />
+                  <SortHead
+                    label={SORT_TITLE.status}
+                    hint="«в игре» — вход был в последние 15 минут"
+                    cellClass={styles.cStatus}
+                    active={sort.key === 'status'}
+                    dir={sort.dir}
+                    onSort={() => applySort('status')}
+                  />
+                </div>
+                <div className={styles.tbody}>
+                  {rows.map((m) => (
+                    <RowBtn key={m.card.accountId} m={m} onOpen={() => openCard(m.card)} />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className={styles.tiles}>
+                {rows.map((m) => (
+                  <TileBtn key={m.card.accountId} m={m} onOpen={() => openCard(m.card)} />
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
-      {nextCursor && cards && cards.length ? (
-        <Button
-          type="button"
-          size="sm"
-          disabled={loadingMore}
-          onClick={() => void loadMore()}
-          className="h-9 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-        >
-          {loadingMore ? 'Загружаем…' : 'Ещё'}
-        </Button>
-      ) : null}
-    </main>
+        {cards && cards.length ? (
+          <nav className={`${styles.panel} ${styles.pager}`} aria-label="Дозагрузка списка">
+            <div className={styles.pagerInfo}>
+              Загружено <b>{rows.length}</b> {plural(rows.length, 'карточка', 'карточки', 'карточек')}
+              {qPart} · {sortNote}
+              {loadingFirst ? ' · обновляем…' : ''}
+            </div>
+            {nextCursor ? (
+              <button
+                type="button"
+                className={`${styles.pbtn} ${styles.pbtnGold}`}
+                disabled={loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? 'Загружаем…' : 'Ещё'}
+              </button>
+            ) : (
+              <span className={styles.pagerInfo}>Это все карточки{qPart}</span>
+            )}
+          </nav>
+        ) : null}
+
+        <p className={styles.footNote}>Каталог показывает только публичные карточки — входы и пароли не раскрываются</p>
+      </div>
+    </div>
   );
 }

@@ -74,6 +74,20 @@ function rememberCat(cat) {
   catBookDirty = true;
 }
 
+/**
+ * P5-редизайн каталога (read-only вью): время последней записи позиции кота
+ * по логину персонажа, 0 — записи нет/устарела (TTL 30 дней). Честный источник
+ * «когда кота последний раз видели на поле» и комнаты-«дома» (книга ведётся
+ * только для комнаты «тест»/Элизия). Ключ — логин кота, т.е. ИМЯ персонажа
+ * (не логин аккаунта): одноимённые персонажи неразличимы — известное
+ * ограничение источника, см. карточку в profiles.js. Ничего не мутирует.
+ */
+function catSeenAt(login) {
+  const rec = catBook[String(login || "").toLowerCase()];
+  if (!rec || typeof rec !== "object") return 0;
+  return Number(rec.ts) || 0;
+}
+
 /** Мирная точка не внутри тела препятствия (эллипс с поворотом, чуть проще
  *  клиентского — на граничных точках лучше вернуть кота, чем оставить на спавне). */
 function peacePointFreeOfObjects(fx, fy) {
@@ -131,4 +145,4 @@ function restoreCatPosition(room, cat) {
   }
 }
 
-export { flushCatBook, rememberCat, restoreCatPosition };
+export { flushCatBook, rememberCat, restoreCatPosition, catSeenAt };
