@@ -19,6 +19,38 @@ dual-host превью (`pr-N.abnocw` + `pr-N.elisium`, один инстанс 
 Разделы ниже остаются историческим аудитом на `f75768f`: «нет в коде» значит «не было на main до волны».
 As-is картина платформы — [PLATFORM-ARCHITECTURE.md](PLATFORM-ARCHITECTURE.md).
 
+**Follow-up PR #49, волны B/C/D (та же ветка, 2026-11-08, в main не влито).** Закрыто после
+платформенной волны и синхронизировано с кодом:
+
+- **B1 — кросс-доменная изоляция (security hardening per-destination):** CSRF
+  fail-closed (пустой/чужой Origin → 403 на unsafe+cookie), CORS отражает Origin только
+  «своему» сайту, cookie host-only (без Domain), прокси-метка класса с loopback;
+  живые пробы — `npm run test:cross-origin` (матрица ≥20).
+- **B2 — админ-дашборд списков:** в `/admin` редактируются СПИСКИ разрешённых значений
+  universes (тумблер «выбор игроками вкл/выкл» = сжатие списка к {default}-only, серверной
+  disabled-модели нет), диф-предпросмотр «было → станет», предупреждение сужения,
+  сворачиваемые тех-детали, честные статусы применения, «Комнатные настройки» с пометкой
+  глобальности.
+- **B3 — каталог игроков:** серверный поиск `?q` (debounce 300 мс) и keyset-пагинация
+  (`?limit` деф. 24, `?cursor`), клиент не фильтрует сам.
+- **B6 — auth UX:** человекочитаемые reason-тексты (taken/weak/short/rate/bad), локальная
+  валидация до отправки, автофокус, сброс пароля после выхода; мини-фолловап —
+  фоновый WS-кадр `whoami` не затирает свежий отказ входа.
+- **A1 — изоляция маркеры-ноль:** env-свёртка хостов/маршрутов Элизии и боевых миров в
+  мёртвых ветках (инлайн-канон site.ts, arch-правило isolatedImports), гейт
+  `npm run check:variants` в preview-build после сборки до упаковки артефакта;
+  **A2/D4** — paths-фильтр CI теперь требует ревью правок всех workflows и deploy-скриптов.
+- **S1–S5 (аудит Z.AI):** роль admin — только одноразовый CLI `scripts/make-admin.mjs`
+  (BOOTSTRAP_ADMIN при регистрации даёт registered + warning, S1); `ADMIN_PASS` fail-closed
+  без дефолта, редактор закрыт без env (S2); легаси-шаблон *.vercel.app удалён из Origin-щита
+  (S3); `/health` показывает `clientIpMode` (S4); ресурсные лимиты `WS_MAX_PER_IP` (деф. 8)
+  и `ROOMS_MAX` (деф. 32) — отказы `too_many_sockets`/`rooms_full` (S5).
+- **D — синхронизация документации с фактическим кодом** (карты AGENTS/ARCHITECTURE,
+  PLATFORM-ARCHITECTURE, AI-CONTEXT, этот файл, PREVIEW-ENVIRONMENTS).
+
+**Не закрыто — этапы аудита 2/3, подряд после мерджа PR #49:** A5 (test→elision),
+A4 (shared-JSON), A3 (резка simulator), S7 (displayName), WS-broadcast, D3 (boot-flow).
+
 **Статус ветки `cursor/product-roadmap-and-platform-42e0`:** фазы 0–5 сделаны в
 коде (аудит, архитектура, аккаунты + закрытая Элизия, страницы режимов,
 справочник Герты, безопасный `/cfg`). Фаза 6 — скрипты и workflow в репо.

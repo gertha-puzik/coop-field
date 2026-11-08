@@ -9,7 +9,7 @@
 Состояние чисел: `wc -l` на 2026-11-08 (ветка `feature/elyria-platform-admin-profiles`, этапы
 P1–P6 платформы; в CI числа бережёт гейт `npm run check:landmarks`, W7a). Карта as-is честная:
 god-файлы разобраны — `server.js` разрезан волной W4 на тонкий вход 10 строк + модули `server/`;
-из `simulator.tsx` (8221 → 4933 сегодня) остаётся разрезать меньшинство. Размер — это долг, а не норма:
+из `simulator.tsx` (8221 → 4953 сегодня) остаётся разрезать меньшинство. Размер — это долг, а не норма:
 **новые файлы >800 строк запрещены** (`npm run arch:check`).
 
 ## 1. Слои и границы
@@ -41,6 +41,11 @@ server.js             комната: комнаты, клетки, бой, ча
   `/, elision/, players/, admin/`); итоговые корни — `www-grotto/` и `www-elyria/`.
   Третий рубеж — серверная Host-изоляция (P1): класс запроса `hostClassOf` (public | elyria | local)
   по заголовку Host закрывает целые API-зоны на публичном сайте (детали — PLATFORM-ARCHITECTURE §5).
+  Четвёртый рубеж — CI-гейт изоляции `npm run check:variants` (A1): после `build:variants` оба корня
+  прогоняются гейтом — www-grotto не содержит НИ ОДНОГО маркера Элизии (включая латиницу `elisium`;
+  кириллический греп недостаточен), www-elyria не содержит снятых маршрутов `/combat/` и `/hunger/`
+  и несёт признаки живой Элизии, ссылки на чанки `_next/static/chunks/*` цельны. Шаг
+  «Изоляция вариантов (A1)» в preview-build.yml идёт после сборки обоих корней и до упаковки артефакта.
 
 ## 2. Карта модулей as-is
 
@@ -48,8 +53,8 @@ server.js             комната: комнаты, клетки, бой, ча
 
 | Модуль | Строк | Ответственность (диапазоны) |
 | --- | ---: | --- |
-| `src/components/sim/simulator.tsx` | 4933 | Остаток после выносов W5a+W5b (+ надстройки PR #41/#48): `Simulator()` начинается :253 (стейт/refs-пояс, сетевые колбэки); вызов buildEditorOps :938 (тела — ./simulator/editor-ops.ts); эффекты атмосферы/комнат/подсказки боя; главный rAF-эффект с `const loop` :4220 (оставлен на месте: ~2700-строчное замыкание, deps `[stage]` — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); вызов buildPointerTools :4364 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек; platform-вставки P3: инлайн IS_ELYRIA :117 — auth-колбэки и панель AuthPanel подключаются только в варианте Элизии (:4548, :4576, :4742–4744); localStorage-маршруты: STORAGE_KEY :710 (чтение СП)/:725 (запись), COMBAT_KEY :1201, сброс :4490–4491, ротация лога :4503. Элизия: рендер WebGL-вида и включение — simulate-сторона ниже |
-| `src/components/sim/simulator/` вынос W5b (+ PR #48) | 5154 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving): hud-canvas.ts 225 (HUD-плашка суток+погода), sim-model.ts 178 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 257 (window keydown/keyup/blur, deps []), hooks/use-network.ts 641 (сетевой эффект coop-клиента), hooks/use-canvas-layers.ts 186 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike), hooks/use-elision-view.ts 47 (реестр WebGL-слоёв Элизии: подключение Babylon-Engine поверх 2D-цикла), editor-ops.ts 734 (операции черновика локации как per-render фабрика; клетки/спавны/заходы — editor-cells.ts, «Перенести» — editor-select.ts), pointer-tools.ts 670 (мышиные обработчики канваса), editor-cells.ts 196, editor-select.ts 197, elision-present.ts 287 (кадр WebGL-вида Элизии: собирает то, что 2D-цикл уже посчитал — камера, коты, камни/деревья, без второго перевода сетевых координат), components/chrome.tsx 408 (SimulatorHeader, кнопки «Погода»/«Сутки», ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 692 (панель редактора + прогресс сохранения), components/field-stage.tsx 159 (рамка канвасов+легенда) |
+| `src/components/sim/simulator.tsx` | 4953 | Остаток после выносов W5a+W5b (+ надстройки PR #41/#48 и мини-фолловап B6): `Simulator()` начинается :253 (стейт/refs-пояс, сетевые колбэки); вызов buildEditorOps :955 (тела — ./simulator/editor-ops.ts); эффекты атмосферы/комнат/подсказки боя; главный rAF-эффект с `const loop` :4237 (оставлен на месте: ~2700-строчное замыкание, deps `[stage]` — целиком свыше лимита 800, а разрывать переменные цикла нельзя без изменения поведения); вызов buildPointerTools :4381 (тела указателей — ./simulator/pointer-tools.ts, удар — ./simulator/hooks/use-strike.ts); патчи настроек; platform-вставки P3: инлайн IS_ELYRIA :117 — auth-колбэки и панель AuthPanel подключаются только в варианте Элизии (sendAuth :4563; setWhoamiGuarded :277 — фоновый WS-кадр `whoami` не затирает свежий отказ входа, окно 8 с, мини-фолловап B6; пропсы AuthPanel :4758–:4763); localStorage-маршруты: STORAGE_KEY :727 (чтение СП)/:742 (запись), COMBAT_KEY :1218, сброс :4507–4508, ротация лога :4520. Элизия: рендер WebGL-вида и включение — simulate-сторона ниже |
+| `src/components/sim/simulator/` вынос W5b (+ PR #48) | 5153 | Хуки/JSX/фабрики, вырезанные из simulator.tsx (behavior-preserving): hud-canvas.ts 225 (HUD-плашка суток+погода), sim-model.ts 178 (AtmoClock/FloatLabel/Step/Engine типы, fmtSec, remote-draw хелперы), hooks/use-keyboard.ts 257 (window keydown/keyup/blur, deps []), hooks/use-network.ts 641 (сетевой эффект coop-клиента; `setWhoami` сужен до `(row: CoopWhoami) => void`), hooks/use-canvas-layers.ts 186 (useAimPublisher/useSpriteCache/useAtmosphereLayer), hooks/use-strike.ts 277 (броня+удар: landStrike/doStrike), hooks/use-elision-view.ts 47 (реестр WebGL-слоёв Элизии: подключение Babylon-Engine поверх 2D-цикла), editor-ops.ts 733 (операции черновика локации как per-render фабрика; клетки/спавны/заходы — editor-cells.ts, «Перенести» — editor-select.ts; S2: пароль редактора в localStorage больше не живёт — при открытии сидит одноразовая миграционная чистка устаревшего ключа EDITOR_PASS_KEY, :199), pointer-tools.ts 670 (мышиные обработчики канваса), editor-cells.ts 196, editor-select.ts 197, elision-present.ts 287 (кадр WebGL-вида Элизии: собирает то, что 2D-цикл уже посчитал — камера, коты, камни/деревья, без второго перевода сетевых координат), components/chrome.tsx 408 (SimulatorHeader, кнопки «Погода»/«Сутки», ColResize/SettingsPanelOverlay/RoomSwitchOverlay), components/editor-overlay.tsx 692 (панель редактора + прогресс сохранения), components/field-stage.tsx 159 (рамка канвасов+легенда) |
 | `src/lib/sim/` вынос W5a-1 | 1028 | Чистые модули, вырезанные из пояса simulator.tsx: engine-consts.ts 98 (именованные константы+STORAGE-ключи, пометки [MIRROR]), geometry.ts 133 (spriteBoxOf/якоря стрелы/coveredRatio/nearestEntryCell), targeting.ts 151 (правило удара pickStrikeTarget — зеркало server aimedNeighbor, STRIKE_RESPONSE_MS), combat-log.ts 187 (layout колонок+STORAGE, mergeLog/CombatState), particles.ts 55 (спринт-частицы), paint.ts 311 (кисть PaintXP: материалы/штампы/undo/encode, синхронный+асинхронный PNG), editor-model.ts 93 (типы редактора+EDITOR_PASS_KEY) |
 | `src/lib/sim/settings.ts` | 1131 | Модель боя: STRIKE_ZONES, ARMOR_CURVE (:567), DAMAGE_LEVELS (:522), тайм-ауты брони, спрайты (31), замедление, атмосфера-типы; 60 экспортов |
 | `src/lib/sim/test-field.ts` | 2155 | Играбельная площадь «Элизии»: проходимость клеток и anchor-точек, route-граф, рендер кромки (марширующие квадраты + Чайкин), paint-маска, дешёвые клипы клеток рельефа, лицевая стена блока по квадранту камеры, кэши; мутабельные модульные синглтоны (раздел 5) |
@@ -59,19 +64,21 @@ server.js             комната: комнаты, клетки, бой, ча
 | `src/lib/sim/elision-scene.ts` | 156 | Математика WebGL-сцены Элизии: `worldPxToScene` — единственный шаг px мира → сцена (второго ±1 нет), камера ортографическая повторяет `screenToWorld` |
 | `src/lib/sim/` прочее | 355 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 136, theme.ts 54 |
 | `src/lib/site.ts` | 28 | Канон варианта сайта (P3): `SITE` из `NEXT_PUBLIC_SITE`, дефолт `grotto` (fail-safe: пустой env — публичный сайт). Хелперы для кода вне React; вариантозависимый UI-код НЕ импортирует его для фолдинга — сверяет env инлайном (см. шапку модуля) |
-| `src/lib/net/modes.ts` | 155 | Клиентский каталог комнат — зеркало `server/modes.js` (titles/access/href). В grotto-варианте комната `test` отсутствует напрочь (мёртвая ветка вырезается сборкой); PlayMode — `'hub' \| 'beer' \| 'elision' \| 'hunger'`: отдельного режима combat больше нет, гроты = beer, страницы /combat/ остаётся входом в гроты |
-| `src/lib/net/coop.ts` | 576 | Транспорт: выбор сокета по хосту (elisium.miew.ru/\*.elisium → same-origin `/ws`; превью pr-N.abnocw.miew.ru → свой `/ws`; легаси sslip/vercel → сокет комнаты; localhost → LOCAL_WS `ws://localhost:3780`), `httpOrigin()` — база HTTP-флоу (auth/профили/cfg; same-origin на Элизии), reconnect backoff, диспетчер входящих (guard-валидаторы + `EV.*` из `./protocol`); `?t=` в URL не используется (P3 — cookie	HttpOnly) |
+| `src/lib/net/modes.ts` | 163 | Клиентский каталог комнат — зеркало `server/modes.js` (titles/access/href). В grotto-варианте комната `test` отсутствует напрочь; href и карточки боевых миров сидят в мёртвых ветках IS_ELYRIA-тернарников (COMBAT_HREF/HUNGER_HREF :38–:39, NAMED_ROOMS :84, MODE_COPY :117) — «мёртвая ветка умирает на сборке», в элизии-артефакте их нет. PlayMode — `'hub' \| 'beer' \| 'elision' \| 'hunger'`: отдельного режима combat больше нет, гроты = beer, страницы /combat/ остаётся входом в гроты |
+| `src/lib/net/coop.ts` | 582 | Транспорт: выбор сокета по хосту (elisium.miew.ru/\*.elisium → same-origin `/ws` — ветка свёрнута инлайн-сравнением `process.env.NEXT_PUBLIC_SITE === "elyria"` ВНУТРИ условия wsUrlBase :193, не импортом константы: мёртвая ветка выкидывается из grotto-сборки целиком вместе с хостами Элизии, A1; превью pr-N.abnocw.miew.ru → свой `/ws`; легаси sslip/vercel → сокет комнаты; localhost → LOCAL_WS `ws://localhost:3780`), `httpOrigin()` :208 — база HTTP-флоу (auth/профили/cfg; same-origin на Элизии), reconnect backoff, диспетчер входящих (guard-валидаторы + `EV.*` из `./protocol`); `?t=` в URL не используется (P3 — cookie HttpOnly) |
 | `src/lib/net/auth.ts` | 30 | Остаток WS-флоу сессии (P3): `whoami` пропускается как есть, payload кадров `auth` (hello — без токена: сессия приходит cookie на хендшейке) |
-| `src/lib/net/http-auth.ts` | 367 | HTTP-cookie-флоу (P3–P4): `/auth/register\|login\|logout\|me`, профили `GET /profiles`, `GET /profiles/:id`, `GET /profiles/me`, `PATCH /profiles/me`, админ-конфиг `GET /cfg/admin`, `POST /cfg` (apply/reset), `POST /cfg/restore`, `GET /cfg/export`, `POST /cfg/import`; все fetch с `credentials: "include"` против `httpOrigin()`. В grotto-варианте эти клиенты в мёртвых ветках |
+| `src/lib/net/http-auth.ts` | 93 | Auth-only HTTP-флоу (P3, сплит B-волны): `httpRegister/httpLogin/httpLogout/httpMe` (`/auth/register\|login\|logout\|me`, fetch с `credentials: "include"` против `httpOrigin()`) + общие низкоуровневые хелперы `apiFetch/asText/asId/ApiRow`, на которых стоят оба соседних модуля. Сплит — изоляция сборки: модуль-донор графа симулятора не должен тянуть серверные HTTP-маршруты Элизии в public-бандл гротов. В grotto-варианте эти клиенты в мёртвых ветках |
+| `src/lib/net/http-profiles.ts` | 152 | Клиент каталога профилей (P4/B3): `httpProfileCatalog` (?q поиск по displayName, ?limit деф. 24, ?cursor keyset-пагинация), `httpProfileById`, `httpMyProfile`, `httpPatchProfile`; типы PublicProfile/ProfileCard/ProfilePatch |
+| `src/lib/net/http-cfg.ts` | 335 | Админ-CRUD конфига (P4/B2): fetch-обёртки GET /cfg/admin, POST /cfg (apply/reset), POST /cfg/restore, GET /cfg/export, POST /cfg/import + ЧИСТЫЕ функции черновика/диффа — draftFromSnapshot, cfgPatchFromDraft, canonByKind, buildCfgDiff, narrowingWarning, listIssue, successText, applyBadgeText (listDiff/fmtNum). Реакт не здесь: UI черновика — в cfg-dashboard.tsx |
 | `src/lib/net/cfg-live.ts` | 122 | Живые universes для UI (P3): один fetch GET /cfg на вкладку с кэшем; сбой → реестровые дефолты; выпавшее из списка сохранённое значение снапится к дефолту (`snapToAllowed` — не к ближайшему) |
 | `src/lib/cfg-registry.ts` | 139 | Клиентское зеркало реестра конфига (P2): подписи/юниверсы/дефолты 5 ключей; формул клэмпа на клиенте НЕТ (только сервер). Паритет — `test:protocol-parity` |
 | `src/lib/net/protocol.ts` | 367 | Client-side protocol canon (W3): mirrored `EV.*` registries (23+23, auth/whoami), payload types, guards; re-exports sim-owned constants from `settings.ts`/`test-map.ts` |
 | `src/lib/net/move-book.ts` | 89 | Предикт своих шагов (≤1 неподтверждённый), откат по refuse, достройка чужих котов. Эталон чистоты для новых модулей |
-| `src/lib/net/gerta-catalog.ts` | 407 | Справочник Герты: типизированные карточки механик/констант из protocol.ts + реальные пути файлов (юнит-проверка путей — scripts/test-handbook.mts в test:unit) |
-| `src/components/players/players-catalog.tsx` | 458 | Страница-каталог игроков `/players` (P4, только elyria): карточки из GET /profiles, deep-link `?id=<accountId>`, инлайн-редактирование своей карточки (PATCH /profiles/me) |
-| `src/components/admin/cfg-dashboard.tsx` | 444 | Админ-дашборд `/admin` (P4, только elyria): реестр 5 ключей, apply-политики/подписи из GET /cfg/admin, черновик+POST /cfg, reset, restore по имени из истории, export/import JSON; рендер только при `role==='admin'` (GET /auth/me) |
+| `src/lib/net/gerta-catalog.ts` | 417 | Справочник Герты: типизированные карточки механик/констант из protocol.ts + реальные пути файлов (юнит-проверка путей — scripts/test-handbook.mts в test:unit). Карточки боевых миров — в мёртвой ветке IS_ELYRIA-тернарника (GROTTO_MECHANIC_CARDS :353, MECHANIC_CARDS :384/:410) — умирают на сборке элизии, в её бандле грот-механик нет |
+| `src/components/players/players-catalog.tsx` | 628 | Страница-каталог игроков `/players` (P4+B3, только elyria): карточки из GET /profiles с серверным поиском `?q` (debounce 300 мс либо Enter/«Найти») и keyset-пагинацией `nextCursor` (клиент НЕ фильтрует — режет сервер), deep-link `?id=<accountId>`, инлайн-редактирование своей карточки (PATCH /profiles/me) |
+| `src/components/admin/cfg-dashboard.tsx` | 736 | Админ-дашборд `/admin` (P4+B2, только elyria): реестр 5 ключей, apply-политики/подписи из GET /cfg/admin, редакторы СПИСКОВ разрешённых значений universes (B2: добавить/удалить вариант, тумблер «выбор игроками вкл/выкл» = сжатие списка к {default}-only — серверной disabled-модели НЕ существует), предпросмотр диффа «было → станет» (+N/−M) до отправки с вторым подтверждением, предупреждение сужения списка, сворачиваемые тех-детали, честные статусы ok/err c деталями провала, reset, restore по имени из истории, export/import JSON; секция «Комнатные настройки» с честной пометкой глобальности (per-room-хранилища у движка нет — правки глобальны для всех комнат); рендер только при `role==='admin'` (гейт GET /auth/me :316) |
 | `src/components/sim/simulator/components/…` — см. carve-строку выше: JSХ-каркас | — | — |
-| `src/components/sim/` прочее | 2986 | settings-panel.tsx 1240 (панель настроек, 30 пропсов; вкладки с `admin:true` рендерятся только при `props.role==='admin'` — роль истины на сервере, локальных паролей с P3 нет), entry-screen.tsx 644, gerta-handbook.tsx 201 (вкладка «Справочник» — карточки из lib/net/gerta-catalog.ts), auth-panel.tsx 113 (форма входа/регистрации Элизии, инлайн IS_ELYRIA), room-picker 154, room-chat 126, fight-log 71, бэкдропы beer 363 / theme 74 |
+| `src/components/sim/` прочее | 3062 | settings-panel.tsx 1240 (панель настроек, 30 пропсов; вкладки с `admin:true` рендерятся только при `props.role==='admin'` — роль истины на сервере, локальных паролей с P3 нет), entry-screen.tsx 644, gerta-handbook.tsx 201 (вкладка «Справочник» — карточки из lib/net/gerta-catalog.ts), auth-panel.tsx 189 (форма входа/регистрации Элизии, инлайн IS_ELYRIA; B6: человекочитаемые reason-тексты taken/weak/short/rate/bad по серверным контрактам, локальная валидация логина 2–24/пароля ≥8 ДО отправки, автофокус, сброс пароля после выхода), room-picker 154, room-chat 126, fight-log 71, бэкдропы beer 363 / theme 74 |
 
 Страницы (static export, `src/app/`): `page.tsx` 11 (меню `/`), `combat/page.tsx` 13 (`<Simulator mode="beer">` — гроты), `elision/page.tsx` 11 (`mode="elision"`), `hunger/page.tsx` 11 (каркас «в разработке»), `players/page.tsx` 12 (+players-catalog), `admin/page.tsx` 12 (+cfg-dashboard). `Simulator({ mode = 'hub' })` — единственный тонкий проп режима.
 
@@ -82,22 +89,22 @@ server.js             комната: комнаты, клетки, бой, ча
 
 | Модуль | Строк | Что |
 | --- | ---: | --- |
-| `server/config.js` | 228 | env (PORT/HOST/DATA_DIR/ADMIN_PASS), Origin-политика REQUIRE_ORIGIN, payload/frame limits, поле (WIDTH/HEIGHT/SPAWNS/PALETTE), whitelist 31 спрайта (:175), имена котов; host-политика P1: `hostClassOf` → public\|elyria\|local (env `PUBLIC_HOSTS`/`ELYRIA_HOSTS` дополняют дефолты точным именем или суффиксом зоны, превью-поддомены наследуют класс; неизвестный хост → public) |
+| `server/config.js` | 386 | env (PORT/HOST/DATA_DIR/ADMIN_PASS — S2: дефолт устранён, fail-closed: без env парольный путь редактора мёртв; WS_MAX_PER_IP деф. 8 / ROOMS_MAX деф. 32 — S5), Origin-политика REQUIRE_ORIGIN, payload/frame limits, поле (WIDTH/HEIGHT/SPAWNS/PALETTE), whitelist 31 спрайта (:314), имена котов; host-политика P1: `hostClassOf` → public\|elyria\|local (env `PUBLIC_HOSTS`/`ELYRIA_HOSTS` дополняют дефолты точным именем или суффиксом зоны, превью-поддомены наследуют класс; неизвестный хост → public; S3: легаси-шаблон *.vercel.app удалён из списков) |
 | `server/protocol.js` | 284 | канон W3 + auth/whoami: реестры EV.* 23+23, зеркальные константы (кулдауны, лимиты, ARMOR_CURVE, зоны, atmo, геометрия прыжка/dummy/rab). Платформой не тронут |
-| `server/testmap.js` | 494 | конфиг локации: defaultTestMap, sanitizeTestMap, атомарная запись, карантин битых конфигов, setmap-хендлер (админ-пароль, бэкапы, рассылка map+field) |
+| `server/testmap.js` | 502 | конфиг локации: defaultTestMap, sanitizeTestMap, атомарная запись, карантин битых конфигов, setmap-хендлер (админ-пароль, бэкапы, рассылка map+field); S2: без env ADMIN_PASS парольный путь мёртв — редактор отвечает «закрыт», fail-closed |
 | `server/world.js` | 663 | чистая геометрия по конфигу: PNG-кисть, марширующие квадраты+Чайкин, island/cells, препятствия, высоты, обрывы (`cliffBetween`), entry-клетки |
 | `server/sanitize.js` | 95 | чистые валидаторы входа: clipChars/sanitizeChat/sanitizeLogin/uniqueLogin + chat-хендлер (450 мс, история 40) |
-| `server/room.js` | 438 | комнаты: roomOf (+ алиас RETIRED_ROOMS combat→grot-1 для легаси ?room=combat), жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move, Элизия без сессии → auth_required), leave, publicCat/поле, send/broadcast, спрайт, block, space, roomsinfo с призраком: гость про registered-комнату слышит `count 0, logins []` — как про несуществующую |
+| `server/room.js` | 460 | комнаты: roomOf (+ алиас RETIRED_ROOMS combat→grot-1 для легаси ?room=combat), жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move, Элизия без сессии → auth_required), leave, publicCat/поле, send/broadcast, спрайт, block, space, roomsinfo с призраком: гость про registered-комнату слышит `count 0, logins []` — как про несуществующую; S5b: потолок ЖИВЫХ комнат ROOMS_MAX (деф. 32) — новая комната сверх лимита → noplace `rooms_full` |
 | `server/movement.js` | 295 | очередь шагов 80 мс×3, move-хендлер с refuse-кодами, freemove, cellsync, jump |
 | `server/combat.js` | 285 | aim (коалесценция 20 мс)/strike: aimedNeighbor — зеркало pickStrikeTarget, зоны удара, броня по ARMOR_CURVE; P2-клэмпы: урон s.events дополнительно зажат сверху по максимальному разрешённому уровню (`maxStrikeDamage` горло-формула), входящая броня снапится вниз к разрешённым десятым (`snapArmorToUniverse`), капы берутся из runtime-config на каждом событии |
 | `server/dummy-rab.js` | 133 | манекен (доли клетки, перенос grab/drop), мишень РАБ, toggle-режимы |
 | `server/atmo.js` | 118 | якорь суток/погоды (фазы 4×pl, погода wl/ws), atmo/atmoset/atmoState/atmoBroadcast; дефолт новых комнат из runtime-config |
 | `server/persist.js` | 134 | книга позиций котов data/test-cats.json, TTL 30 дней, троттлинг записи 1/3 с |
-| `server/net.js` | 264 | транспорт: http statics+`/health`, HTTP-цепочка handleAuthHttp → handleCfgHttp → handleProfilesHttp → static; host-гейт P1: на public-хосте /auth/\*, /profiles/\*, /admin/\*, /cfg/admin*, /cfg/export и пишущий POST /cfg* → 404 `not_found`; CSRF: чужой браузерный Origin на пишущие /cfg-POST → 403; ws-accept (Origin, heartbeat 30 с), onMessage-диспетчер по EV.*, таймеры, startServer() |
+| `server/net.js` | 388 | транспорт: http statics+`/health` (с clientIpMode: 'loopback'\|'xff'\|'direct' — S4; loopback без XFF на прод-классе → warning в лог: темп-лимиты auth не работают), HTTP-цепочка handleAuthHttp → handleCfgHttp → handleProfilesHttp → static; host-гейт P1: на public-хосте /auth/\*, /profiles/\*, /admin/\*, /cfg/admin\*, /cfg/export и пишущий POST /cfg\* → 404 `not_found`; B1: CSRF fail-closed per-destination — unsafe+cookie на public/elyria: пустой Origin → 403 `csrf_origin_required`, чужой → 403 `csrf_origin_mismatch` (local — прежний щит, `AUTH_CSRF_STRICT` форсирует); S5a: потолок ОДНОВРЕМЕННЫХ WS-сокетов с одного адреса WS_MAX_PER_IP — сверх info `too_many_sockets` и close; ws-accept (Origin, heartbeat 30 с), onMessage-диспетчер по EV.\*, таймеры, startServer() |
 | `server/modes.js` | 45 | каталог комнат/доступа: grot-1..3/demo/hunger открыты, `test` registered-only; RETIRED_ROOMS frozen (combat → grot-1, история ссылок) |
-| `server/accounts.js` | 347 | аккаунт/персонаж, scrypt, `accounts.json`; `publicAccount` (whoami/вход), `publicProfile` (DTO карточки: displayName, bio, avatarCharacterId, characters, createdAt — без login/role); BOOTSTRAP_ADMIN списком, MAX_ACCOUNTS |
-| `server/auth.js` | 510 | сессии (sessions.json, токен 32 hex, TTL 14 дней), cookie `coop_session` HttpOnly (https: Secure+SameSite=Lax; env `COOKIE_LOOSE=1` — легаси None), матрица токенов по классу хоста (`AUTH_LEGACY_TOKEN=1` возвращает ?t= на elyria), HTTP /auth/* (CSRF Origin на пишущих), WS auth-кадры (register/login отказ на public), rate-лимиты per-IP+per-login |
-| `server/profiles.js` | 310 | HTTP-профили P4: GET /profiles (каталог карточек по старшинству), GET /profiles/:id, GET/PATCH /profiles/me (только своя запись, идентичность из сессии, валидация displayName≤24/bio≤280/avatarCharacterId из своих персонажей), CSRF на PATCH |
+| `server/accounts.js` | 372 | аккаунт/персонаж, scrypt, `accounts.json`; `publicAccount` (whoami/вход), `publicProfile` (DTO карточки: displayName, bio, avatarCharacterId, characters, createdAt — без login/role); S1: BOOTSTRAP_ADMIN — МИГРАЦИОННЫЙ список: при регистрации имя из списка получает роль registered + warning в лог, роль admin назначает ТОЛЬКО одноразовый CLI `scripts/make-admin.mjs` (promoteToAdmin вызывается им одним); MAX_ACCOUNTS (деф. 2000) |
+| `server/auth.js` | 538 | сессии (sessions.json, токен 32 hex, TTL 14 дней), cookie `coop_session` HttpOnly host-only — атрибута Domain намеренно нет (B1), https: Secure+SameSite=Lax (env COOKIE_LOOSE=1 — легаси None), матрица токенов по классу хоста (`AUTH_LEGACY_TOKEN=1` возвращает ?t= на elyria), HTTP /auth/* (CSRF Origin на пишущих), WS auth-кадры (register/login отказ на public), rate-лимиты per-IP+per-login |
+| `server/profiles.js` | 430 | HTTP-профили P4+B3: GET /profiles (каталог карточек по старшинству с серверным поиском ?q и keyset-пагинацией ?limit деф. 24/клэмп 48/?cursor base64), GET /profiles/:id, GET/PATCH /profiles/me (только своя запись, идентичность из сессии, валидация displayName≤24/bio≤280/avatarCharacterId из своих персонажей), CSRF на PATCH |
 | `server/runtime-config.js` | 357 | runtime-конфиг v2: values-only {v, atmo, universes} в DATA_DIR/runtime-config.json, read-time миграция v1, атомарная запись + 8 бэкапов; HTTP: GET /cfg (публичный: значения+apply-подсказки, БЕЗ истории), admin-роуты GET /cfg/admin (значения+регистр+история+мета), POST /cfg (патч по реестру / reset), POST /cfg/restore (имя из listHistory — path-guard), GET /cfg/export, POST /cfg/import (всё или ничего) |
 | `server/cfg-registry.js` | 295 | whitelist-реестр P2: 5 ключей (atmo.phaseMin, atmo.weatherMin, universes.strikeDamage/armor/arrowSpeed) — подпись/юниверс/дефолт/кап/apply-политика/видимость; sanitizeValues (всё или ничего), formulas: `maxStrikeDamage` (горло = база зоны 42 + 3,67·уровень — зеркало клиентской zoneDamageFor), `snapArmorToUniverse` (снап вниз к разрешённым десятым) |
 | `server/hunger.js` | 11 | каркас раунда idle, без выдуманных правил |
@@ -105,12 +112,16 @@ server.js             комната: комнаты, клетки, бой, ча
 
 ### Сценарии и деплой
 
-`scripts/` — 57 файлов: к npm подключены test:ws (контракт комнаты, 1104 строки), test:queue
+`scripts/` — 60 файлов: к npm подключены test:ws (контракт комнаты, 1119 строки), test:queue
 (self-spawn), test:unit (6 юнитов движка: keys/remote-aim/move-book/elev-rules/handbook/elision-scene),
-test:auth (аккаунты/cookie/CSRF/host-гейт/roomsinfo-призрак), test:cfg (реестр: 49 чеков),
+test:auth (аккаунты/cookie/CSRF/host-гейт/roomsinfo-призрак, 830), test:cross-origin (B1:
+per-destination Origin/CSRF/CORS-матрица ≥20 живых проб, 508), test:cfg (реестр:
+65 чеков — списочные админ-мутации B2 + S1-эскалация через стоп→make-admin→рестарт-цикл, 345),
 test:profiles (HTTP-профили), test:server-modules, test:protocol-parity, check:protocol,
-check:landmarks, arch:check; `prune-export.mjs` (69, обрезка вариантных корней P6);
-прочие — ручные пробы и ops. `deploy/vps/` — образец systemd-юнита, apply.sh (health-check,
+check:landmarks, check:variants (A1: гейт изоляции артефактов, 168), arch:check;
+`prune-export.mjs` (137, обрезка вариантных корней P6 + чистка немонтируемых чанков);
+`make-admin.mjs` (76, одноразовый CLI владелицы: роль admin — только через него, S1;
+запускать при остановленном сервере); прочие — ручные пробы и ops. `deploy/vps/` — образец systemd-юнита, apply.sh (health-check,
 рестарт только при изменении), nginx-www.conf, юниты/sudoers/nginx превью (dual-host),
 отдельный package.json комнаты (`ws` — синхронно с корневым lockfile, гейт check-ws-versions).
 
@@ -145,16 +156,16 @@ check:landmarks, arch:check; `prune-export.mjs` (69, обрезка вариан
 браузер Элизии (elisium.miew.ru)          room-сервер
 POST /auth/register  {login,pass}  →  scrypt, accounts.json; Set-Cookie coop_session (HttpOnly)
 GET  /auth/me                        →  {ok, role, ...} | {ok:true, role:"guest"}
-GET  /profiles      → каталог карточек;  GET /profiles/:id → карточка; PATCH /profiles/me → своя
+GET  /profiles      → каталог карточек (?q поиск, ?limit деф. 24, ?cursor keyset);  GET /profiles/:id → карточка; PATCH /profiles/me → своя
 GET  /cfg           → значения+apply-подсказки (публично, без истории)
 GET  /cfg/admin     → значения+реестр+история (только role=admin, cookie-сессия)
-POST /cfg | /cfg/restore | /cfg/import   → admin, CSRF Origin-щит
+POST /cfg | /cfg/restore | /cfg/import   → admin, CSRF Origin-щит (B1: per-destination fail-closed, пустой Origin → 403 csrf_origin_required)
 ```
 
-Куки `HttpOnly`; на https — `Secure + SameSite=Lax` (`COOKIE_LOOSE=1` возвращает легаси
-`None`). Токен из тела ответа на Элизии не выдаётся (cookie-only); класс local giữает
-токены в телах — на нём стоят тесты. На public-хостах все эти маршруты — 404 (host-гейт)
-до обработчиков.
+Куки `HttpOnly`, host-only — атрибута Domain нет (B1); на https — `Secure + SameSite=Lax`
+(`COOKIE_LOOSE=1` возвращает легаси `None`). Токен из тела ответа на Элизии не выдаётся
+(cookie-only); класс local держит токены в телах — на нём стоят тесты. На public-хостах
+все эти маршруты — 404 (host-гейт) до обработчиков.
 
 ### Move (шаг клетки) — предикт/эхо/refuse
 
@@ -238,7 +249,7 @@ constants live in two mirrored registries — `server/protocol.js` (server side)
 | Дефолт манекена DUMMY_DEFAULT | рендер по `dummyState` (сервер присылает всё) | `server/protocol.js` | сервер — источник; клиентские дефолты не дублируются |
 | Формат кадров `[event, payload]` | `coop.ts` (диспетчер, имена через `protocol.ts` EV.*/guards) | `server/net.js` onMessage-диспетчер (имена через `server/protocol.js` EV.*) | «move» с x:0/y:0 — маркер выхода: двойной смысл сохраняется (canon: `isCoopCat` guard пропускает оба, потребитель различает по нулям) |
 | Реестр конфига (P2) | `src/lib/cfg-registry.ts` (подписи/юниверсы/дефолты 5 ключей) | `server/cfg-registry.js` (+ формулы клэмпов — только сервер) | паритет держит `test:protocol-parity` (ключей 5, сервер == зеркало == golden); сервер пишет значения, клиент — только читает |
-| Whitelist спрайтов (без parity-гейта) | `src/lib/sim/settings.ts:96` (`SPRITES: SpriteMeta[]`, 31) | `server/config.js:175` (`SPRITES`, 31) | руками в одном PR; счётчики держать равными |
+| Whitelist спрайтов (без parity-гейта) | `src/lib/sim/settings.ts:96` (`SPRITES: SpriteMeta[]`, 31) | `server/config.js:314` (`SPRITES`, 31) | руками в одном PR; счётчики держать равными |
 | Каталог комнат (без parity-гейта) | `src/lib/net/modes.ts` NAMED_ROOMS/MODE_COPY | `server/modes.js` MODE_ROOMS + `server/room.js` roomOf | руками в одном PR; в grotto-варианте ветка Элизии вырезана сборкой — там зеркалится только паблик-часть |
 
 ## 5. Координатные системы
@@ -325,7 +336,7 @@ at the 800-line limit like any other file). Мерж за заказчицей. 
 (hooks, factories, HUD dial, sim-model, JSX chrome), оба behavior-preserving; остатки
 этапа 1 (angles/persist/leap/peace-walk/camera/weather-clock) задевают rAF-замыкание и
  остаются хвостами. Kept ON PURPOSE (behavior > counters): the main rAF
-closure (~2700 lines, single `useEffect` with deps `[stage]`, `const loop` :4220) —
+closure (~2700 lines, single `useEffect` with deps `[stage]`, `const loop` :4237) —
 extracting it whole would recreate a >800-line file, splitting it would re-wire engine
 variables; state/refs belt of `Simulator()`; small callback/patch belts (мелкая крошка —
 запрет пере-дробления). settings-panel.tsx не разрезан (1240, за лимитом держит

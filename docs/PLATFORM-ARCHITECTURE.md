@@ -20,7 +20,7 @@
 | **Пивные гроты** (public) | `abnocw.miew.ru` (+ превью `pr-N.abnocw.miew.ru`, легаси `abnocw.89-232-184-77.sslip.io`) | меню с гротами и «Голодными играми», `/combat/`, `/hunger/`. Без аккаунтов, без Элизии: ни ссылок, ни API, ни её комнат | `NEXT_PUBLIC_SITE=grotto` + `prune-export` — корень `www-grotto/` (маршруты elision/players/admin вырезаны) |
 | **Элизия** (elyria) | `elisium.miew.ru` (+ превью `pr-N.elisium.miew.ru`) | вход/регистрация, каталог игроков, панель админа, `/elision/`; комнаты гротов остаются доступными из её меню | `NEXT_PUBLIC_SITE=elyria` + `prune-export` — корень `www-elyria/` (маршруты combat/hunger вырезаны) |
 
-Изоляция тройная, каждый рубеж самодостаточен:
+Изоляция четырёхрубежная, каждый рубеж самодостаточен:
 
 1. **Compile-time (P3):** вариантозависимые модули проверяют инлайн-флаг
    `const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria'` в СВОЁМ файле.
@@ -28,9 +28,16 @@
    а инлайн-сравнение фолдится — мёртвая ветка с текстами/именами Элизии исчезает из
    grotto-бандла целиком. Так делают: wander-gate (меню), modes.ts (каталог комнат),
    settings-panel (подписи), auth-panel/simulator (вход), players/admin-страницы.
+   Гейт `arch:check` (правило isolatedImports) запрещает импорт `src/lib/site.ts` всем
+   файлам, кроме самого site.ts.
 2. **Артефакт (P6):** `npm run build:variants` → `scripts/prune-export.mjs` копирует `out/` в
    `www-grotto/` и `www-elyria/`, вырезая каталоги чужих маршрутов; deploy/preview заливают оба корня.
 3. **Runtime (P1):** сервер классифицирует каждый HTTP/WS запрос по заголовку Host — см. §3.
+4. **CI-гейт артефактов (A1):** `npm run check:variants` после сборки — www-grotto без НИ
+   ОДНОГО маркера Элизии (включая латиницу `elisium`: кириллический греп «Элизи» НЕ
+   достаточен), www-elyria без снятых `/combat/`+`/hunger/` и СО следами живой Элизии,
+   ссылки на чанки цельны. В preview-build.yml — шаг «Изоляция вариантов (A1)» после
+   сборки обоих корней, до упаковки артефакта.
 
 ## 2. Три сущности (не путать)
 
@@ -67,15 +74,21 @@ createdAt                             позиция в Элизии — по na
 | `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен из тела HTTP-ответа не выдаётся |
 | `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в телах — на нём стоят test-auth/test-флои |
 
-Cookie `coop_session`: `HttpOnly; Path=/; Max-Age=14д`. На https — `Secure + SameSite=Lax`
-(P1; `COOKIE_LOOSE=1` возвращает легаси `None` для старых кросс-доменных клиентов), на http —
-`SameSite=Lax`. CSRF-щит: непустой Origin пишущих POST (`/auth/*`, `/cfg/*`, PATCH
-`/profiles/me`) обязан быть в AllowList, иначе 403 `csrf`; пустой Origin не блокируется
-(curl/тесты). Троттлинг: register 1/мин и 5/час на IP, login шаг 6 c на IP + per-LOGIN замок
-20 неудач за 15 мин (env-подстройка: `AUTH_REGISTER_GAP_MS`, `AUTH_REGISTER_HOURLY_MAX`,
-`AUTH_LOGIN_GAP_MS`, `AUTH_LOGIN_FAIL_MAX`, `AUTH_LOGIN_FAIL_WINDOW_MS`);
+Cookie `coop_session`: `HttpOnly; Path=/; Max-Age=14д`, **host-only** — атрибута Domain
+намеренно нет (B1): кука привязана к точному хосту, соседний сайт её не увидит. На https —
+`Secure + SameSite=Lax` (P1; `COOKIE_LOOSE=1` возвращает легаси `None` для старых
+кросс-доменных клиентов), на http — `SameSite=Lax`. CSRF-щит (B1, fail-closed
+per-destination): unsafe-метод с cookie-аутентификацией на public/elyria обязан нести
+Origin, точный для destination-класса — пустой Origin → 403 `csrf_origin_required`,
+чужой (в т.ч. сиблинг-класс из общего env-списка) → 403 `csrf_origin_mismatch`; класс
+local — прежний щит (`AUTH_CSRF_STRICT=0/1` форсирует/ослабляет для всех). CORS:
+credentialed-ответы API отражают Origin только «своему» сайту. Троттлинг: register 1/мин
+и 5/час на IP, login шаг 6 с на IP + per-LOGIN замок 20 неудач за 15 мин (env-подстройка:
+`AUTH_REGISTER_GAP_MS`, `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`,
+`AUTH_LOGIN_FAIL_MAX`, `AUTH_LOGIN_FAIL_WINDOW_MS`);
 XFF доверяется одному случаю — соединение с loopback терминировано нашим nginx, берётся
-последний хоп.
+последний хоп; надёжность режима видна в `/health` → `clientIpMode` (`loopback|xff|direct`,
+S4: `loopback` на прод-классе хоста = темп-лимиты auth выключены — сервер пишет warning в лог).
 
 ## 4. Роли и доступ
 
@@ -105,7 +118,8 @@ XFF доверяется одному случаю — соединение с l
   `?room=combat` попадает в настоящий грот, а не в произвольный open-grid. Страница
   `/combat/` остаётся страницей гротов (режим `beer`) — старые URL живут.
 - Неизвестный код комнаты остаётся открытым grid (легаси `?room=...`), registered-комнаты не
-  через каталог код не создаются.
+  через каталог код не создаются. S5b: потолок ЖИВЫХ комнат на процесс `ROOMS_MAX`
+  (env, деф. 32) — новая комната сверх лимита → `noplace rooms_full`.
 - `roomsinfo` для ГОСТЯ прячет registered-комнату целиком: `count 0, logins []` — как
   несуществующую (комната не раскрывается даже счётчиком сидящих). «Комната из ссылки» для
   registered-кода карточку не получает.
@@ -145,7 +159,7 @@ HTTP (роли — по cookie-сессии, `adminFromReq`):
 | --- | --- | --- |
 | `GET /cfg` | публичный | значения v/atmo/universes + apply-подсказки; **без истории** |
 | `GET /cfg/admin` | admin | значения + метаданные реестра (подписи/типы/капы) + apply + история бэкапов |
-| `POST /cfg` | admin, CSRF | патч по ключам реестра (всё-или-ничего: unknown_keys/invalid) или `{reset:true}` — дефолты |
+| `POST /cfg` | admin, CSRF | патч по ключам реестра (всё-или-ничего: unknown_keys/invalid), значения И списочные мутации universes (B2 — редактирование списков разрешённых значений; тумблер «выбор игроками вкл/выкл» = сжатие списка к {default}-only, серверной disabled-модели нет) или `{reset:true}` — дефолты |
 | `POST /cfg/restore` | admin | восстановить бэкап; имя обязано быть в свежем listHistory (path-guard), мусор не читается |
 | `GET /cfg/export` | admin | текущие значения одним JSON |
 | `POST /cfg/import` | admin | принять экспорт через sanitizeValues, всё или ничего |
@@ -158,12 +172,20 @@ elyria-вариант, рендер при `role==='admin'`; комнатные 
 
 Клиентское зеркало реестра — `src/lib/cfg-registry.ts` (подписи/юниверсы/дефолты; формул
 клэмпа нет). Паритет «сервер == зеркало == golden» держит `test:protocol-parity`
-(`test:cfg` — 49 юнит-чеков реестра).
+(`test:cfg` — 65 юнит-чеков реестра: значения, списочные мутации B2, S1-эскалация
+через стоп→make-admin→рестарт-цикл). Дашборд `/admin` (cfg-dashboard.tsx, 736) — только
+elyria-вариант, рендер при `role==='admin'`: редакторы списков разрешённых значений,
+предпросмотр «было → станет» с предупреждением сужения, restore/export/import;
+комнатные конфиги (per-room atmoset) сюда не входят — для них нет HTTP API, секция
+«Комнатные настройки» честно помечает глобальность правок.
 
 ## 7. Профили игроков (P4)
 
 - `GET /profiles` — каталог публичных карточек (только строки с заполненным `profile`),
-  стабильный порядок по старшинству, без пагинации.
+  стабильный порядок по старшинству; с B3 — серверный поиск `?q` (по displayName) и
+  keyset-пагинация: `?limit` (деф. 24, клэмп 48, мусор → 400 `invalid_limit`) +
+  `?cursor` (base64, next-page keyset). Пустой фильтр = первая страница дефолтного
+  размера; клиент НЕ фильтрует сам.
 - `GET /profiles/:id` — карточка (`accountId` + publicProfile); нет карточки/легаси-строка →
   единый 404 `unknown` (существование скрытых аккаунтов не раскрывается).
 - `GET /profiles/me` — своя карточка по сессии; гость → 401 `auth_required`.
@@ -173,8 +195,9 @@ elyria-вариант, рендер при `role==='admin'`; комнатные 
   вырезаются тем же классом, что в sanitize.js; UTF-8 длины считаются по код-поинтам.
   Identity — строго из сессии (cookie), CSRF-щит на PATCH. Правка legacy-строки без профиля
   и есть «опубликовать карточку».
-- Клиент: страница `/players` (players-catalog.tsx, только elyria) — карточки, deep-link
-  `?id=`, инлайн-редактирование своей; ошибки сервера показываются целиком.
+- Клиент: страница `/players` (players-catalog.tsx, 628, только elyria) — карточки, поиск
+  `?q` (debounce 300 мс), пагинация по `nextCursor`, deep-link `?id=`,
+  инлайн-редактирование своей; ошибки сервера показываются целиком.
 
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 
@@ -210,35 +233,46 @@ elyria-вариант, рендер при `role==='admin'`; комнатные 
 
 Оба хоста проксируются в один инстанс; Host-классы разруливает сервер (env `PUBLIC_HOSTS` /
 `ELYRIA_HOSTS` пишет preview-apply). Конвейер из двух workflow: `preview-build.yml`
-(pull_request, без секретов, артефакт с ОБОИМИ корнями) и `preview-deploy.yml`
-(workflow_run — исполняется из main, держит `PREVIEW_SSH_KEY`). TLS per-host (root-cron,
-первый apply до ~5 минут на http). Снос на closed/merged; лимит 8 живых превью.
-Полная механика и проверки доверия — [PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md).
+(pull_request, без секретов, артефакт с ОБОИМИ корнями; шаг «Изоляция вариантов (A1)» —
+`npm run check:variants` — гоняется ПОСЛЕ сборки обоих корней и ДО упаковки артефакта) и
+`preview-deploy.yml` (workflow_run — исполняется из main, держит `PREVIEW_SSH_KEY`).
+TLS per-host (root-cron, первый apply до ~5 минут на http). Снос на closed/merged; лимит
+8 живых превью. Полная механика и проверки доверия —
+[PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md).
+
+Инфраструктура dual-host (nginx-фрагмент с двумя server-блоками, per-host TLS-cron,
+bootstrap юнита/sudoers, preview-apply) живёт в отдельной ветке
+`feature/preview-dual-host-infra` и до её влития (отдельный инфра-PR; изменения VPS —
+только по явному «ок» владелицы) превью-деплой остаётся на действующем пайплайне из
+main; репо-часть конвейера в этой ветке — только preview-build.yml,
+включая шаг изоляции A1.
 
 ## 11. Карта платформенных модулей (лимит 800 строк)
 
 | Модуль | Строк | Ответственность |
 | --- | ---: | --- |
-| `server/config.js` | 228 | host-политика `hostClassOf` (public/elyria/local), env сплитов PUBLIC_HOSTS/ELYRIA_HOSTS |
-| `server/net.js` | 264 | HTTP host-гейт (404 зон Элизии на public), CSRF Origin на пишущих /cfg |
-| `server/auth.js` | 510 | сессии, cookie HttpOnly/Lax/Secure, матрица токенов, rate-лимиты, /auth/* |
+| `server/config.js` | 386 | host-политика `hostClassOf` (public/elyria/local), env сплитов PUBLIC_HOSTS/ELYRIA_HOSTS, ADMIN_PASS fail-closed (S2), WS_MAX_PER_IP/ROOMS_MAX (S5) |
+| `server/net.js` | 388 | HTTP host-гейт (404 зон Элизии на public), per-destination Origin/CSRF fail-closed (B1), per-IP сокет-лимит (S5a), /health clientIpMode (S4) |
+| `server/auth.js` | 538 | сессии, cookie HttpOnly host-only/Lax/Secure, матрица токенов, rate-лимиты, /auth/* |
 | `server/modes.js` | 45 | каталог комнат + RETIRED_ROOMS (combat→grot-1) |
-| `server/room.js` | 438 | join-гейт `auth_required`, roomsinfo-призрак, алиас roomOf |
-| `server/accounts.js` | 347 | scrypt-стор, publicAccount/publicProfile, BOOTSTRAP_ADMIN, MAX_ACCOUNTS |
-| `server/profiles.js` | 310 | HTTP /profiles*: каталог, карточка, правка своего профиля |
-| `server/cfg-registry.js` | 295 | whitelist 5 ключей + формулы клэмпов (maxStrikeDamage, snapArmorToUniverse) |
+| `server/room.js` | 460 | join-гейт `auth_required`, roomsinfo-призрак, алиас roomOf, потолок живых комнат ROOMS_MAX → rooms_full (S5b) |
+| `server/accounts.js` | 372 | scrypt-стор, publicAccount/publicProfile, BOOTSTRAP_ADMIN миграционный + promoteToAdmin только из make-admin CLI (S1), MAX_ACCOUNTS |
+| `server/profiles.js` | 430 | HTTP /profiles*: каталог (?q/?limit/?cursor), карточка, правка своего профиля |
+| `server/cfg-registry.js` | 295 | whitelist 5 ключей + формулы клэмпов (maxStrikeDamage, snapArmorToUniverse) + метаданные списочных мутаций (B2) |
 | `server/runtime-config.js` | 357 | значения v2, read-time миграция v1, бэкапы, HTTP /cfg(+admin-роуты) |
 | `server/combat.js` | 285 | клэмпы боя поверх ARMOR_CURVE (капы из реестра на каждом событии) |
-| `src/lib/site.ts` | 28 | канон варианта NEXT_PUBLIC_SITE (дефолт grotto) |
-| `src/lib/net/modes.ts` | 155 | клиентский каталог комнат — зеркало modes.js; grotto не знает «test» |
+| `src/lib/site.ts` | 28 | канон варианта NEXT_PUBLIC_SITE (дефолт grotto); импорт запрещён всем, кроме самого site.ts (isolatedImports) |
+| `src/lib/net/modes.ts` | 163 | клиентский каталог комнат — зеркало modes.js; href/карточки боевых миров в мёртвых IS_ELYRIA-тернарниках |
 | `src/lib/net/auth.ts` | 30 | WS-кадры auth без ?t= (cookie-сессия) |
-| `src/lib/net/http-auth.ts` | 367 | HTTP-клиент /auth/*, /profiles/*, /cfg admin (credentials include) |
+| `src/lib/net/http-auth.ts` | 93 | auth-only HTTP-клиент /auth/* + общие хелперы apiFetch/asText/asId/ApiRow |
+| `src/lib/net/http-profiles.ts` | 152 | клиент каталога профилей (?q/?limit/?cursor, карточка, правка своей) |
+| `src/lib/net/http-cfg.ts` | 335 | админ-CRUD конфига: /cfg* fetch-обёртки + чистые draft/diff-функции (React — в cfg-dashboard) |
 | `src/lib/net/cfg-live.ts` | 122 | universes из GET /cfg: кэш на вкладку, дефолты при сбое, снап к дефолту |
 | `src/lib/cfg-registry.ts` | 139 | зеркало реестра для клиента (паритет — parity-гейт) |
-| `src/components/sim/auth-panel.tsx` | 113 | форма входа/регистрации (только elyria) |
+| `src/components/sim/auth-panel.tsx` | 189 | форма входа/регистрации (только elyria): reason→человекочитаемые тексты, локальная валидация, автофокус, сброс пароля после выхода (B6) |
 | `src/components/sim/settings-panel.tsx` | 1240 | ролевой рендер вкладок (role из whoami; паролей нет) |
-| `src/components/players/players-catalog.tsx` | 458 | каталог игроков /players (deep-link, правка своей) |
-| `src/components/admin/cfg-dashboard.tsx` | 444 | админ-дашборд /admin (реестр/restore/export/import) |
+| `src/components/players/players-catalog.tsx` | 628 | каталог игроков /players (поиск ?q, пагинация nextCursor, deep-link, правка своей) |
+| `src/components/admin/cfg-dashboard.tsx` | 736 | админ-дашборд /admin: реестр/списки разрешённых значений (B2)/restore/export/import, диф-предпросмотр |
 | `src/app/*/page.tsx` | 11–13 | оболочки Simulator: `/` hub, `/combat/` beer, `/elision/` elision, `/hunger/` каркас, `/players/`, `/admin/` |
 
 ## 12. Совместимость провода

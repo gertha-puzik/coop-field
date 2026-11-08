@@ -73,23 +73,25 @@ Deploy of a PR serves both hosts `pr-<N>.abnocw.miew.ru` (grottoes) and
 
 | Path | Lines | What is inside |
 | --- | ---: | --- |
-| `src/components/sim/simulator.tsx` | 4933 | Canvas engine. Deliberate legacy remainder: state/refs belt from :253, `buildEditorOps` call :938, main rAF (`const loop` :4220, one `useEffect` `[stage]`), `buildPointerTools` call :4364. Platform hooks inline: `IS_ELYRIA` :117 gates the auth panel/callbacks (:4548–:4744). localStorage: :710/:725 (saved SP), :1201 (combat log), :4490-4491 (reset), :4503 (rotation) |
-| `src/components/sim/simulator/` | 15 files | Stage-2 carve + PR #48: hooks — use-network 641, use-canvas-layers 186, use-keyboard 257, use-strike 277, use-elision-view 47; factories — editor-ops 734, pointer-tools 670, editor-cells 196, editor-select 197; hud-canvas 225, sim-model 178, elision-present 287; JSX — chrome 408, editor-overlay 692, field-stage 159 |
+| `src/components/sim/simulator.tsx` | 4953 | Canvas engine. Deliberate legacy remainder: state/refs belt from :253, `buildEditorOps` call :955, main rAF (`const loop` :4237, one `useEffect` `[stage]`), `buildPointerTools` call :4381. Platform hooks inline: `IS_ELYRIA` :117 gates the auth callbacks (`sendAuth` :4563; a background WS `whoami` frame may NOT overwrite a fresh login refusal — `setWhoamiGuarded` :277) and the AuthPanel wiring (:4758–:4763). localStorage: :727/:742 (saved SP), :1218 (combat log), :4507-4508 (reset), :4520 (rotation) |
+| `src/components/sim/simulator/` | 15 files | Stage-2 carve + PR #48: hooks — use-network 641 (`setWhoami` narrowed to `(row: CoopWhoami) => void`), use-canvas-layers 186, use-keyboard 257, use-strike 277, use-elision-view 47; factories — editor-ops 733 (editor password no longer in localStorage — a one-time migration removes the stale key, :199), pointer-tools 670, editor-cells 196, editor-select 197; hud-canvas 225, sim-model 178, elision-present 287; JSX — chrome 408, editor-overlay 692, field-stage 159 |
 | `src/components/sim/settings-panel.tsx` | 1240 | Settings/HUD panel (30 props). Admin tabs render ONLY for `role === 'admin'` from the session `whoami` — the old local "tab password" is gone (P3); the server stays the arbiter |
 | `src/lib/sim/settings.ts` | 1131 | Combat model: ARMOR_CURVE (:567), DAMAGE_LEVELS (:522), strike zones, sprites (31), slowdown |
 | `src/lib/sim/test-map.ts` | 736 | Location config v1/v2 + client-side editor limits (mirror of server sanitize) |
 | `src/lib/sim/test-field.ts` | 2155 | The drawn «Elision» field: walkability, routes, edge render, paint mask. Mutable singletons — ONE Simulator mount per process |
 | `src/lib/sim/elision-babylon.ts` (+ elision-scene.ts 156) | 307 | WebGL view of `/elision/` only: dynamic Babylon import; `worldPxToScene` — the single px→scene step |
 | `src/lib/site.ts` | 28 | Site variant canon: `NEXT_PUBLIC_SITE=grotto\|elyria`, default grotto (fail-safe). Variant-dependent modules check env INLINE (`const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria'`) — imports from site.ts do NOT fold, inline checks do |
-| `src/lib/net/coop.ts` | 576 | Transport: socket choice by host (elisium → same-origin `/ws`, preview → own `/ws`, legacy → room socket, localhost → :3780), `httpOrigin()` for the HTTP flows, reconnect backoff, inbound dispatcher. No `?t=` in URLs |
+| `src/lib/net/coop.ts` | 582 | Transport: socket choice by host (elisium → same-origin `/ws` via an INLINE env check inside `wsUrlBase` :193 — the dead branch dies at build in the grotto artifact, together with the elisium hostnames; preview → own `/ws`, legacy → room socket, localhost → :3780), `httpOrigin()` :208 for the HTTP flows, reconnect backoff, inbound dispatcher. No `?t=` in URLs |
 | `src/lib/net/protocol.ts` | 367 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
-| `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 367 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — the whole HTTP client: `/auth/register|login|logout|me`, `/profiles` catalog/card/`PATCH /profiles/me`, `/cfg` admin (apply/reset/restore/export/import) |
+| `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 93 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — auth-only core: `/auth/register\|login\|logout\|me` + shared low-level helpers `apiFetch/asText/asId/ApiRow`; WS auth frames go through `auth.ts` |
+| `src/lib/net/http-profiles.ts` | 152 | Profiles catalog client: `httpProfileCatalog` (?q search, ?limit def. 24, ?cursor keyset pagination), `httpProfileById`, `httpMyProfile`, `httpPatchProfile` |
+| `src/lib/net/http-cfg.ts` | 335 | Admin cfg client: /cfg fetch wrappers (apply/reset/restore/export/import) + PURE draft/diff helpers (`draftFromSnapshot`, `cfgPatchFromDraft`, `canonByKind`, `buildCfgDiff`, `narrowingWarning`, `listIssue`, `successText`, `applyBadgeText`); React UI stays in cfg-dashboard.tsx. Split for bundle isolation: the simulator-graph donor module must not pull Elysiae HTTP routes into the grotto bundle |
 | `src/lib/net/cfg-live.ts` + `src/lib/cfg-registry.ts` | 122 + 139 | Live universes from public `GET /cfg` (one fetch per tab; registry defaults on failure; a dropped saved value snaps to DEFAULT); client mirror of the 5-key config registry (parity gate) |
-| `src/lib/net/modes.ts` | 155 | Client room catalogue mirroring `server/modes.js`; the grotto build contains no Elision room at all. PlayMode: hub/beer/elision/hunger — the standalone "combat" mode is retired (server aliases room code `combat` → `grot-1`) |
+| `src/lib/net/modes.ts` | 163 | Client room catalogue mirroring `server/modes.js`; the grotto build contains no Elision room at all. PlayMode: hub/beer/elision/hunger — the standalone "combat" mode is retired (server aliases room code `combat` → `grot-1`). Variant hrefs/cards sit in dead IS_ELYRIA ternaries (COMBAT_HREF/HUNGER_HREF :38–:39, NAMED_ROOMS :84, MODE_COPY :117) — a dead branch dies at build |
 | `src/lib/net/move-book.ts` | 89 | Step prediction (≤1 unconfirmed). **The reference module — copy its style for new files** |
-| `src/components/players/players-catalog.tsx` | 458 | `/players` catalog (elyria build only): public cards, `?id=` deep links, inline edit of your own card |
-| `src/components/admin/cfg-dashboard.tsx` | 444 | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies, reset, restore by history name, export/import JSON |
-| `server.js` + `server/*.js` | 10 + 19 | Room server: config 228 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`), protocol 284 (canon), net 264 (HTTP host gate + CSRF), room 438 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 118, persist 134, sanitize 95, testmap 494, world 663, modes 45, accounts 347, auth 510 (sessions/cookies/token matrix), profiles 310, runtime-config 357, cfg-registry 295 (5-key whitelist), hunger 11 (skeleton) |
+| `src/components/players/players-catalog.tsx` | 628 | `/players` catalog (elyria build only): public cards, server-side `?q` search (300 ms debounce) + keyset pagination via `nextCursor`, `?id=` deep links, inline edit of your own card |
+| `src/components/admin/cfg-dashboard.tsx` | 736 | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies, editors for allowed-value LISTS (the «players choose» toggle = {default}-only list; NO server-side disabled model exists), was→will-become diff preview, narrowing warning, collapsible tech details, honest ok/err statuses, reset, restore by history name, export/import JSON, «Комнатные настройки» section with an honest global-scope note |
+| `server.js` + `server/*.js` | 10 + 19 | Room server: config 386 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; ADMIN_PASS fail-closed — S2; WS_MAX_PER_IP def. 8 / ROOMS_MAX def. 32 — S5), protocol 284 (canon), net 388 (HTTP host gate, per-destination Origin/CSRF B1, per-IP socket cap S5a, `/health` `clientIpMode` S4), room 460 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias, live-rooms cap → `rooms_full`), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 118, persist 134, sanitize 95, testmap 502 (fail-closed without ADMIN_PASS), world 663, modes 45, accounts 372 (S1: admin ONLY via `scripts/make-admin.mjs`; `MAX_ACCOUNTS` def. 2000), auth 538 (sessions/cookies/token matrix; host-only cookie), profiles 430 (catalog with ?q/?limit/?cursor), runtime-config 357, cfg-registry 295 (5-key whitelist), hunger 11 (skeleton) |
 
 Docs: `docs/ARCHITECTURE.md` — data flows, client↔server mirrors, THREE coordinate
 systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singleton contract.
@@ -107,22 +109,53 @@ class, config registry (5 keys, apply policies), profiles, RETIRED_ROOMS.
 3. **Docs updated in the same PR.** Changed protocol, module boundaries or sizes →
    update the tables in `AGENTS.md` and `docs/ARCHITECTURE.md` (§2) in the same PR;
    drifted size numbers fail CI (`check:landmarks`).
-4. **No secrets in the client bundle.** Password `1946` is a known legacy default inside
-   `server/config.js` (`process.env.ADMIN_PASS || …`) — an accepted transitional exception.
-   Do not move it (or any secret) into client code; changing the value is an owner
-   decision done via the systemd unit env.
+4. **No secrets in the client bundle; secrets come from env only.** The legacy `ADMIN_PASS`
+   default inside `server/config.js` is GONE (S2, 2026-11-08): the env is fail-closed —
+   without `ADMIN_PASS` the location-editor password path is dead (setmap answers
+   "the editor is closed"). Do not reintroduce a literal default and do not move any
+   secret into client code; the value is set on the systemd unit by the owner.
 5. **Production/VPS is owner-only.** An agent needing prod operations writes the exact
    commands for the owner and waits — it never improvises server work itself.
 
 Plus two platform rules:
 6. **Site-variant code stays folded.** New variant-dependent UI checks
-   `NEXT_PUBLIC_SITE` INLINE in its own file (imports from `src/lib/site.ts` do not fold);
-   the grotto artifact must contain zero Elision strings/routes. Server-side, the Host
-   class (`hostClassOf`) gates whole API zones — never mark a hidden route "deprecated but
-   working" on the public site.
+   `NEXT_PUBLIC_SITE` INLINE in its own file (an import of the constant from
+   `src/lib/site.ts` does NOT fold — the minifier cannot collapse a cross-module import,
+   so the dead branch with its texts stays in the open bundle; an inline
+   `process.env.NEXT_PUBLIC_SITE === 'elyria'` comparison is folded by DCE and the dead
+   branch dies at build). The same rule applies to variant-world href/HOST STRINGS: they
+   must sit inside IS_ELYRIA ternaries (`coop.ts` elisium branch of `wsUrlBase`,
+   `modes.ts` COMBAT_HREF/HUNGER_HREF + NAMED_ROOMS, `gerta-catalog` GROTTO_MECHANIC_CARDS,
+   `wander-gate` WORLDS) — a string reachable only through the dead branch never reaches
+   the other variant's bundle. The arch gate pins the import ban: `src/lib/site.ts` may
+   be imported ONLY by itself (`isolatedImports` in `scripts/check-architecture.mjs`).
+   The artifact gate is `npm run check:variants` after `build:variants`: the grotto root
+   must contain zero Elysiae markers INCLUDING the latin hostname `elisium` (a cyrillic
+   grep is NOT sufficient), the elyria root must carry no retired `/combat/`+`/hunger/`
+   routes and must contain signs of live Elysiae; chunk links must resolve. Server-side,
+   the Host class (`hostClassOf`) gates whole API zones — never mark a hidden route
+   "deprecated but working" on the public site.
 7. **The config registry is a whitelist.** `server/cfg-registry.js` (5 keys) is the only
    way admin-tunable values exist; protocol constants, events, auth or frame limits are
    NOT admin-editable — do not "just add one more key" without the owner's say-so.
+
+Audit canons (Z.AI security audit 2026-11-08, follow-up waves B/C — hard rules):
+
+- **S1 — the admin role is CLI-only.** Registration with a `BOOTSTRAP_ADMIN` name gives
+  `registered` (NOT admin) + a warning line in the server log; the ONLY way to become
+  admin is the owner's one-shot `node scripts/make-admin.mjs <login> [pass]`, run with
+  the server stopped (a live server would overwrite accounts.json from memory).
+- **S2 — no editor password in localStorage.** The location-editor password now lives
+  in component session state only; `editor-ops.ts` runs a one-time migration that
+  REMOVES the stale key (:199). ADMIN_PASS itself is env-only fail-closed (rule 4).
+- **S5 — resource caps:** `WS_MAX_PER_IP` (default 8) — per-IP simultaneous WS sockets,
+  over the cap the socket is closed with `too_many_sockets`; `ROOMS_MAX` (default 32) —
+  live rooms per process, over the cap new rooms get `noplace rooms_full`. `/health`
+  reports `clientIpMode` (`loopback|xff|direct`, S4): `loopback` on a prod host class
+  means the proxy does not pass X-Forwarded-For and auth rate-limits are OFF.
+- **test:cfg harness mirrors prod escalation:** it stops the server, runs
+  `make-admin.mjs`, restarts with the same DATA_DIR, then logs in — that exact
+  stop→promote→restart cycle is the only supported admin path (S1).
 
 ## Publishing & self-merge
 
@@ -141,13 +174,15 @@ work. Either way: never a direct push to `main`.
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:$PATH"
 npm run typecheck            # tsc --noEmit
-npm run arch:check           # files <= 800 lines + layer boundaries
+npm run arch:check           # files <= 800 lines + layer boundaries + isolatedImports (site.ts)
 npm run check:protocol       # doc tables == protocol registries
 npm run test:protocol-parity # client == server == golden values
 npm run check:landmarks      # doc sizes == wc -l
 npm run test:auth            # accounts, cookies/CSRF, host gate
-npm run test:cfg             # config registry (49 checks)
+npm run test:cfg             # config registry (65 checks: list mutations + S1 escalation cycle)
+npm run test:cross-origin    # per-destination Origin/CSRF/CORS matrix (B1)
 npm run test:profiles        # HTTP profiles (catalog/patch)
+npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www-elyria/ (after npm run build:variants)
 ```
 
 - Browser checks: start the room (`npm start`, port 3780) + `npm run dev`
@@ -174,25 +209,29 @@ npm run test:profiles        # HTTP profiles (catalog/patch)
   (server sanitize, same limits) + `src/components/sim/simulator/editor-ops.ts`.
 - **Settings/HUD:** `src/components/sim/settings-panel.tsx` + ARCHITECTURE §2. Role-gated
   tabs read `whoami.role` — no client password anymore.
-- **Accounts/limits/auth:** `server/accounts.js` (`BOOTSTRAP_ADMIN` = comma-separated
-  preset admin logins, each on its own first registration; `MAX_ACCOUNTS` cap → `full`),
-  `server/auth.js` (sessions; cookie `coop_session` HttpOnly, SameSite=Lax (+Secure on https;
-  `COOKIE_LOOSE=1` → legacy None); token matrix per host class — elyria is cookie-only,
-  `AUTH_LEGACY_TOKEN=1` brings back `?t=`; rate envs `AUTH_REGISTER_GAP_MS`,
-  `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`, `AUTH_LOGIN_FAIL_MAX`,
-  `AUTH_LOGIN_FAIL_WINDOW_MS`; XFF trusted only from the last hop behind our own nginx),
+- **Accounts/limits/auth:** `server/accounts.js` (`BOOTSTRAP_ADMIN` = a MIGRATION list of
+  preset logins — registration gives `registered`, NOT admin, plus a log warning; admin
+  role ONLY via `node scripts/make-admin.mjs` (S1); `MAX_ACCOUNTS` cap → `full`),
+  `server/auth.js` (sessions; cookie `coop_session` HttpOnly host-only (no Domain
+  attribute), SameSite=Lax (+Secure on https; `COOKIE_LOOSE=1` → legacy None); token
+  matrix per host class — elyria is cookie-only, `AUTH_LEGACY_TOKEN=1` brings back `?t=`;
+  rate envs `AUTH_REGISTER_GAP_MS`, `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`,
+  `AUTH_LOGIN_FAIL_MAX`, `AUTH_LOGIN_FAIL_WINDOW_MS`; XFF trusted only from the last hop
+  behind our own nginx),
   `server/config.js` (`hostClassOf`, env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; unknown host → public),
   `server/room.js` (join `auth_required` for `test`; roomsinfo ghost: guests get count 0 / no
   logins for registered-only rooms, as if they did not exist),
   `server/profiles.js` (catalog/card/`PATCH /profiles/me`).
 - **Admin config:** `server/cfg-registry.js` + `server/runtime-config.js` (routes:
-  `GET /cfg` public values, `GET /cfg/admin`, `POST /cfg` (patch/reset),
-  `POST /cfg/restore` (name from history), `GET /cfg/export`, `POST /cfg/import`;
-  all admin ones need the admin session + Origin check) + `src/components/admin/cfg-dashboard.tsx`.
+  `GET /cfg` public values, `GET /cfg/admin`, `POST /cfg` (patch/reset — incl. allowed-value
+  LIST mutations, B2), `POST /cfg/restore` (name from history), `GET /cfg/export`,
+  `POST /cfg/import`; all admin ones need the admin session + Origin check) +
+  `src/components/admin/cfg-dashboard.tsx`.
 - Known hand-synced mirrors WITHOUT CI coverage (check both in one PR):
-  sprite whitelist — `server/config.js:175` ↔ `src/lib/sim/settings.ts:96` (31 entries
+  sprite whitelist — `server/config.js:314` ↔ `src/lib/sim/settings.ts:96` (31 entries
   each side); room catalogue — `server/modes.js` ↔ `src/lib/net/modes.ts` (grotto build
-  folds the Elision branch away); client localStorage routes — `simulator.tsx` :710
-  (read SP), :725 (write SP), :1201 (combat log), :4490–4491 (reset), :4503 (log rotation);
-  `editor-ops.ts` :195/:696 (editor password). Storage keys are named constants in
-  `src/lib/sim/engine-consts.ts`.
+  folds the Elision branch away); client localStorage routes — `simulator.tsx` :727
+  (read SP), :742 (write SP), :1218 (combat log), :4507–4508 (reset), :4520 (log rotation);
+  `editor-ops.ts` :199 — one-time migration REMOVING the stale editor-password key (S2:
+  the editor password is never written to localStorage anymore). Storage keys are named
+  constants in `src/lib/sim/engine-consts.ts`.
