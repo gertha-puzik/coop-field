@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { applyTheme, loadTheme, subscribeTheme, THEMES, type ThemeId } from '@/lib/sim/theme';
+import styles from './theme-select.module.css';
 
 /**
  * Компакт-селект темы оформления (переиспользуемый, паттерн селекта из хрома
@@ -37,7 +38,7 @@ export function ThemeSelect() {
   };
 
   return (
-    <label className="theme-compact" title="Оформление интерфейса (действует на весь сайт)">
+    <label className={styles.themeCompact} title="Оформление интерфейса (действует на весь сайт)">
       <span>тема</span>
       <select value={theme} onChange={(ev) => change(ev.target.value as ThemeId)} aria-label="Тема оформления">
         {THEMES.map((t) => (

@@ -3,6 +3,8 @@
 import type { ReactNode } from 'react';
 
 import { StarBackdrop } from '@/components/menu/star-backdrop';
+import nightStyles from '@/components/site/site-night.module.css';
+import s from './dash-side.module.css';
 
 /**
  * Оболочка контентной панели с сайд-меню (/admin — Elysiae; стиль: ночь
@@ -40,7 +42,7 @@ export function DashShell({
 }) {
   const visible = tabs.filter((t) => t.render !== null);
   return (
-    <main className="page-night relative min-h-screen">
+    <main className={`${nightStyles.pageNight} relative min-h-screen`}>
       {/* Звёзды ЗА контентом: слой ничего не ловит (pointer-events:none),
           панели полупрозрачные — фон ночи виден вокруг них. */}
       <div className="star-backdrop" aria-hidden>
@@ -55,13 +57,13 @@ export function DashShell({
         <div className="flex min-h-0 flex-col gap-4 md:flex-row md:items-start">
           {/* Сайд-меню категорий: слева стеклянная колонка (sticky), на
               мобильном (<768px) — горизонтальная лента с прокруткой. */}
-          <aside className="dash-side md:sticky md:top-6 md:w-56 md:shrink-0">
-            <nav className="dash-side-nav" aria-label="Разделы панели">
+          <aside className={`${s.dashSide} md:sticky md:top-6 md:w-56 md:shrink-0`}>
+            <nav className={s.dashSideNav} aria-label="Разделы панели">
               {visible.map((t) => (
                 <button
                   key={t.id}
                   type="button"
-                  className="dash-side-item"
+                  className={s.dashSideItem}
                   data-active={t.id === active}
                   onClick={() => onPick(t.id)}
                 >

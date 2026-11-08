@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import nightStyles from '@/components/site/site-night.module.css';
 import { Input } from '@/components/ui/input';
 import {
   httpMyProfile,
@@ -515,7 +516,7 @@ export default function PlayersCatalog() {
   const appliedQuery = query.trim();
 
   return (
-    <main className="page-night relative min-h-screen">
+    <main className={`${nightStyles.pageNight} relative min-h-screen`}>
       {/* Звёзды ЗА контентом: слой фиксирован, ничего не ловит; карточки —
           полупрозрачные стеклянные панели, ночь просвечивает вокруг них. */}
       <div className="star-backdrop" aria-hidden>

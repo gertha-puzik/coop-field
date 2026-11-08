@@ -645,21 +645,10 @@
   100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--rot)) scale(0.7); }
 }
 
-/* ============ Ночные страницы-оболочки (star backdrop + glass nav) ============ */
-/*Reuse of the night look of the main menu on content pages: same night colour
-  #070b18 as .wander-sky, stars rendered behind the translucent panels.
-  Kept comment wording neutral: this stylesheet ships to BOTH site bundles.*/
-
-/* Page canvas: night colour + star field behind the glass panels. */
-.page-night {
-  min-height: 100dvh;
-  background: #070b18;
-  color: #f4f0ff;
-}
-
-/* Fixed star layer behind the content: catches no pointer events, sits below
-  any content wrapped in z-10 (positioned nodes paint over in-flow ones,
-  so content gets its own stacking wrapper from the caller). */
+/* ============ Shared star layer ============ */
+/* Fixed star field behind the content of the main-menu pages (both variants;
+   night-side page canvases and glass capsules live in CSS modules imported
+   only by elyria components, so they never reach the grotto bundle). */
 .star-backdrop {
   position: fixed;
   inset: 0;
@@ -668,97 +657,3 @@
   pointer-events: none;
 }
 
-/* Glass category side menu (tokens shared with .wander-window). */
-.dash-side {
-  border-radius: 18px;
-  border: 1px solid rgba(226, 220, 255, 0.28);
-  background: rgba(10, 14, 32, 0.62);
-  backdrop-filter: blur(8px);
-}
-
-.dash-side-nav {
-  display: flex;
-  align-items: stretch;
-  gap: 0.25rem;
-  padding: 0.5rem;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-/* Desktop (>=768px): vertical list; below it degrades to a horizontal strip. */
-@media (min-width: 768px) {
-  .dash-side-nav {
-    flex-direction: column;
-    overflow: visible;
-  }
-}
-
-.dash-side-item {
-  flex: none;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 0.45rem 0.9rem;
-  font-size: 0.875rem;
-  line-height: 1.2;
-  text-align: left;
-  white-space: nowrap;
-  color: #b9b3d9;
-  background: transparent;
-  transition:
-    background-color 128ms ease,
-    border-color 128ms ease,
-    color 128ms ease;
-}
-
-.dash-side-item:hover {
-  color: #efe7ff;
-  background: rgba(239, 231, 255, 0.1);
-}
-
-.dash-side-item[data-active='true'] {
-  color: #f6d7a2;
-  background: rgba(246, 215, 162, 0.12);
-  border-color: rgba(246, 215, 162, 0.38);
-  font-weight: 700;
-}
-
-/* Compact theme capsule ("тема" + select), tokens of the glass panels. */
-.theme-compact {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  border-radius: 999px;
-  border: 1px solid rgba(226, 220, 255, 0.28);
-  background: rgba(10, 14, 32, 0.62);
-  backdrop-filter: blur(8px);
-  color: #b9b3d9;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.theme-compact select {
-  height: 1.7rem;
-  border-radius: 10px;
-  border: 1px solid rgba(226, 220, 255, 0.28);
-  background: var(--sim-input-bg);
-  color: var(--sim-text);
-  font-size: 12px;
-  padding: 0 0.35rem;
-  outline: none;
-  cursor: pointer;
-}
-
-/* Fixed theme capsule slot over the entry screen: top-right corner, above
-  the simulator chrome (z 10), below modal overlays; on the joined field the
-  simulator header (header.shrink-0) already carries its own theme select —
-  the duplicate hides itself so nothing overlaps interactive controls. */
-.elision-theme-slot {
-  position: fixed;
-  top: 0.7rem;
-  right: 0.7rem;
-  z-index: 30;
-}
-
-body:has(header.shrink-0) .elision-theme-slot {
-  display: none;
-}

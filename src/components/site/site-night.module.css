@@ -1,0 +1,8 @@
+/* Night canvas for Elysiae content pages: same night colour as the gate sky,
+   stars rendered behind the translucent panels. Imported ONLY by elyria-only
+   components (dash-shell, players-catalog) so grotto bundles never see it. */
+.pageNight {
+  min-height: 100dvh;
+  background: #070b18;
+  color: #f4f0ff;
+}
