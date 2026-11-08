@@ -67,6 +67,10 @@ import { RoomConfigPanel } from './room-config-panel';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
 import { PlayersFieldTab } from './players-field-tab';
+// Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
+// вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
+import { DashShell, type DashTab } from './dash-shell';
+import { ThemeSelect } from '@/components/site/theme-select';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -304,8 +308,8 @@ function DiffRow({ d }: { d: FieldDiff }) {
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию) и «Игроки на поле». */
-  const [tab, setTab] = useState<'cfg' | 'field'>('cfg');
+  /** Активная вкладка (id из массива дескрипторов tabs ниже). По умолчанию «Конфиг». */
+  const [tab, setTab] = useState('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -521,64 +525,12 @@ export default function CfgDashboard() {
 
   const registryKeys = snap ? Object.keys(snap.registry) : [];
 
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Панель управления</h1>
-        <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
-          ← Главное меню
-        </a>
-      </header>
-
-      {status ? (
-        <div
-          className={`rounded-lg border p-3 ${
-            status.kind === 'ok'
-              ? 'border-emerald-900/60 bg-emerald-950/40'
-              : 'border-red-900/60 bg-red-950/40'
-          }`}
-        >
-          <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
-            {status.text}
-          </p>
-          {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
-              {status.details}
-            </pre>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Разделы панели: реестр конфига и «Игроки на поле» (занятость + сброс). */}
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Разделы панели">
-        <button
-          type="button"
-          onClick={() => setTab('cfg')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'cfg'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Конфиг
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('field')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'field'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Игроки на поле
-        </button>
-      </nav>
-
-      {tab === 'field' ? (
-        <PlayersFieldTab />
-      ) : snap && draft ? (
-        <>
+  /* Вкладка «Конфиг»: главный редактор реестра (секция «Комнатные настройки»
+   * остаётся внутри, как раньше) + перенос значений + история бэкапов.
+   * Содержимое вкладки НЕ менялось — менялась только оболочка навигации. */
+  const renderCfg = () =>
+    snap && draft ? (
+      <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <p className="text-xs text-[var(--sim-text-faint)]">
               Схема v{snap.v} · {registryKeys.length} ключей реестра · хранится {snap.historyKeep} последних бэкапов.
@@ -761,8 +713,62 @@ export default function CfgDashboard() {
         <p className="text-sm text-[var(--sim-text-soft)]">
           Панель не загрузилась. Обновите страницу или проверьте права администратора.
         </p>
-      )}
-    </main>
+      );
+
+  /* Дескрипторы вкладок панели — источник сайд-меню и контента. Параллельная
+   * волна вписывает свою вкладку ОДНОЙ строкой, например:
+   *   { id: 'armor', title: 'Броня', render: () => <ArmorTab /> },
+   * Пункты с render:null — ЗАРЕЗЕРВИРОВАНЫ: сайдбар их не рендерит, пока
+   * у волны нет компонента (заглушки «в разработке» не показываем). */
+  const tabs: DashTab[] = [
+    { id: 'field', title: 'Игроки на поле', render: () => <PlayersFieldTab /> },
+    { id: 'cfg', title: 'Конфиг', render: renderCfg },
+    { id: 'armor', title: 'Броня', render: null },
+    { id: 'sprites', title: 'Спрайты', render: null },
+  ];
+
+  const activeTab = tabs.find((t) => t.id === tab) ?? null;
+
+  return (
+    <DashShell
+      tabs={tabs}
+      active={tab}
+      onPick={setTab}
+      title="Панель управления"
+      headerExtra={
+        <>
+          <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
+            роль: админ
+          </span>
+          <ThemeSelect />
+          <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
+            ← Главное меню
+          </a>
+        </>
+      }
+      notice={
+        status ? (
+          <div
+            className={`rounded-lg border p-3 ${
+              status.kind === 'ok'
+                ? 'border-emerald-900/60 bg-emerald-950/40'
+                : 'border-red-900/60 bg-red-950/40'
+            }`}
+          >
+            <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
+              {status.text}
+            </p>
+            {status.details ? (
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+                {status.details}
+              </pre>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      {activeTab?.render ? activeTab.render() : null}
+    </DashShell>
   );
 }
 

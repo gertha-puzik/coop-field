@@ -4,6 +4,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Lilita_One } from 'next/font/google';
 import { wsUrl } from '@/lib/net/coop';
 import { playersLabel } from '@/components/sim/room-picker';
+// Звёздный фон вынесен в star-backdrop.tsx (переиспользуется и контентными
+// страницами); здесь — патч-замена инлайн-блока 1:1: тот же массив, те же
+// классы wander-star/wander-spark, появление после гидрации.
+import { StarBackdrop } from '@/components/menu/star-backdrop';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
 
@@ -13,21 +17,6 @@ const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' 
  * карточки и коды Элизии с их текстами) не попадает в бандл вовсе (спек §2A).
  */
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
-
-/** Детерминированные звёзды: сервер и клиент рисуют одни и те же точки. */
-const rnd = (seed: number) => {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
-};
-
-const STARS = Array.from({ length: 72 }, (_, i) => ({
-  left: rnd(i + 11) * 100,
-  top: rnd(i + 90) * 78,
-  size: 1.2 + rnd(i + 140) * 2.4,
-  dur: 1.8 + rnd(i + 200) * 3.6,
-  delay: -rnd(i + 260) * 6,
-  spark: rnd(i + 310) > 0.82,
-}));
 
 /**
  * Состав комнат для живого счётчика — только миры этого варианта (P3):
@@ -257,28 +246,10 @@ function Grass() {
 }
 
 function NightSky({ children }: { children: ReactNode }) {
-  // Звёзды только после гидрации: сервер округляет style иначе, чем клиент.
-  const [starsOn, setStarsOn] = useState(false);
-  useEffect(() => setStarsOn(true), []);
   return (
     <div className="wander-sky">
       <div className="wander-drift" aria-hidden />
-      {starsOn
-        ? STARS.map((star, i) => (
-            <span
-              key={i}
-              className={star.spark ? 'wander-star wander-spark' : 'wander-star'}
-              style={{
-                left: `${star.left}%`,
-                top: `${star.top}%`,
-                width: star.size,
-                height: star.size,
-                animationDuration: `${star.dur}s`,
-                animationDelay: `${star.delay}s`,
-              }}
-            />
-          ))
-        : null}
+      <StarBackdrop />
       <PawTrail />
       <div className="wander-stage">{children}</div>
       <Grass />
