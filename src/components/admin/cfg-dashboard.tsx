@@ -1,44 +1,73 @@
 'use client';
 
 /**
- * Админ-дашборд реестра конфига (/admin) — P4, только elyria-вариант (маршрут
- * вырезается prune-export-ом, инлайн-флаг на случай случайной сборки, спек §2A).
+ * Админ-дашборд реестра конфига (/admin) — P4 + волна B2 (спек §4), только
+ * elyria-вариант (маршрут вырезается prune-export-ом, инлайн-флаг на случай
+ * случайной сборки, спек §2A).
  *
  * Всё через готовый серверный контракт /cfg (замороженные модули не трогаем):
- *   GET  /cfg/admin   — значения + мета 5 ключей + apply-политики + история;
+ *   GET  /cfg/admin   — значения + мета 5 ключей (подписи/юниверсы/политики) + история;
  *   POST /cfg         — применение черновика {atmo, universes} | {reset:true};
  *   POST /cfg/restore {name} — только имя из свежей истории;
  *   GET  /cfg/export  — скачивание значений JSON-файлом;
  *   POST /cfg/import  — загрузка файла, всё-или-ничего; 400 показываем целиком.
  *
+ * B2 — полноценное управление СПИСКАМИ разрешённых значений (не только дефолты):
+ *   - редактор списков — чекбоксы по движковому юнису из меты (registry.values,
+ *     KIND-юниверсы levels/tenths/periods сервер знает; формат WS-протокола и
+ *     правила авторизации — НЕ конфиг, тут их нет);
+ *   - «выбор игроками вкл/выкл» — серверная disabled-модель НЕ существует и
+ *     контракт заморожен, поэтому переключатель сериализуется тем же POST /cfg
+ *     как список из одного дефолта: off = списку {default}, on = восстановление
+ *     прежнего списка/юнивера (решение зафиксировано в коммите);
+ *   - дефолт обязан входить в список: сервер валидирует (400), UI не даёт
+ *     сохранить иначе (кнопка заблокирована + подсказка у поля);
+ *   - предпросмотр диффов «было → станет» (+N/−M) до отправки; сужение списка
+ *     (у игроков значение сснапится) — дополнительное предупреждение и вторая
+ *     кнопка подтверждения; отмена = ничего не отправлено;
+ *   - честные статусы применения по applyPolicy: «применено немедленно» — только
+ *     on-next-event; new-room/new-session НЕ показываются как «применено»
+ *     (спек §4.6);
+ *   - «Комнатные настройки»: per-room-хранилища у движка нет (жёстко: room.atmo
+ *     in-memory, atmoset крутит любой игрок), поэтому фейковых per-room
+ *     контролов НЕ рисуем — только честная сводка атмосферных параметров.
+ *
  * Доступ: панель рендерится только при role==='admin' (GET /auth/me); не-админ
  * получает вежливую заглушку без раскрытия данных (сервер тоже отдаёт 403).
- * Комнатные конфиги (per-room atmoset и т.п.) сюда НЕ входят — для них нет
- * готового HTTP API, расширяли бы замороженные server-модули.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
+  applyBadgeText,
+  buildCfgDiff as buildDiff,
+  canonByKind,
+  cfgPatchFromDraft,
+  draftFromSnapshot,
+  fmtNum,
   httpCfgAdmin,
   httpCfgApply,
   httpCfgExportText,
   httpCfgImportText,
   httpCfgReset,
   httpCfgRestore,
+  listIssue,
+  narrowingWarning,
+  successText,
   type CfgAdminSnapshot,
+  type CfgDraft,
+  type CfgFieldDiff,
   type CfgFieldMeta,
-  type CfgUniversesValues,
 } from '@/lib/net/http-cfg';
 import { httpMe } from '@/lib/net/http-auth';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
-type UniversesDraft = Record<string, number>;
-
-/** Черновик: значения atmo (по ключу) и дефолты юниверсов (по полю). */
-type Draft = { atmo: Record<string, number>; defaults: UniversesDraft };
+/* Логика черновика (типы, канонизация, диффы, статусы) — в http-cfg.ts (B2);
+ * здесь только локальные алиасы и React-обёртки. */
+type Draft = CfgDraft;
+type FieldDiff = CfgFieldDiff;
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
@@ -50,91 +79,204 @@ function rangeOptions(def: { min: number; max: number; step: number }): number[]
   return out;
 }
 
-function draftFromSnapshot(snap: CfgAdminSnapshot): Draft {
-  const atmo: Record<string, number> = { ...snap.values.atmo };
-  const defaults: UniversesDraft = {};
-  for (const [field, val] of Object.entries(snap.values.universes)) defaults[field] = val.default;
-  return { atmo, defaults };
+const SELECT_CLS = 'h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]';
+
+/** Сырой тех-ключ/kind/политика — в сворачиваемых «технических деталях» с
+ * копированием (§4: русские подписи — primary, ключи — вторично). */
+function TechDetails({ def }: { def: CfgFieldMeta }) {
+  const [copied, setCopied] = useState(false);
+  const copyKey = () => {
+    const write = navigator.clipboard?.writeText(def.key);
+    if (!write) return;
+    write
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer select-none text-[11px] text-[var(--sim-text-faint)]">Технические детали</summary>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--sim-text-faint)]">
+        <code className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)]">{def.key}</code>
+        <button
+          type="button"
+          className="rounded border border-[var(--sim-line-strong)] px-1.5 py-0.5 hover:bg-black/30"
+          onClick={copyKey}
+        >
+          {copied ? 'Скопировано' : 'Копировать ключ'}
+        </button>
+        <span>тип: {def.kind}</span>
+        <span>охват: {def.scope || 'global'}</span>
+        <span>политика: {def.applyPolicy}</span>
+      </div>
+    </details>
+  );
 }
 
-/** Патч для POST /cfg из черновика: atmo-числа + полные юниверсы-объекты. */
-function collectPatch(draft: Draft, snap: CfgAdminSnapshot) {
-  const atmo: Record<string, number> = {};
-  const universes: Record<string, CfgUniversesValues> = {};
-  for (const def of Object.values(snap.registry)) {
-    const [section, field] = def.key.split('.');
-    if (section === 'atmo') {
-      const v = draft.atmo[field];
-      if (Number.isFinite(v)) atmo[field] = v;
-    } else {
-      const kind = def.kind;
-      const list = snap.values.universes[field];
-      const arr = (list && (list.levels || list.tenths || list.periods)) || [];
-      universes[field] = {
-        [kind]: arr,
-        default: Number.isFinite(draft.defaults[field]) ? draft.defaults[field] : list?.default,
-      } as CfgUniversesValues;
-    }
-  }
-  return { atmo, universes };
-}
-
-/** Один ключ реестра: подпись, описание, контрол по kind. */
-function FieldRow({
-  def,
-  value,
-  listValues,
-  onChange,
-}: {
-  def: CfgFieldMeta;
-  value: number;
-  listValues: number[];
-  onChange: (v: number) => void;
-}) {
-  const isRange = !Array.isArray(def.values);
+/** Каркас строки поля: русская подпись primary, бейдж apply-политики,
+ * описание, дети-контролы, подсказка применения, тех-детали. */
+function FieldShell({ def, children }: { def: CfgFieldMeta; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-[var(--sim-line)] p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm font-bold text-[var(--sim-text)]">{def.label}</p>
-        <code className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)]">{def.key}</code>
-      </div>
-      <p className="mt-1 text-xs text-[var(--sim-text-soft)]">{def.description}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {isRange ? (
-          <select
-            className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
-            value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
-          >
-            {rangeOptions(def.values as { min: number; max: number; step: number }).map((v) => (
-              <option key={v} value={v}>
-                {v} {def.unit}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <select
-            className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
-            value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
-          >
-            {listValues.map((v) => (
-              <option key={v} value={v}>
-                {v} {def.unit}
-              </option>
-            ))}
-          </select>
-        )}
-        <span className="text-[11px] text-[var(--sim-text-faint)]">
-          {def.applyHint}
+        <span className="rounded-full border border-[var(--sim-line-strong)] px-2 py-0.5 text-[10px] text-[var(--sim-text-soft)]">
+          когда вступает: {applyBadgeText(def.applyPolicy)}
         </span>
       </div>
-      {!isRange && listValues.length ? (
-        <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
-          Разрешённый список: {listValues.join(' / ')}
-        </p>
-      ) : null}
+      <p className="mt-1 text-xs text-[var(--sim-text-soft)]">{def.description}</p>
+      {children}
+      <p className="mt-2 text-[11px] text-[var(--sim-text-faint)]">{def.applyHint}</p>
+      <TechDetails def={def} />
     </div>
+  );
+}
+
+/** Числовой диапазон (§4.1): селектор по min/max/step + явные границы и юниты. */
+function RangeFieldRow({
+  def,
+  value,
+  saved,
+  onChange,
+}: {
+  def: CfgFieldMeta;
+  value: number;
+  saved: number;
+  onChange: (v: number) => void;
+}) {
+  const bounds = def.values as { min: number; max: number; step: number };
+  const dirty = Number.isFinite(saved) && Number.isFinite(value) && saved !== value;
+  return (
+    <FieldShell def={def}>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <select
+          className={SELECT_CLS}
+          value={Number.isFinite(value) ? value : bounds.min}
+          onChange={(e) => onChange(Number(e.target.value))}
+        >
+          {rangeOptions(bounds).map((v) => (
+            <option key={v} value={v}>
+              {v} {def.unit}
+            </option>
+          ))}
+        </select>
+        {dirty ? (
+          <span className="text-[11px] text-amber-300/90">
+            не сохранено — на сервере сейчас {fmtNum(saved)} {def.unit}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
+        Границы: от {bounds.min} до {bounds.max} {def.unit}, шаг {bounds.step}.
+      </p>
+    </FieldShell>
+  );
+}
+
+/** Редактор СПИСКА разрешённых значений (§4.2): чекбоксы по движковому юнису
+ * (registry.values), вкл/выкл выбора игроками (off = список из одного
+ * дефолта), дефолт — селектом из списка. */
+function ListFieldRow({
+  def,
+  list,
+  saved,
+  draftDefault,
+  universe,
+  onToggleValue,
+  onToggleChoice,
+  onDefault,
+}: {
+  def: CfgFieldMeta;
+  list: number[];
+  saved: { list: number[]; def: number };
+  draftDefault: number;
+  universe: number[];
+  onToggleValue: (v: number, on: boolean) => void;
+  onToggleChoice: (on: boolean) => void;
+  onDefault: (v: number) => void;
+}) {
+  const issue = listIssue(list, draftDefault);
+  const choiceOn = list.length > 1;
+  return (
+    <FieldShell def={def}>
+      <label className="mt-2 flex items-center gap-2 text-xs text-[var(--sim-text-soft)]">
+        <input type="checkbox" checked={choiceOn} onChange={(e) => onToggleChoice(e.target.checked)} />
+        Игроки могут выбирать значение
+      </label>
+      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
+        {choiceOn
+          ? `Разрешено значений: ${list.length} из ${universe.length} (в ${def.unit}).`
+          : 'Выбор выключен: игроку доступно только дефолтное значение.'}
+      </p>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        {universe.map((v) => (
+          <label key={v} className="flex items-center gap-1 text-xs text-[var(--sim-text-soft)]">
+            <input type="checkbox" checked={list.includes(v)} onChange={(e) => onToggleValue(v, e.target.checked)} />
+            {fmtNum(v)}
+          </label>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--sim-text-soft)]">
+        <span>Дефолт ({def.unit}):</span>
+        <select
+          className={`${SELECT_CLS} h-7`}
+          value={list.includes(draftDefault) ? draftDefault : ''}
+          onChange={(e) => onDefault(Number(e.target.value))}
+        >
+          {!list.includes(draftDefault) ? <option value="">— выберите —</option> : null}
+          {list.map((v) => (
+            <option key={v} value={v}>
+              {fmtNum(v)} {def.unit}
+            </option>
+          ))}
+        </select>
+      </div>
+      {issue ? <p className="mt-1 text-[11px] font-semibold text-red-300">{issue}</p> : null}
+      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
+        На сервере сейчас: {saved.list.map(fmtNum).join(' / ') || '—'}, дефолт {fmtNum(saved.def)}.
+      </p>
+    </FieldShell>
+  );
+}
+
+/** Одна строка предпросмотра: «было → станет» (+N/−M) + предупреждение сужения. */
+function DiffRow({ d }: { d: FieldDiff }) {
+  return (
+    <li className="rounded border border-[var(--sim-line)] p-2 text-xs text-[var(--sim-text-soft)]">
+      <p className="font-semibold text-[var(--sim-text)]">{d.label}</p>
+      {d.range ? (
+        <p className="mt-1">
+          Было: {fmtNum(d.range.before)} {d.range.unit} → станет: <b>{fmtNum(d.range.after)} {d.range.unit}</b>
+        </p>
+      ) : d.list ? (
+        <div className="mt-1 space-y-1">
+          <p>
+            Список: {d.list.before.length} зн. → <b>{d.list.after.length} зн.</b> (+{d.list.added.length} / −{d.list.removed.length})
+          </p>
+          {d.list.added.length ? (
+            <p>
+              Добавляются: {d.list.added.map(fmtNum).join(', ')} {d.list.unit}
+            </p>
+          ) : null}
+          {d.list.removed.length ? (
+            <p>
+              Убраны: {d.list.removed.map(fmtNum).join(', ')} {d.list.unit}
+            </p>
+          ) : null}
+          {d.list.defBefore !== d.list.defAfter ? (
+            <p>
+              Дефолт: {fmtNum(d.list.defBefore)} → {fmtNum(d.list.defAfter)}
+            </p>
+          ) : null}
+          {d.list.removed.length ? (
+            <p className="font-semibold text-amber-300">⚠ {narrowingWarning(d.list.kind)}</p>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">{d.hint}</p>
+    </li>
   );
 }
 
@@ -146,13 +288,18 @@ export default function CfgDashboard() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Предпросмотр «было → станет», ждёт второго подтверждения (Отмена = ничего не отправлено). */
+  const [pending, setPending] = useState<FieldDiff[] | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /** Списки «до выключения выбора» — на случай повторного включения в той же сессии. */
+  const multiBackup = useRef<Record<string, number[]>>({});
 
   const refresh = useCallback(async () => {
     const res = await httpCfgAdmin();
     if (res.ok && res.snapshot) {
       setSnap(res.snapshot);
       setDraft(draftFromSnapshot(res.snapshot));
+      multiBackup.current = {};
       setPhase('ready');
     } else {
       setStatus({ kind: 'err', text: 'Не удалось загрузить панель конфига.', details: res.details || undefined });
@@ -186,8 +333,15 @@ export default function CfgDashboard() {
     };
   }, []);
 
+  /** Любая правка черновика протухивает открытый предпросмотр: подтверждение
+   * всегда сверяется со свежим диффом, панель закрывается при изменениях. */
+  useEffect(() => {
+    setPending(null);
+  }, [draft]);
+
   const runAction = useCallback(
     async (name: string, go: () => Promise<{ ok: boolean; reason?: string; details?: string }>, okText: string) => {
+      setPending(null); // любая завершённая операция устаряет висящий предпросмотр
       setBusy(name);
       const res = await go();
       setBusy(null);
@@ -200,6 +354,83 @@ export default function CfgDashboard() {
     },
     [refresh],
   );
+
+  /* ---------- черновик списков (§4.2) ---------- */
+
+  /** Поставить/снять значение: список черновика канонизируется как на сервере. */
+  const toggleValue = useCallback((field: string, kind: string, v: number, on: boolean) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const c = canonByKind(kind, v);
+      const cur = prev.lists[field] || [];
+      const next = (on ? [...cur, c] : cur.filter((x) => x !== c)).sort((a, b) => a - b);
+      return { ...prev, lists: { ...prev.lists, [field]: next } };
+    });
+  }, []);
+
+  /** Вкл/выкл выбора игроками: серверной «disabled»-модели нет и контракт
+   * заморожен — переключатель сериализуется списком из одного дефолта (off);
+   * on возвращает запомненный список либо весь движковый юниверс. */
+  const toggleChoice = useCallback((field: string, def: CfgFieldMeta, on: boolean) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      if (!on) {
+        multiBackup.current[field] = prev.lists[field] || [];
+        return { ...prev, lists: { ...prev.lists, [field]: [prev.defaults[field]] } };
+      }
+      const universe = Array.isArray(def.values) ? def.values : [];
+      const remembered = multiBackup.current[field];
+      const next = remembered && remembered.length > 1 ? remembered : universe;
+      return { ...prev, lists: { ...prev.lists, [field]: [...next] } };
+    });
+  }, []);
+
+  /** Валидность черновика: все списки непустые, дефолты внутри списков. */
+  const hasListIssues = useMemo(() => {
+    if (!snap || !draft) return false;
+    for (const def of Object.values(snap.registry)) {
+      const [sec, field] = def.key.split('.');
+      if (sec === 'universes' && listIssue(draft.lists[field] || [], draft.defaults[field])) return true;
+    }
+    return false;
+  }, [snap, draft]);
+
+  const diffCount = useMemo(() => (snap && draft ? buildDiff(snap, draft).length : 0), [snap, draft]);
+
+  /** Шаг 1 применения: собрать диф «было → станет» и показать предпросмотр —
+   * НИЧЕГО не отправлять до второго подтверждения (§4.5). */
+  const requestApply = useCallback(() => {
+    if (!snap || !draft) return;
+    if (hasListIssues) {
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      return;
+    }
+    const diff = buildDiff(snap, draft);
+    if (!diff.length) {
+      setStatus({ kind: 'ok', text: 'Отличий от сервера нет — применять нечего.' });
+      return;
+    }
+    setStatus(null);
+    setPending(diff);
+  }, [snap, draft, hasListIssues]);
+
+  /** Шаг 2: подтверждение отправляет POST /cfg. Дифф пересобирается на момент
+   * клика (черновик могли менять при открытом предпросмотре), статус — честный
+   * по applyPolicy актуальных изменений. */
+  const confirmApply = useCallback(() => {
+    if (!snap || !draft) return;
+    if (hasListIssues) {
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      return;
+    }
+    const diff = buildDiff(snap, draft);
+    if (!diff.length) {
+      setStatus({ kind: 'ok', text: 'Отличий от сервера нет — применять нечего.' });
+      return;
+    }
+    const okText = successText(diff);
+    void runAction('apply', () => httpCfgApply(cfgPatchFromDraft(draft, snap)), okText);
+  }, [snap, draft, hasListIssues, runAction]);
 
   if (!IS_ELYRIA) {
     return (
@@ -234,13 +465,9 @@ export default function CfgDashboard() {
     );
   }
 
-  const apply = () => {
-    if (!snap || !draft) return;
-    void runAction('apply', () => httpCfgApply(collectPatch(draft, snap)), 'Черновик применён.');
-  };
   const reset = () => {
     if (!window.confirm('Сбросить ВСЕ параметры реестра на дефолты?')) return;
-    void runAction('reset', httpCfgReset, 'Значения сброшены на дефолты.');
+    void runAction('reset', httpCfgReset, 'Значения сброшены на дефолты (момент вступления в силу — по подсказкам полей).');
   };
   const restore = (name: string) => {
     void runAction(name, () => httpCfgRestore(name), `Бэкап «${name}» восстановлен.`);
@@ -275,11 +502,12 @@ export default function CfgDashboard() {
       setStatus({ kind: 'err', text: 'Файл пустой — импорт ничего не сделает.' });
       return;
     }
-    await runAction('import', () => httpCfgImportText(text), 'Импорт применён.');
+    await runAction('import', () => httpCfgImportText(text), 'Импорт принят — значения заменены (момент вступления в силу — по подсказкам полей).');
     ev.target.value = '';
   };
 
   const registryKeys = snap ? Object.keys(snap.registry) : [];
+  const atmoDefs = snap ? Object.values(snap.registry).filter((d) => d.key.startsWith('atmo.')) : [];
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
@@ -319,46 +547,110 @@ export default function CfgDashboard() {
               {registryKeys.map((key) => {
                 const def = snap.registry[key];
                 const [section, field] = def.key.split('.');
-                const value =
-                  section === 'atmo' ? draft.atmo[field] : draft.defaults[field];
-                const listValues =
-                  section === 'universes'
-                    ? snap.values.universes[field]?.levels ||
-                      snap.values.universes[field]?.tenths ||
-                      snap.values.universes[field]?.periods ||
-                      []
-                    : [];
+                if (section === 'atmo') {
+                  return (
+                    <RangeFieldRow
+                      key={key}
+                      def={def}
+                      value={draft.atmo[field]}
+                      saved={snap.values.atmo[field]}
+                      onChange={(v) =>
+                        setDraft((prev) => (prev ? { ...prev, atmo: { ...prev.atmo, [field]: v } } : prev))
+                      }
+                    />
+                  );
+                }
+                const stored = snap.values.universes[field];
                 return (
-                  <FieldRow
+                  <ListFieldRow
                     key={key}
                     def={def}
-                    value={value}
-                    listValues={listValues}
-                    onChange={(v) =>
-                      setDraft((prev) => {
-                        if (!prev) return prev;
-                        if (section === 'atmo') return { ...prev, atmo: { ...prev.atmo, [field]: v } };
-                        return { ...prev, defaults: { ...prev.defaults, [field]: v } };
-                      })
+                    list={draft.lists[field] || []}
+                    saved={{
+                      list: stored?.levels || stored?.tenths || stored?.periods || [],
+                      def: stored?.default ?? 0,
+                    }}
+                    draftDefault={draft.defaults[field]}
+                    universe={Array.isArray(def.values) ? def.values : []}
+                    onToggleValue={(v, on) => toggleValue(field, def.kind, v, on)}
+                    onToggleChoice={(on) => toggleChoice(field, def, on)}
+                    onDefault={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, defaults: { ...prev.defaults, [field]: v } } : prev))
                     }
                   />
                 );
               })}
             </div>
+            {pending ? (
+              <div className="mt-3 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3">
+                <p className="text-sm font-bold text-amber-200">Предпросмотр изменений — пока ничего не отправлено</p>
+                <ul className="mt-2 space-y-2">
+                  {pending.map((d) => (
+                    <DiffRow key={d.key} d={d} />
+                  ))}
+                </ul>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+                    disabled={busy !== null}
+                    onClick={confirmApply}
+                  >
+                    {busy === 'apply' ? 'Применяем…' : 'Подтверждаю — применить'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
+                    disabled={busy !== null}
+                    onClick={() => setPending(null)}
+                  >
+                    Отмена — ничего не отправлять
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-[var(--sim-text-faint)]">Несохранённых изменений: {diffCount}</span>
               <Button
                 type="button"
                 size="sm"
                 className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                disabled={busy !== null}
-                onClick={apply}
+                disabled={busy !== null || hasListIssues}
+                onClick={requestApply}
               >
-                {busy === 'apply' ? 'Применяем…' : 'Применить'}
+                Проверить и применить…
               </Button>
               <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={busy !== null} onClick={reset}>
                 Сбросить на дефолты
               </Button>
             </div>
+            {hasListIssues ? (
+              <p className="mt-1 text-[11px] text-red-300">
+                Применение заблокировано: заполните ошибки в полях выше (пустой список / дефолт вне списка).
+              </p>
+            ) : null}
+          </section>
+
+          <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+            <h2 className="text-base font-bold text-[var(--sim-text)]">Комнатные настройки</h2>
+            <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
+              Движок не хранит отдельные конфигурации комнат (per-room): параметры ниже — глобальные
+              стартовые значения для всех НОВЫХ комнат. Живую комнату можно подкрутить на месте —
+              ползунок «Сутки» в панели (кадр atmoset), повернуть его может любой игрок внутри комнаты.
+              Админского per-room API нет, поэтому фейковых «комнатных» полей здесь не показываем.
+            </p>
+            <ul className="mt-2 space-y-1 text-xs text-[var(--sim-text-soft)]">
+              {atmoDefs.map((def) => (
+                <li key={def.key}>
+                  «{def.label}» ({def.unit}) — сейчас {fmtNum(snap ? snap.values.atmo[def.key.split('.')[1]] : 0)};
+                  применяется глобально, только для новых комнат.
+                </li>
+              ))}
+            </ul>
           </section>
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
