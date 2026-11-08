@@ -457,6 +457,7 @@ function setMap(ws, payload = {}) {
     send(ws, EV.INFO, `Редактор: ${r.error}.`);
     return;
   }
+  const previousMap = testMap;
   testMap = r.map;
   rebuildTestGeometry();
   // Не сохранившаяся на диск правка умерла бы при первом же рестарте («карта
@@ -465,7 +466,10 @@ function setMap(ws, payload = {}) {
     saveTestMap();
   } catch (e) {
     console.warn('map save failed:', e?.message || e);
-    send(ws, EV.INFO, `Редактор: локация применилась, но записать её на диск не удалось — ${e?.message || e}. После рестарта сервера она потеряется.`);
+    testMap = previousMap;
+    rebuildTestGeometry();
+    send(ws, EV.INFO, `Редактор: сохранить локацию на диск не удалось — ${e?.message || e}. Правка осталась в черновике, попробуйте ещё раз.`);
+    return;
   }
   const room = rooms.get(TEST_ROOM);
   if (room && room.sockets.size > 0) {

@@ -229,7 +229,7 @@ export function elisionActorFoot(actor: ElisionActor) {
 
 /** Препятствие перед игроком мягко просвечивает, не меняя коллизий. */
 export function elisionObstacleAlpha(actor: ElisionActor, self: ElisionActor | undefined, yaw: number): number {
-  if (!actor.isProp || !self) return 1;
+  if (!actor.isProp || !self || /\/rock-/.test(actor.url)) return 1;
   const rect = (item: ElisionActor) => {
     const foot = elisionActorFoot(item);
     const x = foot.x * Math.cos(yaw) - foot.z * Math.sin(yaw);

@@ -14,7 +14,7 @@
  * Коды выхода: 0 — зелёный; 1 — отказ.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -23,6 +23,7 @@ const PASS = 'editor-pass-123';
 const PORT = 3981 + Math.floor(Math.random() * 20);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
+const DATA = mkdtempSync(path.join(tmpdir(), 'coop-stone-platform-'));
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ['server.js'], {
@@ -31,7 +32,7 @@ const srv = process.env.WS_URL
         ...process.env,
         PORT: String(PORT),
         HOST: '127.0.0.1',
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), 'coop-stone-platform-')),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -55,12 +56,11 @@ function makeSock() {
   });
   const next = () => state.inbox[state.readIdx++];
   const wait = (timeoutMs = 5000) =>
-    new Promise((resolve, reject) => {
+    state.readIdx < state.inbox.length ? Promise.resolve(next()) : new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('timeout waiting frame')), timeoutMs);
       const check = () => {
         if (state.readIdx < state.inbox.length) { clearTimeout(t); resolve(next()); }
       };
-      check();
       state.waiters.push(check);
     });
   const send = (event, payload) => ws.send(JSON.stringify([event, payload]));
@@ -114,6 +114,7 @@ for (let i = 0; i < 6 && !mapBack; i++) {
 }
 check('setmap принял карту с камнем/деревом/высотами', !!mapBack);
 check('сервер сохранил elev', JSON.stringify(mapBack?.elev ?? null) === JSON.stringify({ '11,3': 2, '12,2': 3 }));
+if (srv) check('высоты записаны в файл для следующего запуска', JSON.stringify(JSON.parse(readFileSync(path.join(DATA, 'test-map.json'), 'utf8')).elev) === JSON.stringify(edited.elev));
 
 // --- 1. cellsync на клетку камня (1-based 13,4) ---
 const A = first.s;

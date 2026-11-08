@@ -582,6 +582,21 @@ function testElev(x, y) {
   return Math.min(TERRAIN_MAX_LEVEL, base + (stone ? STONE_LEVEL : 0));
 }
 
+/** Явный грунт отдельно от опоры предмета (0-based). */
+function terrainLevelAt(c, r) {
+  const v = Math.round(Number(testMap.elev?.[`${c},${r}`]));
+  return Number.isFinite(v) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0,v)) : 0;
+}
+function supportLevelAt(x, y) {
+  const stone = obstacleBodiesOf(testMap).some(b => {
+    if (b.o.kind !== 'stone') return false;
+    const dx = (x-b.x)*100, dy = (y-b.y)*150;
+    const cos = Math.cos(-b.rot), sin = Math.sin(-b.rot);
+    return ((dx*cos-dy*sin)/(b.hw+2))**2 + ((dx*sin+dy*cos)/(b.h+2))**2 <= 1;
+  });
+  return Math.min(TERRAIN_MAX_LEVEL, terrainLevelAt(Math.floor(x),Math.floor(y)) + (stone ? STONE_LEVEL : 0));
+}
+
 /** Перепад больше одного уровня — стенка: шагом не проходится, только
  *  прыжком (elevJumpOk). Зеркало клиентского elevWalkBlocked.
  *  Переходы через клетку захода перепадом не считаются: заход — переход между
@@ -718,7 +733,7 @@ export {
   decodePaintPng, paintPxOn, paintCellCoverage, tracePaintLoops, traceMaskOutline,
   buildIsland, testCellInIsland, buildCells, obstacleBodiesOf, obstacleBlockedCells,
   pointInPolygon, objectBase, objectSprite, objectScale, objectRotDeg, obstacleBodyPx,
-  terrainBodyOverlap, testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
+  terrainLevelAt, supportLevelAt, terrainBodyOverlap, testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
   paintPxMask, paintCellCoverageMask,
   hashStr, mulberry32, chaikin,
 };
