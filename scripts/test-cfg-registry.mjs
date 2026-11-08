@@ -15,7 +15,11 @@
  *   - POST /cfg/restore: только имя из listHistory (path-guard), иначе 404;
  *   - GET /cfg/export + POST /cfg/import: roundtrip и отказ без частичного
  *     применения;
- *   - reset → дефолты реестра.
+ *   - reset → дефолты реестра;
+ *   - (B2, §4) списочные админ-мутации: сузить/расширить/убрать значение,
+ *     toggle «выбор игроками» = список {default}-only, дефолт вне списка → 400,
+ *     пустой список → 400, публичный /cfg отражает сужение, export/import
+ *     и restore поверх суженных списков.
  *
  * Запуск: node scripts/test-cfg-registry.mjs (npm-раннер: npm run test:cfg).
  */
@@ -228,6 +232,72 @@ try {
   const resetRes = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
   check(resetRes.status === 200 && resetRes.json?.atmo?.phaseMin === 7 && resetRes.json?.universes?.armor?.tenths?.length === 10, "cfg: reset возвращает дефолты реестра");
   check(JSON.stringify(resetRes.json?.universes?.armor?.tenths) === JSON.stringify(defs.universes.armor.tenths), "cfg: reset совпадает с defaultsFor()");
+
+  // (ж) Списочные админ-мутации (B2, спек §4): управление СПИСКАМИ разрешённых
+  //     значений тем же POST /cfg; «выключение выбора игроками» = список из
+  //     одного дефолта (серверной disabled-модели нет — контракт заморожен).
+  const narrow = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 2, 3, 2], default: 2 } } }, token: adminTok });
+  check(
+    narrow.status === 200 && JSON.stringify(narrow.json?.universes?.strikeDamage) === '{"levels":[0,2,3],"default":2}',
+    "cfg-список: сужение уровней урона до [0,2,3] (дубликат снят сервером)",
+  );
+  const pubNarrow = await httpJson("/cfg");
+  check(
+    pubNarrow.json?.universes?.strikeDamage?.levels?.length === 3 && pubNarrow.json?.universes?.strikeDamage?.default === 2,
+    "cfg-список: публичный /cfg отражает сужение (клиент видит меньше вариантов)",
+  );
+  const widen = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 1, 2, 3], default: 2 } } }, token: adminTok });
+  check(
+    widen.status === 200 && JSON.stringify(widen.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2, 3]),
+    "cfg-список: добавление значения назад ([0,2,3]→[0,1,2,3])",
+  );
+  const defOutside = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 1, 3], default: 2 } } }, token: adminTok });
+  check(defOutside.status === 400 && defOutside.json?.reason === "invalid", "cfg-список: дефолт вне списка → 400 invalid (контракт §4.3)");
+  const emptyList = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [], default: 0 } } }, token: adminTok });
+  check(emptyList.status === 400 && emptyList.json?.reason === "invalid", "cfg-список: пустой список → 400 invalid");
+  const stillWide = await httpJson("/cfg");
+  check(JSON.stringify(stillWide.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2, 3]), "cfg-список: после отказов значения НЕ изменились (всё или ничего)");
+  const removeOne = await httpJson("/cfg", { method: "POST", body: { universes: { strikeDamage: { levels: [0, 1, 2], default: 0 } } }, token: adminTok });
+  check(
+    removeOne.status === 200 && JSON.stringify(removeOne.json?.universes?.strikeDamage) === '{"levels":[0,1,2],"default":0}',
+    "cfg-список: точечное удаление значения со сдвигом дефолта ([0,1,2,3]→[0,1,2])",
+  );
+  const toggleOff = await httpJson("/cfg", { method: "POST", body: { universes: { arrowSpeed: { periods: [5], default: 5 } } }, token: adminTok });
+  check(
+    toggleOff.status === 200 && JSON.stringify(toggleOff.json?.universes?.arrowSpeed) === '{"periods":[5],"default":5}',
+    "cfg-список: «выбор выключен» = список из одного дефолта (toggle БЕЗ серверной disabled-модели)",
+  );
+  const expNarrow = await httpJson("/cfg/export", { token: adminTok });
+  check(
+    expNarrow.status === 200 &&
+      JSON.stringify(expNarrow.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2]) &&
+      expNarrow.json?.universes?.arrowSpeed?.periods?.length === 1,
+    "cfg-список: export несёт суженные списки",
+  );
+  const impNarrow = await httpJson("/cfg/import", { method: "POST", body: { v: 1, atmo: expNarrow.json?.atmo, universes: expNarrow.json?.universes }, token: adminTok });
+  check(
+    impNarrow.status === 200 &&
+      JSON.stringify(impNarrow.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2]) &&
+      impNarrow.json?.universes?.arrowSpeed?.periods?.length === 1,
+    "cfg-список: import roundtrip сохраняет суженные списки",
+  );
+  const histNarrow = await httpJson("/cfg/admin", { token: adminTok });
+  const latestBackup = histNarrow.json?.history?.[0];
+  check(!!latestBackup, "cfg-список: история бэкапов продолжает пополняться после списочных мутаций");
+  const restoreNarrow = await httpJson("/cfg/restore", { method: "POST", body: { name: latestBackup }, token: adminTok });
+  check(
+    restoreNarrow.status === 200 &&
+      JSON.stringify(restoreNarrow.json?.universes?.strikeDamage?.levels) === JSON.stringify([0, 1, 2]) &&
+      restoreNarrow.json?.universes?.arrowSpeed?.periods?.length === 1,
+    "cfg-список: restore последнего бэкапа жив поверх списочных мутаций",
+  );
+  const finalReset = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
+  check(
+    finalReset.status === 200 &&
+      finalReset.json?.universes?.strikeDamage?.levels?.length === 10 &&
+      finalReset.json?.universes?.arrowSpeed?.periods?.length === 6,
+    "cfg-список: финальный reset возвращает полные движковые юниверсы",
+  );
 } catch (e) {
   failures += 1;
   console.error("FAIL exception", e);
