@@ -59,6 +59,9 @@ import {
   type CfgFieldMeta,
 } from '@/lib/net/http-cfg';
 import { httpMe } from '@/lib/net/http-auth';
+// Пересводка W2 (2026-11-08): навигацию и сессию панели несёт общая шапка
+// сайта (SiteHeader над оболочкой: ссылки, бейдж входа, тема — в ней).
+import { SiteHeader } from '@/components/site/site-header';
 
 // Строки-редакторы полей (Range/Bool/List/Diff + каркас) — вынесены в
 // cfg-fields.tsx: дашборд держим под лимитом 800 строк (как players-field-tab).
@@ -74,10 +77,11 @@ import { ApplyPreview } from './cfg-apply-preview';
 // Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
+// Пересводка W2 (2026-11-08): ThemeSelect из шапки панели убран — селект темы
+// несёт общая шапка сайта (SiteHeader), дублей быть не должно.
 // Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
 // вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
 import { DashShell, type DashTab } from './dash-shell';
-import { ThemeSelect } from '@/components/site/theme-select';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -88,13 +92,37 @@ type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
+/* ========================= Персист активной вкладки ======================== */
+
+/** Ключ активной вкладки панели в localStorage — тот же API, что тема
+ *  оформления (THEME_KEY/loadTheme из lib/sim/theme.ts: window-guard,
+ *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
+ *  «пункт, который мы смотрели», сохраняется между визитами. */
+const TAB_KEY = 'elyria-admin-tab';
+const TAB_IDS = ['cfg', 'field', 'armor', 'sprites'] as const;
+const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'cfg';
+
+/** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
+function readSavedTab(): (typeof TAB_IDS)[number] {
+  if (typeof window === 'undefined') return TAB_DEFAULT;
+  try {
+    const raw = localStorage.getItem(TAB_KEY) as (typeof TAB_IDS)[number] | null;
+    return raw && TAB_IDS.includes(raw) ? raw : TAB_DEFAULT;
+  } catch {
+    return TAB_DEFAULT;
+  }
+}
+
 /* ================================ дашборд ================================ */
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
   /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
-   *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив). */
-  const [tab, setTab] = useState('cfg');
+   *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив).
+   *  Стартует лениво с сохранённой (readSavedTab: на SSR/export-ветке и для
+   *  мусора в хранилище — дефолт 'cfg'); старт на сохранённой 'field'
+   *  поведением не отличается от ручного клика — вкладка просто рендерится. */
+  const [tab, setTab] = useState(() => readSavedTab());
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -252,15 +280,20 @@ export default function CfgDashboard() {
 
   if (phase === 'loading') {
     return (
-      <main className="flex min-h-screen items-center justify-center p-6">
-        <p className="text-sm text-[var(--sim-text-soft)]">Загружаем панель…</p>
-      </main>
+      <>
+        <SiteHeader />
+        <main className="flex min-h-screen items-center justify-center p-6">
+          <p className="text-sm text-[var(--sim-text-soft)]">Загружаем панель…</p>
+        </main>
+      </>
     );
   }
 
   if (phase === 'denied') {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center gap-3 p-6">
+      <>
+        <SiteHeader />
+        <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center gap-3 p-6">
         <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-6">
           <h1 className="text-lg font-bold text-[var(--sim-text)]">Раздел для администраторов</h1>
           <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
@@ -271,7 +304,8 @@ export default function CfgDashboard() {
             ← Главное меню
           </a>
         </section>
-      </main>
+        </main>
+      </>
     );
   }
 
@@ -534,18 +568,33 @@ export default function CfgDashboard() {
 
   const activeTab = tabs.find((t) => t.id === tab) ?? null;
 
+  /** Единственный переключатель вкладок: сначала localStorage, затем state —
+   *  старт на сохранённой и ручной клик идут одним путём. */
+  const pickTab = useCallback((id: string) => {
+    if (!TAB_IDS.includes(id as (typeof TAB_IDS)[number])) return;
+    try {
+      localStorage.setItem(TAB_KEY, id);
+    } catch {
+      /* приватный режим/квота — переключаем и без персиста */
+    }
+    setTab(id as (typeof TAB_IDS)[number]);
+  }, []);
+
   return (
-    <DashShell
-      tabs={tabs}
-      active={tab}
-      onPick={setTab}
-      title="Панель управления"
-      headerExtra={
+    <>
+      {/* Пересводка W2 (2026-11-08): общая шапка сайта над оболочкой панели;
+          сайд-меню и вкладки — как были (дельта 3: вкладка персистится). */}
+      <SiteHeader />
+      <DashShell
+        tabs={tabs}
+        active={tab}
+        onPick={pickTab}
+        title="Панель управления"
+        headerExtra={
         <>
           <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
             роль: админ
           </span>
-          <ThemeSelect />
           <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
             ← Главное меню
           </a>
@@ -578,7 +627,8 @@ export default function CfgDashboard() {
         <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
       ) : null}
       {activeTab?.render ? activeTab.render() : null}
-    </DashShell>
+      </DashShell>
+    </>
   );
 }
 

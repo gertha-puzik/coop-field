@@ -8,6 +8,10 @@ import { playersLabel } from '@/components/sim/room-picker';
 // страницами); здесь — патч-замена инлайн-блока 1:1: тот же массив, те же
 // классы wander-star/wander-spark, появление после гидрации.
 import { StarBackdrop } from '@/components/menu/star-backdrop';
+// Пересводка W2 (2026-11-08): навигацию аккаунтов главной несёт общая шапка
+// сайта. Монтируется внутри IS_ELYRIA-ветки — grotto не получает ни шапки,
+// ни её графа (DCE вырезает ветку вместе с импортом; спека §2A/§10.4).
+import { SiteHeader } from '@/components/site/site-header';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
 
@@ -303,13 +307,7 @@ export function WanderMenu() {
           );
         })}
       </div>
-      {IS_ELYRIA ? (
-        <nav className="wander-note" aria-label="Аккаунты и администрация">
-          <a href="/players/">Каталог игроков</a>
-          <span aria-hidden> · </span>
-          <a href="/admin/">Панель админа</a>
-        </nav>
-      ) : null}
+      {IS_ELYRIA ? <SiteHeader /> : null}
     </NightSky>
   );
 }
