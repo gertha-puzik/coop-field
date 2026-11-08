@@ -365,7 +365,7 @@ const SPAWNS = [
 ];
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
-const SPRITES = ["blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit"];
+const SPRITES = ["blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit", "test1"];
 /* ---------- размеры спрайтов пака и их варианты.
    Объявлены ДО loadTestMap(): sanitizeTestMap читает их при загрузке карты —
    раньше константы стояли ниже по файлу, sanitize падал с «Cannot access

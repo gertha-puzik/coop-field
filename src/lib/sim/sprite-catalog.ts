@@ -122,7 +122,7 @@ export function applySpriteCatalog(items: SpriteCatalogItem[]): void {
 
 /** Базовые id из статичного набора (подсветка builtin в UI и разделитель
  *  «рукотворные группы/категории»): множество заполняется при загрузке модуля
- *  ДО первого apply — 31 элемент, O(1) поиск. */
+ *  ДО первого apply — 32 элемента, O(1) поиск. */
 const STATIC_BASE_IDS = new Set<string>();
 const isBuiltinId = (id: string): boolean => STATIC_BASE_IDS.has(id);
 
@@ -138,7 +138,14 @@ function readCache(): SpriteCatalogItem[] | null {
     const raw = window.localStorage.getItem(SPRITE_CATALOG_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length ? (parsed as SpriteCatalogItem[]) : null;
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+    const items = parsed as SpriteCatalogItem[];
+    const have = new Set(items.map(item => item.id));
+    // Новый builtin должен быть виден до фонового fetch; загруженные скины
+    // из старого кэша сохраняем вместе с их именами и категориями.
+    return [...items, ...SPRITES.filter(sp => !have.has(sp.id)).map(sp => ({
+      ...sp, category: sp.category ?? "Базовые",
+    }))];
   } catch {
     return null;
   }

@@ -6,7 +6,7 @@
  *   <id>.png      — файлы ЗАГРУЖЕННЫХ спрайтов (builtin-файлы НЕ копируются:
  *                   их отдаёт статика www/sprites/<id>.png, src builtin = тот же
  *                   путь, как было до менеджера).
- * Сид: при загрузке модуля manifest.json отсутствует → записываем 31 базовый
+ * Сид: при загрузке модуля manifest.json отсутствует → записываем 32 базовых
  * id (config.SPRITES; имя = клиентский словарь settings.ts SPRITES — зеркало
  * меняется одним PR, счёт одинаковый), category «Базовые», builtin true,
  * addedAt 0. Загруженные: builtin false, src = /sprites/file/<id>.png.
@@ -97,6 +97,7 @@ const BASE_NAMES = {
   "puhlyashik-kit": "Пухляшик (кит-версия)",
   "blestyashka-kit": "Блестяшка",
   "chistolapik-kit": "Чистолапик",
+  test1: "test1",
 };
 
 function writeFileAtomic(file, data) {

@@ -7,12 +7,12 @@
  *
  * Позитив:
  *   1. при старте каталог сеидится: публичный GET /sprites/catalog без сессии
- *      отдаёт 31 базовый (config.SPRITES), все category «Базовые»;
- *   2. admin-список — те же 31 строкой c builtin:true, addedAt:0, wornBy:[],
+ *      отдаёт 32 базовых (config.SPRITES), все category «Базовые»;
+ *   2. admin-список — те же 32 строкой c builtin:true, addedAt:0, wornBy:[],
  *      имена из словаря владельца (puhlyashik — «Пухляшик», ryzhiy — «Сырь»);
  *   3. upload валидного PNG (мини 1×1) с именем «Тестовый Кот» и категорией
  *      «Праздничные» → id testovyy-kot, файл в DATA_DIR/sprites/, строка
- *      в публичном каталоге (32), файл отдаётся GET /sprites/file/<id>.png;
+ *      в публичном каталоге (33), файл отдаётся GET /sprites/file/<id>.png;
  *   4. повторное имя → суффикс id testovyy-kot-2;
  *   5. PATCH переименовывает/меняет категорию (манифест то же отражает);
  *   6. WS-путь: аккаунтный join c sprite=<загруженный id> проживает attachSprite
@@ -60,7 +60,7 @@ const ORIGIN = `http://${HOST}:${PORT}`; // цикличный origin: клас�
 // кириллическими через поле name персонажа, регистрируемого тестом).
 const ADMIN = "lastochka_q";
 const USER = "kopeechka_q";
-/** Базовых в сида: сколько id в config.SPRITES (31 — источник истины счёта). */
+/** Базовых в сида: сколько id в config.SPRITES (32 — источник истины счёта). */
 const BASE_COUNT = BASE_SPRITE_IDS.length;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -227,7 +227,7 @@ try {
   const manifestFile = path.join(DATA, "sprites", "manifest.json");
   const seeded = JSON.parse(readFileSync(manifestFile, "utf8"));
   seeded.push({id:"origami-cat",name:"Снятая модель",category:"Базовые",builtin:true,addedAt:0});
-  writeFileSync(manifestFile, JSON.stringify(seeded));
+  writeFileSync(manifestFile, JSON.stringify(seeded.filter(row => row.id !== "test1")));
   const accountsFile = path.join(DATA, "accounts.json");
   const accounts = JSON.parse(readFileSync(accountsFile, "utf8"));
   const retiredAccount = Object.values(accounts.accounts).find((acc) => acc.login === USER);
@@ -245,6 +245,8 @@ try {
   const cat0 = await pubCatalog();
   check(cat0.status === 200 && cat0.json?.ok === true, "публичный GET /sprites/catalog доступен без сессии");
   const items0 = cat0.json?.items || [];
+  check(items0.some(row => row.id === "test1" && row.name === "test1" && row.src === "/sprites/test1.png"),
+    "новая builtin test1 добавляется в каталог из старого манифеста");
   check(!items0.some((row) => row.id === "origami-cat"), "снятый builtin не воскресает из манифеста");
   const relogin = await httpJson("/auth/login", {method:"POST",body:{login:USER,pass:"password1"}});
   const me = await httpJson("/auth/me", {token:relogin.json?.token});
