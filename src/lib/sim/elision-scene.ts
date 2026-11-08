@@ -249,3 +249,20 @@ export function elisionDepthBias(id: string): number {
   for (const letter of id) hash = (hash * 31 + letter.charCodeAt(0)) >>> 0;
   return -(1 + hash % 997) / 1000;
 }
+
+
+/**
+ * Вершины карточки относительно ног: XY — картинка, Z — направление к камере.
+ * Поворот старого спрайта может опустить угол ниже ног. Поднимаем такой угол
+ * вдоль луча камеры (Y и Z одинаково), сохраняя экранную проекцию Z−Y.
+ * Поэтому повёрнутый камень не режется грунтом и не теряет прежний угол.
+ */
+export function elisionSpriteVertices(w: number, h: number, rot: number, mirror: boolean): number[] {
+  const angle = -rot * Math.PI/180;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  return [[-w/2,0], [w/2,0], [w/2,h], [-w/2,h]].flatMap(([px, py]) => {
+    const x = px * (mirror ? -1 : 1);
+    const rx = x*c - py*s, ry = x*s + py*c;
+    return [rx, Math.max(0, ry), Math.max(0, -ry)];
+  });
+}

@@ -19,7 +19,6 @@ import { Camera } from '@babylonjs/core/Cameras/camera';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
-import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
@@ -31,6 +30,7 @@ import { Constants } from '@babylonjs/core/Engines/constants';
 import {
   elisionOrtho,
   elisionActorFoot,
+  elisionSpriteVertices,
   elisionObstacleAlpha,
   elisionDepthBias,
   elisionCameraPose,
@@ -290,17 +290,17 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         mat.alphaCutOff = 0.35;
         mat.backFaceCulling = false;
         mat.zOffset = elisionDepthBias(actor.id);
-        const mesh = CreatePlane(
-          `decal-${actor.id}`,
-          { width: actor.w, height: actor.h },
-          scene,
-        );
+        const mesh = new Mesh(`decal-${actor.id}`, scene);
+        const vertices = new VertexData();
+        vertices.positions = elisionSpriteVertices(actor.w, actor.h, actor.rot, actor.mirror);
+        vertices.indices = [0,1,2, 0,2,3];
+        vertices.normals = [0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1];
+        vertices.uvs = [0,0, 1,0, 1,1, 0,1];
+        vertices.applyToMesh(mesh);
         mesh.material = mat;
         mesh.isPickable = false;
         const root = new TransformNode(`sprite-foot-${actor.id}`, scene);
         mesh.parent = root;
-        mesh.position.y = actor.h/2;
-        root.scaling.x = actor.mirror ? -1 : 1;
         node = { root, mesh, mat, sig };
         decals.set(actor.id, node);
       }
@@ -314,7 +314,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const foot = elisionActorFoot(actor);
       node.root.position.set(foot.x, foot.y, foot.z);
       // Вертикальные билборды имеют глубину по точке опоры, а не общей плоскости земли.
-      node.root.rotation.set(0, frame.yaw, -actor.rot * Math.PI/180);
+      node.root.rotation.set(0, frame.yaw, 0);
     }
     for (const [id, node] of decals) {
       if (seen.has(id)) continue;

@@ -7,7 +7,7 @@ import { SPRITES as CLIENT_SPRITES } from '../src/lib/sim/settings.ts';
 import { objectSprite, sanitizeTestMap as sanitizeClient } from '../src/lib/sim/test-map.ts';
 import { SPRITES as SERVER_SPRITES, TREE_SPRITE_IDS } from '../server/config.js';
 import { defaultTestMap, sanitizeTestMap as sanitizeServer } from '../server/testmap.js';
-import { elisionActorFoot, elisionDepthBias, elisionObstacleAlpha } from '../src/lib/sim/elision-scene.ts';
+import { elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha } from '../src/lib/sim/elision-scene.ts';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -70,4 +70,12 @@ assert(foot.x === 130 && foot.z === 200 && Math.abs(foot.y-.2) < 1e-9, 'billboar
 assert(elisionDepthBias('tree') === elisionDepthBias('tree'), 'no frame-dependent sort jitter');
 assert(elisionDepthBias('tree') !== elisionDepthBias('main'), 'coplanar ties have stable offsets');
 assert(elisionDepthBias('tree') > -1 && elisionDepthBias('tree') < 0, 'bias stays small');
+for (const angle of [0, 45, 90, 180, 270]) {
+  const vertices = elisionSpriteVertices(60,100,angle,false);
+  assert(vertices.every(Number.isFinite), 'finite rotated billboard');
+  assert(vertices.filter((_,i)=>i%3===1).every(y=>y>=0), 'no billboard vertex below terrain');
+  const radians = angle*Math.PI/180;
+  const expected = [[-30,0],[30,0],[30,100],[-30,100]].map(([x,y])=>x*Math.sin(radians)-y*Math.cos(radians));
+  for(let i=0;i<4;i++) assert(Math.abs(vertices[i*3+2]-vertices[i*3+1]-expected[i])<1e-8,'old 2D rotation preserved above ground');
+}
 console.log('elision models: 201 GLBs, whitelists, map round trips, stable sprite depth and occlusion ok');
