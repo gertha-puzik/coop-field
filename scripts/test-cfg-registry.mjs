@@ -51,11 +51,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------- Юнит: реестр (без сети) ---------- */
 check(
   JSON.stringify(reg.KEYS) ===
-    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "atmo.allowPlayerAtmosphereControl", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
-  "unit: 6 ключей реестра в каноническом порядке (5 числовых + bool-гейт atmoset, F2 §3.4)",
+    JSON.stringify(["atmo.phaseMin", "atmo.weatherMin", "atmo.playerControl", "atmo.allowPlayerAtmosphereControl", "universes.strikeDamage", "universes.armor", "universes.arrowSpeed"]),
+  "unit: 7 ключей реестра в каноническом порядке (мастер-гейт atmoset сразу после погоды, потом per-room гейт, мандат владелицы 2026-11-08)",
 );
 const defs = reg.defaultsFor();
-check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12 && defs.atmo.allowPlayerAtmosphereControl === true, "unit: дефолтальные длительности 7/12; гейт atmoset default=true (прежний геймплей без миграции)");
+check(defs.v === 1 && defs.atmo.phaseMin === 7 && defs.atmo.weatherMin === 12 && defs.atmo.playerControl === true && defs.atmo.allowPlayerAtmosphereControl === true, "unit: дефолтальные длительности 7/12; оба гейта atmoset default=true (прежний геймплей без миграции)");
+const masterGlobal = reg.sanitizeValues({ atmo: { playerControl: false } });
+check(masterGlobal.values?.atmo?.playerControl === false && masterGlobal.error === undefined, "unit: глобальный мастер-гейт atmo.playerControl пишется глобальным POST /cfg (scope global)");
+const masterBadStr = reg.sanitizeValues({ atmo: { playerControl: "вкл" } });
+check(masterBadStr.error?.reason === "invalid", "unit: мастер-гейт atmoset — строго boolean (строка → invalid)");
+const masterBadNum = reg.sanitizeValues({ atmo: { playerControl: 1 } });
+check(masterBadNum.error?.reason === "invalid", "unit: мастер-гейт atmoset — число 1 → invalid (нужен явный true/false, не 1/0)");
 check(defs.universes.arrowSpeed.periods.length === 6 && defs.universes.arrowSpeed.default === 5, "unit: пресеты стрелы 6 шт, дефолт 5");
 const clamped = reg.sanitizeValues({ atmo: { phaseMin: 999, weatherMin: 0 } }).values;
 check(clamped.atmo.phaseMin === 120 && clamped.atmo.weatherMin === 2, "unit: диапазон клэмпится 999→120, 0→2 (толерантность прежняя)");
@@ -64,7 +70,7 @@ check(
   unknown.error?.reason === "unknown_keys" && JSON.stringify(unknown.error.unknown) === JSON.stringify(["marja", "atmo.marja"]),
   "unit: неизвестная секция/поле → unknown_keys",
 );
-check(unknown.error?.allowed?.length === 6, "unit: отказ перечисляет разрешённые ключи (whitelist, 6 шт)");
+check(unknown.error?.allowed?.length === 7, "unit: отказ перечисляет разрешённые ключи (полный список, 7 шт)");
 const badLevel = reg.sanitizeValues({ universes: { strikeDamage: { levels: [0, 27], default: 0 } } });
 check(badLevel.error?.reason === "invalid" && badLevel.error.invalid[0].key === "universes.strikeDamage", "unit: уровень вне движкового юниверса → invalid");
 const emptyList = reg.sanitizeValues({ universes: { armor: { tenths: [], default: 0 } } });
@@ -270,7 +276,7 @@ try {
   check(restoreGhost.status === 404, "cfg: restore по незнакомому имени → отказ");
 
   const adminCfg = await httpJson("/cfg/admin", { token: adminTok });
-  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 6, "cfg: GET /cfg/admin отдаёт метаданные реестра (6 параметров)");
+  check(adminCfg.status === 200 && Object.keys(adminCfg.json?.registry || {}).length === 7, "cfg: GET /cfg/admin отдаёт метаданные реестра (7 параметров)");
   check(Array.isArray(adminCfg.json?.history) && adminCfg.json.history.length >= 1, "cfg: админ видит историю бэкапов");
   const hist = adminCfg.json.history;
   // Самый старый бэкап — снимок засеянного старого файла ( rotated at first POST).
@@ -284,7 +290,7 @@ try {
 
   // (е) Reset.
   const resetRes = await httpJson("/cfg", { method: "POST", body: { reset: true }, token: adminTok });
-  check(resetRes.status === 200 && resetRes.json?.atmo?.phaseMin === 7 && resetRes.json?.universes?.armor?.tenths?.length === 10, "cfg: reset возвращает дефолты реестра");
+  check(resetRes.status === 200 && resetRes.json?.atmo?.phaseMin === 7 && resetRes.json?.atmo?.playerControl === true && resetRes.json?.universes?.armor?.tenths?.length === 10, "cfg: reset возвращает дефолты реестра (в т.ч. мастер-гейт playerControl=true)");
   check(JSON.stringify(resetRes.json?.universes?.armor?.tenths) === JSON.stringify(defs.universes.armor.tenths), "cfg: reset совпадает с defaultsFor()");
 
   // (ж) Списочные админ-мутации (B2, спек §4): управление СПИСКАМИ разрешённых

@@ -166,6 +166,8 @@ export type CfgFieldDiff = {
   };
   /** §4: флип «выбор игроками» без изменения списка (off-then-on фикс). */
   choice?: { before: boolean; after: boolean; kept: number };
+  /** Глобальный bool-ключ (master-гейт atmoset): «разрешено/запрещено». */
+  bool?: { before: boolean; after: boolean };
 };
 
 /** Черновик из админ-снапшота: значения сервера, готовые к редактированию.
@@ -187,18 +189,22 @@ export function draftFromSnapshot(snap: CfgAdminSnapshot): CfgDraft {
 
 /** Патч тела POST /cfg из черновика: atmo-числа + юниверсы (список+дефолт+
  *  ЯВНЫЙ playerSelectable — §4). Пустой список не отправляется никогда —
- *  UI блокирует такую кнопку. */
+ *  UI блокирует такую кнопку. Глобальные bool-ключи (kind="bool" + scope
+ *  "global", master-гейт atmoset) уходят СТРОГИМ boolean: черновик/снапшот
+ *  несут их как 1/0-число, контракт POST /cfg заморожен. */
 export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
-  const atmo: Record<string, number> = {};
+  const atmo: Record<string, number | boolean> = {};
   const universes: Record<string, CfgUniversesValues> = {};
   for (const def of Object.values(snap.registry)) {
     const [section, field] = def.key.split(".");
     if (section === "atmo") {
-      // scope-room ключи (гейт atmoset §3.4) глобальным POST /cfg не пишутся —
-      // их слой живёт в /cfg/rooms* (панель «Комнатные настройки»).
+      // scope-room ключи (гейт atmoset §3.4 per-room) глобальным POST /cfg не
+      // пишутся — их слой живёт в /cfg/rooms* (панель «Комнатные настройки»).
       if (def.scope === "room") continue;
       const v = draft.atmo[field];
-      if (Number.isFinite(v)) atmo[field] = v;
+      if (def.kind === "bool") {
+        if (Number.isFinite(v)) atmo[field] = v > 0;
+      } else if (Number.isFinite(v)) atmo[field] = v;
     } else {
       const arr = draft.lists[field] || [];
       if (!arr.length) continue;
@@ -231,6 +237,7 @@ export function applyBadgeText(policy: string): string {
   if (policy === 'on-next-event') return 'применяется сразу';
   if (policy === 'new-session') return 'игроки увидят в новой сессии';
   if (policy === 'new-room') return 'вступает в новых комнатах';
+  if (policy === 'live-gate') return 'действует сразу';
   return policy;
 }
 
@@ -255,12 +262,18 @@ export function listIssue(list: number[], defaultValue: number): string | null {
 export function buildCfgDiff(snap: CfgAdminSnapshot, draft: CfgDraft): CfgFieldDiff[] {
   const out: CfgFieldDiff[] = [];
   for (const def of Object.values(snap.registry)) {
-    const [section, field] = def.key.split('.');
-    if (section === 'atmo') {
+    const [section, field] = def.key.split(".");
+    if (section === "atmo") {
       const before = snap.values.atmo[field];
       const after = draft.atmo[field];
       if (Number.isFinite(before) && Number.isFinite(after) && before !== after) {
-        out.push({ key: def.key, label: def.label, policy: def.applyPolicy, hint: def.applyHint, range: { before, after, unit: def.unit } });
+        out.push(
+          // Global bool (мастер-гейт): человекочитаемое «разрешено/запрещено»,
+          // не 0/1 (снапшот хранит bool именно как 1/0-число).
+          def.kind === "bool"
+            ? { key: def.key, label: def.label, policy: def.applyPolicy, hint: def.applyHint, bool: { before: before === 1, after: after === 1 } }
+            : { key: def.key, label: def.label, policy: def.applyPolicy, hint: def.applyHint, range: { before, after, unit: def.unit } },
+        );
       }
       continue;
     }
@@ -288,14 +301,17 @@ export function buildCfgDiff(snap: CfgAdminSnapshot, draft: CfgDraft): CfgFieldD
   return out;
 }
 
-/** Честный статус после удачного POST: «действует сразу» — только on-next-event
- * (§4.6); new-room/new-session НЕ подаются как «применено». */
+/** Честный статус после удачного POST: «действует сразу» — on-next-event и
+ *  live-gate (гейты atmoset); new-room/new-session НЕ подаются как «применено»
+ *  (§4.6). */
 export function successText(diff: CfgFieldDiff[]): string {
   const labels = (policy: string) => diff.filter((d) => d.policy === policy).map((d) => d.label);
   const now = labels('on-next-event');
+  const gate = labels('live-gate');
   const room = labels('new-room');
   const sess = labels('new-session');
   const parts = ['Сохранено.'];
+  if (gate.length) parts.push(`Действует сразу на работающие комнаты: ${gate.join(', ')}.`);
   if (now.length) parts.push(`Действует сразу (на следующие события): ${now.join(', ')}.`);
   if (room.length)
     parts.push(`Начнёт действовать только в новых комнатах: ${room.join(', ')} — уже открытые комнаты едут на своих циклах.`);
@@ -312,8 +328,9 @@ export async function httpCfgAdmin(): Promise<CfgAction> {
 }
 
 /** Применение патча значений/дефолтов (POST /cfg). 400-я ошибка (unknown_keys/
- * invalid) отдаётся в details целиком — дашборд показывает её без обрезки. */
-export async function httpCfgApply(patch: { atmo?: Record<string, number>; universes?: Record<string, CfgUniversesValues> }): Promise<CfgAction> {
+ * invalid) отдаётся в details целиком — дашборд показывает её без обрезки.
+ * atmo несёт числа и ГЛОБАЛЬНЫЕ bool-ключи (boolean, master-гейт atmoset). */
+export async function httpCfgApply(patch: { atmo?: Record<string, number | boolean>; universes?: Record<string, CfgUniversesValues> }): Promise<CfgAction> {
   const { status, row, text } = await apiFetch("/cfg", { method: "POST", body: patch });
   if (status === 200 && row?.ok === true) return { ok: true };
   return { ok: false, reason: cfgErrorReason(status, row), details: text };

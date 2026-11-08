@@ -20,7 +20,8 @@ export interface CfgRange {
 }
 
 /** Тип параметра: kind задаёт и валидатор, и имя списка в values-файле.
- *  bool — per-room гейт atmoset (F2 §3.4): юниверса значений нет (values/engineCap null). */
+ *  bool — гейты atmoset (F2 §3.4): per-room override + ГЛОБАЛЬНЫЙ master-ключ
+ *  atmo.playerControl (мандат владелицы 2026-11-08); юниверса значений нет. */
 export type CfgKind = 'range' | 'levels' | 'tenths' | 'periods' | 'bool';
 export type CfgApplyPolicy = 'new-room' | 'on-next-event' | 'new-session' | 'live-gate';
 
@@ -75,11 +76,26 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
     visibility: 'public',
     scope: 'global',
   },
+  'atmo.playerControl': {
+    key: 'atmo.playerControl',
+    label: 'Игроки крутят атмосферу — общий выключатель',
+    description:
+      'Разрешает игрокам во всех комнатах перематывать части суток и менять погоду (кнопки панели и слайдер «Сутки»). «Запрещено» выключает управление сразу везде — настройки отдельных комнат это не переопределяют. «Разрешено» возвращает комнатам их собственные настройки.',
+    unit: 'вкл/выкл',
+    kind: 'bool',
+    values: null,
+    default: true,
+    engineCap: null,
+    applyPolicy: 'live-gate',
+    applyHint: 'Действует сразу на все комнаты: при «запрещено» сервер молча отбрасывает смену суток/погоды от игроков; ход времени и погоды не перезапускается.',
+    visibility: 'admin-only',
+    scope: 'global',
+  },
   'atmo.allowPlayerAtmosphereControl': {
     key: 'atmo.allowPlayerAtmosphereControl',
     label: 'Игроки крутят атмосферу',
     description:
-      'Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки» — кадры atmo/atmoset). Управление per-room: отключается на конкретную комнату; по умолчанию (без переопределения) разрешено, как сейчас.',
+      'Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки» — кадры atmo/atmoset). Тонкая настройка отдельной комнаты: без переопределения — разрешено, как сейчас. Общий выключатель на все комнаты сразу — ключ «Игроки крутят атмосферу — общий выключатель» выше в этой секции.',
     unit: 'вкл/выкл',
     kind: 'bool',
     values: null,

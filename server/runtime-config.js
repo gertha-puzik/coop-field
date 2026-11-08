@@ -130,6 +130,16 @@ function atmoLengths() {
   };
 }
 
+/**
+ * Live-значение глобального master-гейта atmo.playerControl (мандат
+ * владелицы 2026-11-08): читается ГЕЙТОМ atmoset/atmo на каждом кадре —
+ * тот же live-паттерн, что combatCaps в combat.js. Отсутствие ключа в
+ * старом файле (до 7-го ключа) трактуется как true — геймплей не меняется.
+ */
+function playerAtmoControl() {
+  return current.atmo.playerControl !== false;
+}
+
 function rotateBackup(cfgJson) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -359,6 +369,7 @@ export {
   adminConfig,
   combatCaps,
   atmoLengths,
+  playerAtmoControl,
   saveConfig,
   loadConfig,
   defaults,

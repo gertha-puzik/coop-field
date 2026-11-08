@@ -77,6 +77,39 @@ check(
 const noOv = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12 }, {});
 check(noOv.phaseMin === 9 && noOv.weatherMin === 12, "unit: без overrides — чистый глобальный слой");
 
+/* МАСТЕР-ГЕЙТ atmo.playerControl (мандат владелицы 2026-11-08, 7-й ключ
+ * реестра): effective = глобальный && (per-room override ?? true). Матрица —
+ * все 4 сочетания в чистом resolver’е + live-чтение глобального слоя. */
+const mOffROn = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12, playerControl: false }, { "atmo.allowPlayerAtmosphereControl": true });
+check(mOffROn.allowPlayerAtmosphereControl === false, "unit: master ВЫКЛ глушит per-room ВКЛ (глобальный решает)");
+const mOffROff = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12, playerControl: false }, { "atmo.allowPlayerAtmosphereControl": false });
+check(mOffROff.allowPlayerAtmosphereControl === false, "unit: master ВЫКЛ + per-room ВЫКЛ — гейт закрыт");
+const mOnROff = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12, playerControl: true }, { "atmo.allowPlayerAtmosphereControl": false });
+check(mOnROff.allowPlayerAtmosphereControl === false, "unit: master ВКЛ + per-room ВЫКЛ — комната закрыла гейт");
+const mOnROn = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12, playerControl: true }, { "atmo.allowPlayerAtmosphereControl": true });
+check(mOnROn.allowPlayerAtmosphereControl === true, "unit: master ВКЛ + per-room ВКЛ — гейт открыт");
+const mAbsent = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12 }, { "atmo.allowPlayerAtmosphereControl": true });
+check(mAbsent.allowPlayerAtmosphereControl === true, "unit: старый globalAtmo без playerControl — обратно совместимо (открыт)");
+const mOffInh = rc.resolveRoomAtmo({ phaseMin: 9, weatherMin: 12, playerControl: false }, {});
+check(mOffInh.allowPlayerAtmosphereControl === false, "unit: master ВЫКЛ, override нет — глушит и «наследуемые» комнаты");
+
+/* Файл → гейт (живая проводка без HTTP): отдельный node-процесс со своим
+ * DATA_DIR — кэш модулей родительского теста не делится с пробой (потому в
+ * родителе RC-файл после импорта уже ничего не меняет: current грузится на
+ * старте). Паттерн как у make-admin-запуска ниже. */
+const gateProbeCode = `
+import { pathToFileURL } from "node:url";
+const { writeFileSync, rmSync } = await import("node:fs");
+const DATA = ${JSON.stringify(DATA_M)};
+writeFileSync(DATA + "/runtime-config.json", JSON.stringify({ v: 1, atmo: { phaseMin: 5, weatherMin: 12, playerControl: false } }, null, 2));
+const rc = await import(pathToFileURL(${JSON.stringify(ROOT)} + "server/room-config.js").href);
+const out = { off: rc.isPlayerAtmoControlAllowed("grot-1") };
+rmSync(DATA + "/runtime-config.json");
+console.log(JSON.stringify(out));
+`;
+const gateProbe = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", gateProbeCode], { encoding: "utf8" }));
+check(gateProbe.off === false, "unit(файл→гейт): runtime-config с playerControl:false глушит гейт даже у комнаты без overrides");
+
 check(rc.strictRoomValue("atmo.phaseMin", 999).error !== undefined, "unit: out-of-range 999 → отказ (положение «доводим» только у глобального POST /cfg)");
 check(rc.strictRoomValue("atmo.phaseMin", 7.4).value === 7, "unit: дробный диапазон → строгий int");
 check(rc.canonicalRoomId("combat") === "grot-1", "unit: RETIRED-алиас combat канонизируется в grot-1");
@@ -361,6 +394,42 @@ try {
   wsC.send(JSON.stringify(["atmo", { dp: "night", w: "rain" }]));
   const echo = await waitFor(wsC, "atmo");
   check(echo[1].dp === "night" && echo[1].w === "rain", "room-§3.4: соседняя комната без гейта управляется атмосферой как раньше");
+
+  // (з) МАСТЕР-ГЕЙТ atmo.playerControl (мандат владелицы 2026-11-08): POST /cfg
+  //     пишет глобальный bool; его ВЫКЛ глушит atmoset во ВСЕХ комнатах — в т.ч.
+  //     grot-2 (per-room ВКЛ по умолчанию) и под aw-гейт wsA (per-room ВЫКЛ);
+  //     не-bool значение — 400; ВКЛ возвращает решение комнатам. Матрица 2×2
+  //     покрывается: OFF×ON (drop), ON×OFF (drop, шаг (ж)), ON×ON (echo),
+  //     OFF×OFF (drop тривиально).
+  const offRes = await httpJson("/cfg", { method: "POST", body: { atmo: { playerControl: false } }, token: adminTok });
+  check(offRes.status === 200 && offRes.json?.atmo?.playerControl === false, "cfg-master: глобальный playerControl=false принят (строгий boolean)");
+  const strRes = await httpJson("/cfg", { method: "POST", body: { atmo: { playerControl: "нет" } }, token: adminTok });
+  check(strRes.status === 400 && strRes.json?.reason === "invalid", "cfg-master: строка вместо bool → 400 invalid");
+  const numRes = await httpJson("/cfg", { method: "POST", body: { atmo: { playerControl: 0 } }, token: adminTok });
+  check(numRes.status === 400, "cfg-master: число 0 вместо bool → 400 (строго true/false)");
+  const stormFile = readFileSync(ROOM_FILE, "utf8");
+  wsC.inbox.length = 0;
+  wsA.inbox.length = 0;
+  wsC.send(JSON.stringify(["atmo", { dp: "night", w: "snow" }])); // per-room ВКЛ (default) — master глушит
+  wsA.send(JSON.stringify(["atmo", { dp: "night", w: "snow" }])); // per-room ВЫКЛ — тем более
+  await sleep(400);
+  check(
+    !wsC.inbox.some((m) => m[0] === "atmo") && !wsA.inbox.some((m) => m[0] === "atmo"),
+    "cfg-master: playerControl ВЫКЛ — atmoset-кадры игроков глушатся во ВСЕХ комнатах (per-room ВКЛ не спасает)",
+  );
+  check(readFileSync(ROOM_FILE, "utf8") === stormFile, "cfg-master: master-штурм не пишет room-configs.json (слои изолированы)");
+
+  const onRes = await httpJson("/cfg", { method: "POST", body: { atmo: { playerControl: true } }, token: adminTok });
+  check(onRes.status === 200 && onRes.json?.atmo?.playerControl === true, "cfg-master: playerControl=true возвращён (комнаты решают сами)");
+  wsC.inbox.length = 0;
+  wsC.send(JSON.stringify(["atmo", { dp: "night", w: "rain" }]));
+  const echo2 = await waitFor(wsC, "atmo");
+  check(echo2[1].dp === "night" && echo2[1].w === "rain", "cfg-master: playerControl ВКЛ — комната с per-room ВКЛ снова управляет атмосферой");
+  wsA.inbox.length = 0;
+  wsA.send(JSON.stringify(["atmoset", { pl: 2, wl: 3 }]));
+  await sleep(300);
+  check(!wsA.inbox.some((m) => m[0] === "atmo"), "cfg-master: master ВКЛ НЕ отменяет per-room ВЫКЛ (grot-1 остаётся глухим)");
+
   wsA.close();
   wsB.close();
   wsC.close();
