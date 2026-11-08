@@ -175,7 +175,8 @@ export function EntryScreen({
   /** Разрешённые значения СП из GET /cfg (P3): ползунок и чипы предлагают только их. */
   universes: Universes;
   onLogin?: (login: string, pass: string) => void;
-  onRegister?: (login: string, pass: string) => void;
+  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт логином). */
+  onRegister?: (login: string, pass: string, name?: string) => void;
   onLogout?: () => void;
 }) {
   const [name, setName] = useState(initialName);

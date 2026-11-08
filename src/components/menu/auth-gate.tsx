@@ -83,13 +83,13 @@ export function AuthGate({
   }, [welcome]);
 
   const submit = useCallback(
-    async (action: 'login' | 'register', login: string, pass: string) => {
+    async (action: 'login' | 'register', login: string, pass: string, name?: string) => {
       if (!IS_ELYRIA) return;
       setBusy(true);
       setFail(null);
       let row: Awaited<ReturnType<typeof httpLogin>>;
       try {
-        row = action === 'login' ? await httpLogin(login, pass) : await httpRegister(login, pass);
+        row = action === 'login' ? await httpLogin(login, pass) : await httpRegister(login, pass, name);
       } catch {
         setFail(SERVER_UNREACHABLE);
         setBusy(false);
@@ -156,7 +156,7 @@ export function AuthGate({
         fail={fail}
         welcome={inAccount ? welcome : null}
         onLogin={(login, pass) => void submit('login', login, pass)}
-        onRegister={(login, pass) => void submit('register', login, pass)}
+        onRegister={(login, pass, name) => void submit('register', login, pass, name)}
       />
     </div>
   ) : null;

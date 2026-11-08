@@ -18,9 +18,12 @@ const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
  * мягкий #b9b3d9, акценты #f6d7a2 (золото) и #efe7ff (лаванда), ошибка #e07a7a,
  * успех «в игре» #7dcaa0.
  *
- * Поля — реальные контракты server/auth.js: логин 2–24 после обрезки пробелов,
- * пароль от 8; отправка через onLogin/onRegister(login, pass) наружу (гейт сам
- * зовёт httpLogin/httpRegister из http-auth.ts — клиенты не дублируются).
+ * Поля — реальные контракты server/auth.js: при регистрации логин — латиница/
+ * цифры/._- 2–24, «Имя на поле» — опциональное видимое имя 2–24 (без него зовут
+ * логином), пароль от 8; вход — прежние мягкие правила (старые логины бывают с
+ * пробелами). Отправка через onLogin/onRegister(login, pass, name?) наружу
+ * (гейт сам зовёт httpLogin/httpRegister из http-auth.ts — клиенты не
+ * дублируются).
  */
 
 type Mode = 'login' | 'register';
@@ -71,12 +74,14 @@ export function AuthModal({
   fail?: string | null;
   welcome?: string | null;
   onLogin: (login: string, pass: string) => void;
-  onRegister: (login: string, pass: string) => void;
+  /** register v2: name — опциональное «имя на поле» (отсутствует → звать логином). */
+  onRegister: (login: string, pass: string, name?: string) => void;
 }) {
   const [mode, setMode] = useState<Mode>('login');
   const [login, setLogin] = useState('');
   const [pass, setPass] = useState('');
   const [pass2, setPass2] = useState('');
+  const [fieldName, setFieldName] = useState('');
   /** локальная ошибка полей: подсветка + hint; гаснет при любом вводе */
   const [localFail, setLocalFail] = useState<string | null>(null);
   const loginRef = useRef<HTMLInputElement | null>(null);
@@ -97,14 +102,14 @@ export function AuthModal({
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault();
     if (busy || welcome) return;
-    const local = localGateError(mode, login, pass, mode === 'register' ? pass2 : undefined);
+    const local = localGateError(mode, login, pass, mode === 'register' ? pass2 : undefined, mode === 'register' ? fieldName : undefined);
     if (local) {
       setLocalFail(local);
       return;
     }
     const clean = login.trim().slice(0, 24);
     if (mode === 'login') onLogin(clean, pass);
-    else onRegister(clean, pass);
+    else onRegister(clean, pass, fieldName.trim() || undefined);
   };
 
   const failText = localFail || fail || null;
@@ -180,6 +185,26 @@ export function AuthModal({
                   className={`${INPUT_BASE} ${badLogin}`}
                 />
               </Field>
+              {mode === 'register' ? (
+                <Field label="Имя на поле">
+                  <input
+                    type="text"
+                    value={fieldName}
+                    maxLength={24}
+                    autoComplete="off"
+                    placeholder="как вас будут звать на поле (можно кириллицей)"
+                    aria-invalid={Boolean(failText)}
+                    onChange={(e) => {
+                      setFieldName(e.target.value);
+                      touch();
+                    }}
+                    className={`${INPUT_BASE} ${badLogin}`}
+                  />
+                  <span className="mt-1.5 block text-[12.5px] leading-snug text-[rgba(185,179,217,0.6)]">
+                    необязательно — без него вас будут звать логином
+                  </span>
+                </Field>
+              ) : null}
               <Field label="Пароль">
                 <input
                   type="password"

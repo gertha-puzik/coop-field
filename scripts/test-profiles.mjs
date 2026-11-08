@@ -172,7 +172,7 @@ try {
   const reg = await probe({
     method: "POST",
     path: "/auth/register",
-    body: { login: "Пузик", pass: "password1" },
+    body: { login: "puzik_q", pass: "password1", name: "Пузик" },
   });
   const cookie = sessionCookie(reg.setCookie);
   const myAccount = reg.json?.accountId;
@@ -317,7 +317,7 @@ try {
   const reg2 = await probe({
     method: "POST",
     path: "/auth/register",
-    body: { login: "Герта", pass: "password1" },
+    body: { login: "gertha_q", pass: "password1", name: "Герта" },
   });
   const cookie2 = sessionCookie(reg2.setCookie);
   await probe({
@@ -349,8 +349,10 @@ try {
   // → 7 карточек; limit=3 даёт 3 страницы (3+3+1). rate-limiter не мешает:
   // прямые loopback-коннекты теста исключены из троттлинга (auth.js rate()).
   const extras = [];
-  for (const name of ["Ольга", "Тара", "Марго", "Кира", "Нова"]) {
-    const r = await probe({ method: "POST", path: "/auth/register", body: { login: name, pass: "password1" } });
+  // register v2: логины пула — строго латиницей, видимые имена (name) — прежние
+  // кириллические: поисковые пробы ниже бьют по displayName карточек.
+  for (const [name, regLogin] of [["Ольга", "olga_q"], ["Тара", "tara_q"], ["Марго", "margo_q"], ["Кира", "kira_q"], ["Нова", "nova_q"]]) {
+    const r = await probe({ method: "POST", path: "/auth/register", body: { login: regLogin, pass: "password1", name } });
     if (r.status === 200 && r.json?.ok === true && r.json?.accountId) {
       extras.push({ name, id: r.json.accountId, cookie: sessionCookie(r.setCookie) });
     }

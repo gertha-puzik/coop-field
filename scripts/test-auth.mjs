@@ -1,6 +1,16 @@
 /**
- * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг + P1 сплит доменов).
+ * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг + P1 сплит доменов
+ * + register v2 по мандату владелицы 2026-11-08: снятие register-лимитов на
+ * тест/dev и отдельное имя на поле при регистрации).
  *
+ *  0. register v2: юнит-таблица registerLimits() по классу инстанса
+ *     (production 60 c / 5 в час, preview 5 c / 60, local/test — без
+ *     ограничений; env-override сильнее класса), строгий формат НОВОГО
+ *     логина при создании (латиница/цифры/._-, 2–24, края — буква/цифра;
+ *     мусор → badlogin), опциональное имя на поле name → profile.displayName
+ *     и персонаж (пусто → логин — совместимость со старым клиентом), мусор в
+ *     имени → badname; вход легаси-логина с пробелом («myster syr») жив:
+ *     validateLogin/loginAccount не ужесточены;
  *  1. store: регистрация, повторный login, чужой пароль, короткое имя, занятое имя;
  *  2. гость входит в grot-1 (you+field), в test — refuse auth_required + noplace;
  *  3. register по WS → whoami + token; join test — you; login не с клиента;
@@ -41,9 +51,10 @@ const WS = `ws://${HOST}:${PORT}`;
 const HTTP = `http://${HOST}:${PORT}`;
 
 process.env.DATA_DIR = DATA;
-process.env.BOOTSTRAP_ADMIN = "Герта";
+process.env.BOOTSTRAP_ADMIN = "gertha_q";
 
 const accounts = await import("../server/accounts.js");
+const auth = await import("../server/auth.js");
 const modes = await import("../server/modes.js");
 
 let failures = 0;
@@ -102,18 +113,82 @@ check(modes.requiresAccount("combat") === false, "modes: combat open");
 check(modes.requiresAccount("hunger") === false, "modes: hunger open");
 check(modes.requiresAccount("custom-xyz") === false, "modes: unknown code open");
 
-const made = await accounts.createAccount("Сырь", "password1");
-check(!!made.account, "store: register Сырь");
+/* ---------- 0. register v2: юнит-таблица registerLimits() ---------- */
+// Гейт регистций выбирает лимиты по классу инстанса (мандат 2026-11-08);
+// env-override сильнее класса. Мутации env гасим сразу — спавны ниже
+// наследуют process.env,rate-пробы харднинг-песочницы ждут прод-лимиты.
+const lim = (cls, env) => {
+  delete process.env.AUTH_REGISTER_GAP_MS;
+  delete process.env.AUTH_REGISTER_HOURLY_MAX;
+  if (cls === undefined) delete process.env.COOP_INSTANCE_CLASS;
+  else process.env.COOP_INSTANCE_CLASS = cls;
+  if (env) Object.assign(process.env, env);
+  const row = auth.registerLimits();
+  delete process.env.AUTH_REGISTER_GAP_MS;
+  delete process.env.AUTH_REGISTER_HOURLY_MAX;
+  delete process.env.COOP_INSTANCE_CLASS;
+  return row;
+};
+check(lim("production").gapMs === 60_000 && lim("production").hourMax === 5, "register-limits: production — 60 c / 5 в час (как прежде)");
+check(lim("preview").gapMs === 5_000 && lim("preview").hourMax === 60, "register-limits: preview — 5 с / 60 в час (смоуки без барьера)");
+check(lim("local").gapMs === 0 && lim("local").hourMax === Infinity, "register-limits: local — без ограничений");
+check(lim("test").gapMs === 0 && lim("test").hourMax === Infinity, "register-limits: test — без ограничений");
+const limOver = lim("production", { AUTH_REGISTER_GAP_MS: "111", AUTH_REGISTER_HOURLY_MAX: "7" });
+check(limOver.gapMs === 111 && limOver.hourMax === 7, "register-limits: env-override сильнее класса (production)");
+const limLocalOver = lim("local", { AUTH_REGISTER_GAP_MS: "500", AUTH_REGISTER_HOURLY_MAX: "2" });
+check(limLocalOver.gapMs === 500 && limLocalOver.hourMax === 2, "register-limits: env-override сильнее класса (local)");
+
+/* ---------- 1. store + register v2: создание ---------- */
+const made = await accounts.createAccount("Syr_q", "password1");
+check(!!made.account, "store: register Syr_q");
 check(made.account?.role === "registered" || made.account?.role === "admin", "store: role set");
-const again = await accounts.createAccount("Сырь", "password1");
+check(
+  made.account?.profile?.displayName === "Syr_q" && made.account?.characters?.[0]?.name === "Syr_q",
+  "store v2: без имени на поле displayName и персонаж = логин (совместимость)",
+);
+const again = await accounts.createAccount("Syr_q", "password1");
 check(again.error === "taken", "store: duplicate login");
-const weak = await accounts.createAccount("Пух", "123");
+const weak = await accounts.createAccount("Weak_q", "123");
 check(weak.error === "weak", "store: short password");
-const short = await accounts.createAccount("Я", "password1");
-check(short.error === "short", "store: short login");
-const bad = await accounts.loginAccount("Сырь", "wrongpass");
+const named = await accounts.createAccount("Dym_q", "password1", "Дым Лунный");
+check(
+  !!named.account && named.account?.login === "Dym_q" && named.account?.characters?.[0]?.name === "Дым Лунный",
+  "store v2: имя на поле → персонаж (независимо от логина)",
+);
+check(named.account?.profile?.displayName === "Дым Лунный", "store v2: имя на поле → profile.displayName");
+const omon = await accounts.createAccount("Omon_q", "password1", "Дым Лунный");
+check(!!omon.account, "store v2: имя на поле НЕ уникально (однофамильцы ок)");
+const nameShort = await accounts.createAccount("Ns1_q", "password1", "Д");
+check(nameShort.error === "badname", "store v2: имя 1 код-поинт → badname");
+const nameLong = await accounts.createAccount("Ns2_q", "password1", "Ы".repeat(25));
+check(nameLong.error === "badname", "store v2: имя 25 код-поинтов → badname");
+const nameBlank = await accounts.createAccount("Ns3_q", "password1", "   ");
+check(nameBlank.error === "badname", "store v2: пробельно-пустое имя → badname");
+const nameEmpty = await accounts.createAccount("Ns4_q", "password1", "");
+check(!!nameEmpty.account && nameEmpty.account?.profile?.displayName === "Ns4_q", "store v2: пустая строка имени → зовут логином");
+const blCyr = await accounts.createAccount("Вася", "password1");
+check(blCyr.error === "badlogin", "store v2: кириллический логин при создании → badlogin");
+const blSpace = await accounts.createAccount("two words", "password1");
+check(blSpace.error === "badlogin", "store v2: логин с пробелом при создании → badlogin");
+const blEdge = await accounts.createAccount("_edge", "password1");
+check(blEdge.error === "badlogin", "store v2: краевой ._- в начале логина → badlogin");
+const blOne = await accounts.createAccount("a", "password1");
+check(blOne.error === "badlogin", "store v2: односимвольный логин → badlogin");
+const okTwo = await accounts.createAccount("ab", "password1");
+check(!!okTwo.account, "store v2: двухсимвольный логин [a-zA-Z0-9]{2} легален");
+// Легаси-аккаунт с пробелом в логине («myster syr» на pr-51): создать теперь
+// нельзя, но существующий ОБЯЗАН входить — ужесточение не трогает login-in.
+// Сеем мутацией живого стора (тот же accounts.json читает спавн ниже).
+const legacy = await accounts.createAccount("legacy_probe", "password1");
+legacy.account.login = "myster syr";
+legacy.account.profile.displayName = "myster syr";
+legacy.account.characters[0].name = "myster syr";
+accounts.flushAccounts(true);
+const legacyIn = await accounts.loginAccount("myster syr", "password1");
+check(!!legacyIn.account && legacyIn.account?.login === "myster syr", "store v2: вход легаси-логина с пробелом жив (login-in не ужесточён)");
+const bad = await accounts.loginAccount("Syr_q", "wrongpass");
 check(bad.error === "bad", "store: bad password");
-const okLogin = await accounts.loginAccount("Сырь", "password1");
+const okLogin = await accounts.loginAccount("Syr_q", "password1");
 check(!!okLogin.account, "store: login ok");
 
 mkdirSync(DATA, { recursive: true });
@@ -122,14 +197,14 @@ writeFileSync(
   JSON.stringify({
     v: 1,
     cats: {
-      сырь: { login: "Сырь", fm: 1, fx: 3.25, fy: 2.5, x: 4, y: 3, ts: Date.now() },
+      syr_q: { login: "Syr_q", fm: 1, fx: 3.25, fy: 2.5, x: 4, y: 3, ts: Date.now() },
     },
   }),
 );
 
 const server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stderr.on("data", (d) => process.stderr.write(d));
@@ -168,18 +243,31 @@ try {
   guest2.close();
 
   const authed = await client();
-  authed.send(JSON.stringify(["auth", { action: "register", login: "Элис", pass: "password1" }]));
+  authed.send(JSON.stringify(["auth", { action: "register", login: "elis_q", pass: "password1" }]));
   const who = await waitFor(authed, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId);
   check(!!who[1].token, "ws register: token");
-  check(who[1].login === "Элис", "ws register: login");
+  check(who[1].login === "elis_q", "ws register: login");
   authed.send(JSON.stringify(["join", { room: "test", login: "Хакер", sprite: "blestyashka", size: 80 }]));
   const youTest = await waitFor(authed, (m) => m[0] === "you");
-  check(youTest[1].login === "Элис", "ws join test: identity from account, not payload.login");
+  check(youTest[1].login === "elis_q", "ws join test: identity from account, not payload.login");
   authed.close();
 
+  // register v2: WS-кадр с именем на поле — whoami несёт character+profile, join закрепляет персонажа, а не логин.
+  const namedWs = await client();
+  namedWs.send(JSON.stringify(["auth", { action: "register", login: "wsdym_q", pass: "password1", name: "Дым Лунный" }]));
+  const whoNamed = await waitFor(namedWs, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId);
+  check(
+    whoNamed[1]?.login === "wsdym_q" &&
+      whoNamed[1]?.profile?.displayName === "Дым Лунный" &&
+      whoNamed[1]?.character?.name === "Дым Лунный" &&
+      whoNamed[1]?.characters?.[0]?.name === "Дым Лунный",
+    "ws register v2: name → profile.displayName и персонаж (login другой)",
+  );
+  namedWs.close();
+
   const gertha = await client();
-  gertha.send(JSON.stringify(["auth", { action: "register", login: "Герта", pass: "password1" }]));
-  const whoAdmin = await waitFor(gertha, (m) => m[0] === "whoami" && m[1]?.login === "Герта");
+  gertha.send(JSON.stringify(["auth", { action: "register", login: "gertha_q", pass: "password1" }]));
+  const whoAdmin = await waitFor(gertha, (m) => m[0] === "whoami" && m[1]?.login === "gertha_q");
   // S1 (аудит Z.AI): регистрация имени из BOOTSTRAP_ADMIN больше НЕ назначает
   // роль admin — кто угодно мог занять имя раньше владелицы и стать админом.
   check(whoAdmin[1].role !== "admin", "S1: bootstrap-имя регистрируется БЕЗ роли admin");
@@ -192,6 +280,50 @@ try {
   });
   const httpReg = await resReg.json();
   check(resReg.ok && httpReg.ok && httpReg.token, "http register");
+  check(
+    httpReg.profile?.displayName === "HttpKot" && httpReg.character?.name === "HttpKot",
+    "http register v2: без name → displayName и персонаж = логин (совместимость)",
+  );
+
+  // register v2 (HTTP): имя на поле отдельно от логина.
+  const resName = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "httpdym_q", pass: "password1", name: "Дым Лунный" }),
+  });
+  const httpName = await resName.json();
+  check(
+    resName.ok &&
+      httpName.ok &&
+      httpName.login === "httpdym_q" &&
+      httpName.profile?.displayName === "Дым Лунный" &&
+      httpName.character?.name === "Дым Лунный",
+    "http register v2: name → profile.displayName и character.name (login другой)",
+  );
+  const resBadName = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "httpbadnm_q", pass: "password1", name: "Д" }),
+  });
+  const httpBadName = await resBadName.json();
+  check(resBadName.status === 400 && httpBadName.reason === "badname", "http register v2: короткое name → 400 badname");
+  const resBadLogin = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "myster syr v2", pass: "password1" }),
+  });
+  const httpBadLogin = await resBadLogin.json();
+  check(resBadLogin.status === 400 && httpBadLogin.reason === "badlogin", "http register v2: логин с пробелом при создании → 400 badlogin");
+  const resLegacyIn = await fetch(`${HTTP}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "myster syr", pass: "password1" }),
+  });
+  const httpLegacyIn = await resLegacyIn.json();
+  check(
+    resLegacyIn.ok && httpLegacyIn.ok && httpLegacyIn.login === "myster syr",
+    "http login v2: легаси-логин с пробелом входит (200) — старые аккаунты живы",
+  );
 
   const resLogin = await fetch(`${HTTP}/auth/login`, {
     method: "POST",
@@ -231,8 +363,8 @@ try {
   withTok.close();
 
   const pos = await client();
-  pos.send(JSON.stringify(["auth", { action: "login", login: "Сырь", pass: "password1" }]));
-  await waitFor(pos, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.login === "Сырь");
+  pos.send(JSON.stringify(["auth", { action: "login", login: "Syr_q", pass: "password1" }]));
+  await waitFor(pos, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.login === "Syr_q");
   pos.send(JSON.stringify(["join", { room: "test" }]));
   const youPos = await waitFor(pos, (m) => m[0] === "you");
   const restored = youPos[1].fm === 1 && Math.abs(youPos[1].fx - 3.25) < 0.05 && Math.abs(youPos[1].fy - 2.5) < 0.05;
@@ -242,7 +374,7 @@ try {
   pos.close();
   const after = await client();
   await waitFor(after, (m) => m[0] === "whoami");
-  after.send(JSON.stringify(["join", { room: "test", login: "Сырь" }]));
+  after.send(JSON.stringify(["join", { room: "test", login: "Syr_q" }]));
   const afterOut = await waitFor(after, (m) => m[0] === "refuse" || m[0] === "noplace");
   check(afterOut[1]?.code === "auth_required" || afterOut[1]?.reason === "auth_required", "logout: test closed again");
   after.close();
@@ -287,12 +419,12 @@ try {
   server.kill("SIGTERM");
   await waitExit(server);
   const cliEnv = { ...process.env, DATA_DIR: DATA };
-  const cli1 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+  const cli1 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
     env: cliEnv,
     encoding: "utf8",
   });
   check(/повышен/.test(cli1), "S1: make-admin повышает существующий аккаунт (CLI, код возврата 0)");
-  const cli2 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+  const cli2 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
     env: cliEnv,
     encoding: "utf8",
   });
@@ -311,7 +443,7 @@ try {
 
   const serverB = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   serverB.stderr.on("data", (d) => process.stderr.write(d));
@@ -320,11 +452,11 @@ try {
     const resAdminLogin = await fetch(`${HTTP}/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ login: "Герта", pass: "password1" }),
+      body: JSON.stringify({ login: "gertha_q", pass: "password1" }),
     });
     const adminLogin = await resAdminLogin.json();
     check(
-      resAdminLogin.ok && adminLogin.role === "admin" && adminLogin.login === "Герта",
+      resAdminLogin.ok && adminLogin.role === "admin" && adminLogin.login === "gertha_q",
       "S1: после make-admin вход даёт роль admin (пароль-хеш сохранён)",
     );
     const cfgAdmin = await fetch(`${HTTP}/cfg?t=${adminLogin.token}`, {
@@ -346,8 +478,10 @@ try {
 
 /* ---------- pr-41: изоляция Элизии и auth-харднинг (второй sandbox) ----------
  * Свой server.js со заниженными порогами — детерминированные проверки без
- * sleep-магии: BOOTSTRAP_ADMIN="Герта, лИзА" (список), MAX_ACCOUNTS=8,
- * per-login замок = 2 неудачи за окно 300 мс. Порт — отдельный свободный. */
+ * sleep-магии: BOOTSTRAP_ADMIN="gertha_q, liza_q" (список), MAX_ACCOUNTS=8,
+ * per-login замок = 2 неудачи за окно 300 мс. Порт — отдельный свободный.
+ * Класс инстанса — production: register-гейт обязан работать в этих пробах
+ * (register v2: local/test без ограничений, прод-лимиты — здесь). */
 const DATA2 = mkdtempSync(path.join(tmpdir(), "coop-auth-hard-"));
 const PORT2 = 3960 + Math.floor(Math.random() * 30);
 const WS2 = `ws://${HOST}:${PORT2}`;
@@ -359,7 +493,8 @@ const server2 = spawn(process.execPath, ["server.js"], {
     PORT: String(PORT2),
     HOST,
     DATA_DIR: DATA2,
-    BOOTSTRAP_ADMIN: "Герта, лИзА",
+    COOP_INSTANCE_CLASS: "production",
+    BOOTSTRAP_ADMIN: "gertha_q, liza_q",
     MAX_ACCOUNTS: "8",
     AUTH_LOGIN_FAIL_MAX: "2",
     AUTH_LOGIN_FAIL_WINDOW_MS: "300",
@@ -407,13 +542,13 @@ try {
   // больше НЕ даёт роли — у каждого НЕзависимо от списка обычная роль; роль
   // назначает только CLI владелицы. Пробелы/регистр по-прежнему: trim+lower.
   const gA = await client2();
-  registerFrame(gA, "  гЕРТА "); // пробелы и регистр: список сравнивается после trim+lower
+  registerFrame(gA, "  gErThA_q "); // пробелы и регистр: список сравнивается после trim+lower
   const whoGA = await waitForFrom(gA, registeredOk, 0);
   check(whoGA[1]?.role === "registered", "S1 list: имя №1 из BOOTSTRAP_ADMIN → роль НЕ admin");
   gA.close();
 
   const gB = await client2();
-  registerFrame(gB, "  лИзА ");
+  registerFrame(gB, "  liZa_Q ");
   const whoGB = await waitForFrom(gB, registeredOk, 0);
   check(whoGB[1]?.role === "registered", "S1 list: имя №2 из списка → тоже НЕ admin (независимо)");
   gB.close();
@@ -423,19 +558,19 @@ try {
   // (9.9.9.9 → 4.4.4.4) не должна обходить лимит (старый код доверял первому).
   const XFF_LAST = "203.0.113.7";
   const x1 = await client2({ "x-forwarded-for": `9.9.9.9, ${XFF_LAST}` });
-  registerFrame(x1, "Люся1");
+  registerFrame(x1, "xff_one_q");
   const x1r = await waitForFrom(x1, registeredOk, 0);
   check(!!x1r, "xff-харднинг: регистрация через «прокси» прошла");
   x1.close();
 
   const x2 = await client2({ "x-forwarded-for": `4.4.4.4, ${XFF_LAST}` });
-  registerFrame(x2, "Люся2");
+  registerFrame(x2, "xff_two_q");
   const x2r = await waitForFrom(x2, (m) => m[0] === "whoami" && m[1]?.ok === false, 0);
   check(x2r[1]?.reason === "rate", "xff-харднинг: тот же последний хоп → rate (подмена первого не помогает)");
   x2.close();
 
   const x3 = await client2({ "x-forwarded-for": "4.4.4.4, 198.51.100.77" });
-  registerFrame(x3, "Люся3");
+  registerFrame(x3, "xff_three_q");
   const x3r = await waitForFrom(x3, registeredOk, 0);
   check(!!x3r, "xff-харднинг: другой последний хоп — лимит чужой записи не задел");
   x3.close();
@@ -443,11 +578,11 @@ try {
   // Контроль: прямой коннект БЕЗ XFF (локальная разработка) — байпас лимитов
   // остался только для этого случая.
   const d1 = await client2();
-  registerFrame(d1, "Прямой1");
+  registerFrame(d1, "direct1_q");
   const d1r = await waitForFrom(d1, registeredOk, 0);
   check(!!d1r, "dev-байпас: прямой loopback без XFF не лимитируется (№1)");
   const d2 = await client2();
-  registerFrame(d2, "Прямой2");
+  registerFrame(d2, "direct2_q");
   const d2r = await waitForFrom(d2, registeredOk, 0);
   check(!!d2r, "dev-байпас: прямой loopback подряд (№2)");
   d1.close();
@@ -455,17 +590,17 @@ try {
 
   // (г) MAX_ACCOUNTS=8: счёт 6 — ещё две в потолок, дальше 'full'.
   const f1 = await client2();
-  registerFrame(f1, "ЕщёМесто");
+  registerFrame(f1, "seat7_q");
   const f1r = await waitForFrom(f1, registeredOk, 0);
   check(!!f1r, "max-accounts: 7-я регистрация внутри потолка");
   f1.close();
   const f2 = await client2();
-  registerFrame(f2, "ВосьмойКот");
+  registerFrame(f2, "seat8_q");
   const f2r = await waitForFrom(f2, registeredOk, 0);
   check(!!f2r, "max-accounts: 8-я регистрация — последняя в потолке");
   f2.close();
   const f3 = await client2();
-  registerFrame(f3, "ДевятыйКот");
+  registerFrame(f3, "seat9_q");
   const f3r = await waitForFrom(f3, (m) => m[0] === "whoami" && m[1]?.ok === false, 0);
   check(f3r[1]?.reason === "full", "max-accounts: за потолком WS-регистрация → 'full'");
   f3.close();
@@ -473,7 +608,7 @@ try {
   const res2Full = await fetch(`http://${HOST}:${PORT2}/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ login: "ХттпПолный", pass: "password1" }),
+    body: JSON.stringify({ login: "http_full_q", pass: "password1" }),
   });
   const http2Full = await res2Full.json();
   check(res2Full.status === 400 && http2Full?.reason === "full", "max-accounts: HTTP-регистрация → 400 'full'");
@@ -482,29 +617,29 @@ try {
   // успех сбрасывает счётчик; окно отпускает (лок поствременный).
   const lk = await client2();
   let mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "wrong-password");
+  loginFrame(lk, "liZa_Q", "wrong-password");
   const bad1 = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "bad", mark);
   check(!!bad1, "per-login: неудача №1 → 'bad'");
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "wrong-password");
+  loginFrame(lk, "liZa_Q", "wrong-password");
   const bad2 = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "bad", mark);
   check(!!bad2, "per-login: неудача №2 → 'bad' (счётчик на пороге)");
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "password1"); // верный пароль под замком
+  loginFrame(lk, "liZa_Q", "password1"); // верный пароль под замком
   const locked = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "rate", mark);
   check(!!locked, "per-login: верный пароль при замке → 'rate'");
   await sleep(350); // окно 300 мс истекло — счётчик сгорел
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "password1");
+  loginFrame(lk, "liZa_Q", "password1");
   const unlocked = await waitForFrom(lk, registeredOk, mark);
-  check(!!unlocked && unlocked[1]?.login === "лИзА", "per-login: окно отпустило — верный пароль входит");
+  check(!!unlocked && unlocked[1]?.login === "liZa_Q", "per-login: окно отпустило — верный пароль входит");
   lk.close();
 
   // Состав закрытой комнаты: аккаунту — реальный счётчик и имена; гость
   // ниже получает «призрак» (count 0, пустые logins) — см. rooms-ghost.
   const sitter = await client2();
   let sMark = sitter.inbox.length;
-  loginFrame(sitter, "лИзА", "password1");
+  loginFrame(sitter, "liZa_Q", "password1");
   const sLogin = await waitForFrom(sitter, registeredOk, sMark);
   check(!!sLogin, "rooms-count: сиделка вошла в аккаунт");
   sitter.send(JSON.stringify(["join", { room: "test" }]));
@@ -558,7 +693,7 @@ const LOCAL3 = `127.0.0.1:${PORT3}`;
 const ADMIN3_PASS = "b7-elision-admin1";
 const cliS3 = execFileSync(
   process.execPath,
-  [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта", ADMIN3_PASS],
+  [path.join(ROOT, "scripts", "make-admin.mjs"), "Admin3_q", ADMIN3_PASS],
   { env: { ...process.env, DATA_DIR: DATA3 }, encoding: "utf8" },
 );
 check(/создан с ролью admin/.test(cliS3), "S1: make-admin создаёт новый аккаунт с ролью admin (до старта сервера)");
@@ -754,7 +889,7 @@ try {
   );
   const adminLogin3 = await probe3({
     method: "POST", path: "/auth/login", host: "ely.example",
-    body: { login: "Герта", pass: ADMIN3_PASS },
+    body: { login: "Admin3_q", pass: ADMIN3_PASS },
   });
   const adminTok3 = (String(adminLogin3.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
   check(adminLogin3.json?.role === "admin" && !!adminTok3, "cfg-admin: make-admin-аккаунт входит, роль admin (cookie-only на elyria)");
