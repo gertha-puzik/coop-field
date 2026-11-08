@@ -9,8 +9,17 @@ name: Preview PR (build)
 # с main, PR его подменить не может, секреты доступны только ему.
 # Прод-пайплайн (deploy-frontend / deploy-backend на main) не трогаем.
 # Форки не собираем и не деплоим (head_repository проверяется и тут, и в deploy).
-# Каталог/юнит/имена сайтов — pr-<номер PR>; dual-host P5: артефакт несёт
-# ОБА корня www-grotto/ + www-elyria/, на VPS один инстанс с двумя хостами.
+# Каталог/юнит/имена сайтов — pr-<номер PR>.
+#
+# TWO-STATE сборка (порядок мерджа PR #49/#50 не гарантирован): режим
+# выводит scripts/preview-build-lib.mjs detect по package.json чекаута —
+# есть scripts.build:variants → dual (www-grotto/ + www-elyria/), нет →
+# legacy-single (одна сборка `npm run build` из out/ в www/). Легаси —
+# честный одно-сайтовый артефакт с metadata {mode:'legacy-single'}:
+# деплоер поднимет один хост pr-<N>.abnocw.miew.ru, второй сайт не
+# заявляется. Это НЕ фейк и НЕ ослабление — dual-превью появится после
+# мерджа продуктового PR #49. Логика НЕ размазана по YAML-шеллу: упаковку
+# и валидации делает тестируемый node-модуль preview-build-lib.mjs.
 # Сборка из SHA коммита, не из ветки.
 
 on:
@@ -42,20 +51,56 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Сборка обоих вариантов сайта
-        # Контракт с фазой P6: в package.json появляется скрипт
-        # build:variants, который из ЭТОГО ЖЕ head-SHA собирает оба Next-варианта
-        # и раскладывает статические корни РОВНО в www-grotto/ (публичные
-        # «Пивные гроты») и www-elyria/ (Элизия) в корне репо, с обрезкой чужих
-        # маршрутов. До вхождения P6 в ветку этого скрипта нет — шаг упадёт,
-        # и это осознанный enforcement контракта dual-host (P5 не собирает
-        # single-root www/ из out/).
+      - name: Детект режима сборки (dual | legacy-single)
+        # Детект по package.json чекаута (НЕ по ветке): продукты без
+        # build:variants идут легаси-контрактом и не должны падать CI.
+        id: mode
+        run: |
+          set -euo pipefail
+          MODE=$(node scripts/preview-build-lib.mjs detect)
+          case "$MODE" in
+            dual|legacy-single) : ;;
+            *) echo "неизвестный режим: $MODE" >&2; exit 1 ;;
+          esac
+          echo "build_mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "preview mode: $MODE (pr=${{ github.event.pull_request.number }}, sha=${{ github.event.pull_request.head.sha }})"
+
+      - name: Сборка обоих вариантов сайта (dual)
+        # Контракт с фазой P6: build:variants из ЭТОГО ЖЕ head-SHA собирает
+        # оба Next-варианта и раскладывает статические корни в www-grotto/
+        # (публичные «Пивные гроты») и www-elyria/ (Элизия).
+        if: steps.mode.outputs.build_mode == 'dual'
         run: |
           set -euo pipefail
           npm ci
           npm run build:variants
           test -f www-grotto/index.html
           test -f www-elyria/index.html
+
+      - name: Изоляция билд-вариантов (dual, только если скрипт в чекауте)
+        # Обрезку чужих маршрутов делает продуктовый scripts/check-variants.mjs;
+        # в чекаутах без него (main-линейные PR) шаг честно печатает скип.
+        # Детект по ФАЙЛУ, а не uname/флагов: нельзя предполагать наличие.
+        if: steps.mode.outputs.build_mode == 'dual'
+        run: |
+          set -euo pipefail
+          if [ -f scripts/check-variants.mjs ]; then
+            node scripts/check-variants.mjs
+          else
+            echo "skip: scripts/check-variants.mjs отсутствует в чекауте — обрезка маршрутов выполняется самим build:variants"
+          fi
+
+      - name: Сборка одного сайта (legacy-single)
+        # Легаси-контракт main-линейных PR: одна сборка в out/. НЕ фейк:
+        # артефакт честно одно-сайтовый, деплой поднимет только хост
+        # pr-<N>.abnocw.miew.ru, никаких заявлений про второй сайт.
+        if: steps.mode.outputs.build_mode == 'legacy-single'
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -f out/index.html
+          echo "preview mode: legacy-single (build:variants отсутствует; dual-превью появится после мерджа PR #49)"
 
       - name: Preview-гейты
         run: |
@@ -65,34 +110,29 @@ jobs:
           npm run test:preview-pr-link
           npm run test:write-openssh-key
 
-      - name: Изоляция вариантов (A1)
-        # Аудит Z.AI 2026-11-08 (A1): в собранных корнях не должно быть чужих
-        # маркеров — www-grotto без следов Элизии (elisium, «Элизи», /auth/,
-        # coop_session…), www-elyria без снятых маршрутов /combat/ /hunger/ и
-        # со своей подписью (Elysiae, каталог игроков, players/admin/index.html).
-        # Гейт идёт ПОСЛЕ сборки обоих корней и ДО упаковки артефакта: утечка
-        # останавливает выкладку preview раньше, чем дистрибутив уедет на VPS.
-        # Списки маркеров — константы в scripts/check-variants.mjs.
-        run: |
-          set -euo pipefail
-          node scripts/check-variants.mjs www-grotto www-elyria
-
       - name: Упаковка preview-дистрибутива
-        # Ровно тот состав, что уезжает на VPS: server-код, ДВА
-        # статических корня (www-grotto «гроты» + www-elyria «Элизия» —
-        # dual-host P5: один инстанс, два сайта), рантайм-скрипты, пакеты.
-        # Деплой-скрипты preview-deploy.yml сюда НЕ входят.
+        # Ровно тот состав, что уезжает на VPS: server-код, статические
+        # корни (dual: www-grotto + www-elyria; legacy: www из out/),
+        # рантайм-скрипты, пакеты, ЯВНЫЙ metadata.json режима и штамп
+        # preview-sha = head-SHA PR (деплой сверяет и отказывается
+        # выкладывать устаревший артефакт). Упаковку и валидации делает
+        # preview-build-lib.mjs — не YAML-шелл; после пака отдельный
+        # гейт pack-check перепроверяет артефакт по заявленному режиму.
         run: |
           set -euo pipefail
-          rm -rf preview-dist
-          mkdir -p preview-dist/www-grotto preview-dist/www-elyria
-          cp -a www-grotto/. preview-dist/www-grotto/
-          cp -a www-elyria/. preview-dist/www-elyria/
-          cp -a server.js server scripts package.json package-lock.json preview-dist/
-          test -f preview-dist/server.js
-          test -f preview-dist/server/protocol.js
-          test -f preview-dist/www-grotto/index.html
-          test -f preview-dist/www-elyria/index.html
+          MODE="${{ steps.mode.outputs.build_mode }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          PR="${{ github.event.pull_request.number }}"
+          case "$MODE" in
+            dual)
+              node scripts/preview-build-lib.mjs pack-dual preview-dist --sha="$SHA" --branch="$BRANCH" --pr="$PR"
+              ;;
+            legacy-single)
+              node scripts/preview-build-lib.mjs pack-legacy preview-dist --sha="$SHA" --branch="$BRANCH" --pr="$PR"
+              ;;
+          esac
+          node scripts/preview-build-lib.mjs pack-check preview-dist "$MODE"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

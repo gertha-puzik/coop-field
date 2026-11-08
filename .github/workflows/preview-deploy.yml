@@ -8,16 +8,25 @@ name: Preview PR (deploy)
 # Правила доверия:
 # - всё, что исполняется на VPS (deploy/vps/preview-apply.sh, юнит, sudoers,
 #   nginx-фрагменты) и все утилиты Джобы (scripts/preview-slug.mjs,
-#   preview-pr-link.mjs, write-openssh-key.sh) чекаутятся из МЕЙНА;
+#   preview-build-lib.mjs, preview-pr-link.mjs, write-openssh-key.sh)
+#   чекаутятся из МЕЙНА;
 # - из артефакта сборки PR на VPS уезжает только код/статика/пакеты
-#   (server.js, server/, www-grotto/, www-elyria/ — dual-host P5: два
-#   статических корня, scripts/, package*.json) — доверие то же,
-#   что и раньше: PR-код работает на VPS только юзером deploy-preview
-#   в /opt/coop-field-preview/<slug>, прод и root недостижимы;
+#   (server.js, server/, статические корни, scripts/, package*.json) —
+#   доверие то же, что и раньше: PR-код работает на VPS только юзером
+#   deploy-preview в /opt/coop-field-preview/<slug>, прод и root недостижимы;
 # - форки не деплоим: head_repository обязан совпадать с этим репо;
 # - PR-номер/состояние берём из GitHub API (не из PR-контролируемых данных);
 # - юнит и sudoers apply не ставит: их ставит preview-bootstrap.sh от root,
 #   apply только включает/перезапускает установленный юнит.
+#
+# TWO-STATE артефакт (порядок мерджа PR #49/#50 НЕ гарантирован, деплой
+# обязан работать в любой комбинации): режим определяет preview-build-lib.mjs
+# artifact-mode по metadata.json, а если билд старого формата без меты —
+# по корневым каталогам (www-grotto+www-elyria → dual; www/ → legacy-single).
+# dual — оба сайта (pr-<N>.abnocw.miew.ru гроты + pr-<N>.elisium.miew.ru
+# Элизия). legacy-single — ЧЕСТНЫЙ один сайт на abnocw-хосте: второй хост
+# не заявляем (пометка «dual-host появится после мерджа PR #49»), это не
+# ослабление и не «частичная неудача».
 
 on:
   workflow_run:
@@ -128,6 +137,28 @@ jobs:
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
+      - name: Режим артефакта (dual | legacy-single)
+        # Заявленный режим — metadata.json нового билда; его нет (артефакт
+        # старого main-формата) — честный вывод по корневым каталогам через
+        # ту же либу, что паковала билд. Молчаливых фейлов нет: нераспознанный
+        # набор корней = ошибка джобы, а не «догадка».
+        if: steps.meta.outputs.state == 'open'
+        id: artmode
+        run: |
+          set -euo pipefail
+          MODE="$(node scripts/preview-build-lib.mjs artifact-mode preview-dist)"
+          case "$MODE" in
+            dual|legacy-single) : ;;
+            *) echo "::error::артефакт не распознан как dual/legacy-single: $MODE" >&2; exit 1 ;;
+          esac
+          # SHA-гейт до rsync (раньше VPS-фазы «trusted»: расхождение штампа
+          # с workflow_run SHA = устаревшая сборка, не выкладываем; артефакт
+          # старого формата без штампа честно пропускается — VPS verify
+          # ответит sha=none).
+          node scripts/preview-build-lib.mjs artifact-sha preview-dist "${{ steps.meta.outputs.sha }}"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "artifact mode: $MODE (pr=${{ steps.meta.outputs.pr }}, sha=${{ steps.meta.outputs.sha }})"
+
       - name: Выкладка или снос на VPS
         id: ship
         env:
@@ -140,6 +171,7 @@ jobs:
           PORT: ${{ steps.meta.outputs.port }}
           SHA: ${{ steps.meta.outputs.sha }}
           STATE: ${{ steps.meta.outputs.state }}
+          ARTMODE: ${{ steps.artmode.outputs.mode }}
         run: |
           set -euo pipefail
           if [ -z "${SSH_KEY:-}" ]; then
@@ -159,27 +191,83 @@ jobs:
             echo "status=destroyed" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www-grotto incoming-preview/$SLUG/www-elyria incoming-preview/$SLUG/server"
+          # Каталоги входа — по режиму артефакта: legacy-single несёт один
+          # корень www/ (main-контракт до продуктового PR), dual — оба
+          # вариантных. Режимную уборку остатков другого формата на VPS
+          # делает сам preview-apply.sh по корням входа.
+          if [ "$ARTMODE" = "legacy-single" ]; then
+            $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www incoming-preview/$SLUG/server"
+          else
+            $SSH "$SSH_USER@$SSH_HOST" "mkdir -p incoming-preview/$SLUG/www-grotto incoming-preview/$SLUG/www-elyria incoming-preview/$SLUG/server"
+          fi
           rsync -az -e "$SSH" deploy/vps/preview-apply.sh deploy/vps/preview-bootstrap.sh deploy/vps/sudoers-coop-field-preview deploy/vps/coop-field-preview@.service deploy/vps/nginx-preview.conf deploy/vps/nginx-preview-include.conf "$SSH_USER@$SSH_HOST:incoming-preview/"
           if ! $SSH "$SSH_USER@$SSH_HOST" "test -d /opt/coop-field-preview && test -w /opt/coop-field-preview"; then
             echo "::warning::На VPS ещё нет bootstrap. От root: sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh"
             echo "status=needs-bootstrap" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Артефакт dual-host: оба корня (www-grotto + www-elyria) от того же SHA.
           rsync -az --delete -e "$SSH" preview-dist/server/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server/"
           rsync -az -e "$SSH" preview-dist/server.js "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/server.js"
-          rsync -az --delete -e "$SSH" preview-dist/www-grotto/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-grotto/"
-          rsync -az --delete -e "$SSH" preview-dist/www-elyria/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-elyria/"
+          if [ "$ARTMODE" = "legacy-single" ]; then
+            rsync -az --delete -e "$SSH" preview-dist/www/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www/"
+          else
+            rsync -az --delete -e "$SSH" preview-dist/www-grotto/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-grotto/"
+            rsync -az --delete -e "$SSH" preview-dist/www-elyria/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/www-elyria/"
+          fi
           rsync -az --delete -e "$SSH" preview-dist/scripts/ "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/scripts/"
           rsync -az -e "$SSH" preview-dist/package.json preview-dist/package-lock.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
-          $SSH "$SSH_USER@$SSH_HOST" "PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_HOST2=$HOST2 PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh"
-          echo "status=live" >> "$GITHUB_OUTPUT"
+          if [ -f preview-dist/preview-sha ]; then
+            rsync -az -e "$SSH" preview-dist/preview-sha "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
+          fi
+          if [ -f preview-dist/metadata.json ]; then
+            rsync -az -e "$SSH" preview-dist/metadata.json "$SSH_USER@$SSH_HOST:incoming-preview/$SLUG/"
+          fi
+          # Apply с пост-деплой верификацией (без ssh изнутри apply — curl с
+          # самой VPS к публичным именам). bounded polling: 4 попытки по 15 c —
+          # systemctl/node подъём; TLS root-cron выпускает до ~5 мин, поэтому
+          # needs-tls не ждём пять минут в одном прогоне, а честно отдаём
+          # статус (следующий push перепроверит, http уже работает).
+          # legacy-single: PREVIEW_HOST2 не передаём — второго хоста нет,
+          # apply ожидает ровно один abnocw-хост (host-вычисление у ветки
+          # живёт в preview-apply.sh, дефолт по slug корректен и для dual).
+          APPLY_ENV="PREVIEW_SLUG=$SLUG PREVIEW_HOST=$HOST PREVIEW_PORT=$PORT PREVIEW_SHA=$SHA PREVIEW_TRUSTED_SHA=$SHA"
+          if [ "$ARTMODE" != "legacy-single" ]; then
+            APPLY_ENV="$APPLY_ENV PREVIEW_HOST2=$HOST2"
+          fi
+          RC=0
+          $SSH "$SSH_USER@$SSH_HOST" "$APPLY_ENV PREVIEW_VERIFY_TRIES=4 PREVIEW_VERIFY_SLEEP=15 PREVIEW_ACTION=apply bash incoming-preview/preview-apply.sh" 2>&1 | tee /tmp/preview-apply.log || RC=$?
+          OVERALL="$(sed -n 's/^PREVIEW-RESULT overall=//p' /tmp/preview-apply.log | tail -n 1)"
+          GROTTO_V="$(sed -n 's/^PREVIEW-RESULT grotto=//p' /tmp/preview-apply.log | tail -n 1 | cut -d' ' -f1)"
+          ELYRIA_V="$(sed -n 's/^PREVIEW-RESULT elyria=//p' /tmp/preview-apply.log | tail -n 1 | cut -d' ' -f1)"
+          REASONS="$(grep '^PREVIEW-RESULT ' /tmp/preview-apply.log | grep -o 'reasons=[^ ]*' | sort -u | tr '\n' ' ' | sed 's/reasons=//g')"
+          VTIME="$(sed -n 's/.*verified_at=//p' /tmp/preview-apply.log | tail -n 1)"
+          # Честный статус: live — только после независимой верификации хостов
+          # (exit 0 от verify-фазы: HTTPS, корни, health, WS-проба, смоук).
+          # Пустой overall — транспортный провал, называем его failed.
+          if [ -z "${OVERALL:-}" ]; then OVERALL="failed"; fi
+          echo "status=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "grotto=${GROTTO_V:-?}" >> "$GITHUB_OUTPUT"
+          echo "elyria=${ELYRIA_V:-none}" >> "$GITHUB_OUTPUT"
+          echo "reasons=${REASONS:-none}" >> "$GITHUB_OUTPUT"
+          echo "verified_at=${VTIME:-}" >> "$GITHUB_OUTPUT"
+          if [ "$RC" != 0 ]; then
+            # Шаг провалился ПОСЛЕ записи статуса: комментарий (always())
+            # успевает честно отчитаться до падения run'а.
+            exit "$RC"
+          fi
 
       - name: Deployment и один комментарий
         # Маркер-комментарий ОДИН на PR (обновляется, не плодится; провал
-        # сборки маркерит preview-build.yml той же меткой). Statuses — только
-        # для live; шапка PR — preview-pr-link.mjs с маркерами-обёртками.
+        # сборки маркерит preview-build.yml той же меткой). Статус берём из
+        # честного вывода apply (PREVIEW-RESULT overall=*), а не из факта
+        # «rsync прошёл»: live ставится только после независимой верификации
+        # хостов (включая WS-пробу и функциональный смоук). needs-dns/
+        # needs-tls/partial-failure/failed — с причинами и временем последней
+        # верификации. Спекулятивных ссылок (до live/needs-tls) не публикуем.
+        # §9.5: dual — ДВА блока (гаражи/Элизия) со своим статусом каждый;
+        # legacy-single — ОДИН блок + честная пометка «dual-host появится
+        # после мерджа PR #49» (это нормальный легаси-режим, не ошибка и
+        # не partial-failure).
         if: ${{ always() && steps.meta.outputs.pr != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,49 +276,107 @@ jobs:
           SHA: ${{ steps.meta.outputs.sha }}
           SLUG: ${{ steps.meta.outputs.slug }}
           STATUS: ${{ steps.ship.outputs.status }}
+          GROTTO: ${{ steps.ship.outputs.grotto }}
+          ELYRIA: ${{ steps.ship.outputs.elyria }}
+          REASONS: ${{ steps.ship.outputs.reasons }}
+          VTIME: ${{ steps.ship.outputs.verified_at }}
           PR: ${{ steps.meta.outputs.pr }}
+          ARTMODE: ${{ steps.artmode.outputs.mode }}
           ENV_NAME: preview-pr-${{ steps.meta.outputs.pr }}
         run: |
           set -euo pipefail
           MARKER="<!-- coop-field-preview -->"
           NOW="$(date -u '+%Y-%m-%d %H:%M UTC')"
-          # Статусы построчно для КАЖДОГО хоста: статус один на PR (один apply
-          # покрывает оба сайта), но две строки читаются легче.
-          if [ "${STATUS:-}" = "destroyed" ]; then
-            BODY="${MARKER}
-          Гроты (\`pr-${PR}\`): ${URL} — снесён.
-          Элизия (\`pr-${PR}\`): ${URL2} — снесена."
-            STATE=inactive
-          elif [ "${STATUS:-}" = "live" ]; then
-            BODY="${MARKER}
-          Гроты «Пивные гроты»: ${URL} — live.
-          Элизия «Elyria Eides»: ${URL2} — live.
+          if [ "$ARTMODE" = "legacy-single" ]; then
+            LEGNOTE="legacy single-site; dual-host появится после мерджа PR #49.
+          "
+          else
+            LEGNOTE=""
+          fi
+          case "${STATUS:-}" in
+            destroyed)
+              BODY="${MARKER}
+          ${LEGNOTE}Окружение \`pr-${PR}\` снесено: оба сайта и данные preview убраны с VPS."
+              STATE=inactive ;;
+            live)
+              if [ "$ARTMODE" = "legacy-single" ]; then
+                BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — live. Верификация хоста (DNS, редирект, TLS, корень, health, WS-проба): прошла ${VTIME:-$NOW}.
+          Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Данные прода не используются."
+              else
+                BODY="${MARKER}
+          Beer Grottoes:
+          ${URL} — live. Верификация: ${VTIME:-$NOW}.
+          Elyria Eides:
+          ${URL2} — live. Верификация: ${VTIME:-$NOW}.
           Сборка с коммита \`${SHA:0:7}\` (не из имени ветки). Оба сайта и комната — из этого SHA, данные прода не используются.
-          Выложено: ${NOW}.
-          HTTPS: per-host сертификат на КАЖДЫЙ из двух хостов — root-cron на VPS выдаёт их в течение ~5 минут; до этого первый прогон открывается по чистому http (это ожидаемо, не поломка)."
-            STATE=success
-          elif [ "${STATUS:-}" = "needs-secret" ]; then
-            BODY="${MARKER}
-          Гроты: ${URL} — не выложен: нет секрета \`PREVIEW_SSH_KEY\`.
-          Элизия: ${URL2} — не выложен: тот же секрет, один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md)."
-            STATE=""
-          elif [ "${STATUS:-}" = "needs-bootstrap" ]; then
-            BODY="${MARKER}
-          Гроты: ${URL} — SSH есть, на VPS ещё нет bootstrap.
-          Элизия: ${URL2} — то же окружение. От root один раз:
+          HTTPS: per-host сертификат на КАЖДЫЙ хост — root-cron на VPS выдаёт их в течение ~5 минут; до этого первый прогон открывается по чистому http (это ожидаемо, не поломка)."
+              fi
+              STATE=success ;;
+            partial-failure)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — ${GROTTO:-unknown}.
+          Elyria Eides:
+          ${URL2} — ${ELYRIA:-unknown}.
+          Частичная неудача: один сайт не прошёл верификацию, второй честно живёт по своему статусу.
+          Причины: ${REASONS:-unknown}. Коммит \`${SHA:0:7}\`, проверено ${VTIME:-$NOW}.
+          Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+              STATE=failure ;;
+            needs-tls)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — выложено, https-сертификат ещё не готов.
+          Elyria Eides:
+          ${URL2} — выложено, тот же сертификат-конвейер.
+          root-cron на VPS выпускает per-host сертификаты каждые ~5 минут; по http сайты уже отвечает. Ссылку можно открывать, как только статус станет live (следующий push или через повторную проверку). Причины последней проверки: ${REASONS:-none}. Проверено ${VTIME:-$NOW}."
+              STATE=in_progress ;;
+            needs-dns)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — не резолвится.
+          Elyria Eides:
+          ${URL2} — не резолвится.
+          Сервер честно отказывается звать несуществующее имя live: нужен wildcard pr-*.abnocw.miew.ru / pr-*.elisium.miew.ru (см. docs/PREVIEW-ENVIRONMENTS.md). Причины: ${REASONS:-dns}. Проверено ${VTIME:-$NOW}."
+              STATE=failure ;;
+            failed)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — не выложен или не прошёл верификацию (${GROTTO:-?}).
+          Elyria Eides:
+          ${URL2} — не выложен или не прошёл верификацию (${ELYRIA:-?}).
+          Причины: ${REASONS:-unknown}. Коммит \`${SHA:0:7}\`, проверено ${VTIME:-$NOW}.
+          Лог: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+              STATE=failure ;;
+            needs-secret)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — не выложен: нет секрета \`PREVIEW_SSH_KEY\`.
+          Elyria Eides:
+          ${URL2} — не выложен: тот же секрет, один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${{ github.repository }}/blob/${SHA}/docs/PREVIEW-ENVIRONMENTS.md)."
+              STATE="" ;;
+            needs-bootstrap)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — SSH есть, на VPS ещё нет bootstrap.
+          Elyria Eides:
+          ${URL2} — то же окружение. От root один раз:
           \`\`\`
           sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh
           \`\`\`
           После этого следующий push в PR выложит оба сайта."
-            STATE=""
-          else
-            BODY="${MARKER}
-          Гроты: ${URL} — не выложен (ошибка джобы).
-          Элизия: ${URL2} — не выложен (то же окружение). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
+              STATE="" ;;
+            *)
+              BODY="${MARKER}
+          ${LEGNOTE}Beer Grottoes:
+          ${URL} — не выложен (ошибка джобы).
+          Elyria Eides:
+          ${URL2} — не выложен (то же окружение). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:
           \`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\`"
-            STATE=""
-          fi
-          if [ -n "$STATE" ] && [ "$STATE" != "inactive" ]; then
+              STATE="" ;;
+          esac
+          if [ "$STATE" = "success" ] || [ "$STATE" = "in_progress" ] || [ "$STATE" = "failure" ]; then
             DEP=$(gh api -X POST "repos/${{ github.repository }}/deployments" \
               -f ref="$SHA" -f environment="$ENV_NAME" -F auto_merge=false \
               -f description="preview $SLUG: гроты ${URL}, Элизия ${URL2}" \
@@ -241,31 +387,51 @@ jobs:
                 -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true)
             fi
           fi
-          CID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
+          CID=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --jq ".[] | select(.body|startswith(\"${MARKER}\")) | .id" | tail -n 1)
           if [ -n "$CID" ]; then
             gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$CID" -f body="$BODY"
           else
-            gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -f body="$BODY"
+            gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -f body="$BODY"
           fi
 
           # Шапка PR: живая ссылка первым блоком описания. Маркеры делают
           # перезапись идемпотентной — комментарий в треде так не может (тонет).
-          case "${STATUS:-}" in
-            live)
-              HDR="> 🚀 **Гроты:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`, данные прода не используются.
-          > 🚀 **Элизия:** [${URL2}](${URL2}) — тот же коммит и та же комната. HTTPS: per-host сертификат от root-cron на VPS (до ~5 минут после деплоя)." ;;
-            destroyed)
-              HDR="> 🚀 **Preview:** снесён — PR закрыт, оба сайта (${URL} и ${URL2}) и окружение убраны с VPS." ;;
-            needs-secret)
-              HDR="> 🚀 **Гроты:** ${URL} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md).
-          > 🚀 **Элизия:** ${URL2} — появится тем же шагом вместе с гротами." ;;
-            needs-bootstrap)
-              HDR="> 🚀 **Гроты:** ${URL} — ждёт один bootstrap на VPS от root.
-          > 🚀 **Элизия:** ${URL2} — появится тем же bootstrap'ом." ;;
-            *)
-              HDR="> 🚀 **Гроты:** ${URL} — не выложен (ошибка джобы).
-          > 🚀 **Элизия:** ${URL2} — не выложен (то же окружение)." ;;
-          esac
+          if [ "$ARTMODE" = "legacy-single" ]; then
+            case "${STATUS:-}" in
+              live)
+                HDR="> 🚀 **Beer Grottoes:** [${URL}](${URL}) — live, сборка с коммита \`${SHA:0:7}\` (legacy single-site; dual-host появится после мерджа PR #49). Верифицировано ${VTIME:-$NOW}." ;;
+              needs-tls)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — выложено, ждём https-сертификат (~5 мин, root-cron; http уже работает). Legacy single-site до мерджа PR #49." ;;
+              destroyed)
+                HDR="> 🚀 **Preview:** снесён — PR закрыт, сайт и окружение убраны с VPS." ;;
+              needs-secret)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md). Legacy single-site до мерджа PR #49." ;;
+              needs-bootstrap)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — ждёт один bootstrap на VPS от root. Legacy single-site до мерджа PR #49." ;;
+              *)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — не выложен или не верифицирован (статус: ${STATUS:-unknown}). Legacy single-site до мерджа PR #49." ;;
+            esac
+          else
+            case "${STATUS:-}" in
+              live)
+                HDR="> 🚀 **Beer Grottoes:** [${URL}](${URL}) — сборка с коммита \`${SHA:0:7}\`, данные прода не используются.
+          > 🚀 **Elyria Eides:** [${URL2}](${URL2}) — тот же коммит и та же комната. Верифицировано ${VTIME:-$NOW}." ;;
+              needs-tls)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — выложено, ждём https-сертификат (~5 мин, root-cron на VPS; http уже работает).
+          > 🚀 **Elyria Eides:** ${URL2} — выложено, тот же конвейер сертификатов." ;;
+              destroyed)
+                HDR="> 🚀 **Preview:** снесён — PR закрыт, оба сайта (${URL} и ${URL2}) и окружение убраны с VPS." ;;
+              needs-secret)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md).
+          > 🚀 **Elyria Eides:** ${URL2} — появится тем же шагом вместе с гротами." ;;
+              needs-bootstrap)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — ждёт один bootstrap на VPS от root.
+          > 🚀 **Elyria Eides:** ${URL2} — появится тем же bootstrap'ом." ;;
+              *)
+                HDR="> 🚀 **Beer Grottoes:** ${URL} — не выложен или не верифицирован (статус: ${STATUS:-unknown}).
+          > 🚀 **Elyria Eides:** ${URL2} — то же окружение." ;;
+            esac
+          fi
           printf '%s\n' "$HDR" > /tmp/preview-header.md
           node scripts/preview-pr-link.mjs apply --repo "${{ github.repository }}" --pr "$PR" --file /tmp/preview-header.md \
             || echo "::warning::шапка PR не обновилась — ссылка осталась в комментарии"

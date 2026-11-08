@@ -49,14 +49,23 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 каталог, хоть у него и два сайта). Девятый PR получит отказ, пока не закроют
 старый.
 
-## Артефакт сборки: два корня вместо одного
+## Артефакт сборки: two-state — dual или legacy-single
 
-`preview-build.yml` собирает из head-SHA PR оба варианта фронтенда
-(`npm run build:variants` — скрипт кладёт статические корни ровно в
-`www-grotto/` и `www-elyria/`, с обрезкой чужих маршрутов) и пакует артефакт:
+`preview-build.yml` собирает из head-SHA PR тот формат, который ветка
+честно может дать (детект — `scripts/preview-build-lib.mjs` по
+`package.json` чекаута, не по ветке):
+
+- **dual** (есть `scripts.build:variants`): оба варианта фронтенда, корни
+  ровно в `www-grotto/` и `www-elyria/`, с обрезкой чужих маршрутов;
+- **legacy-single** (скрипта нет — main-линейные и инфра-PR): одна сборка
+  `npm run build` (статик-экспорт `out/`) кладётся в единый корень `www/`.
+  Это честный одно-сайтовый превью-артефакт: деплой поднимает ОДИН хост
+  `pr-<N>.abnocw.miew.ru`, второй сайт не заявляется и не верифицируется
+  (пометка «dual-host появится после мерджа продуктового PR»), это не
+  `partial-failure`.
 
 ```text
-preview-dist/
+preview-dist/                # dual-форма:
   server.js
   server/            # общий код комнаты — ОДИН инстанс на PR
   scripts/
@@ -66,25 +75,17 @@ preview-dist/
     index.html
   www-elyria/        # билд Элизии
     index.html
+  preview-sha        # head-SHA, гейт деплоя (там же и в legacy)
+  metadata.json      # { mode: dual | legacy-single, sha, branch, pr } — режим ЯВНЫЙ
 ```
 
-Оба `index.html` проверяются как обязательные: сборка без любого из корней —
-провалена, выкладки не будет.
-
-С волны A1 (2026-11-08) сборка дополнительно проходит шаг **«Изоляция вариантов (A1)»** —
-`node scripts/check-variants.mjs www-grotto www-elyria`, ПОСЛЕ сборки обоих корней и ДО
-упаковки артефакта: www-grotto не содержит НИ ОДНОГО маркера Элизии (включая латиницу
-`elisium` — кириллический греп «Элизи» недостаточен), www-elyria не содержит снятых
-маршрутов `/combat/`+`/hunger/` и несёт признаки живой Элизии, ссылки на чанки
-`_next/static/chunks/*` цельны. Утечка = красный ранн сборки, артефакт не пакуется,
-выкладки нет.
-
-**Ветка инфраструктуры.** Dual-host-инфраструктура VPS (preview-apply с двумя
-server-блоками nginx, per-host TLS-cron, bootstrap юнита/sudoers) готовится ОТДЕЛЬНЫМ
-инфра-PR из ветки `feature/preview-dual-host-infra` — он НЕ влит и ждёт явного «ок»
-владелицы (изменения на VPS — её решение; bootstrap от 2026-11-07 уже выполнен).
-Этот PR #49 несёт только репо-часть конвейера: `preview-build.yml`, включая шаг
-изоляции A1.
+В legacy-форме вместо `www-grotto/`+`www-elyria/` — корень `www/`.
+Оба `index.html` dual-формы проверяются как обязательные: сборка без
+любого из корней — провалена, выкладки не будет; в legacy обязателен
+`www/index.html`. Свежая упаковка без `metadata.json` не проходит
+`pack-check` (режим обязан быть явным), а деплой, получив артефакт старого
+формата без меты, честно выводит режим по корневым каталогам — молчаливых
+угадываний нет. Недоверие `npm exit 0` не практикуется: валидации в либе.
 
 ## Два workflow и секреты (после security-фикса PR #41)
 
@@ -188,6 +189,99 @@ Merge и закрытие — одно событие `pull_request: closed` (в
   80/443/8787.
 
 Чужой slug (`../`, слэш, имя юнита прода) скрипт отвергает до любых `rm`.
+
+## Честные статусы деплоя и пост-верификация (без ssh изнутри apply)
+
+Правило (B4): **live ≠ «rsync прошёл»**. `preview-apply.sh` после выкладки
+сам (на VPS, локальными `dig`/`curl` к публичным именам, никакого ssh)
+проверяет каждый хост и печатает `PREVIEW-RESULT`-строки; workflow читает
+их и публикует точный статус. `live` ставится только после независимой
+верификации ОБЕИХ хостов.
+
+Проверки на host (дважды: `pr-N.abnocw.miew.ru` → корень `www-grotto`,
+`pr-N.elisium.miew.ru` → корень `www-elyria`):
+
+1. DNS: имя резолвится (fallback-цепочка dig→nslookup→getent);
+2. HTTP→HTTPS редирект (80 жив, 301 на https-имя);
+3. TLS: https-корень отвечает 200 и тело байт-в-байт равно локальному
+   `index.html` этого хоста (не соседа!) — иначе `index-mismatch`;
+4. `/health`: JSON `{ok,rooms,maxPlayers}` c `ok:true`;
+5. дифференциация: `www-grotto`… гроты: `/profiles` обязан быть 404
+   (публичный хост), Элизия: `/profiles` 200 `ok`. Утечка наружу —
+   `profiles-leak-200`, пропавшая дифференциация у Элизии — `profiles-404`;
+6. `site.marker` (если билд положил): байты совпадают с вариантом хоста —
+   иначе `marker-mismatch`;
+7. WS-проба: upgrade-рука `GET /ws` с заголовками RFC 6455
+   (`Upgrade: websocket`, `Connection: Upgrade`, случайный base64-16 байт
+   `Sec-WebSocket-Key`, `Version: 13`, `Origin` хоста) — точка сокета
+   обязана ответить; молчание сети (000: conn refused / TLS-fail) — причина
+   `ws-000`, `live` без живой WS-точки не ставится (голого health-HTTP
+   недостаточно);
+8. функциональный смоук (только честный dual): гроты — `/auth/me` обязан
+   быть 401/403/404/429 (200 = течь API Элизии, причина
+   `elyria-api-leak-<code>`); Элизия — `POST /auth/register` и
+   `POST /auth/login` пустым телом отвечают 400/401/403/429 (не 404),
+   `POST /cfg` не-админу 403 (200 = админка открыта, `cfg-admin-open`);
+9. SHA: `preview-sha` в артефакте (штампит `preview-build.yml`) против
+   head PR (`PREVIEW_TRUSTED_SHA` в deploy-запросе): расхождение —
+   `sha-stale`; артефакт старой сборки apply не выкладывает вовсе.
+
+Bounded polling: `PREVIEW_VERIFY_TRIES=4` × `PREVIEW_VERIFY_SLEEP=15`
+(деплой-вызов) — конечные попытки с пересчётом причин в каждой, а не
+слепой sleep до успеха. После последней попытки — статус с последними
+причинами.
+
+Статусы (overall / per-host) и их exit-коды:
+
+| overall | grotto/elyria | exit | смысл |
+| --- | --- | --- | --- |
+| `live` | `ok` | 0 | оба хоста прошли ВСЕ проверки |
+| `needs-dns` | `needs-dns` | 6 | оба имени не резолвятся (wildcard-DNS) |
+| `needs-tls` | `needs-tls` | 5 | выложено, http жив, серты от root-cron ещё не готовы (~5 мин) |
+| `partial-failure` | `ok`/`broken`/`needs-tls`/`needs-dns` | 3 | один сайт честно жив/мёртв, другой нет |
+| `failed` | `broken`/`…` | 4 | оба не прошли или SHA-стейл |
+| `unverified` | — | 0 | только dry-прогон с `PREVIEW_VERIFY=0` (тесты), в деплое не используется |
+| `needs-bootstrap` | — | 0 | нет `/opt/coop-field-preview` (ставит root один раз) |
+| `destroyed` | — | 0 | снос закрытого PR, идемпотентный, только свой slug |
+| `needs-secret` | — | 0 | не задан `PREVIEW_SSH_KEY` |
+
+`building`/`deploying` — это прогресс GitHub Actions run'а (run идёт),
+они не публикуются как результат. PR-комментарий (маркер
+`<!-- coop-field-preview -->`, ОДИН на PR, обновляется): оба адреса,
+реальный статус каждого хоста, SHA, `verified_at` (время последней
+верификации), причина (`reasons=...`) если отказ. Спекулятивные ссылки
+до `live`/`needs-tls` не публикуются.
+
+### Почему упал run 42414900091 (PR #49, старый деплой из main)
+
+`preview-deploy.yml` в **main** (односайтовая эпоха) ждал артефакт с
+каталогом `preview-dist/www/` и делал `rsync ... $SSH_HOST:incoming-preview/$SLUG/www/`.
+Продуктовая ветка PR #49 собрала артефакт нового формата
+(`www-grotto/` + `www-elyria/`), каталога `www/` в нём нет — rsync
+завершился с `exit code 23` (partial transfer: исходные файлы пропали
+во время передачи). Дословно из `gh run view 42414900091 --log-failed`,
+шаг «Выкладка или снос preview»:
+
+```
+rsync: [sender] change_dir "/home/runner/work/coop-field/coop-field/preview-dist/www" failed: No such file or directory (2)
+rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1356) [sender=3.2.7]
+##[error]Process completed with exit code 23.
+```
+
+Это не баг кода, а рассинхрон эпох: деплой-скрипт main'а не знал о
+dual-root-артефакте. После мерджа ЭТОГО инфра-PR в main и наката его на
+продуктовые PR (следующий push) format артефакта и деплоя согласованы;
+кейс задокументирован как ожидаемая расплата за
+«привилегированный код всегда только из main».
+
+С 2026-11-08 конвейер two-state закрывает этот класс рассинхронов
+навсегда: сборка пакует в артефакт ЯВНЫЙ `metadata.json {mode, sha}`,
+деплой (всегда из main) распознаёт ОБА формата — по метаданным, а у
+артефактов старой эпохи без меты честно по корневым каталогам
+(`www-grotto+www-elyria` → dual, `www/` → legacy-single). Порядок мерджа
+продуктового и инфраструктурного PR теперь безопасен в любой
+комбинации: любой PR из любой эпохи деплоится тем реестром правил,
+который в момент деплоя жив на main.
 
 ## Что уже сделано (2026-11-07, Europe/Samara)
 
