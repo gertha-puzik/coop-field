@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Simulator from "@/components/sim/simulator";
+import { ThemeSelect } from "@/components/site/theme-select";
+import slotStyles from "@/components/site/theme-select.module.css";
 
 export const metadata: Metadata = {
   title: "Wanderpaws: Elysiae",
@@ -7,5 +9,16 @@ export const metadata: Metadata = {
 };
 
 export default function ElisionPage() {
-  return <Simulator mode="elision" />;
+  return (
+    <>
+      <Simulator mode="elision" />
+      {/* Компакт-селект темы поверх симулятора: фиксированный слот в правом
+          верхнем углу экрана входа. На самом поле селект уже есть в хроме
+          симулятора — слот прячет себя через CSS (body:has(header.shrink-0)),
+          чтобы не дублировать и не перекрывать кнопки хрома. */}
+      <div className={slotStyles.elisionThemeSlot}>
+        <ThemeSelect />
+      </div>
+    </>
+  );
 }

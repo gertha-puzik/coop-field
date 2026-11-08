@@ -74,6 +74,10 @@ import { ApplyPreview } from './cfg-apply-preview';
 // Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
+// Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
+// вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
+import { DashShell, type DashTab } from './dash-shell';
+import { ThemeSelect } from '@/components/site/theme-select';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -88,10 +92,9 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию), «Игроки на поле»,
-   *  «Броня» — редактор кривой защиты (мандат владелицы 2026-11-08) — и
-   *  «Спрайты» (менеджер спрайтов: загрузка/категории/удаление). */
-  const [tab, setTab] = useState<'cfg' | 'field' | 'armor' | 'sprites'>('cfg');
+  /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
+   *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив). */
+  const [tab, setTab] = useState('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -315,104 +318,12 @@ export default function CfgDashboard() {
 
   const registryKeys = snap ? Object.keys(snap.registry) : [];
 
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Панель управления</h1>
-        <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
-          ← Главное меню
-        </a>
-      </header>
-
-      {status ? (
-        <div
-          className={`rounded-lg border p-3 ${
-            status.kind === 'ok'
-              ? 'border-emerald-900/60 bg-emerald-950/40'
-              : 'border-red-900/60 bg-red-950/40'
-          }`}
-        >
-          <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
-            {status.text}
-          </p>
-          {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
-              {status.details}
-            </pre>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Разделы панели: реестр конфига, «Броня» и «Игроки на поле». */}
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Разделы панели">
-        <button
-          type="button"
-          onClick={() => setTab('cfg')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'cfg'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Конфиг
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('armor')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'armor'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Броня
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('field')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'field'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Игроки на поле
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('sprites')}
-          className={`h-8 rounded-md border px-3 text-sm ${
-            tab === 'sprites'
-              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
-              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
-          }`}
-        >
-          Спрайты
-        </button>
-      </nav>
-
-      {/* Предпросмотр «было → станет» — общий над вкладками: apply-кнопки и
-       *  «Конфига», и «Брони» открывают его, отправка — только вторым шагом. */}
-      {pending && snap && draft ? (
-        <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
-      ) : null}
-
-      {tab === 'field' ? (
-        <PlayersFieldTab />
-      ) : tab === 'armor' && snap && draft && snap.registry['combat.armorCurve'] ? (
-        <ArmorTab
-          snap={snap}
-          meta={snap.registry['combat.armorCurve']}
-          points={draft.points.armorCurve || []}
-          issue={curveIssue(draft.points.armorCurve, snap.registry['combat.armorCurve'])}
-          busy={busy}
-          onPoints={(pts) => setPoints('armorCurve', pts)}
-          onApply={requestApply}
-        />
-      ) : tab === 'sprites' ? (
-        <SpritesTab />
-      ) : snap && draft ? (
-        <>
+  /* Вкладка «Конфиг»: главный редактор реестра (секция «Комнатные настройки»
+   * остаётся внутри, как раньше) + перенос значений + история бэкапов.
+   * Содержимое вкладки НЕ менялось — менялась только оболочка навигации. */
+  const renderCfg = () =>
+    snap && draft ? (
+      <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <p className="text-xs text-[var(--sim-text-faint)]">
               Формат настроек v{snap.v} · {registryKeys.length} ключей · хранится {snap.historyKeep} последних резервных копий.
@@ -594,8 +505,80 @@ export default function CfgDashboard() {
         <p className="text-sm text-[var(--sim-text-soft)]">
           Панель не загрузилась. Обновите страницу или проверьте права администратора.
         </p>
-      )}
-    </main>
+      );
+
+  /* Дескрипторы вкладок панели — источник сайд-меню и контента. Все волны
+   * сведены (2026-11-08): «Броня» (кривая защиты) и «Спрайты» (менеджер
+   * скинов) — live-рендеры, рендер Брони гаснет без снапшота реестра. */
+  const tabs: DashTab[] = [
+    { id: 'field', title: 'Игроки на поле', render: () => <PlayersFieldTab /> },
+    { id: 'cfg', title: 'Конфиг', render: renderCfg },
+    {
+      id: 'armor',
+      title: 'Броня',
+      render: () =>
+        snap && draft && snap.registry['combat.armorCurve'] ? (
+          <ArmorTab
+            snap={snap}
+            meta={snap.registry['combat.armorCurve']}
+            points={draft.points.armorCurve || []}
+            issue={curveIssue(draft.points.armorCurve, snap.registry['combat.armorCurve'])}
+            busy={busy}
+            onPoints={(pts) => setPoints('armorCurve', pts)}
+            onApply={requestApply}
+          />
+        ) : null,
+    },
+    { id: 'sprites', title: 'Спрайты', render: () => <SpritesTab /> },
+  ];
+
+  const activeTab = tabs.find((t) => t.id === tab) ?? null;
+
+  return (
+    <DashShell
+      tabs={tabs}
+      active={tab}
+      onPick={setTab}
+      title="Панель управления"
+      headerExtra={
+        <>
+          <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
+            роль: админ
+          </span>
+          <ThemeSelect />
+          <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
+            ← Главное меню
+          </a>
+        </>
+      }
+      notice={
+        status ? (
+          <div
+            className={`rounded-lg border p-3 ${
+              status.kind === 'ok'
+                ? 'border-emerald-900/60 bg-emerald-950/40'
+                : 'border-red-900/60 bg-red-950/40'
+            }`}
+          >
+            <p className={`text-sm font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
+              {status.text}
+            </p>
+            {status.details ? (
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+                {status.details}
+              </pre>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      {/* Предпросмотр «было → станет» — общий над контентом вкладки: apply-кнопки
+       *  «Конфига» и «Брони» открывают его, отправка — только вторым шагом. */}
+      {pending && snap && draft ? (
+        <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
+      ) : null}
+      {activeTab?.render ? activeTab.render() : null}
+    </DashShell>
   );
 }
 

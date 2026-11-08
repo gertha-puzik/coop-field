@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import nightStyles from '@/components/site/site-night.module.css';
 import { Input } from '@/components/ui/input';
 import {
   httpMyProfile,
@@ -30,6 +31,10 @@ import {
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
+// Ночная оболочка каталога: звёзды за контентом + компакт-селект темы в шапке
+// (переиспользуемые блоки волны «elyria-admin-look»).
+import { StarBackdrop } from '@/components/menu/star-backdrop';
+import { ThemeSelect } from '@/components/site/theme-select';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -511,13 +516,22 @@ export default function PlayersCatalog() {
   const appliedQuery = query.trim();
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Игроки</h1>
-        <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
-          ← Главное меню
-        </a>
-      </header>
+    <main className={`${nightStyles.pageNight} relative min-h-screen`}>
+      {/* Звёзды ЗА контентом: слой фиксирован, ничего не ловит; карточки —
+          полупрозрачные стеклянные панели, ночь просвечивает вокруг них. */}
+      <div className="star-backdrop" aria-hidden>
+        <StarBackdrop />
+      </div>
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-bold text-[var(--sim-text)]">Игроки</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <ThemeSelect />
+            <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
+              ← Главное меню
+            </a>
+          </div>
+        </header>
 
       <form
         className="flex w-full max-w-md flex-col gap-1"
@@ -623,6 +637,7 @@ export default function PlayersCatalog() {
           {loadingMore ? 'Загружаем…' : 'Ещё'}
         </Button>
       ) : null}
+      </div>
     </main>
   );
 }
