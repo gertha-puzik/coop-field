@@ -55,8 +55,11 @@ const HOST = "127.0.0.1";
 const HTTP = `http://${HOST}:${PORT}`;
 const WS = `ws://${HOST}:${PORT}`;
 const ORIGIN = `http://${HOST}:${PORT}`; // цикличный origin: классу local разрешён
-const ADMIN = "Ласточка";
-const USER = "Копеечка";
+// qa-логины приведены к строгому формату создания (register v2, мандат 2026-11-08:
+// кириллица в логине регистрации больше не проходит; видимые имена остаются
+// кириллическими через поле name персонажа, регистрируемого тестом).
+const ADMIN = "lastochka_q";
+const USER = "kopeechka_q";
 /** Базовых в сида: сколько id в config.SPRITES (31 — источник истины счёта). */
 const BASE_COUNT = BASE_SPRITE_IDS.length;
 
@@ -387,14 +390,14 @@ try {
 
   /* ---------- носители: WS join со спрайтом через attachSprite ---------- */
 
-  const ws = await wsJoinWithSprite("Снежинка", "testovyy-kot");
+  const ws = await wsJoinWithSprite("snezhinka_q", "testovyy-kot");
   const you = await waitFor(ws, ([ev]) => ev === "you");
   check(you[1]?.sprite === "testovyy-kot",
     `WS join со спрайтом testovyy-kot: кадр you с этим скином (pickSprite принял)`);
   await sleep(150);
   const wornList = await adminList(adminTok);
   const wornRow = (wornList.json?.items || []).find((r) => r.id === "testovyy-kot");
-  check(wornRow?.wornCount === 1 && wornRow.wornBy.some((w) => w.login === "Снежинка"),
+  check(wornRow?.wornCount === 1 && wornRow.wornBy.some((w) => w.login === "snezhinka_q"),
     "admin-список видит владельца: wornBy содержит логин аккаунта (attachSprite прошёл)");
 
   const delWorn = await httpJson("/admin/sprites/testovyy-kot", {
@@ -403,16 +406,16 @@ try {
     origin: ORIGIN,
   });
   check(delWorn.status === 400 && delWorn.json?.reason === "in_use" &&
-    Array.isArray(delWorn.json?.wornBy) && delWorn.json.wornBy.some((w) => w.login === "Снежинка"),
+    Array.isArray(delWorn.json?.wornBy) && delWorn.json.wornBy.some((w) => w.login === "snezhinka_q"),
     "DELETE одетого → 400 in_use, wornBy с логином владельца в ответе");
-  check(typeof delWorn.json?.message === "string" && delWorn.json.message.includes("Снежинка"),
+  check(typeof delWorn.json?.message === "string" && delWorn.json.message.includes("snezhinka_q"),
     "отказ «одет» несёт человекочитаемое message с ником");
 
   /* Освобождение: повторный join с ДРУГИМ спрайтом перезаписывает одетость
    * (attachSprite на каждом join) — админ никого не переодевает руками. */
   ws.close();
   await sleep(300);
-  const ws2 = await wsJoinWithSprite("Снежинка", "chis");
+  const ws2 = await wsJoinWithSprite("snezhinka_q", "chis");
   const you2 = await waitFor(ws2, ([ev]) => ev === "you");
   check(you2[1]?.sprite === "chis", "повторный join с иным спрайтом: аккаунт переодет во «chis»");
   ws2.close();
@@ -433,7 +436,7 @@ try {
   check(fileGone.status === 404, "файл удалённого спрайта больше не отдаётся (404)");
 
   /* Зеркало whitelist: удалённый id НЕ валиден для setSprite — молча игнор. */
-  const ws3 = await wsJoinWithSprite("Снежинка", "chis");
+  const ws3 = await wsJoinWithSprite("snezhinka_q", "chis");
   const you3 = await waitFor(ws3, ([ev]) => ev === "you");
   ws3.send(JSON.stringify(["sprite", { sprite: "testovyy-kot" }]));
   await sleep(250);
