@@ -45,6 +45,7 @@ import {
   buildCfgDiff as buildDiff,
   canonByKind,
   cfgPatchFromDraft,
+  curveIssue,
   draftFromSnapshot,
   fmtNum,
   httpCfgAdmin,
@@ -54,11 +55,9 @@ import {
   httpCfgReset,
   httpCfgRestore,
   listIssue,
-  narrowingWarning,
   successText,
   type CfgAdminSnapshot,
   type CfgDraft,
-  type CfgFieldDiff,
   type CfgFieldMeta,
 } from '@/lib/net/http-cfg';
 import { httpMe } from '@/lib/net/http-auth';
@@ -67,13 +66,17 @@ import { RoomConfigPanel } from './room-config-panel';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
 import { PlayersFieldTab } from './players-field-tab';
+// Вкладка «Броня» (мандат владелицы 2026-11-08): редактор кривой защиты
+// combat.armorCurve + предпросмотр «было → станет» — общие сателлиты.
+import { ArmorTab } from './armor-tab';
+import { ApplyPreview } from './cfg-apply-preview';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 /* Логика черновика (типы, канонизация, диффы, статусы) — в http-cfg.ts (B2);
  * здесь только локальные алиасы и React-обёртки. */
 type Draft = CfgDraft;
-type FieldDiff = CfgFieldDiff;
+type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
@@ -253,59 +256,13 @@ function ListFieldRow({
   );
 }
 
-/** Одна строка предпросмотра: «было → станет» (+N/−M) + предупреждение сужения. */
-function DiffRow({ d }: { d: FieldDiff }) {
-  return (
-    <li className="rounded border border-[var(--sim-line)] p-2 text-xs text-[var(--sim-text-soft)]">
-      <p className="font-semibold text-[var(--sim-text)]">{d.label}</p>
-      {d.range ? (
-        <p className="mt-1">
-          Было: {fmtNum(d.range.before)} {d.range.unit} → станет: <b>{fmtNum(d.range.after)} {d.range.unit}</b>
-        </p>
-      ) : d.list ? (
-        <div className="mt-1 space-y-1">
-          <p>
-            Список: {d.list.before.length} зн. → <b>{d.list.after.length} зн.</b> (+{d.list.added.length} / −{d.list.removed.length})
-          </p>
-          {d.list.added.length ? (
-            <p>
-              Добавляются: {d.list.added.map(fmtNum).join(', ')} {d.list.unit}
-            </p>
-          ) : null}
-          {d.list.removed.length ? (
-            <p>
-              Убраны: {d.list.removed.map(fmtNum).join(', ')} {d.list.unit}
-            </p>
-          ) : null}
-          {d.list.defBefore !== d.list.defAfter ? (
-            <p>
-              Дефолт: {fmtNum(d.list.defBefore)} → {fmtNum(d.list.defAfter)}
-            </p>
-          ) : null}
-          {d.list.removed.length ? (
-            <p className="font-semibold text-amber-300">⚠ {narrowingWarning(d.list.kind)}</p>
-          ) : null}
-        </div>
-      ) : null}
-      {d.choice ? (
-        <p className="mt-1">
-          Выбор игроками: {d.choice.before ? 'вкл' : 'выкл'} → <b>{d.choice.after ? 'вкл' : 'выкл'}</b>
-          {d.choice.after
-            ? ` — список из ${d.choice.kept} зн. вернётся игрокам целиком`
-            : ` — игрокам отдаётся только дефолт, список из ${d.choice.kept} зн. сохраняется на сервере`}
-        </p>
-      ) : null}
-      <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">{d.hint}</p>
-    </li>
-  );
-}
-
 /* ================================ дашборд ================================ */
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию) и «Игроки на поле». */
-  const [tab, setTab] = useState<'cfg' | 'field'>('cfg');
+  /** Вкладка панели: реестр конфига (по умолчанию), «Игроки на поле» и
+   *  «Броня» — редактор кривой защиты (мандат владелицы 2026-11-08). */
+  const [tab, setTab] = useState<'cfg' | 'field' | 'armor'>('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -398,15 +355,23 @@ export default function CfgDashboard() {
     });
   }, []);
 
-  /** Валидность черновика: все списки непустые, дефолты внутри списков. */
+  /** Валидность черновика: все списки непустые, дефолты внутри списков,
+   *  кривые points — без ошибок (curveIssue: счёт, границы, сортировка). */
   const hasListIssues = useMemo(() => {
     if (!snap || !draft) return false;
     for (const def of Object.values(snap.registry)) {
       const [sec, field] = def.key.split('.');
       if (sec === 'universes' && listIssue(draft.lists[field] || [], draft.defaults[field])) return true;
+      if (def.kind === 'points' && curveIssue(draft.points[field], def)) return true;
     }
     return false;
   }, [snap, draft]);
+
+  /** Черновик кривой брони (вкладка «Броня»): строки уже канонизированы
+   *  редактором (сортировка/2 знака), финальную валидацию делает сервер. */
+  const setPoints = useCallback((field: string, pts: number[][]) => {
+    setDraft((prev) => (prev ? { ...prev, points: { ...prev.points, [field]: pts } } : prev));
+  }, []);
 
   const diffCount = useMemo(() => (snap && draft ? buildDiff(snap, draft).length : 0), [snap, draft]);
 
@@ -415,7 +380,7 @@ export default function CfgDashboard() {
   const requestApply = useCallback(() => {
     if (!snap || !draft) return;
     if (hasListIssues) {
-      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка / кривая брони) — исправьте подсвеченное.' });
       return;
     }
     const diff = buildDiff(snap, draft);
@@ -433,7 +398,7 @@ export default function CfgDashboard() {
   const confirmApply = useCallback(() => {
     if (!snap || !draft) return;
     if (hasListIssues) {
-      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка) — исправьте подсвеченное.' });
+      setStatus({ kind: 'err', text: 'Черновик содержит ошибки полей (пустой список / дефолт вне списка / кривая брони) — исправьте подсвеченное.' });
       return;
     }
     const diff = buildDiff(snap, draft);
@@ -549,7 +514,7 @@ export default function CfgDashboard() {
         </div>
       ) : null}
 
-      {/* Разделы панели: реестр конфига и «Игроки на поле» (занятость + сброс). */}
+      {/* Разделы панели: реестр конфига, «Броня» и «Игроки на поле». */}
       <nav className="flex flex-wrap items-center gap-2" aria-label="Разделы панели">
         <button
           type="button"
@@ -564,6 +529,17 @@ export default function CfgDashboard() {
         </button>
         <button
           type="button"
+          onClick={() => setTab('armor')}
+          className={`h-8 rounded-md border px-3 text-sm ${
+            tab === 'armor'
+              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
+              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
+          }`}
+        >
+          Броня
+        </button>
+        <button
+          type="button"
           onClick={() => setTab('field')}
           className={`h-8 rounded-md border px-3 text-sm ${
             tab === 'field'
@@ -575,8 +551,24 @@ export default function CfgDashboard() {
         </button>
       </nav>
 
+      {/* Предпросмотр «было → станет» — общий над вкладками: apply-кнопки и
+       *  «Конфига», и «Брони» открывают его, отправка — только вторым шагом. */}
+      {pending && snap && draft ? (
+        <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
+      ) : null}
+
       {tab === 'field' ? (
         <PlayersFieldTab />
+      ) : tab === 'armor' && snap && draft && snap.registry['combat.armorCurve'] ? (
+        <ArmorTab
+          snap={snap}
+          meta={snap.registry['combat.armorCurve']}
+          points={draft.points.armorCurve || []}
+          issue={curveIssue(draft.points.armorCurve, snap.registry['combat.armorCurve'])}
+          busy={busy}
+          onPoints={(pts) => setPoints('armorCurve', pts)}
+          onApply={requestApply}
+        />
       ) : snap && draft ? (
         <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
@@ -587,6 +579,11 @@ export default function CfgDashboard() {
               {registryKeys.map((key) => {
                 const def = snap.registry[key];
                 const [section, field] = def.key.split('.');
+                if (section === 'combat') {
+                  // Кривая брони живёт на своей вкладке «Броня» (мандат 2026-11-08);
+                  // здесь оставляем только консервативную ссылку.
+                  return null;
+                }
                 if (section === 'atmo' && def.kind === 'bool') {
                   return (
                     <FieldShell key={key} def={def}>
@@ -634,34 +631,10 @@ export default function CfgDashboard() {
               })}
             </div>
             {pending ? (
-              <div className="mt-3 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3">
-                <p className="text-sm font-bold text-amber-200">Предпросмотр изменений — пока ничего не отправлено</p>
-                <ul className="mt-2 space-y-2">
-                  {pending.map((d) => (
-                    <DiffRow key={d.key} d={d} />
-                  ))}
-                </ul>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                    disabled={busy !== null}
-                    onClick={confirmApply}
-                  >
-                    {busy === 'apply' ? 'Применяем…' : 'Подтверждаю — применить'}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    disabled={busy !== null}
-                    onClick={() => setPending(null)}
-                  >
-                    Отмена — ничего не отправлять
-                  </Button>
-                </div>
+              <div className="mt-3">
+                <p className="text-[11px] text-[var(--sim-text-faint)]">
+                  Предпросмотр и подтверждение — панелью над разделами (общая для вкладок).
+                </p>
               </div>
             ) : null}
 
