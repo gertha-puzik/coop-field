@@ -185,7 +185,13 @@ function wsUrlBase(): string {
   }
   // Элизия (elisium.miew.ru и PR-превью *.elisium.miew.ru): same-origin /ws —
   // кука сессии ездит в хендшейке, отдельного сокет-хоста у Элизии нет.
-  if (hostname === "elisium.miew.ru" || hostname.endsWith(".elisium.miew.ru")) {
+  // Вариант свёрнут env-инлайном (канон — src/lib/site.ts: межмодульный
+  // импорт константы не фолдится) — в grotto-сборке ветка выкидывается
+  // целиком вместе с хостами Элизии (A1: артефакты grotto без 'elisium').
+  if (
+    process.env.NEXT_PUBLIC_SITE === "elyria" &&
+    (hostname === "elisium.miew.ru" || hostname.endsWith(".elisium.miew.ru"))
+  ) {
     const scheme = protocol === "https:" ? "wss:" : "ws:";
     return `${scheme}//${host}/ws`;
   }

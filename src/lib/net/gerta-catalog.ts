@@ -343,29 +343,39 @@ const MECHANIC_CARDS_BASE: readonly MechanicCard[] = [
     breaks: "Каждый клиент со своим циклом без якоря; смена длины без рассылки.",
     deps: ["runtime-config.js для дефолта новых комнат"],
   },
-  {
-    id: "dummy-rab",
-    title: "Манекен и мишень РАБ",
-    does: "Только боевые комнаты гротов. В закрытых мирах сервер отказывает.",
-    mode: "beer",
-    files: ["server/dummy-rab.js"],
-    functions: ["dummyToggle", "rabToggle", "dummyGrab"],
-    params: ["on", "sprite", "x", "y"],
-    breaks: "Включить манекен там, где сервер отказывает; два держателя grab.",
-    deps: ["grid-комнаты grot/combat/hunger/demo"],
-  },
-  {
-    id: "hunger-idle",
-    title: "Каркас Голодных игр",
-    does: "Комната и страница есть. Раунд в состоянии idle. Правил победы нет — не выдуманы.",
-    mode: "hunger",
-    files: ["server/hunger.js", "src/app/hunger/page.tsx"],
-    functions: ["hungerState"],
-    params: ["round", "phase"],
-    breaks: "Придумать правила без владелиц.",
-    deps: ["server/modes.js id=hunger"],
-  },
 ];
+
+/**
+ * Боевые карточки — только grotto (A1): Элизия не знает ни манекена, ни
+ * каркаса голода; литералы сидят в мёртвой ветке IS_ELYRIA-тернарника и
+ * умирают на сборке elyria (канон свёртки — site.ts, спек §2A).
+ */
+const GROTTO_MECHANIC_CARDS: readonly MechanicCard[] = IS_ELYRIA
+  ? []
+  : [
+      {
+        id: "dummy-rab",
+        title: "Манекен и мишень РАБ",
+        does: "Только боевые комнаты гротов. В закрытых мирах сервер отказывает.",
+        mode: "beer",
+        files: ["server/dummy-rab.js"],
+        functions: ["dummyToggle", "rabToggle", "dummyGrab"],
+        params: ["on", "sprite", "x", "y"],
+        breaks: "Включить манекен там, где сервер отказывает; два держателя grab.",
+        deps: ["grid-комнаты грот/demo"],
+      },
+      {
+        id: "hunger-idle",
+        title: "Каркас Голодных игр",
+        does: "Комната и страница есть. Раунд в состоянии idle. Правил победы нет — не выдуманы.",
+        mode: "hunger",
+        files: ["server/hunger.js", "src/app/hunger/page.tsx"],
+        functions: ["hungerState"],
+        params: ["round", "phase"],
+        breaks: "Придумать правила без владелиц.",
+        deps: ["server/modes.js id=hunger"],
+      },
+    ];
 
 /**
  * Механики Элизии (мирная ходьба, редактор) — только в elyria-сборке:
@@ -397,7 +407,7 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = IS_ELYRIA
         deps: ["ADMIN_PASS или роль admin", "backups/"],
       },
     ]
-  : MECHANIC_CARDS_BASE;
+  : [...MECHANIC_CARDS_BASE, ...GROTTO_MECHANIC_CARDS];
 
 export const HANDBOOK_FILES: readonly string[] = [
   ...new Set([

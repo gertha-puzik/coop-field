@@ -30,6 +30,14 @@ export type NamedRoom = {
   blurb: string;
 };
 
+/**
+ * Compile-time grotto-навигация (A1): на Элизии боевые миры вырезаны из
+ * выдачи ПОЛНОСТЬЮ — в её бандле нет ни маршрута, ни строки-ссылки. Свёртка
+ * по IS_ELYRIA-инлайну, как в site.ts (мёртвая ветка умирает на сборке).
+ */
+const COMBAT_HREF: string | undefined = IS_ELYRIA ? undefined : "/combat/";
+const HUNGER_HREF: string | undefined = IS_ELYRIA ? undefined : "/hunger";
+
 /** Комнаты публичного сайта: только гроты и заглушка «Голодных игр». */
 const GROTTO_ROOMS: readonly NamedRoom[] = [
   {
@@ -37,7 +45,7 @@ const GROTTO_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №1",
     mode: "beer",
     access: "open",
-    href: "/combat/",
+    href: COMBAT_HREF,
     emoji: "🍺",
     blurb: "Клеточное поле 10×6, бой, манекен и мишень. Гости заходят без аккаунта.",
   },
@@ -46,7 +54,7 @@ const GROTTO_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №2",
     mode: "beer",
     access: "open",
-    href: "/combat/",
+    href: COMBAT_HREF,
     emoji: "🍺",
     blurb: "Второй грот — то же поле, другая комната.",
   },
@@ -55,7 +63,7 @@ const GROTTO_ROOMS: readonly NamedRoom[] = [
     title: "Пивной грот №3",
     mode: "beer",
     access: "open",
-    href: "/combat/",
+    href: COMBAT_HREF,
     emoji: "🍺",
     blurb: "Третий грот — то же поле, другая комната.",
   },
@@ -64,7 +72,7 @@ const GROTTO_ROOMS: readonly NamedRoom[] = [
     title: "Голодные игры",
     mode: "hunger",
     access: "open",
-    href: "/hunger",
+    href: HUNGER_HREF,
     emoji: "🌾",
     blurb: "Отдельная открытая комната. Правила раунда владелицы ещё не задали — сейчас каркас «раунд не начат».",
   },
