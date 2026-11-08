@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { DATA_DIR } from "./config.js";
+import { DATA_DIR, SPRITES } from "./config.js";
 // Динамический каталог спрайтов (менеджер спрайтов): attachSprite принимает
 // id из манифеста sprites.js — и загруженные, и базовые. Цикл импортов
 // accounts.js ↔ sprites.js здесь осознанный: spriteIdAllowed вызывается
@@ -221,6 +221,11 @@ async function verifyPassword(password, rec) {
   return timingSafeEqual(a, b);
 }
 
+/** Снятый с поставки скин не оставляет битую картинку в сессии и профиле. */
+function visibleSprite(sprite) {
+  return !sprite || spriteIdAllowed(sprite) ? sprite : SPRITES[0];
+}
+
 function publicAccount(acc) {
   if (!acc) return null;
   const ch = activeCharacter(acc);
@@ -229,9 +234,9 @@ function publicAccount(acc) {
     login: acc.login,
     role: acc.role,
     profile: { displayName: acc.profile?.displayName || acc.login },
-    characters: acc.characters.map((c) => ({ id: c.id, name: c.name, sprite: c.sprite, size: c.size })),
+    characters: acc.characters.map((c) => ({ id: c.id, name: c.name, sprite: visibleSprite(c.sprite), size: c.size })),
     activeCharacterId: acc.activeCharacterId,
-    character: ch ? { id: ch.id, name: ch.name, sprite: ch.sprite, size: ch.size } : null,
+    character: ch ? { id: ch.id, name: ch.name, sprite: visibleSprite(ch.sprite), size: ch.size } : null,
   };
 }
 
@@ -255,7 +260,7 @@ function publicProfile(acc) {
     characters: chars.map((c) => ({
       id: c.id,
       name: c.name,
-      sprite: c.sprite,
+      sprite: visibleSprite(c.sprite),
       size: c.size,
     })),
     activeCharacterId: acc.activeCharacterId,

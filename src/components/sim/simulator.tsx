@@ -4853,8 +4853,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           editorOverlay={
             editorOpen && editorView ? (
               <EditorOverlay
-                playerSprite={settings.character.sprite}
-                onPlayerSprite={(sprite) => patchCharacter({ sprite })}
                 editorRef={editorRef}
                 syncEditorView={syncEditorView}
                 editorView={editorView}

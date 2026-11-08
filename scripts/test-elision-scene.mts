@@ -11,6 +11,7 @@ import { Frustum } from '@babylonjs/core/Maths/math.frustum.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
+  elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha,
   elisionCameraDown,
   elisionCameraPose,
   elisionTerrainGeometry,
@@ -128,3 +129,24 @@ assert(empty.tops.positions.length === 0 && empty.walls.positions.length === 0, 
 world.dispose();
 engine.dispose();
 console.log('elision scene ok');
+
+const self = {id:'main',x:100,y:100,w:60,h:100,lift:0,rot:0,url:'cat',mirror:false};
+const obstacle = {...self,id:'tree',isProp:true,x:90,y:70,w:120,h:160};
+assert(elisionObstacleAlpha(obstacle,self,0) < 0.5, 'foreground obstacle does not hide player');
+assert(elisionObstacleAlpha({...obstacle,y:0},self,0) === 1, 'background obstacle stays opaque');
+assert(elisionObstacleAlpha({...obstacle,x:1000},self,0) === 1, 'unrelated obstacle stays opaque');
+assert(elisionObstacleAlpha(self,self,0) === 1, 'player stays opaque');
+const foot = elisionActorFoot(self);
+assert(foot.x === 130 && foot.z === 200 && Math.abs(foot.y-.2) < 1e-9, 'billboard is anchored at feet above ground');
+assert(elisionDepthBias('tree') === elisionDepthBias('tree'), 'no frame-dependent sort jitter');
+assert(elisionDepthBias('tree') !== elisionDepthBias('main'), 'coplanar ties have stable offsets');
+assert(elisionDepthBias('tree') > -1 && elisionDepthBias('tree') < 0, 'bias stays small');
+for (const angle of [0, 45, 90, 180, 270]) {
+  const vertices = elisionSpriteVertices(60,100,angle,false);
+  assert(vertices.every(Number.isFinite), 'finite rotated billboard');
+  assert(vertices.filter((_,i)=>i%3===1).every(y=>y>=0), 'no billboard vertex below terrain');
+  const radians = angle*Math.PI/180;
+  const expected = [[-30,0],[30,0],[30,100],[-30,100]].map(([x,y])=>x*Math.sin(radians)-y*Math.cos(radians));
+  for(let i=0;i<4;i++) assert(Math.abs(vertices[i*3+2]-vertices[i*3+1]-expected[i])<1e-8,'old 2D rotation preserved above ground');
+}
+console.log('sprite depth, occlusion and rotated ground clearance ok');
