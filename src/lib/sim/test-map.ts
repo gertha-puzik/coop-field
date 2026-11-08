@@ -1,4 +1,3 @@
-import { MODEL_BY_ID, TREE_MODEL_OPTS } from './model-catalog.ts';
 /**
  * Конфигурация локации комнаты «тест» — то, что правит редактор локации.
  *
@@ -98,11 +97,11 @@ export const GROUND_COVER_OPTS = [
   { id: 'floor-3', label: 'Пол 3' },
 ] as const;
 
-export type TreeSpr = (typeof TREE_SPRITE_OPTS)[number]['id'] | `tree3d-${string}`;
+export type TreeSpr = (typeof TREE_SPRITE_OPTS)[number]['id'];
 export type RockSpr = (typeof ROCK_SPRITE_OPTS)[number]['id'];
 export type GroundCover = (typeof GROUND_COVER_OPTS)[number]['id'];
 
-const TREE_SPRITE_IDS = new Set<string>([...TREE_SPRITE_OPTS, ...TREE_MODEL_OPTS].map((t) => t.id));
+const TREE_SPRITE_IDS = new Set<string>(TREE_SPRITE_OPTS.map((t) => t.id));
 const ROCK_SPRITE_IDS = new Set<string>(ROCK_SPRITE_OPTS.map((t) => t.id));
 const GROUND_COVER_IDS = new Set<string>(GROUND_COVER_OPTS.map((t) => t.id));
 
@@ -161,12 +160,6 @@ export const OBJECT_DIMS: Record<string, [number, number]> = {
   'rock-9': [19, 16],
   'rock-10': [31, 19],
 };
-
-// PNG-превью обеспечивают редактор и fallback без WebGL; физическое тело дерева не меняется.
-for (const model of MODEL_BY_ID.values()) {
-  if (model.kind !== 'tree') continue;
-  OBJECT_DIMS[model.id] = [model.worldHeight * model.screenSize[0], model.worldHeight * model.screenSize[1]];
-}
 
 /**
  * Физическое тело препятствия у земли в px мира (до масштаба): [полуширина, высота

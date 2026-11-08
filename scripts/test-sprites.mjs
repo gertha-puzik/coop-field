@@ -42,7 +42,7 @@
  * Запуск: node scripts/test-sprites.mjs
  */
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
@@ -224,6 +224,16 @@ try {
     encoding: "utf8",
   });
   check(/повышен|уже админ/.test(cliOut), "make-admin повышает аккаунт (лестница S1)");
+  const manifestFile = path.join(DATA, "sprites", "manifest.json");
+  const seeded = JSON.parse(readFileSync(manifestFile, "utf8"));
+  seeded.push({id:"origami-cat",name:"Снятая модель",category:"Базовые",builtin:true,addedAt:0});
+  writeFileSync(manifestFile, JSON.stringify(seeded));
+  const accountsFile = path.join(DATA, "accounts.json");
+  const accounts = JSON.parse(readFileSync(accountsFile, "utf8"));
+  const retiredAccount = Object.values(accounts.accounts).find((acc) => acc.login === USER);
+  retiredAccount.characters[0].sprite = "origami-cat";
+  writeFileSync(accountsFile, JSON.stringify(accounts));
+
   startServer();
   await waitReady();
   const adminLogin = await httpJson("/auth/login", { method: "POST", body: { login: ADMIN, pass: "password1" } });
@@ -235,6 +245,13 @@ try {
   const cat0 = await pubCatalog();
   check(cat0.status === 200 && cat0.json?.ok === true, "публичный GET /sprites/catalog доступен без сессии");
   const items0 = cat0.json?.items || [];
+  check(!items0.some((row) => row.id === "origami-cat"), "снятый builtin не воскресает из манифеста");
+  const relogin = await httpJson("/auth/login", {method:"POST",body:{login:USER,pass:"password1"}});
+  const me = await httpJson("/auth/me", {token:relogin.json?.token});
+  check(me.json?.character?.sprite === BASE_SPRITE_IDS[0], "снятый скин игрока получает рабочий fallback");
+  const card = await httpJson(`/profiles/${retiredAccount.id}`);
+  check(card.json?.characters?.[0]?.sprite === BASE_SPRITE_IDS[0], "публичный профиль не ссылается на снятую модель");
+
   check(Array.isArray(items0) && items0.length === BASE_COUNT,
     `сид каталога: ${items0.length} = ${BASE_COUNT} базовых (config.SPRITES)`);
   check(items0.every((r) => r.category === "Базовые" && /^[a-z0-9-]{1,64}$/.test(r.id)),
@@ -285,6 +302,9 @@ try {
     .some((r) => r.id === "testovyy-kot" && r.category === "Праздничные" && r.builtin === false),
     "манифест несёт новую строку {id, name, category, builtin:false, addedAt}");
 
+  await stopServer();
+  startServer();
+  await waitReady();
   const cat1 = await pubCatalog();
   const newPublic = (cat1.json?.items || []).find((r) => r.id === "testovyy-kot");
   check((cat1.json?.items || []).length === BASE_COUNT + 1 &&

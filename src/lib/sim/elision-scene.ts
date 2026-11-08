@@ -15,12 +15,9 @@
 
 export type ElisionDay = 'morning' | 'day' | 'evening' | 'night';
 
-/** Спрайт на плоскости земли. x/y — левый верх в px мира (y вниз). */
+/** Вертикальная карточка спрайта с опорой у ног. x/y — левый верх в px мира (y вниз). */
 export type ElisionActor = {
   id: string;
-  model?: string;
-  modelScale?: number;
-  heading?: number;
   isProp?: boolean;
   x: number;
   y: number;

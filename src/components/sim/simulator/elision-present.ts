@@ -19,7 +19,6 @@ import {
   objectSprite,
   type TestMapObject,
 } from '@/lib/sim/test-map';
-import { MODEL_BY_ID, PLAYER_MODEL_ID } from '@/lib/sim/model-catalog';
 import type { Engine } from './sim-model';
 import {
   selfWorldPx,
@@ -207,8 +206,6 @@ function catActor(
   const size = spriteSizePx(input.cellH, scale, aspectOf(input.spriteImage(sprite)));
   return {
     id,
-    ...(sprite === PLAYER_MODEL_ID ? { model: PLAYER_MODEL_ID, modelScale: scale/100,
-      heading: input.engine.lastDir ?? (input.engine.face === -1 ? 0 : 180) } : {}),
     x: topLeft.x,
     y: topLeft.y,
     w: size.w,
@@ -233,7 +230,6 @@ function propActor(o: TestMapObject, cellW: number, cellH: number): ElisionActor
   return {
     id: `prop:${o.id}`,
     isProp: true,
-    ...(MODEL_BY_ID.has(spr) ? { model: spr, modelScale: sc } : {}),
     x: footX - w / 2,
     y: footY - h,
     w,

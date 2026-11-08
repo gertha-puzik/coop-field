@@ -59,9 +59,7 @@ function eq(label, actual, expected) {
 eq("config.PORT (без env)", cfg.PORT, 3780);
 eq("config.TEST_ROOM", cfg.TEST_ROOM, "test");
 eq("config.WIDTH/HEIGHT", [cfg.WIDTH, cfg.HEIGHT], [10, 6]);
-// The original 31 skins remain, plus the explicitly added GLB player.
-eq("config.SPRITES — прежние 31 скин", cfg.SPRITES.filter((id) => id !== "origami-cat").length, 31);
-eq("config.SPRITES — origami-cat разрешён", cfg.SPRITES.includes("origami-cat"), true);
+eq("config.SPRITES — whitelist размером 31", cfg.SPRITES.length, 31);
 eq("config.FRAME_LIMIT 64 КиБ", cfg.FRAME_LIMIT, 64 * 1024);
 eq("config.isAllowedOrigin: пустой Origin без REQUIRE_ORIGIN", cfg.isAllowedOrigin(""), true);
 eq("config.isAllowedOrigin: чужой https", cfg.isAllowedOrigin("https://random.example"), false);
@@ -155,6 +153,11 @@ const st = testmap.sanitizeTestMap(def);
 eq("sanitizeTestMap: дефолт проходит", [st.map?.v, st.map?.zones?.length, st.map?.cols, st.map?.rows], [2, 3, 19, 7]);
 eq("sanitizeTestMap: v3", testmap.sanitizeTestMap({ v: 3, cols: 10, rows: 5 }).error, "неизвестная версия конфига");
 eq("sanitizeTestMap: null", testmap.sanitizeTestMap(null).error, "конфиг не распознан");
+const retiredTreeMap = testmap.defaultTestMap();
+retiredTreeMap.objects = [{id:"retired-tree",kind:"tree",spr:"tree3d-200",c:2,r:2,x:2.5,y:3,s:1.2,rot:37,mir:1}];
+const retiredTree = testmap.sanitizeTestMap(retiredTreeMap).map?.objects?.[0];
+eq("снятая модель дерева: видимый fallback и сохранённая позиция", [retiredTree?.spr,retiredTree?.x,retiredTree?.y,retiredTree?.s,retiredTree?.rot], ["tree-1",2.5,3,1.2,37]);
+
 eq("sanitizeTestMap: нет зон", testmap.sanitizeTestMap({ v: 2, cols: 10, rows: 5, zones: [] }).error, "список зон пуст");
 eq(
   "sanitizeTestMap: высота вне лимита",

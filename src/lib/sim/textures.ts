@@ -16,12 +16,10 @@
  * пикселях без DOMMatrix.
  */
 
-import { TREE_MODELS } from './model-catalog';
 import { GROUND_COVER_OPTS, type GroundCover } from './test-map';
 
 /** Имена доступных спрайтов пака. */
 export type PackName =
-  | `tree3d-${string}`
   | 'tree-1'
   | 'tree-2'
   | 'tree-3'
@@ -70,7 +68,6 @@ for (const c of GROUND_COVER_OPTS) SRC[c.id] = `/tex/${c.id}.png`;
 for (let i = 0; i < PACK_TUFT_COUNT; i++) SRC[`tuft-${String(i).padStart(2, '0')}`] = `/tex/tuft-${String(i).padStart(2, '0')}.png`;
 
 const imgs = new Map<string, HTMLImageElement>();
-const modelLoads = new Set<string>();
 let started = false;
 
 function ensureStarted(): void {
@@ -90,15 +87,6 @@ function ensureStarted(): void {
 /** Спрайт пака или null, пока не догрузился (рисовалка тогда идёт вектором). */
 export function packImg(name: PackName): HTMLImageElement | null {
   ensureStarted();
-  if (name.startsWith('tree3d-') && !modelLoads.has(name) && typeof Image !== 'undefined') {
-    const model = TREE_MODELS.find((entry) => entry.id === name);
-    if (model) {
-      modelLoads.add(name);
-      const image = new Image();
-      image.onload = () => imgs.set(name, image);
-      image.src = model.preview;
-    }
-  }
   return imgs.get(name) ?? null;
 }
 

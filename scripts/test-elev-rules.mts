@@ -2,6 +2,7 @@
 // Правила высоты: шаг при перепаде ≤1, прыжок по доле шкалы.
 // Запуск — через npm run test:unit (node --experimental-strip-types).
 import {
+  objectSprite, sanitizeTestMap, TEST_MAP_DEFAULT,
   elevJumpOk,
   elevStepOk,
   jumpFillOf,
@@ -47,3 +48,10 @@ const stepAt = (c, r) => step.get(`${c},${r}`) ?? 0;
 assert(!pointInSouthWallOf(2.5, 3.9, cols, rows, stepAt), "перепад в 1 — ступенька, не стена");
 
 console.log("elev rules: ok");
+
+const retiredTreeMap = structuredClone(TEST_MAP_DEFAULT);
+retiredTreeMap.objects = [{id:'retired-tree',kind:'tree',spr:'tree3d-200',c:2,r:2,x:2.5,y:3,s:1.2,rot:37,mir:1}];
+const restoredTree = sanitizeTestMap(retiredTreeMap).map?.objects?.[0];
+assert(restoredTree?.spr === 'tree-1', 'снятая модель становится обычным деревом');
+assert(restoredTree?.x === 2.5 && restoredTree?.y === 3 && restoredTree?.s === 1.2 && restoredTree?.rot === 37, 'дерево сохраняет позицию и трансформации');
+assert(objectSprite({kind:'tree',spr:'tree3d-001'}) === 'tree-1', 'сырой старый ID также имеет видимый fallback');
