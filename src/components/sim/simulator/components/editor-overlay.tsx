@@ -49,8 +49,6 @@ export interface EditorOverlayProps {
   toggleEditorSel: (id: string) => void;
   renameEditorZone: (id: string, name: string) => void;
   deleteEditorZone: (id: string) => void;
-  editorPass: string;
-  setEditorPass: Dispatch<SetStateAction<string>>;
   saveEditorMap: () => void;
   /** Прогресс сохранения: фазы кодирования/отправки/подтверждения с секундами. */
   editorSave: EditorSaveState | null;
@@ -79,8 +77,6 @@ export function EditorOverlay(props: EditorOverlayProps) {
     toggleEditorSel,
     renameEditorZone,
     deleteEditorZone,
-    editorPass,
-    setEditorPass,
     saveEditorMap,
     editorSave,
     editorCover,
@@ -640,14 +636,6 @@ export function EditorOverlay(props: EditorOverlayProps) {
                       </div>
                     </div>
                     <div className="mt-auto flex flex-col gap-1.5 border-t border-[var(--sim-line)] pt-2.5">
-                      <input
-                        type="password"
-                        value={editorPass}
-                        onChange={(ev2) => setEditorPass(ev2.target.value)}
-                        placeholder="Пароль редактора"
-                        aria-label="Пароль редактора локации"
-                        className="h-7 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-2 text-[11px] text-[var(--sim-text)] outline-none"
-                      />
                       <button
                         type="button"
                         className="h-8 rounded-md bg-[var(--sim-accent)] px-2 text-xs font-semibold text-white hover:bg-[var(--sim-accent-hover)] disabled:opacity-60"

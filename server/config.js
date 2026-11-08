@@ -3,7 +3,7 @@
  * Origin whitelist, payload/frame caps and every static registry a domain
  * module needs (palette, sprite whitelist, spawn cells, object dims). Values
  * are singletons for the whole process; nothing here is ever reassigned after
- * boot. Owner of ADMIN_PASS (env-only с S2: устранённый дефолт, fail-closed)
+ * boot. Legacy ADMIN_PASS is exported for compatibility and no longer gates editing
  * and DATA_DIR.
  */
 import path from "node:path";
@@ -397,11 +397,7 @@ const OBJECT_SCALE_MAX = 3.5;
  * логическую клетку — ближайшую проходимую — для ударов и препятствий).
  */
 const TEST_ROOM = 'test';
-/** Пароль редактора локации (событие setmap). S2 (аудит Z.AI 2026-11-08):
- * устранивший дефолт '1946' — теперь fail-closed: БЕЗ env ADMIN_PASS парольный
- * путь setmap мёртв (обработчик в server/testmap.js отвечает «редактор
- * локации закрыт»), с env — прежний проход. На проде значение задаёт
- * systemd-юнит (deploy/vps/coop-field.service). Тесты передают env явно. */
+/** Устаревшая настройка: больше не проверяется редактором локации. */
 const ADMIN_PASS = process.env.ADMIN_PASS || null;
 
 /** S5 (аудит Z.AI 2026-11-08): ресурсные лимиты процесса против исчерпания

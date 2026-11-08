@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  ADMIN_PASS, DATA_DIR, TEST_ROOM,
+  DATA_DIR, TEST_ROOM,
   OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
 } from "./config.js";
 import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./protocol.js";
@@ -420,18 +420,23 @@ function saveTestMap() {
 rebuildTestGeometry();
 
 /**
- * Редактор локации: клиент → ["setmap", { pass, map }]. При верном пароле и
- * корректном конфиге локация сохраняется в data/test-map.json, геометрия
+ * Редактор локации: клиент → ["setmap", { map }]. Любой игрок может сохранить
+ * корректный конфиг локации в data/test-map.json, геометрия
  * перестраивается, всем в комнате уходит ["map", map] и свежий field (коты,
  * оставшиеся за пределами новой локации, переезжают на ближайшую клетку).
  */
 const SETMAP_MIN_GAP_MS = 10000;
 
 function setMap(ws, payload = {}) {
+  // Сохранять может любой игрок локации, без роли admin и без пароля.
+  if (ws.room?.code !== TEST_ROOM || !ws.room.sockets.has(ws)) {
+    send(ws, EV.INFO, 'Редактор: сначала войдите в локацию.');
+    return;
+  }
   const now = Date.now();
-  // Троттлинг на ЛЮБОЙ setmap-кадр, верный пароль тому не исключение: кадр
+  // Троттлинг на ЛЮБОЙ setmap-кадр участника локации: кадр
   // запускает тяжёлую работу (PNG-декод, пересборку всей геометрии, запись
-  // с бэкапами), так что защита нужна не только от перебора пароля. Счётчик
+  // с бэкапами), так что повторные записи ограничены. Счётчик
   // живёт на сокете (по аналогии с lastJoin); отброшенный кадр окно
   // не продлевает — окно отсчитывается от последнего пропущенного кадра.
   if (now - (ws.lastSetmap || 0) < SETMAP_MIN_GAP_MS) {
@@ -439,19 +444,6 @@ function setMap(ws, payload = {}) {
     return;
   }
   ws.lastSetmap = now;
-  // S2 (аудит Z.AI): fail-closed — без env ADMIN_PASS парольный путь мёртв.
-  // Информативный отказ (не «неверный пароль»): любой кадр, даже с прежним
-  // устранённым дефолтом '1946', ничего не применяет. Роль admin (назначается
-  // CLI make-admin) по-прежнему открывает редактор без пароля.
-  if (!ADMIN_PASS) {
-    send(ws, EV.INFO, 'Редактор: редактор локации закрыт — пароль не задан на сервере (ADMIN_PASS).');
-    return;
-  }
-  const asAdmin = ws.account && ws.account.role === 'admin';
-  if (!asAdmin && String(payload?.pass || '') !== ADMIN_PASS) {
-    send(ws, EV.INFO, 'Редактор: неверный пароль.');
-    return;
-  }
   const r = sanitizeTestMap(payload?.map);
   if (!r.map) {
     send(ws, EV.INFO, `Редактор: ${r.error}.`);

@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 
-const PASS = 'editor-pass-123';
+// Пароль намеренно отсутствует: редактор открыт обычным игрокам.
 const PORT = 3981 + Math.floor(Math.random() * 20);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
@@ -33,7 +33,7 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: '127.0.0.1',
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
+        ADMIN_PASS: process.env.OPEN_EDITOR_TEST_PASS || '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -83,7 +83,7 @@ async function joinTest(prefix) {
     if (f[0] === 'noplace') throw new Error(`join: ${JSON.stringify(f)}`);
   }
   if (!field) throw new Error('field не пришёл');
-  return { s, field };
+  return { s, field, role: reg[1].role };
 }
 
 let failures = 0;
@@ -95,7 +95,14 @@ const check = (name, ok, detail = '') => {
 await sleep(800);
 
 // --- карта: боевой полигон по умолчанию + камень (12,3) 0-based, дерево (13,2), elev-соседи ---
+const outsider = makeSock();
+await outsider.open();
+await outsider.wait();
+outsider.send('setmap', {map:{}});
+check('сокет вне локации не может менять карту', (await outsider.wait())[1]?.includes('сначала войдите в локацию'));
+outsider.ws.close();
 const first = await joinTest('a');
+check('редактор доступен обычному аккаунту', first.role === 'registered');
 const map0 = first.field[1].map;
 const edited = {
   ...map0,
@@ -105,7 +112,7 @@ const edited = {
   ],
   elev: { '11,3': 2, '12,2': 3 },
 };
-first.s.send('setmap', { pass: PASS, map: edited });
+first.s.send('setmap', { map: edited });
 let mapBack = null;
 for (let i = 0; i < 6 && !mapBack; i++) {
   const f = await first.s.wait();
@@ -114,6 +121,15 @@ for (let i = 0; i < 6 && !mapBack; i++) {
 }
 check('setmap принял карту с камнем/деревом/высотами', !!mapBack);
 check('сервер сохранил elev', JSON.stringify(mapBack?.elev ?? null) === JSON.stringify({ '11,3': 2, '12,2': 3 }));
+first.s.send('setmap', {map:edited});
+let limited;
+do { limited=await first.s.wait(); } while(limited[0]!=='info');
+check('повторное сохранение ограничено троттлингом', limited[1].includes('слишком часто'));
+const invalid=await joinTest('b');
+invalid.s.send('setmap',{map:{v:2}});
+const invalidReply=await invalid.s.wait();
+check('невалидная карта по-прежнему отвергается',invalidReply[0]==='info'&&invalidReply[1].startsWith('Редактор:'));
+invalid.s.ws.close();
 if (srv) check('высоты записаны в файл для следующего запуска', JSON.stringify(JSON.parse(readFileSync(path.join(DATA, 'test-map.json'), 'utf8')).elev) === JSON.stringify(edited.elev));
 
 // --- 1. cellsync на клетку камня (1-based 13,4) ---

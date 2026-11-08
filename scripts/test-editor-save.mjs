@@ -23,7 +23,7 @@ new Function('require','exports',compiled)(id => mocks[id] ?? require(id),export
 const original = {cols:6,rows:6,margin:.5,seed:'regression',zones:[{kind:'cells',c0:0,r0:0,c1:5,r1:5}],objects:[],spawns:[],elev:{'1,1':2}};
 const editorRef={current:{...structuredClone(original),undo:[],elev:{'1,1':2},dirty:false,pcv:null}};
 const sent=[];
-const params = { editorRef, elevStrokeRef:{current:null}, savedMapRef:{current:original}, netRef:{current:{ready:true,emit:(...args)=>sent.push(args)}}, camRef:{current:{}}, editorPass:'local-test',setTestMap:()=>{} };
+const params = { editorRef, elevStrokeRef:{current:null}, savedMapRef:{current:original}, netRef:{current:{ready:true,emit:(...args)=>sent.push(args)}}, camRef:{current:{}}, setTestMap:()=>{} };
 for(const name of ['setEditorView','setEditorOpen','setEditorMsg','setEditorSave','setEditorPlace']) params[name]=()=>{};
 const ops=exports.buildEditorOps(params);
 ops.beginElevStroke('raise',2,2);
@@ -35,6 +35,7 @@ finish('');
 await new Promise(r=>setImmediate(r));
 assert.equal(sent.length,1,'closing editor must not silently cancel saving');
 assert.equal(sent[0][0],'setmap');
+assert(!('pass' in sent[0][1]),'client sends no editor password');
 assert.deepEqual(sent[0][1].map.elev,{'1,1':2,'2,2':1},'old and new elevations both survive');
 assert.deepEqual(original.elev,{'1,1':2},'preview does not mutate saved map');
 console.log('editor elevation save after close: OK');
@@ -66,12 +67,14 @@ console.log('stone support, terrain separation and elevation roundtrip: OK');
 
 // A disk failure cannot be acknowledged as a saved map or replace the live map.
 process.env.DATA_DIR=fs.mkdtempSync('/tmp/coop-editor-write-fail-');
-process.env.ADMIN_PASS='local-test';
+delete process.env.ADMIN_PASS;
 const serverMap=await import('../server/testmap.js');
 const previousMap=serverMap.testMap;
 fs.mkdirSync(process.env.DATA_DIR+'/test-map.json'); // force atomic rename to fail
 const replies=[];
-serverMap.setMap({readyState:1,lastSetmap:0,send:data=>replies.push(JSON.parse(data))},{pass:'local-test',map:{...previousMap,elev:{'2,2':1}}});
+const ws={readyState:1,lastSetmap:0,send:data=>replies.push(JSON.parse(data))};
+ws.room={code:'test',sockets:new Map([[ws,{}]])};
+serverMap.setMap(ws,{map:{...previousMap,elev:{'2,2':1}}});
 assert.equal(serverMap.testMap,previousMap,'failed save restores previous live map');
 assert(replies.some(([event,text])=>event==='info'&&text.includes('сохранить локацию на диск не удалось')));
 assert(!replies.some(([event])=>event==='map'||event==='field'),'failed save never broadcasts success');

@@ -88,7 +88,6 @@ import {
   stampPaintBrush,
 } from '@/lib/sim/paint';
 import {
-  EDITOR_PASS_KEY,
   type EditorDraft,
   type EditorPlace,
   type EditorTool,
@@ -372,7 +371,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const editorRef = useRef<EditorDraft | null>(null);
   const [editorView, setEditorView] = useState<EditorDraft | null>(null);
   /** Пароль редактора: хранится в localStorage, подставляется при открытии. */
-  const [editorPass, setEditorPass] = useState('');
   /** Вариант спрайта при постановке: последнее выбранное дерево и камень. */
   const lastSprRef = useRef<{ tree: string; stone: string }>({ tree: 'tree-1', stone: 'rock-1' });
   /** Вариант покрытия земли при покраске (инструмент «Покрытие»). */
@@ -974,12 +972,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     setEditorView,
     setEditorOpen,
     setEditorMsg,
-    setEditorPass,
     setEditorPlace,
     setEditorSave,
     patchField,
     editorSelRef,
-    editorPass,
   });
 
   /** Размер инструмента редактора одним шагом (Alt+колесо над полем, клавиши [ ]):
@@ -4914,8 +4910,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 toggleEditorSel={toggleEditorSel}
                 renameEditorZone={renameEditorZone}
                 deleteEditorZone={deleteEditorZone}
-                editorPass={editorPass}
-                setEditorPass={setEditorPass}
                 saveEditorMap={saveEditorMap}
                 editorCover={editorCover}
                 setEditorCover={setEditorCover}
