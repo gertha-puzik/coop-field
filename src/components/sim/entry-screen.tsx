@@ -17,6 +17,7 @@ import {
 import { RoomPicker, type RoomRow } from './room-picker';
 import { AuthPanel } from './auth-panel';
 import type { CoopWhoami } from '@/lib/net/protocol';
+import { httpMyProfile } from '@/lib/net/http-profiles';
 import type { ProfileMe } from '@/lib/net/http-profiles';
 import { MODE_COPY, namedRoom, type PlayMode } from '@/lib/net/modes';
 import type { Universes } from '@/lib/net/cfg-live';
@@ -220,18 +221,30 @@ export function EntryScreen({
     let dead = false;
     setMeFailed(false);
     void (async () => {
-      const { httpMyProfile } = await import('@/lib/net/http-profiles');
-      const res = await httpMyProfile();
-      if (dead) return;
-      // Фетч не удался — профиль не держит игрока на входе: выбор комнаты
-      // открывается на стартовых значениях движка (внешность применит
-      // сервер по сессии, пустой скин профиля не перезапишет).
-      if (!res.ok || !res.profile) {
-        setMeFailed(true);
+      // Динамический import здесь НЕДОПУСТИМ: turbopack-карта ссылалась на
+      // чанк, которого не было в выкладке (404 → молчаливый reject → вечная
+      // «Готовим ваш профиль», owner report 2026-11-08). Модуль импортируется
+      // статически; литералы его маршрутов вырезаются env-DCE (канон P3).
+      // Любой сбой путём отдаёт meFailed — выбор комнаты не висит никогда.
+      let profile: ProfileMe | null = null;
+      try {
+        const res = await httpMyProfile();
+        if (dead) return;
+        // Фетч не удался — профиль не держит игрока на входе: выбор комнаты
+        // открывается на стартовых значениях движка (внешность применит
+        // сервер по сессии, пустой скин профиля не перезапишет).
+        if (!res.ok || !res.profile) {
+          setMeFailed(true);
+          return;
+        }
+        profile = res.profile;
+        setMe({ accountId: whoami.accountId!, profile });
+      } catch {
+        if (!dead) setMeFailed(true);
         return;
       }
-      setMe({ accountId: whoami.accountId!, profile: res.profile });
-      const sp = res.profile.sp;
+      if (dead || !profile) return;
+      const sp = profile.sp;
       if (!sp) return;
       const { onApplySpeed: applySpeed, onApplyDamage: applyDamage, onApplyArmor: applyArmor } =
         applyRef.current;

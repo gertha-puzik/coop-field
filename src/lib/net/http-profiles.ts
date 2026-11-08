@@ -16,6 +16,29 @@
  */
 import { apiFetch, asId, asText, type ApiRow } from "./http-auth";
 
+/** Вариант сборки (как http-auth.ts): литералы закрытых маршрутов
+ *  вырезаются env-DCE в грот-бандле (канон P3, прецедент authRoute). */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
+
+/** Маршрут профилей с env-DCE: в грот-сборке мёртвая ветка удаляется
+ *  минификатором — литералов закрытой зоны в публичном бандле нет вовсе,
+ *  живой вызов невозможен ('/dev/null' не несёт намёка). */
+function profilesRoute(kind: "me"): string;
+function profilesRoute(kind: "card", id: string): string;
+function profilesRoute(kind: "me" | "card", id?: string): string {
+  if (!IS_ELYRIA) return "/dev/null";
+  if (kind === "me") return "/profiles/me";
+  return `/profiles/${encodeURIComponent(id ?? "")}`;
+}
+
+/** Каталог профилей (страница /players/ — только Элизия): лимит/курсор
+ *  строго валидируются сервером (см. server/profiles.js). В грот-сборке
+ *  литерал вырезается той же env-DCE-веткой. */
+function profilesCatalogRoute(qs: string): string {
+  if (!IS_ELYRIA) return "/dev/null";
+  return qs ? `/profiles?${qs}` : "/profiles";
+}
+
 export type ProfileCharacter = { id: string; name: string; sprite: string; size: number };
 
 /** Публичный DTO (accounts.publicProfile): без login, role и пароля.
@@ -151,7 +174,7 @@ export async function httpProfileCatalog(
   if (typeof page.cursor === "string" && page.cursor) params.set("cursor", page.cursor);
   if (typeof page.q === "string" && page.q.trim()) params.set("q", page.q);
   const qs = params.toString();
-  const { status, row, text } = await apiFetch(qs ? `/profiles?${qs}` : "/profiles");
+  const { status, row, text } = await apiFetch(profilesCatalogRoute(qs));
   if (status === 200 && row?.ok === true && Array.isArray(row.items)) {
     const items = (row.items as unknown[])
       .filter((it): it is ApiRow => !!it && typeof it === "object")
@@ -178,7 +201,7 @@ function catalogErrorReason(status: number, row: ApiRow | null): string {
 /** Карточка по accountId (deep-link): DTO или 404/ошибка. */
 export async function httpProfileById(accountId: string): Promise<ProfileResult & { card?: ProfileCard }> {
   const id = encodeURIComponent(accountId);
-  const { status, row, text } = await apiFetch(`/profiles/${id}`);
+  const { status, row, text } = await apiFetch(profilesRoute("card", id));
   const base = toProfileResult(status, row, text);
   if (base.ok) return { ...base, card: { accountId: asText(row?.accountId), ...base.profile! } };
   return base;
@@ -186,7 +209,7 @@ export async function httpProfileById(accountId: string): Promise<ProfileResult 
 
 /** Свой профиль по cookie-сессии; гость → {ok:false, reason:'auth_required'}. */
 export async function httpMyProfile(): Promise<ProfileResult> {
-  const { status, row, text } = await apiFetch("/profiles/me");
+  const { status, row, text } = await apiFetch(profilesRoute("me"));
   return toProfileResult(status, row, text);
 }
 
@@ -196,6 +219,6 @@ export async function httpMyProfile(): Promise<ProfileResult> {
  * ошибку (unknown_keys/invalid/…) отдаём целиком в details — панель её показывает.
  */
 export async function httpPatchProfile(patch: ProfilePatch): Promise<ProfileResult> {
-  const { status, row, text } = await apiFetch("/profiles/me", { method: "PATCH", body: patch });
+  const { status, row, text } = await apiFetch(profilesRoute("me"), { method: "PATCH", body: patch });
   return toProfileResult(status, row, text);
 }

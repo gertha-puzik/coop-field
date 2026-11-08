@@ -129,7 +129,11 @@ function checkNoMarkers(label, root, markers) {
 function checkChunkIntegrity(label, root) {
   const chunksDir = path.join(root, "_next", "static", "chunks");
   const referenced = new Set();
-  const re = /_next\/static\/chunks\/([A-Za-z0-9._%-]+\.(?:js|css))/g;
+  // Два формата ссылок на чанки: прямые /_next/static/... (html/пререндеры)
+  // и КАРТЫ turbopack внутри js — "static/chunks/X.js" относительные
+  // (owner-bug 2026-11-08: карта ссылалась на чанк, которого нет в выкладке
+  // → 404 → вечная «Готовим ваш профиль»; второй паттерн ловит это в CI).
+  const re = /(?:^|[^\w])static\/chunks\/([A-Za-z0-9._%-]+\.(?:js|css))/g;
   for (const file of textFilesOf(root)) {
     let text;
     try {

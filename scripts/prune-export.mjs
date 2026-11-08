@@ -71,10 +71,17 @@ if (existsSync(chunksDir)) {
     }
   };
   await walk(dest);
-  const chunkRefs = /_next\/static\/chunks\/([A-Za-z0-9._-]+\.js)/g;
+  // Два формата: прямые html-ссылки /_next/static/chunks/X.js И КАРТЫ
+  // async-загрузчиков В ТЕЛАХ ЧАНКОВ — "static/chunks/X.js" относительные
+  // (без /_next). Без второго паттерна prune вырезал lazy-чанки runtime-карт:
+  // страницы молча теряли атмосферу/Babylon/профили (владелица 2026-11-08).
+  const chunkRefs = [
+    /_next\/static\/chunks\/([A-Za-z0-9._%-]+\.js)/g,
+    /(?:^|[^\w])static\/chunks\/([A-Za-z0-9._%-]+\.js)/g,
+  ];
   const pooled = new Set();
   const scanText = (text) => {
-    for (const m of text.matchAll(chunkRefs)) pooled.add(m[1]);
+    for (const re of chunkRefs) for (const m of text.matchAll(re)) pooled.add(m[1]);
   };
   for (const f of pageFiles) scanText(await readFile(f, "utf8"));
   // 2. Фикс-пойнт: тела известных чанков тоже ссылаются на чанки (динамика).
@@ -114,15 +121,21 @@ for (const dir of EXCLUDE[variant]) {
 if (!existsSync(path.join(dest, "index.html"))) failures.push(`${label}/index.html отсутствует`);
 // Целостность после чистки: каждая упоминаемая ссылка на чанк обязана существовать.
 if (existsSync(chunksDir)) {
-  const chunkRefs = /_next\/static\/chunks\/([A-Za-z0-9._-]+\.js)/g;
+  // Оба формата (см. пул выше): прямые /_next/... и относительные карты static/...
+  const chunkRefs = [
+    /_next\/static\/chunks\/([A-Za-z0-9._%-]+\.js)/g,
+    /(?:^|[^\w])static\/chunks\/([A-Za-z0-9._%-]+\.js)/g,
+  ];
   const walkVerify = async (dir) => {
     for (const ent of await readdir(path.join(dir), { withFileTypes: true })) {
       const p = path.join(dir, ent.name);
       if (ent.isDirectory()) await walkVerify(p);
       else if (/\.(html|txt|js)$/.test(ent.name)) {
         const text = await readFile(p, "utf8");
-        for (const m of text.matchAll(chunkRefs)) {
-          if (!existsSync(path.join(chunksDir, m[1]))) failures.push(`${label}: ссылка на удалённый чанк ${m[1]} (файл ${p.replace(dest + path.sep, "")})`);
+        for (const re of chunkRefs) {
+          for (const m of text.matchAll(re)) {
+            if (!existsSync(path.join(chunksDir, m[1]))) failures.push(`${label}: ссылка на удалённый чанк ${m[1]} (файл ${p.replace(dest + path.sep, "")})`);
+          }
         }
       }
     }

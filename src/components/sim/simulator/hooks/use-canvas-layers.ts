@@ -20,6 +20,10 @@ import { useEffect, type RefObject } from 'react';
 import type { CoopAtmo, createCoopClient } from '@/lib/net/coop';
 import { FIELD_SPRITES, wrap180, wrap360, type SimSettings, type SpriteId } from '@/lib/sim/settings';
 import type { AtmosphereLike } from '../sim-model';
+// Статический импорт: динамические async-чанки не выписываются в
+// static-export сборке turbopack (owner report 2026-11-08: поток 404 и
+// молчаливое отсутствие атмосферы на поле). Атмосфера нужна обеим играм.
+import { Atmosphere } from '@/lib/sim/atmosphere';
 
 export interface AimPublisherDeps {
   netRef: RefObject<ReturnType<typeof createCoopClient> | null>;
@@ -153,8 +157,9 @@ export function useAtmosphereLayer(deps: AtmosphereLayerDeps) {
     // слотом (pointer-events-none).
     cnv.className = 'block h-full w-full rounded-lg pointer-events-none';
     slot.appendChild(cnv);
-    import('@/lib/sim/atmosphere')
-      .then(({ Atmosphere }) => (dead ? undefined : Atmosphere.create(cnv, worldCv)))
+    // Статический модуль (см. импорт сверху): динамические async-чанки
+    // не выписываются static-export сборкой — было поле без атмосферы.
+    void (dead ? Promise.resolve<undefined>(undefined) : Atmosphere.create(cnv, worldCv))
       .then((a) => {
         if (!a) return;
         if (dead) {

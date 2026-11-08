@@ -9,7 +9,7 @@
     "build": "next build",
     "build:grotto": "NEXT_PUBLIC_SITE=grotto next build",
     "build:elyria": "NEXT_PUBLIC_SITE=elyria next build",
-    "build:variants": "npm run build:grotto && node scripts/prune-export.mjs grotto && npm run build:elyria && node scripts/prune-export.mjs elyria",
+    "build:variants": "node scripts/build-variants.mjs",
     "start": "node server.js",
     "test:ws": "node scripts/test-ws.mjs",
     "test:queue": "node scripts/test-move-queue.mjs",

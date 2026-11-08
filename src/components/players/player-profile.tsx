@@ -23,7 +23,7 @@ import { Lilita_One } from 'next/font/google';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
-import type { ProfileCard, ProfileMe, ProfilePatch, ProfileSp, PublicProfile } from '@/lib/net/http-profiles';
+import { httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -264,7 +264,8 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
       return;
     }
     setBusy(true);
-    const { httpPatchProfile, httpMyProfile } = await import('@/lib/net/http-profiles');
+    // Статический импорт (дин-импорт ломался: turbopack-карта → 404 чанк,
+    // см. owner report 2026-11-08); маршруты модуля — env-DCE канон P3.
     const patch: ProfilePatch = {
       displayName: name,
       bio: draftBio.trim(),
