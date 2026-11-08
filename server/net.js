@@ -31,6 +31,9 @@ import { handleCfgHttp } from "./runtime-config.js";
 // F2: per-room admin-роуты (те же гейты /cfg-зоны: роль admin на сервере,
 // host-гейт public ниже прячет /cfg/rooms* целиком, CSRF-щит — общий apiZone).
 import { handleRoomCfgHttp } from "./room-config.js";
+// Админ-операции «Игроки на поле» (GET/POST /admin/players*): гейт session
+// + role=admin + общий apiZone-CSRF — сам домен в room.js (W4-граница).
+import { handleAdminOpsHttp } from "./admin-ops.js";
 import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
@@ -218,7 +221,11 @@ export function startServer() {
     const apiZone =
       p === "/auth" || p.startsWith("/auth/") ||
       p === "/profiles" || p.startsWith("/profiles/") ||
-      p === "/cfg" || p.startsWith("/cfg/");
+      p === "/cfg" || p.startsWith("/cfg/") ||
+      // Админ-операции «Игроки на поле» (/admin/players*): тот же CSRF-щит
+      // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
+      // в зону попадают ТОЛЬКО эти два API-пути.
+      p === "/admin/players" || p.startsWith("/admin/players/");
     if (apiZone) {
       if (originHeader) res.setHeader("Vary", "Origin");
       if (originAllowed) {
@@ -261,6 +268,11 @@ export function startServer() {
     }
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
+      // Админ-операции «Игроки на поле» (/admin/players*): разбираются ДО
+      // статики — страница /admin остаётся статичной (P1 их не прячет),
+      // а вот эти API-пути живой домен room.js должен перехватить.
+      return handleAdminOpsHttp(req, res).then((opsHit) => {
+        if (opsHit) return;
       // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ: глобальный
       // /cfg-хендлер заявляет всё /cfg-подпространство (fetch фолбэк-404),
       // а room-роуты отвечают false на всё, что не /cfg/rooms*.
@@ -273,6 +285,7 @@ export function startServer() {
             serveStatic(req, res, url);
           });
         });
+      });
       });
     }).catch(() => {
       res.writeHead(500);

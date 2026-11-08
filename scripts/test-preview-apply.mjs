@@ -107,9 +107,11 @@ eq(
     blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /.well-known/acme-challenge/"),
   true,
 );
-// Полный набор проксируемых маршрутов в ОБОИХ блоках.
-// /admin здесь быть НЕ должно: он статика (www-elyria/admin), а не API.
-for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/ws"]) {
+// Полный набор проксируемых маршрутов в ОБОИХ блоках. /admin как ПРЕФИКС
+// здесь быть НЕ должно: страница — статика варианта (www-elyria/admin);
+// из /admin в Node уходит ТОЛЬКО API-префикс «Игроки на поле» (/admin/players
+// со слэш-суффиксом), он и перечислен отдельной точной локацией.
+for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/ws"]) {
   eq(
     `both blocks proxy ${loc}`,
     blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`location ${loc} `) &&
@@ -117,6 +119,19 @@ for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/ws"]) {
     true,
   );
 }
+// Страница панели остаётся статикой: цельного «location /admin » в блоке нет,
+// значит /admin и /admin/ отдаются try_files от root варианта (как на проде).
+eq(
+  "no whole /admin location (page stays static)",
+  /location \/admin \{/.test(alphaFrag),
+  false,
+);
+eq(
+  "admin page falls to try_files, api prefix is exact",
+  !/location \/admin \{/.test(blockFor(alphaFrag, "alpha.elisium.miew.ru")) &&
+    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /admin/players {"),
+  true,
+);
 eq(
   "both blocks keep ws upgrade headers",
   blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("proxy_set_header Upgrade $http_upgrade;") &&

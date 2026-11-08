@@ -16,6 +16,7 @@
     "test:auth": "node scripts/test-auth.mjs",
     "test:cross-origin": "node scripts/test-cross-origin.mjs",
     "test:csrf-startup": "node scripts/test-csrf-startup.mjs",
+    "test:admin-reset": "node scripts/test-admin-reset.mjs",
     "test:profiles": "node scripts/test-profiles.mjs",
     "test:cfg": "node scripts/test-cfg-registry.mjs",
     "test:room-config": "node scripts/test-room-config.mjs",

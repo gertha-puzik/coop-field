@@ -64,6 +64,9 @@ import {
 import { httpMe } from '@/lib/net/http-auth';
 
 import { RoomConfigPanel } from './room-config-panel';
+// Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
+// вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
+import { PlayersFieldTab } from './players-field-tab';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -301,6 +304,8 @@ function DiffRow({ d }: { d: FieldDiff }) {
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
+  /** Вкладка панели: реестр конфига (по умолчанию) и «Игроки на поле». */
+  const [tab, setTab] = useState<'cfg' | 'field'>('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -519,7 +524,7 @@ export default function CfgDashboard() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
       <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-xl font-bold text-[var(--sim-text)]">Панель конфига</h1>
+        <h1 className="text-xl font-bold text-[var(--sim-text)]">Панель управления</h1>
         <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
           ← Главное меню
         </a>
@@ -544,7 +549,35 @@ export default function CfgDashboard() {
         </div>
       ) : null}
 
-      {snap && draft ? (
+      {/* Разделы панели: реестр конфига и «Игроки на поле» (занятость + сброс). */}
+      <nav className="flex flex-wrap items-center gap-2" aria-label="Разделы панели">
+        <button
+          type="button"
+          onClick={() => setTab('cfg')}
+          className={`h-8 rounded-md border px-3 text-sm ${
+            tab === 'cfg'
+              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
+              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
+          }`}
+        >
+          Конфиг
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('field')}
+          className={`h-8 rounded-md border px-3 text-sm ${
+            tab === 'field'
+              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
+              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
+          }`}
+        >
+          Игроки на поле
+        </button>
+      </nav>
+
+      {tab === 'field' ? (
+        <PlayersFieldTab />
+      ) : snap && draft ? (
         <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <p className="text-xs text-[var(--sim-text-faint)]">

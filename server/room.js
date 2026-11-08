@@ -12,9 +12,9 @@ import { EV, MAX_PLAYERS, JOIN_COOLDOWN_MS, RAB_CELL } from "./protocol.js";
 import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM, ROOMS_MAX } from "./config.js";
 import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
-import { rememberCat, flushCatBook, restoreCatPosition } from "./persist.js";
+import { rememberCat, flushCatBook, restoreCatPosition, forgetCat } from "./persist.js";
 import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
-import { requiresAccount, RETIRED_ROOMS } from "./modes.js";
+import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 // F2 (спек §3): per-room overrides атмосферных параметров — начальный якорь
 // НОВОЙ комнаты из effective-слоёв (нет overrides → null → прежняя ленивая
 // инициализация глобальным слоем, поведение неизменно).
@@ -460,7 +460,111 @@ function roomsInfo(ws, payload = {}) {
   send(ws, EV.ROOMSINFO, list);
 }
 
+/**
+ * Занятость поля для админ-чтения (GET /admin/players): живые комнаты и их
+ * коты — без копии состояния, строки собираются прямо из комнат через
+ * publicCat (те же объекты, что рисуют поле). Пустые комнаты не показываем.
+ * Полчленный fm/fx/fy — только для сверки freemove-точки «теста»: админ
+ * принимает решение по координатам, не по подобию боевого протокола.
+ */
+function adminOccupancy() {
+  const out = [];
+  for (const room of rooms.values()) {
+    if (room.cats.size === 0) continue;
+    const cats = [];
+    for (const cat of room.cats.values()) {
+      const pc = publicCat(cat, room);
+      cats.push({
+        login: pc.login,
+        id: pc.id,
+        x: pc.x,
+        y: pc.y,
+        sprite: pc.sprite,
+        fm: pc.fm ? 1 : 0,
+        fx: Number.isFinite(pc.fx) ? pc.fx : null,
+        fy: Number.isFinite(pc.fy) ? pc.fy : null,
+      });
+    }
+    out.push({
+      room: room.code,
+      title: modeOf(room.code)?.title || room.code,
+      fmt: room.fmt,
+      count: room.cats.size,
+      cats,
+    });
+  }
+  return out;
+}
+
+/**
+ * Админ-сброс положения кота (POST /admin/players/reset): вернуть его на
+ * свежую клетку спавна spawnCell — как новичку после join. Персистная
+ * freemove-точка стирается из книги точек (restore после рестарта не вернёт
+ * прежнее место), очереди/прыжки гасятся, комнате раздан кадр EV.MOVE с
+ * новыми координатами — им же join уже раздаёт вошедшего (EV не расширяется).
+ * Ответ: { room, login, x, y, sprite } либо { error: { reason, message } } —
+ * человекочитаемый message отдаётся панелью без перевода. Свободную клетку
+ * обещает spawnCell: он исключает занятые клетки, включая клетку самого
+ * сбрасываемого кота, — координаты меняются всегда.
+ */
+function resetPlayerPosition(rawRoom, rawLogin) {
+  const key = RETIRED_ROOMS[normalizeRoomCode(rawRoom)] || normalizeRoomCode(rawRoom);
+  const room = rooms.get(key);
+  if (!room) {
+    return {
+      error: {
+        reason: "unknown_room",
+        message: `Комнаты «${key}» сейчас нет на сервере — она не открыта (в ней никого нет).`,
+      },
+    };
+  }
+  const login = String(rawLogin ?? "").trim();
+  if (!login) return { error: { reason: "invalid_login", message: "Не указано имя кота." } };
+  let cat = [...room.cats.values()].find((c) => c.login === login);
+  if (!cat) {
+    const low = login.toLowerCase();
+    cat = [...room.cats.values()].find((c) => c.login.toLowerCase() === low);
+  }
+  if (!cat) {
+    return {
+      error: {
+        reason: "unknown_cat",
+        message: `Кота «${login}» в комнате «${modeOf(key)?.title || key}» нет.`,
+      },
+    };
+  }
+  const cell = spawnCell(room);
+  if (!cell) {
+    return {
+      error: {
+        reason: "no_free_cell",
+        message: "На поле нет свободной клетки спавна — сбросить кота некуда.",
+      },
+    };
+  }
+  // Дозаписанные шаги очереди мертвы — движение после телепорта исполняется заново.
+  clearMoveTimer(cat);
+  cat.moveQueue = [];
+  cat.x = cell[0];
+  cat.y = cell[1];
+  // Мирный режим, как у новичка со спавна (см. join): стрела не рисуется,
+  // freemove-точка начинается заново с запаса клетки.
+  cat.fm = room.fmt === "test" ? 1 : 0;
+  delete cat.fx;
+  delete cat.fy;
+  cat.fsp = 0;
+  cat.jp = 0;
+  cat.freeJumpUntil = 0;
+  // Прежняя точка уходит из книги персистентных позиций — атомарный слив
+  // flushCatBook по конвенции записи; новая ходьба после сброса запишется сама.
+  forgetCat(cat.login);
+  flushCatBook(true);
+  broadcast(room, EV.MOVE, publicCat(cat, room));
+  console.log(`admin reset: room=${room.code} cat=${cat.login}#${cat.id} -> ${cell[0]},${cell[1]}`);
+  return { room: room.code, login: cat.login, x: cell[0], y: cell[1], sprite: cat.sprite };
+}
+
 export {
   rooms, send, broadcast, normalizeRoomCode, occupied, publicCat, fieldPayload,
-  leave, join, setSprite, block, space, roomsInfo,
+  leave, join, setSprite, block, space, roomsInfo, adminOccupancy, resetPlayerPosition,
 };

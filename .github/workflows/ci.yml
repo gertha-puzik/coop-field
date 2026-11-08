@@ -83,6 +83,11 @@ jobs:
       # CSRF (COOP_INSTANCE_CLASS-контракт), unknown-класс — тоже отказ.
       - name: CSRF fail-closed старт (§5)
         run: npm run test:csrf-startup
+      # Админ-операция «сброс положения игрока на поле»: /admin/players*
+      # (гейты 401/403/CSRF, живые координаты, кадр EV.MOVE, стирание
+      # freemove-точки из книги, повторный join без прежней точки).
+      - name: Сброс положения игрока (admin)
+        run: npm run test:admin-reset
       # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
       # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
       - name: Реестр конфига

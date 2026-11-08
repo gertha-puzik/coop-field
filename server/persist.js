@@ -131,4 +131,21 @@ function restoreCatPosition(room, cat) {
   }
 }
 
-export { flushCatBook, rememberCat, restoreCatPosition };
+/**
+ * Стык с книгой точек: убрать персистную запись кота (админ-сброс положения,
+ * POST /admin/players/reset). После стирания повторный join не вернёт прежнюю
+ * точку — восстановление пройдёт по свежей клетке спавна; новая ходьба честно
+ * запишется сама. Конвенция записи не меняется: правится память, помечается
+ * грязной, на диск списывается общим атомарным сливом flushCatBook.
+ * true — запись была и удалена, false — записи и так не было (чистый no-op,
+ * лишний флеш не поднимаем).
+ */
+function forgetCat(rawLogin) {
+  const key = String(rawLogin || "").toLowerCase();
+  if (!key || !Object.prototype.hasOwnProperty.call(catBook, key)) return false;
+  delete catBook[key];
+  catBookDirty = true;
+  return true;
+}
+
+export { flushCatBook, rememberCat, restoreCatPosition, forgetCat };
