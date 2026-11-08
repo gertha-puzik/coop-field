@@ -32,6 +32,14 @@ import { ThemeSelect } from '@/components/site/theme-select';
 const NAV_LINK =
   'whitespace-nowrap text-[13px] text-[#b9b3d9] underline-offset-2 transition-colors hover:text-[#f4f0ff] hover:underline';
 
+/**
+ * Элизия-маршруты за ИНЛАЙН-тернарниками (правило P3): модуль SiteHeader
+ * импортируется статически и остаётся в общем чанке при grotto-сборке,
+ * поэтому сами строки-пути обязаны умирать в мёртвой ветке	env-константы —
+ * иначе check-variants поймает «/players/» и «/admin/» в www-grotto.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
 export function SiteHeader() {
   const me = useMeRow();
   const inAccount = meHasAccount(me);
@@ -40,7 +48,13 @@ export function SiteHeader() {
   /** Своя карточка с якорем (гость — каталог без id): настроек и профиля
    *  общий предикат: без аккаунта ведём в каталог, там гейт сам спросит вход. */
   const profileHref = (hash: `#${string}` | '' = ''): string =>
-    inAccount && me?.accountId ? `/players/?id=${encodeURIComponent(me.accountId)}${hash}` : '/players/';
+    inAccount && me?.accountId
+      ? IS_ELYRIA
+        ? `/players/?id=${encodeURIComponent(me.accountId)}${hash}`
+        : '/'
+      : IS_ELYRIA
+        ? '/players/'
+        : '/';
 
   /** Выход: httpLogout гасит куку и me-кэш вкладки (бейджи слушают ME_EVENT),
    *  дальше — главная. Сбой сети не блокирует выход: уходим всё равно. */
@@ -62,7 +76,7 @@ export function SiteHeader() {
         <a className={NAV_LINK} href="/elision/">
           Игровая комната
         </a>
-        <a className={NAV_LINK} href="/players/">
+        <a className={NAV_LINK} href={IS_ELYRIA ? '/players/' : '/'}>
           Игроки
         </a>
         <a className={NAV_LINK} href={profileHref('#settings')}>
@@ -72,7 +86,7 @@ export function SiteHeader() {
           Мой профиль
         </a>
         {isAdmin ? (
-          <a className={NAV_LINK} href="/admin/">
+          <a className={NAV_LINK} href={IS_ELYRIA ? '/admin/' : '/'}>
             Панель
           </a>
         ) : null}

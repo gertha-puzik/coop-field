@@ -44,8 +44,8 @@ const GROTTO_FORBIDDEN = [
 ];
 /** Снятые легаси-маршруты, которых НЕ должно быть в актуальной Элизии. */
 const ELYRIA_FORBIDDEN = ["/combat/", "/hunger/"];
-/** Подпись живой Элизии в index.html. */
-const ELYRIA_INDEX_MUST = ["Elysiae", "Каталог игроков"];
+/** Подпись живой Элизии в index.html (W2:.SiteHeader несёт навигацию). */
+const ELYRIA_INDEX_MUST = ["Elysiae", "Мой профиль"];
 /** Расширения, в которых ищем маркеры/ссылки (чанки Next — .js/.css/.txt). */
 const TEXT_EXT = new Set([
   ".html", ".js", ".mjs", ".txt", ".json", ".css", ".map", ".svg", ".xml", ".webmanifest",

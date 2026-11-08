@@ -153,6 +153,7 @@ const HOMONYM_CONFIG_KEYS = new Set([
   "server/cfg-registry.js:armor",   // pick("armor","tenths") — universesForPublic §4
   "server/runtime-config.js:armor", // visible("armor","tenths") — combatCaps §4
   "server/sprites.js:sprite",       // slugify() фоллбек пустого транслит-слага — ИД каталога, не кадр протокола
+  "server/profiles.js:sprite",      // ключ PATCH-поля профиля (PATCH_FLAT/валидатор/ошибка) — не кадр протокола (W1)
 ]);
 const seen = new Map();
 let protocolImported = false;

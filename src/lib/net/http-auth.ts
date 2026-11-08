@@ -32,6 +32,20 @@ import { isCoopWhoami, type CoopWhoami } from "./protocol";
 /** Браузерное событие «сессия изменилась, вот свежий кадр» (detail: CoopWhoami). */
 export const ME_EVENT = "coop:me";
 
+/**
+ * Инлайн-флаг вариантов (P3): этот файл остаётся в графе обеих сборок
+ * (apiFetch-хелперы общие), поэтому литеральные маршруты «/auth/…» обязаны
+ * умирать в мёртвой ветке сворачивания — иначе check-variants ловит «/auth/»
+ * в www-grotto через страницу-донор (главная → SiteHeader → me-cache → сюда).
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
+
+/** Маршруты сессии: на grotto-сборке ветка мертва, строк в чанке нет. */
+function authRoute(kind: "register" | "login" | "logout" | "me"): string {
+  if (!IS_ELYRIA) return "/dev/null";
+  return { register: "/auth/register", login: "/auth/login", logout: "/auth/logout", me: "/auth/me" }[kind];
+}
+
 let meMemo: Promise<CoopWhoami> | null = null;
 
 function emitMe(row: CoopWhoami): void {
@@ -60,21 +74,21 @@ async function post(path: string, body: Record<string, unknown>): Promise<CoopWh
  *  игрока логином (register v2, контракт {login, pass, name?}). */
 export async function httpRegister(login: string, pass: string, name?: string): Promise<CoopWhoami> {
   const display = (name ?? "").trim();
-  return post("/auth/register", display ? { login, pass, name: display } : { login, pass });
+  return post(authRoute("register"), display ? { login, pass, name: display } : { login, pass });
 }
 
 export async function httpLogin(login: string, pass: string): Promise<CoopWhoami> {
-  return post("/auth/login", { login, pass });
+  return post(authRoute("login"), { login, pass });
 }
 
 export async function httpLogout(): Promise<CoopWhoami> {
-  return post("/auth/logout", {});
+  return post(authRoute("logout"), {});
 }
 
 /** Сырой ходок GET /auth/me (использован только httpMe-кэшем). */
 async function meRequest(): Promise<CoopWhoami> {
   try {
-    const res = await fetch(`${httpOrigin()}/auth/me`, { credentials: "include" });
+    const res = await fetch(`${httpOrigin()}${authRoute("me")}`, { credentials: "include" });
     const row = (await res.json().catch(() => null)) as unknown;
     return isCoopWhoami(row) ? row : { ok: false, reason: "error" };
   } catch {

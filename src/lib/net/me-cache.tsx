@@ -57,10 +57,19 @@ export function useMeRow(): CoopWhoami | null {
   return me;
 }
 
-/** href ссылки «Мой профиль»: вошедший — своя карточка, гость/без id — каталог. */
+/** href ссылки «Мой профиль»: вошедший — своя карточка, гость/без id — каталог.
+ *  Маршрут — за ИНЛАЙН-тернарником (P3, IS_ELYRIA модуля выше): модуль
+ *  остаётся в общем чанке при grotto-сборке, строка «/players/» обязана
+ *  умирать в мёртвой ветке. */
 export function myProfileHref(me: CoopWhoami | null | undefined): string {
   const id = me?.accountId;
-  return me?.ok && id ? `/players/?id=${encodeURIComponent(id)}` : "/players/";
+  return me?.ok && id
+    ? IS_ELYRIA
+      ? `/players/?id=${encodeURIComponent(id)}`
+      : '/'
+    : IS_ELYRIA
+      ? "/players/"
+      : '/';
 }
 
 /**
