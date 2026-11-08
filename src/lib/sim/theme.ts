@@ -35,6 +35,28 @@ export function applyTheme(t: ThemeId) {
     document.documentElement.setAttribute('data-theme', t);
     localStorage.setItem(THEME_KEY, t);
   } catch {}
+  notifyTheme(t);
+}
+
+/**
+ * Подписка на смену темы (аккумулятивное расширение, волна «elyria-admin-look»):
+ * компакт-селекты страниц синхронизируются между собой и с хромом симулятора —
+ * хром в своём changeTheme вызывает applyTheme, значит каждая смена темы
+ * (из любого UI) уведомляет всех подписчиков. Подписка: fn → функция отписки.
+ */
+type ThemeListener = (t: ThemeId) => void;
+
+const listeners = new Set<ThemeListener>();
+
+export function subscribeTheme(fn: ThemeListener): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+function notifyTheme(t: ThemeId): void {
+  for (const fn of listeners) fn(t);
 }
 
 /** Палитра самого поля (канвас): применяется при смене темы, если игрок

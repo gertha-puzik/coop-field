@@ -10,13 +10,36 @@ import {
   type MechanicCard,
 } from '@/lib/net/gerta-catalog';
 
-const MODE_LABEL: Record<CatalogMode, string> = {
-  all: 'все режимы',
-  beer: 'гроты',
-  elision: 'Элизия',
-  combat: 'бой',
-  hunger: 'голодные',
-};
+/**
+ * Compile-time вариант сайта (P3): сворачивается сборщиком, поэтому подписи и
+ * placeholder Элизии не попадают в grotto-бандл (спек §2A).
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
+const MODE_LABEL: Record<CatalogMode, string> = IS_ELYRIA
+  ? {
+      all: 'все режимы',
+      beer: 'гроты',
+      elision: 'Элизия',
+      hunger: 'голодные',
+    }
+  : ({
+      all: 'все режимы',
+      beer: 'гроты',
+      hunger: 'голодные',
+      // Ключ elision недостижим: CARD_MODES в grotto его не содержит, а чип
+      // фильтра строится из CARD_MODES.
+    } as Record<CatalogMode, string>);
+
+/**
+ * Режимы, о которых справочник говорит в этом варианте сайта (P3): grotto не
+ * упоминает Элизию вовсе, у Элизии свой набор. «all»-карточки общие.
+ */
+const CARD_MODES: readonly CatalogMode[] = IS_ELYRIA ? ['elision'] : ['beer', 'hunger'];
+
+function cardVisible(mode: CatalogMode): boolean {
+  return mode === 'all' || CARD_MODES.includes(mode);
+}
 
 const APPLY_LABEL = {
   now: 'сразу в этой комнате',
@@ -49,6 +72,7 @@ export function GertaHandbook() {
   const mechanics = useMemo(
     () =>
       MECHANIC_CARDS.filter((c) => {
+        if (!cardVisible(c.mode)) return false;
         if (mode !== 'any' && c.mode !== 'all' && c.mode !== mode) return false;
         if (needle && !matches(cardText(c), needle)) return false;
         return true;
@@ -58,6 +82,7 @@ export function GertaHandbook() {
   const constants = useMemo(
     () =>
       CONSTANT_CARDS.filter((c) => {
+        if (!cardVisible(c.mode)) return false;
         if (mode !== 'any' && c.mode !== 'all' && c.mode !== mode) return false;
         if (onlyEditable && !c.editable) return false;
         if (needle && !matches(cardText(c), needle)) return false;
@@ -81,11 +106,11 @@ export function GertaHandbook() {
           className="mt-1 h-8 text-sm"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="удар, Элизия, пароль…"
+          placeholder={IS_ELYRIA ? 'удар, Элизия, пароль…' : 'удар, манекен, пароль…'}
         />
       </label>
       <div className="flex flex-wrap gap-1">
-        {(['any', 'elision', 'beer', 'combat', 'hunger'] as const).map((id) => (
+        {(['any', ...CARD_MODES] as const).map((id) => (
           <button
             key={id}
             type="button"

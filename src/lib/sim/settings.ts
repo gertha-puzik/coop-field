@@ -6,7 +6,12 @@
 // Диагонали: 45° = вправо-вниз, 135° = влево-вниз, 225° = влево-вверх, 315° = вправо-вверх.
 // ============================================================
 
-/** Надпись об авторах: футер страницы входа и страницы поля. */
+// Алиасов и беэ-расширительных импортов быть не должно: этот файл читает
+// node-зонд паритета (scripts/protocol-parity-probe.mts, --experimental-strip-types) —
+// только относительные пути с расширением (.ts) он резолвит сам.
+import { STORAGE_KEY } from './engine-consts.ts';
+
+/** Надпись об авторах: футер страницы входа и страница поля. */
 export const GAME_CREDITS = 'Абноукетвар разработан Пухляшиком и Сырь, идейно вдохновлён Суперняшкой Блестяшкой';
 
 /** Окно стрелы, в котором движение в данном направлении происходит без замедления. */
@@ -51,45 +56,27 @@ export interface StrikeZone {
 
 export type WindowKey = '0' | '45' | '90' | '135' | '180' | '225' | '270' | '315';
 
-/** Идентификатор спрайта персонажа. */
-export type SpriteId =
-  | 'puhlyashik'
-  | 'puhlyashshshshshshshsh'
-  | 'blestyashka'
-  | 'puzatik'
-  | 'razdora'
-  | 'pohititel'
-  | 'syrstyashka'
-  | 'gromoryov'
-  | 'gremuchnik'
-  | 'ryzhiy'
-  | 'trehcvetny'
-  | 'negr'
-  | 'chis'
-  | 'lera'
-  | 'anya1'
-  | 'anya2'
-  | 'serebristyy'
-  | 'evr'
-  | 'drel'
-  | 'maslina'
-  | 'buran'
-  | 'sumrak'
-  | 'izya'
-  | 'kameshechek'
-  | 'klubochek'
-  | 'podushka'
-  | 'plyushik'
-  | 'rvanitse'
-  | 'puhlyashik-kit'
-  | 'blestyashka-kit'
-  | 'chistolapik-kit'
-  | 'rab';
+/**
+ * Идентификатор спрайта персонажа. ДО менеджера спрайтов был литеральным
+ * union 31 базового id (+ 'rab' — мишень); каталог стал динамическим
+ * (GET /sprites/catalog + админский менеджер загружает новые скины,
+ * server/sprites.js), серверные id новых — translit-slugs произвольных имён,
+ * поэтому тип расширён до строки осознанно. Все runtime-проверки строгие:
+ * валидатор сервера (манифест каталога) и валидатор join-пакета на клиенте.
+ * Базовые id перечислены массивом SPRITES ниже (каталог сида).
+ */
+export type SpriteId = string;
 
 export interface SpriteMeta {
   id: SpriteId;
   name: string;
   src: string;
+  /**
+   * Категория каталога (админский менеджер спрайтов, server/sprites.js):
+   * свободная строка, у записей статичного базового набора поля нет
+   * (undefined) — интерфейс только расширен, существующие свойства не менялись.
+   */
+  category?: string;
 }
 
 /** Доступные спрайты персонажа (экран выбора перед полем). */
@@ -1128,4 +1115,46 @@ export function bfsPath(
     cur = p;
   }
   return path.reverse();
+}
+
+// ---------------- СП из профиля аккаунта (Элизия) ----------------
+
+/** Диапазоны СП профиля — зеркалируют контракт сервера (server/profiles.js):
+ *  период оборота стрелы 1,8–5,0 сек (шаг 0,1), пресеты урона/брони 0–9
+ *  (на воде это числа 0,0–0,9). Меняются только парой: сервер и клиент. */
+export const SP_PROFILE_PERIOD_MIN = 1.8;
+export const SP_PROFILE_PERIOD_MAX = 5;
+export const SP_PROFILE_LEVEL_MAX = 9;
+
+/**
+ * Применение сохранённых в профиле СП к локальным настройкам сессии: тот же
+ * стор localStorage (STORAGE_KEY), в который панель настроек пишет через
+ * свой effect в симуляторе — симулятор прочитает значения при следующем
+ * монтировании. Экран входа Элизии дополнительно применяет их и к живым
+ * настройкам сразу (onApply*-механизм подтверждения). Отсутствующее поле —
+ * локальное значение не трогаем; ошибки хранилища молча игнорируются (как
+ * эффект сохранения в симуляторе). SSR-безопасно.
+ */
+export function persistProfileSp(sp: {
+  periodSec?: number;
+  damageLevel?: number;
+  armorLevel?: number;
+}): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const cur = raw ? mergeSettings(JSON.parse(raw)) : DEFAULT_SETTINGS;
+    if (typeof sp.periodSec === 'number' && Number.isFinite(sp.periodSec)) {
+      cur.arrow.periodSec = Math.min(
+        SP_PROFILE_PERIOD_MAX,
+        Math.max(SP_PROFILE_PERIOD_MIN, Math.round(sp.periodSec * 10) / 10),
+      );
+    }
+    const level = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= SP_PROFILE_LEVEL_MAX;
+    if (level(sp.damageLevel)) cur.combat.damageLevel = sp.damageLevel as number;
+    if (level(sp.armorLevel)) cur.combat.armorLevel = sp.armorLevel as number;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cur));
+  } catch {
+    /* хранилище может быть недоступно */
+  }
 }

@@ -7,8 +7,8 @@
 # PR-коду исполнить произвольный юнит от root.
 #
 # Dual-host (P5): одно окружение = ДВА сайта и ДВА веб-корня:
-#   pr-<номер>.abnocw.miew.ru  -> $APP/www-grotto  (публичные «Пивные гротты»)
-#   pr-<номер>.elisium.miew.ru -> $APP/www-elyria  (Элизия Эйдес)
+#   pr-<номер>.abnocw.phainonsmilk.ru  -> $APP/www-grotto  (публичные «Пивные гротты»)
+#   pr-<номер>.elysiae.phainonsmilk.ru -> $APP/www-elyria  (Элизия Эйдес)
 # Инстанс комнаты на PR остаётся один (один порт): оба server-блока nginx
 # проксируют на один и тот же 127.0.0.1:$PORT; что именно разрешено на
 # каждом хосте, решает сервер по env PUBLIC_HOSTS/ELYRIA_HOSTS (фаза P1) —
@@ -65,8 +65,8 @@ PORT="${PREVIEW_PORT:-}"
 ACTION="${PREVIEW_ACTION:-apply}"
 SHA="${PREVIEW_SHA:-unknown}"
 IN="${PREVIEW_IN:-$HOME/incoming-preview/$SLUG}"
-HOST="${PREVIEW_HOST:-$SLUG.abnocw.miew.ru}"
-HOST2="${PREVIEW_HOST2:-$SLUG.elisium.miew.ru}"
+HOST="${PREVIEW_HOST:-$SLUG.abnocw.phainonsmilk.ru}"
+HOST2="${PREVIEW_HOST2:-$SLUG.elysiae.phainonsmilk.ru}"
 
 fail() { echo "$*" >&2; exit 1; }
 
@@ -87,13 +87,13 @@ valid_host() {
   local h="$1"
   local label=""
   case "$h" in
-    *.abnocw.miew.ru)
-      label="${h%.abnocw.miew.ru}"
-      [ "$h" = "$label.abnocw.miew.ru" ] || return 1
+    *.abnocw.phainonsmilk.ru)
+      label="${h%.abnocw.phainonsmilk.ru}"
+      [ "$h" = "$label.abnocw.phainonsmilk.ru" ] || return 1
       ;;
-    *.elisium.miew.ru)
-      label="${h%.elisium.miew.ru}"
-      [ "$h" = "$label.elisium.miew.ru" ] || return 1
+    *.elysiae.phainonsmilk.ru)
+      label="${h%.elysiae.phainonsmilk.ru}"
+      [ "$h" = "$label.elysiae.phainonsmilk.ru" ] || return 1
       ;;
     *)
       return 1
@@ -114,11 +114,11 @@ GROTTO_HOST=""
 ELYRIA_HOST=""
 for h in "$HOST" "$HOST2"; do
   case "$h" in
-    *.abnocw.miew.ru)
+    *.abnocw.phainonsmilk.ru)
       [ -z "$GROTTO_HOST" ] || fail "два abnocw-хоста: нужен ровно один (${HOST} + ${HOST2})"
       GROTTO_HOST="$h"
       ;;
-    *.elisium.miew.ru)
+    *.elysiae.phainonsmilk.ru)
       [ -z "$ELYRIA_HOST" ] || fail "два elisium-хоста: нужен ровно один (${HOST} + ${HOST2})"
       ELYRIA_HOST="$h"
       ;;
@@ -150,7 +150,7 @@ if [ "$ARTIFACT_MODE" = "legacy-single" ]; then
   # abnocw-зоной: Элизия-суффикс для одно-сайтового артефакта — чужой хост,
   # отказ, а не тихая подмена хостом из HOST2.
   case "$HOST" in
-    *.abnocw.miew.ru) [ -n "$GROTTO_HOST" ] || GROTTO_HOST="$HOST" ;;
+    *.abnocw.phainonsmilk.ru) [ -n "$GROTTO_HOST" ] || GROTTO_HOST="$HOST" ;;
     *) fail "legacy-single артефакт деплоится на один abnocw-хост (получили ${HOST})" ;;
   esac
 else
@@ -204,8 +204,8 @@ cert_covers_host() {
   pem="$dir/fullchain.pem"
   [ -f "$pem" ] && [ -f "$dir/privkey.pem" ] || return 1
   case "$host" in
-    *.abnocw.miew.ru) wild="DNS:\\*\\.abnocw\\.miew\\.ru" ;;
-    *.elisium.miew.ru) wild="DNS:\\*\\.elisium\\.miew\\.ru" ;;
+    *.abnocw.phainonsmilk.ru) wild="DNS:\\*\\.abnocw\\.phainonsmilk\\.ru" ;;
+    *.elysiae.phainonsmilk.ru) wild="DNS:\\*\\.elysiae\\.phainonsmilk\\.ru" ;;
     *) return 1 ;;
   esac
   sans="$(openssl x509 -in "$pem" -noout -text 2>/dev/null || true)"
@@ -217,7 +217,7 @@ cert_dir_for_host() {
   # Печатает первый каталог с сертификатом, покрывающим $1, либо пусто.
   # Приоритет: per-host зеркало (${PREVIEW_TLS_PER:-tls/<host>} — штатный
   # HTTP-01 поток coop-preview-cert) — потом зеркало зоны
-  # tls/abnocw.miew.ru|tls/elisium.miew.ru (wildcard DNS-01) — в конце
+  # tls/abnocw.phainonsmilk.ru|tls/elysiae.phainonsmilk.ru (wildcard DNS-01) — в конце
   # легаси-слот PREVIEW_TLS_WILD (один SAN-набор теоретически мог бы покрыть
   # обе зоны сразу).
   local host="$1"
@@ -225,12 +225,12 @@ cert_dir_for_host() {
   local per="${PREVIEW_TLS_PER:-$PREVIEW_ROOT/tls/$host}"
   local zone=""
   case "$host" in
-    *.abnocw.miew.ru) zone="abnocw" ;;
-    *.elisium.miew.ru) zone="elisium" ;;
+    *.abnocw.phainonsmilk.ru) zone="abnocw" ;;
+    *.elysiae.phainonsmilk.ru) zone="elysiae" ;;
     *) return 1 ;;
   esac
   local d=""
-  for d in "$per" "$PREVIEW_ROOT/tls/${zone}.miew.ru" "$wild"; do
+  for d in "$per" "$PREVIEW_ROOT/tls/${zone}.phainonsmilk.ru" "$wild"; do
     if cert_covers_host "$host" "$d"; then
       printf '%s\n' "$d"
       return 0
@@ -299,6 +299,9 @@ ${https_jump}
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        # §6: /cfg — credentialed admin-зона, auth rate-limits считаются по
+        # клиентскому IP так же, как в /auth (прод-блоки уже так делают).
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
     location /profiles {
@@ -309,13 +312,51 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
-    location /admin {
+    # NB: /admin как ПРЕФИКС не проксируется: панель админа — статическая
+    # страница варианта (GET /admin/ отдаётся try_files, как на прод-конфиге);
+    # проксирование всего префикса ломало страницу 404. Единственное исключение
+    # ниже — API-префикс «Игроки на поле» (/admin/players со слэш-суффиксом):
+    # уходит в Node только он, страница /admin остаётся статикой.
+    location /admin/players {
         proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
+    }
+    # Менеджер спрайтов (server/sprites.js): те же правила «только реальные
+    # API-префиксы» — админские CRUD /admin/sprites* уходят в Node, страница
+    # /admin остаётся статикой варианта (как /admin/players выше).
+    location /admin/sprites {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    # Публичный каталог спрайтов ОБЕИМ сайтам (карусель выбора скина): без
+    # прокси изолированный билд отдал бы try_files→index.html и карусель
+    # молча деградировала на статичный список.
+    location /sprites/catalog {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    # Файлы ЗАГРУЖЕННЫХ спрайтов (не-builtin): префикс ДЛИННЕЕ статики
+    # /sprites/, поэтому nginx выбирает этот location, а базовые PNG
+    # (www*/sprites/<id>.png) остаются на try_files своего root. Порядок в
+    # конфиге для наглядности до статических location — у префиксов nginx и
+    # так берёт самое длинное совпадение.
+    location /sprites/file {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     location /ws {
         proxy_pass http://127.0.0.1:$port;
@@ -873,15 +914,15 @@ if [ "$ARTIFACT_MODE" = "legacy-single" ]; then
   # grep -v ниже гарантирует, что ключ от прошлого dual-окружения удалён.
   SITES_MODE="legacy-single"
   AO="http://$GROTTO_HOST,https://$GROTTO_HOST"
-  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE)=' "$APP/env" > "$APP/env.n" || true
-  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\n' \
+  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE|COOP_INSTANCE_CLASS)=' "$APP/env" > "$APP/env.n" || true
+  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\nCOOP_INSTANCE_CLASS=preview\n' \
     "$PORT" "$AO" "$GROTTO_HOST" "$SHA" "$SITES_MODE" >> "$APP/env.n"
 else
   SITES_MODE="dual"
   cmp -s "$APP/www-grotto/index.html" "$APP/www-elyria/index.html" && SITES_MODE="mirror"
   AO="http://$GROTTO_HOST,https://$GROTTO_HOST,http://$ELYRIA_HOST,https://$ELYRIA_HOST"
-  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE)=' "$APP/env" > "$APP/env.n" || true
-  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nELYRIA_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\n' \
+  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE|COOP_INSTANCE_CLASS)=' "$APP/env" > "$APP/env.n" || true
+  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nELYRIA_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\nCOOP_INSTANCE_CLASS=preview\n' \
     "$PORT" "$AO" "$GROTTO_HOST" "$ELYRIA_HOST" "$SHA" "$SITES_MODE" >> "$APP/env.n"
 fi
 mv "$APP/env.n" "$APP/env"

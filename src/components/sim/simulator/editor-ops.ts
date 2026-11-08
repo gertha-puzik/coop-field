@@ -191,10 +191,14 @@ export function buildEditorOps(params: EditorOpsParams) {
     }
     patchOrClearPlace(null);
     setEditorMsg(null);
+    // S2 (аудит Z.AI 2026-11-08): пароль редактора больше НЕ живёт на диске
+    // клиента — только в сессионном состоянии компонента, вводится при
+    // сохранении. Миграция: чистим след устаревшего ключа у существующих
+    // пользователей (с ключа только удаляем, на диск ничего не пишем).
     try {
-      setEditorPass(localStorage.getItem(EDITOR_PASS_KEY) || '');
+      localStorage.removeItem(EDITOR_PASS_KEY);
     } catch {
-      /* приватный режим — пароль вводится вручную */
+      /* приватный режим — localStorage недоступен, чистить нечего */
     }
     setEditorOpen(true);
     // Режим редактирования выключает мирную ходьбу: цель клика и маршрут гасим.
@@ -692,11 +696,6 @@ export function buildEditorOps(params: EditorOpsParams) {
       return;
     }
     if (d.selFloat) dropEditorSelection();
-    try {
-      localStorage.setItem(EDITOR_PASS_KEY, editorPass);
-    } catch {
-      /* приватный режим — просто не запоминаем */
-    }
     // Сохранение — долгая дорога (кодирование многимегапиксельного рисунка,
     // отправка, серверный декод и пересбор геометрии): каждый этап показываем
     // в панели с секундами, чтобы было видно, что сохранение реально идёт.

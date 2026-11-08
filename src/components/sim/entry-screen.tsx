@@ -5,25 +5,34 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import {
-  DAMAGE_LEVELS,
   GAME_CREDITS,
   SPRITES,
   SPRITE_GROUPS,
   MALYSHOCHKI_SET,
-  armorLevelMultiplier,
   damageLevelLabel,
   spriteGroupOf,
-  throatDamageFor,
   type SpriteId,
   type SpriteMeta,
 } from '@/lib/sim/settings';
 import { RoomPicker, type RoomRow } from './room-picker';
 import { AuthPanel } from './auth-panel';
 import type { CoopWhoami } from '@/lib/net/protocol';
+import { httpMyProfile } from '@/lib/net/http-profiles';
+import type { ProfileMe } from '@/lib/net/http-profiles';
 import { MODE_COPY, namedRoom, type PlayMode } from '@/lib/net/modes';
+import type { Universes } from '@/lib/net/cfg-live';
 
-/** Готовые значения периода оборота стрелы — те же, что в настройках («Стрела»). */
-const SPEED_PRESETS = [1.8, 2.5, 3.5, 4, 4.5, 5];
+/**
+ * Compile-time вариант сайта (P3, спек §2A): сворачивается сборщиком —
+ * блок аккаунта и панели входа в grotto-бандл не попадают, как и их тексты.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
+/**
+ * Хинт имени для вошедшего аккаунта. Строка профиля — только elyria-ветка
+ * тернарника: в grotto-бандле её нет (спек §2A).
+ */
+const NAME_HINT_ACCOUNT = IS_ELYRIA ? 'Имя — из вашего аккаунта.' : '';
 
 const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
 
@@ -116,7 +125,11 @@ function ParamCard({
  *  справа — «Скрытые параметры»: скорость стрелы (ползунок + пресеты 5…1,8 сек),
  *  дамаг и броня (пресеты 0,0–0,9). Каждый пункт игрок подтверждает — только
  *  подтверждённое значение уходит в настройки.
- * Когда имя введено и все три пункта подтверждены — ниже открывается выбор комнаты.
+ * Элизия: блоков СП нет — скрытые параметры хранятся в профиле аккаунта,
+ * при монтировании тихо подтягиваются (GET /profiles/me) и применяются
+ * без подтверждений; менять их можно на своей странице профиля. Гроты —
+ * прежний флоу (гости без аккаунтов). Когда имя введено (а в Элизии —
+ * СП применены), ниже открывается выбор комнаты.
  */
 export function EntryScreen({
   initialSprite,
@@ -130,7 +143,9 @@ export function EntryScreen({
   roomsStale,
   whoami,
   authMessage,
+  authBusy,
   playMode = 'hub',
+  universes,
   onPickRoom,
   onApplySpeed,
   onApplyDamage,
@@ -156,9 +171,14 @@ export function EntryScreen({
   onApplyArmor: (level: number) => void;
   whoami?: CoopWhoami | null;
   authMessage?: string | null;
+  /** Запрос входа в процессе — кнопки входа/регистрации выключены. */
+  authBusy?: boolean;
   playMode?: PlayMode;
+  /** Разрешённые значения СП из GET /cfg (P3): ползунок и чипы предлагают только их. */
+  universes: Universes;
   onLogin?: (login: string, pass: string) => void;
-  onRegister?: (login: string, pass: string) => void;
+  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт логином). */
+  onRegister?: (login: string, pass: string, name?: string) => void;
   onLogout?: () => void;
 }) {
   const [name, setName] = useState(initialName);
@@ -175,6 +195,70 @@ export function EntryScreen({
    *  раз при открытии экрана — дальше ползунки живут своей жизнью. */
   const prevSpRef = useRef({ speed: Math.round(periodSec * 10) / 10, damage: damageLevel, armor: armorLevel });
 
+  /** Профиль по cookie (только Элизия): записи без аккаунта не храним, чужой
+   *  аккаунт после выхода не светит — валиден только совпавший accountId.
+   *  Динамический импорт внутри свёрнутой IS_ELYRIA-ветки: /profiles-код в
+   *  grotto-бандл не попадает (изоляция сайтов, §10.4). */
+  const [me, setMe] = useState<{ accountId: string; profile: ProfileMe } | null>(null);
+  const [meFailed, setMeFailed] = useState(false);
+  const meProfile = IS_ELYRIA && me && whoami?.ok && whoami.accountId && me.accountId === whoami.accountId
+    ? me.profile
+    : null;
+  const applyRef = useRef({ onApplySpeed, onApplyDamage, onApplyArmor });
+  applyRef.current = { onApplySpeed, onApplyDamage, onApplyArmor };
+
+  /**
+   * Тихое применение СП из профиля (только Элизия): экран входа за гейтом,
+   * вход уже аутентифицирован — берем /profiles/me тем же fetch, что и
+   * страница профиля. Пока ответ не пришёл — живут локальные дефолты;
+   * пришёл — применяем ОДИН раз на аккаунт (переприменение при чужих
+   * перерисовках не нужно). Флоу входа фетч не ждёт: имя и выбор комнаты
+   * доступны сразу. Выйденный аккаунт — fetch не делаем вовсе.
+   */
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    if (!whoami?.ok || !whoami.accountId) return;
+    let dead = false;
+    setMeFailed(false);
+    void (async () => {
+      // Динамический import здесь НЕДОПУСТИМ: turbopack-карта ссылалась на
+      // чанк, которого не было в выкладке (404 → молчаливый reject → вечная
+      // «Готовим ваш профиль», owner report 2026-11-08). Модуль импортируется
+      // статически; литералы его маршрутов вырезаются env-DCE (канон P3).
+      // Любой сбой путём отдаёт meFailed — выбор комнаты не висит никогда.
+      let profile: ProfileMe | null = null;
+      try {
+        const res = await httpMyProfile();
+        if (dead) return;
+        // Фетч не удался — профиль не держит игрока на входе: выбор комнаты
+        // открывается на стартовых значениях движка (внешность применит
+        // сервер по сессии, пустой скин профиля не перезапишет).
+        if (!res.ok || !res.profile) {
+          setMeFailed(true);
+          return;
+        }
+        profile = res.profile;
+        setMe({ accountId: whoami.accountId!, profile });
+      } catch {
+        if (!dead) setMeFailed(true);
+        return;
+      }
+      if (dead || !profile) return;
+      const sp = profile.sp;
+      if (!sp) return;
+      const { onApplySpeed: applySpeed, onApplyDamage: applyDamage, onApplyArmor: applyArmor } =
+        applyRef.current;
+      if (typeof sp.periodSec === 'number' && Number.isFinite(sp.periodSec)) {
+        applySpeed(Math.round(sp.periodSec * 10) / 10);
+      }
+      if (typeof sp.damageLevel === 'number') applyDamage(sp.damageLevel);
+      if (typeof sp.armorLevel === 'number') applyArmor(sp.armorLevel);
+    })();
+    return () => {
+      dead = true;
+    };
+  }, [whoami?.ok, whoami?.accountId]);
+
   /** «Использовать предыдущие СП»: подтягивает сохранённый выбор и подтверждает
    *  все три пункта разом — каждый раз тыкать одно и то же не нужно. */
   const applyPrevSp = () => {
@@ -190,13 +274,76 @@ export function EntryScreen({
     setArmorOk(p.armor);
   };
 
-  const accountName = whoami?.ok && whoami.accountId ? whoami.login : '';
+  /** Имя аккаунта — только Элизия (P3): в гротах аккаунтных сессий не бывает,
+   *  панель входа туда не монтируется вовсе. */
+  const accountName = IS_ELYRIA && whoami?.ok && whoami.accountId ? whoami.login || '' : '';
   const trimmed = (accountName || name).trim();
   const speedDone = speedOk !== null && Math.abs(speedOk - speedVal) < 0.05;
   const damageDone = damageOk !== null && damageOk === damageVal;
   const armorDone = armorOk !== null && armorOk === armorVal;
   const doneCount = [speedDone, damageDone, armorDone].filter(Boolean).length;
-  const roomsOpen = !!trimmed && doneCount === 3;
+
+  /** Кто идёт на поле (Элизия): полный профиль → всё из профиля. Неполный
+   *  (скина нет) → ник из профиля, скин и рост — текущий выбор карусели
+   *  на входе: join сохранит его в аккаунт, второй вход уже пройдёт мимо.
+   *  Фетч не удался — пустой скин: сохранённая внешность не затрётся,
+   *  сервер применит её сам по сессии. */
+  const elyWho = () => {
+    const ch = meProfile
+      ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
+      : null;
+    const nick = (meProfile?.displayName || accountName || name).trim() || 'Кот';
+    if (!ch || !ch.sprite) {
+      return {
+        name: nick,
+        sprite: (meProfile ? sprite : '') as SpriteId,
+        scale: meProfile ? scale : initialScale,
+      };
+    }
+    return {
+      name: nick,
+      sprite: ch.sprite,
+      scale: Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : initialScale,
+    };
+  };
+
+  /** Профиль «всё выбрано» (Элизия): у персонажа скин (непустой и из базового
+   *  каталога движка — так честно решает появление на поле) и ник. Скрытые
+   *  параметры в критерий не входят: у них всегда есть значения. */
+  const meChar = meProfile
+    ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
+    : null;
+  const profileComplete = !!(
+    meProfile &&
+    meChar &&
+    meChar.sprite &&
+    SPRITES.some((s) => s.id === meChar.sprite) &&
+    (meProfile.displayName.trim() || meChar.name.trim())
+  );
+
+  /** Комната Элизии этого экрана: первый ряд «по аккаунту» из текущего
+   *  режима — тот же id, что ушла бы из кнопки выбора комнаты. */
+  const elyRoomId = roomRows.find((row) => namedRoom(row.id)?.access === 'registered')?.id ?? null;
+
+  /** Автовход (Элизия): профиль полон → на поле сразу, минуя выбор комнаты.
+   *  Один раз на аккаунт (перевход не долбит второй join), только по
+   *  живой сессии; гостей нет — экран за гейтом, но проверяем всё равно. */
+  const autoTriedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!IS_ELYRIA || !profileComplete) return;
+    if (!whoami?.ok || !whoami.accountId || !elyRoomId) return;
+    if (autoTriedRef.current === whoami.accountId) return;
+    autoTriedRef.current = whoami.accountId;
+    onPickRoom(elyRoomId, elyWho());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileComplete, whoami?.ok, whoami?.accountId, elyRoomId]);
+
+  // Элизия: СП и внешность применяются молча из профиля — ручных блоков нет;
+  // комнаты ждут профиль (миллисекунды того же fetch), фетч не удался — не
+  // держим игрока. Гроты — прежний флоу с тремя подтверждениями.
+  const roomsOpen = IS_ELYRIA
+    ? !!trimmed && (meProfile !== null || meFailed)
+    : !!trimmed && doneCount === 3;
 
   /* --- карусель скинов: колонки-персонажи («общее имя» → спрайты), крутится в стороны.
      У одного игрока могут быть разные персонажи — все спрайты персонажа стоят
@@ -271,9 +418,30 @@ export function EntryScreen({
         </nav>
       </header>
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]">
+      {/* Элизия: полный профиль → сразу на поле (автовход), экран выбора не
+          рендерим вовсе. Неполный — единственная недостающая выборалка:
+          скин (ник в аккаунте есть всегда), join сохранит выбор в аккаунт.
+          Гроты — прежние три блока с ручным выбором. */}
+      {IS_ELYRIA && profileComplete ? (
+        <section
+          aria-live="polite"
+          className="mt-5 rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-4 py-6 text-center"
+        >
+          <p className="text-sm font-semibold text-[var(--sim-text)]">Заходим на поле…</p>
+          <p className="mt-1 text-xs text-[var(--sim-text-faint)]">Внешность — из вашего профиля.</p>
+        </section>
+      ) : (
+      <div
+        className={
+          IS_ELYRIA
+            ? 'mt-5 grid items-start gap-4'
+            : 'mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]'
+        }
+      >
         {/* Блок 1: имя сверху, под ним карусель скинов в 2 ряда */}
         <section aria-label="Кот" className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+          {/* Имя — только для гостей гротов: в Элизии ник живёт в аккаунте. */}
+          {!IS_ELYRIA && (
           <label className="flex flex-col gap-1.5" htmlFor="entry-name">
             <span className="text-sm font-semibold text-[var(--sim-text)]">Имя</span>
             <Input
@@ -288,11 +456,10 @@ export function EntryScreen({
               className="h-10 border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
             />
             <span id="entry-name-hint" className="text-xs text-[var(--sim-text-faint)]">
-              {accountName
-                ? 'Имя взято из аккаунта — так вас увидят на поле и в книге позиций Элизии.'
-                : 'Обязательное поле. Пустое имя на поле не пускает.'}
+              {accountName ? NAME_HINT_ACCOUNT : 'Обязательное поле. Пустое имя на поле не пускает.'}
             </span>
           </label>
+          )}
 
           <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -388,9 +555,7 @@ export function EntryScreen({
                 );
               })}
             </div>
-            <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">
-              Спрайты собраны под общими именами персонажей. Листайте карусель: тяните мышью, колесом или кнопками ‹ ›.
-            </p>
+            <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">Листайте карусель.</p>
             {/* Отдельный раздел: набор скинов №2 «Малышочки» — маленькие спящие зверьки,
                 живут вне общей карусели, своим блоком (выбор работает так же). */}
             {malyshSprites.length > 0 ? (
@@ -431,6 +596,14 @@ export function EntryScreen({
             ) : null}
           </div>
 
+          {IS_ELYRIA && meProfile ? (
+            <p className="mt-2 text-xs text-[var(--sim-text-faint)]">
+              Скин сохранится в вашем аккаунте — на поле и в профиле.
+            </p>
+          ) : null}
+
+          {/* Размер — гроты: в Элизии рост хранится в профиле. */}
+          {!IS_ELYRIA && (
           <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <span id="entry-scale-label" className="text-sm font-semibold text-[var(--sim-text)]">
@@ -450,10 +623,12 @@ export function EntryScreen({
               }}
               className="py-1 [&_[data-slot=slider-range]]:bg-[var(--sim-accent-hover)] [&_[data-slot=slider-thumb]]:border-[var(--sim-accent-hover)] [&_[data-slot=slider-thumb]]:bg-zinc-100 [&_[data-slot=slider-track]]:bg-[var(--sim-line-strong)]"
             />
-            <p className="mt-1.5 text-xs text-[var(--sim-text-faint)]">Рост модельки в процентах от высоты клетки. 100% — в полный рост.</p>
           </div>
+          )}
         </section>
 
+        {IS_ELYRIA ? null : (
+          <>
         {/* Средний блок: записанный выбор СП — стрела, дамаг, броня. Значения обновляются
             сразу при выборе; ✓ отмечает уже подтверждённые пункты. */}
         <section
@@ -465,9 +640,6 @@ export function EntryScreen({
             <SpVal done={damageDone}>{damageLevelLabel(damageVal)}</SpVal>, броня{' '}
             <SpVal done={armorDone}>{damageLevelLabel(armorVal)}</SpVal>
           </p>
-          <p className="mt-2 text-[11px] leading-snug text-[var(--sim-text-faint)]">
-            Значения берутся из блока справа и применяются к вам на поле. ✓ — пункт подтверждён.
-          </p>
           <Button
             type="button"
             size="sm"
@@ -478,19 +650,12 @@ export function EntryScreen({
           >
             {doneCount === 3 ? 'СП подтверждены' : 'Использовать предыдущие СП'}
           </Button>
-          <p className="mt-1.5 text-[11px] leading-snug text-[var(--sim-text-faint)]">
-            Подтягивает выбор вашего прошлого входа ({fmtSec(prevSpRef.current.speed)},{' '}
-            {damageLevelLabel(prevSpRef.current.damage)}, {damageLevelLabel(prevSpRef.current.armor)}) и
-            подтверждает все три пункта разом.
-          </p>
         </section>
 
-        {/* Блок 2: скрытые параметры, каждый пункт подтверждается */}
+        {/* Блок 2: скрытые параметры, каждый пункт подтверждается (только гроты:
+            в Элизии параметры живут в профиле аккаунта и применяются сами) */}
         <section aria-label="Скрытые параметры" className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
           <h2 className="text-base font-bold text-[var(--sim-text)]">Скрытые параметры</h2>
-          <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
-            Применяются к вам на поле. Каждый пункт нужно подтвердить — подтверждается то, что сейчас выставлено.
-          </p>
 
           <div className="mt-3 flex flex-col gap-3">
             <ParamCard
@@ -505,8 +670,8 @@ export function EntryScreen({
               <div className="flex items-center gap-3">
                 <Slider
                   value={[speedVal]}
-                  min={1.8}
-                  max={5}
+                  min={universes.arrowPeriods[0] ?? 1.8}
+                  max={universes.arrowPeriods[universes.arrowPeriods.length - 1] ?? 5}
                   step={0.1}
                   aria-label="Период оборота стрелы"
                   onValueChange={(vals) => {
@@ -518,14 +683,14 @@ export function EntryScreen({
                 <span className="w-16 text-right text-sm tabular-nums text-[var(--sim-text-soft)]">{fmtSec(speedVal)}</span>
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
-                {SPEED_PRESETS.map((v) => (
+                {universes.arrowPeriods.map((v) => (
                   <Chip key={v} active={Math.abs(speedVal - v) < 0.05} onClick={() => setSpeedVal(v)}>
                     {String(v).replace('.', ',')} сек
                   </Chip>
                 ))}
               </div>
               <p className="mt-1.5 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-                Период оборота стрелы: 1,8 сек — крутится быстро, 5 сек — медленно. Как «Скорость вращения» в настройках.
+                Период оборота: 1,8–5 сек.
               </p>
             </ParamCard>
 
@@ -539,16 +704,12 @@ export function EntryScreen({
               }}
             >
               <div className="flex flex-wrap gap-1">
-                {DAMAGE_LEVELS.map((k) => (
+                {universes.damage.map((k) => (
                   <Chip key={k} active={damageVal === k} onClick={() => setDamageVal(k)}>
                     {damageLevelLabel(k)}
                   </Chip>
                 ))}
               </div>
-              <p className="mt-1.5 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-                Урон игрока: горло получает {throatDamageFor(damageVal)}% при пресете {damageLevelLabel(damageVal)}, остальные зоны —
-                пропорционально своим базам.
-              </p>
             </ParamCard>
 
             <ParamCard
@@ -561,26 +722,26 @@ export function EntryScreen({
               }}
             >
               <div className="flex flex-wrap gap-1">
-                {DAMAGE_LEVELS.map((k) => (
+                {universes.armor.map((k) => (
                   <Chip key={k} active={armorVal === k} onClick={() => setArmorVal(k)}>
                     {damageLevelLabel(k)}
                   </Chip>
                 ))}
               </div>
-              <p className="mt-1.5 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-                Броня режет получаемый урон: при {damageLevelLabel(armorVal)} по вам проходит{' '}
-                {Math.round(armorLevelMultiplier(armorVal) * 100)}% урона.
-              </p>
             </ParamCard>
           </div>
         </section>
+          </>
+        )}
       </div>
+      )}
 
-      {onLogin && onRegister && onLogout ? (
+      {IS_ELYRIA && onLogin && onRegister && onLogout ? (
         <section aria-label="Аккаунт" className="mt-4">
           <AuthPanel
             whoami={whoami ?? null}
             message={authMessage}
+            busy={authBusy}
             onLogin={onLogin}
             onRegister={onRegister}
             onLogout={onLogout}
@@ -588,7 +749,8 @@ export function EntryScreen({
         </section>
       ) : null}
 
-      {/* Выбор комнаты открывается ниже, когда имя введено и все пункты подтверждены */}
+      {/* Выбор комнаты: гроты — после имени и трёх подтверждений; Элизия —
+          сразу с именем (скрытые параметры применяются молча из профиля) */}
       <section aria-label="Выбор комнаты" className="mt-4">
         {roomsOpen ? (
           <RoomPicker
@@ -602,6 +764,10 @@ export function EntryScreen({
               if (gate?.access === 'registered' && !(whoami?.ok && whoami.accountId)) {
                 return;
               }
+              if (IS_ELYRIA) {
+                onPickRoom(id, elyWho());
+                return;
+              }
               onPickRoom(id, { name: trimmed, sprite, scale });
             }}
           />
@@ -610,8 +776,12 @@ export function EntryScreen({
             <p className="text-sm font-semibold text-[var(--sim-text-soft)]">Выбор комнаты пока закрыт</p>
             <p className="mt-1 text-xs text-[var(--sim-text-faint)]" role="status">
               {!trimmed
-                ? 'Введите имя слева — без него на поле не пустят.'
-                : `Подтвердите три скрытых параметра справа (${doneCount} из 3) — здесь откроется выбор комнаты.`}
+                ? IS_ELYRIA
+                  ? 'Войдите в аккаунт — здесь появится выбор комнаты.'
+                  : 'Введите имя слева — без него на поле не пустят.'
+                : IS_ELYRIA
+                  ? 'Готовим ваш профиль — выбор комнаты откроется сразу.'
+                  : `Подтвердите три скрытых параметра справа (${doneCount} из 3) — здесь откроется выбор комнаты.`}
             </p>
           </div>
         )}

@@ -318,9 +318,9 @@ console.log("ok: block dropped before impact → strike lands as thrown");
 
 // Хвост и блок: хвост — ЕДИНСТВЕННОЕ исключение из блока. Блок проводит любой удар
 // в «Лапы», но удар в хвост не переносит: он остаётся хвостом и по логу, и по урону.
-// 1) Блок уже стоит — удар в хвост проходит хвостом с уроном бьющего (33).
-// 2) Блока нет — то же самое: хвост проходит хвостом.
-// 3) Блок встал, пока удар летит — хвост всё равно проходит хвостом (исключение).
+// 1) Блок уже стоит — удар в хвост проходит хвостом с уроном бьющего (33 клэмпится реестром P2 до 4).
+// 2) Блока нет — то же самое: хвост проходит хвостом (33→4).
+// 3) Блок встал, пока удар летит — хвост всё равно проходит хвостом (исключение, 33→4).
 // 4) Контраст: удар в морду по стоящему блоку — «Лапы» с лаповым уроном бьющего.
 const tailRoom = `t${Date.now().toString(36)}tail`;
 const tAtk = await client("Хвостобой", tailRoom);
@@ -335,10 +335,10 @@ tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5 }]));
 const tailBlocked = await waitFor(tDef, "fight");
-if (tailBlocked[1].zone !== "tail" || tailBlocked[1].part !== "Хвост" || tailBlocked[1].damage !== 33) {
+if (tailBlocked[1].zone !== "tail" || tailBlocked[1].part !== "Хвост" || tailBlocked[1].damage !== 4) {
   throw new Error(`tail vs block ${JSON.stringify(tailBlocked[1])}`);
 }
-console.log("ok: tail strike vs standing block → tail, tail damage (block exception)");
+console.log("ok: tail strike vs standing block → tail, damage clamped by registry (33→4)");
 tDef.send(JSON.stringify(["block", { on: false }]));
 await waitFor(tAtk, "block");
 await sleep(80);
@@ -346,20 +346,29 @@ tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33 }]));
 const tailFree = await waitFor(tDef, "fight");
-if (tailFree[1].zone !== "tail" || tailFree[1].part !== "Хвост" || tailFree[1].damage !== 33) {
+if (tailFree[1].zone !== "tail" || tailFree[1].part !== "Хвост" || tailFree[1].damage !== 4) {
   throw new Error(`tail without block ${JSON.stringify(tailFree[1])}`);
 }
-console.log("ok: tail strike without block → tail");
+console.log("ok: tail strike without block → tail (registry 33→4)");
 await sleep(80);
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5, flightMs: 150 }]));
 tDef.send(JSON.stringify(["block", { on: true }]));
 const tailFlight = await waitFor(tDef, "fight");
-if (tailFlight[1].zone !== "tail" || tailFlight[1].part !== "Хвост" || tailFlight[1].damage !== 33) {
+if (tailFlight[1].zone !== "tail" || tailFlight[1].part !== "Хвост" || tailFlight[1].damage !== 4) {
   throw new Error(`tail flight exception ${JSON.stringify(tailFlight[1])}`);
 }
-console.log("ok: tail strike vs block risen in flight → tail (exception)");
+console.log("ok: tail strike vs block risen in flight → tail (exception, registry 33→4)");
+// P2: клэмп урона реестром — запредельный удар 999 по хвосту не проходит выше уровневого капа.
+tAtk.inbox.length = 0;
+tDef.inbox.length = 0;
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 999 }]));
+const tailOverkill = await waitFor(tDef, "fight");
+if (tailOverkill[1].zone !== "tail" || tailOverkill[1].part !== "Хвост" || tailOverkill[1].damage !== 4) {
+  throw new Error(`tail overkill clamp ${JSON.stringify(tailOverkill[1])}`);
+}
+console.log("ok: tail strike 999 → registry clamp 4");
 // Контраст: не-хвостовая зона по стоящему блоку по-прежнему ловится в «Лапы».
 await sleep(80);
 tAtk.inbox.length = 0;
@@ -381,7 +390,7 @@ console.log("ok: non-tail strike vs standing block → paws, paws damage");
 // 2) броня 0,5 — горло 42 проходит как 31;
 // 3) броня 0,0 — урон проходит целиком;
 // 4) броня 0,9 + блок — морда переводится в «Лапы», лаповый урон 5 проходит как 2;
-// 5) хвост по бронированному блокирующему — остаётся хвостом, 33 проходит как 13;
+// 5) хвост по бронированному блокирующему — остаётся хвостом; реестр сначала клэмпит 33→4, кривая брони 0,9 режет до 2;
 // 6) зажим: armor 5 ведёт себя как 0,9.
 const armRoom = `t${Date.now().toString(36)}arm`;
 const aAtk = await client("Пробойник", armRoom);
@@ -433,12 +442,12 @@ aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
 aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "tail", angle: armAngle, damage: 33 }]));
 const armTail = await waitFor(aDef, "fight");
-if (armTail[1].zone !== "tail" || armTail[1].part !== "Хвост" || armTail[1].damage !== 13) {
+if (armTail[1].zone !== "tail" || armTail[1].part !== "Хвост" || armTail[1].damage !== 2) {
   throw new Error(`armor tail ${JSON.stringify(armTail[1])}`);
 }
 aDef.send(JSON.stringify(["block", { on: false }]));
 await waitFor(aAtk, "block");
-console.log("ok: armored tail vs block → tail, 13");
+console.log("ok: armored tail vs block → tail, registry 33→4 then armor 0.9 → 2");
 await sleep(60);
 aDef.send(JSON.stringify(["armor", { armor: 5 }]));
 await sleep(60);
@@ -1085,8 +1094,13 @@ function handshake(origin) {
 const originCases = [
   ["https://abnocw.89-232-184-77.sslip.io", true],
   ["https://coop.89-232-184-77.sslip.io", true],
-  ["https://coop-field.vercel.app", true],
-  ["https://coop-field-git-foo.vercel.app", true],
+  // S3 (аудит Z.AI 2026-11-08): легаси-шаблон *.vercel.app удалён из
+  // server/config.js isAllowedOrigin — vercel-хосты не «свои» ни в одном
+  // классе; осознанно проверяем теперь ОТКАЗ (смысл теста — «чужой origin
+  // не пускают», а не конкретный vercel-хост). Свои хосты перечисляются
+  // точно через env ALLOWED_ORIGINS на сервере.
+  ["https://coop-field.vercel.app", false],
+  ["https://coop-field-git-foo.vercel.app", false],
   ["https://evil.example", false],
 ];
 for (const [origin, expectOpen] of originCases) {

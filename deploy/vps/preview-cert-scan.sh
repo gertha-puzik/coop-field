@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cron (root, каждые 5 минут, /etc/cron.d/coop-preview-cert): HTTP-01
-# сертификаты preview-хостов *.abnocw.miew.ru и *.elisium.miew.ru
+# сертификаты preview-хостов *.abnocw.phainonsmilk.ru и *.elysiae.phainonsmilk.ru
 #   (dual-host P5: один фрагмент nginx держит ДВА server-блока на PR —
 #   читаем ВСЕ server_name фрагмента);
 #   новый хост (фрагмент есть, линии нет) — certbot certonly --webroot;
@@ -30,8 +30,8 @@ for frag in "$FRAGD"/preview-*.conf; do
   awk '$1=="server_name"{print $2}' "$frag" | tr -d ';' | while IFS= read -r host; do
     [ -n "$host" ] || continue
     case "$host" in
-      *.abnocw.miew.ru) wwwdir="www-grotto" ;;
-      *.elisium.miew.ru) wwwdir="www-elyria" ;;
+      *.abnocw.phainonsmilk.ru) wwwdir="www-grotto" ;;
+      *.elysiae.phainonsmilk.ru) wwwdir="www-elyria" ;;
       *) echo "станный server_name=$host в $frag — пропускаю" >&2; continue ;;
     esac
     if [ -d "$LIVE/$host" ]; then
@@ -50,11 +50,11 @@ for frag in "$FRAGD"/preview-*.conf; do
   done
 done
 
-for conf in "$RENEW"/*.abnocw.miew.ru.conf "$RENEW"/*.elisium.miew.ru.conf; do
+for conf in "$RENEW"/*.abnocw.phainonsmilk.ru.conf "$RENEW"/*.elysiae.phainonsmilk.ru.conf; do
   host="$(basename "$conf" .conf)"
   case "$host" in
-    *.abnocw.miew.ru) slug="${host%.abnocw.miew.ru}" ;;
-    *.elisium.miew.ru) slug="${host%.elisium.miew.ru}" ;;
+    *.abnocw.phainonsmilk.ru) slug="${host%.abnocw.phainonsmilk.ru}" ;;
+    *.elysiae.phainonsmilk.ru) slug="${host%.elysiae.phainonsmilk.ru}" ;;
     *) continue ;;
   esac
   if [ ! -e "$FRAGD/preview-$slug.conf" ]; then

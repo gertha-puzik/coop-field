@@ -7,5 +7,7 @@ export const metadata: Metadata = {
 };
 
 export default function CombatPage() {
-  return <Simulator mode="combat" />;
+  // Гроты — режим «beer»: код «combat» снят с клиента (P3), старые ссылки
+  // алиасит сервер (P1), а страница /combat/ остаётся входом в гроты.
+  return <Simulator mode="beer" />;
 }

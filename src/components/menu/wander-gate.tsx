@@ -4,36 +4,46 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Lilita_One } from 'next/font/google';
 import { wsUrl } from '@/lib/net/coop';
 import { playersLabel } from '@/components/sim/room-picker';
+// Звёздный фон вынесен в star-backdrop.tsx (переиспользуется и контентными
+// страницами); здесь — патч-замена инлайн-блока 1:1: тот же массив, те же
+// классы wander-star/wander-spark, появление после гидрации.
+import { StarBackdrop } from '@/components/menu/star-backdrop';
+// Пересводка W2 (2026-11-08): навигацию аккаунтов главной несёт общая шапка
+// сайта. Монтируется внутри IS_ELYRIA-ветки — grotto не получает ни шапки,
+// ни её графа (DCE вырезает ветку вместе с импортом; спека §2A/§10.4).
+import { SiteHeader } from '@/components/site/site-header';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
 
-/** Детерминированные звёзды: сервер и клиент рисуют одни и те же точки. */
-const rnd = (seed: number) => {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
-};
+/**
+ * Compile-time вариант сайта (P3): сравнение инлайном, а не через хелпер из
+ * site.ts — сборщик сворачивает его в false/true, и мёртвая ветка (в grotto —
+ * карточки и коды Элизии с их текстами) не попадает в бандл вовсе (спек §2A).
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
-const STARS = Array.from({ length: 72 }, (_, i) => ({
-  left: rnd(i + 11) * 100,
-  top: rnd(i + 90) * 78,
-  size: 1.2 + rnd(i + 140) * 2.4,
-  dur: 1.8 + rnd(i + 200) * 3.6,
-  delay: -rnd(i + 260) * 6,
-  spark: rnd(i + 310) > 0.82,
-}));
-
-const ROOM_IDS = ['grot-1', 'grot-2', 'grot-3', 'test', 'hunger'] as const;
+/**
+ * Состав комнат для живого счётчика — только миры этого варианта (P3):
+ * grotto спрашивает гроты и голодные игры, elyria — комнату Элизии.
+ * Код закрытой комнаты (test) в grotto на сервер не уходит вовсе.
+ */
+const ROOM_IDS = IS_ELYRIA
+  ? (['test'] as const)
+  : (['grot-1', 'grot-2', 'grot-3', 'hunger'] as const);
 
 type Preview = 'combat' | 'hunger' | 'elision';
 
-const WORLDS: readonly {
+type WorldCard = {
   href: string;
   name: string;
   blurb: string;
   italic: boolean;
   ids: readonly string[];
   preview: Preview;
-}[] = [
+};
+
+/** Мировые карточки меню. В grotto-варианте Элизии нет — ни кода, ни ссылки. */
+const GROTTO_WORLDS: readonly WorldCard[] = [
   {
     href: '/combat/',
     name: 'abnocw',
@@ -50,6 +60,10 @@ const WORLDS: readonly {
     ids: ['hunger'],
     preview: 'hunger',
   },
+];
+
+/** Элизия: меню — мир Элизии. Карточки гротов сюда не показываем. */
+const ELYRIA_WORLDS: readonly WorldCard[] = [
   {
     href: '/elision/',
     name: 'Wanderpaws: Elysiae',
@@ -60,14 +74,35 @@ const WORLDS: readonly {
   },
 ];
 
-/** Старые ссылки с `?room=` вели на корень. Корень теперь меню — уводим в свой мир. */
+const WORLDS: readonly WorldCard[] = IS_ELYRIA ? ELYRIA_WORLDS : GROTTO_WORLDS;
+
+/**
+ * Превью мира Элизии (луна) — JSX живёт в elyria-ветке тернарника: сборка
+ * grotto не содержит ни разметки, ни ссылки на маршрут (спек §2A).
+ */
+const ELISION_PREVIEW = IS_ELYRIA ? (
+  <div className="wander-preview wander-preview-elision" aria-hidden>
+    <span className="wander-moon" />
+  </div>
+) : null;
+
+/**
+ * Старые ссылки с `?room=` вели на корень. Корень теперь меню — уводим в свой
+ * мир, но только если этот мир есть в варианте сайта: grotto не редиректит на
+ * вырезанный маршрут Элизии (404 и утечка маршрута), elyria — на гроты.
+ */
 function legacyRoomHref(): string | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
   const room = (params.get('room') || '').trim();
   if (!room) return null;
   const q = window.location.search;
-  if (room === 'test') return `/elision/${q}`;
+  if (IS_ELYRIA) {
+    // Только комната Элизии; чужие коды в этом варианте каталожным мирам
+    // не соответствуют — остаёмся на меню, без редиректа в 404.
+    return room === 'test' ? `/elision/${q}` : null;
+  }
+  if (room === 'test') return null; // закрытая комната в grotto не открывается
   if (room === 'hunger') return `/hunger/${q}`;
   return `/combat/${q}`;
 }
@@ -215,28 +250,10 @@ function Grass() {
 }
 
 function NightSky({ children }: { children: ReactNode }) {
-  // Звёзды только после гидрации: сервер округляет style иначе, чем клиент.
-  const [starsOn, setStarsOn] = useState(false);
-  useEffect(() => setStarsOn(true), []);
   return (
     <div className="wander-sky">
       <div className="wander-drift" aria-hidden />
-      {starsOn
-        ? STARS.map((star, i) => (
-            <span
-              key={i}
-              className={star.spark ? 'wander-star wander-spark' : 'wander-star'}
-              style={{
-                left: `${star.left}%`,
-                top: `${star.top}%`,
-                width: star.size,
-                height: star.size,
-                animationDuration: `${star.dur}s`,
-                animationDelay: `${star.delay}s`,
-              }}
-            />
-          ))
-        : null}
+      <StarBackdrop />
       <PawTrail />
       <div className="wander-stage">{children}</div>
       <Grass />
@@ -253,11 +270,7 @@ function WorldPreview({ kind }: { kind: Preview }) {
       </div>
     );
   }
-  return (
-    <div className="wander-preview wander-preview-elision" aria-hidden>
-      <span className="wander-moon" />
-    </div>
-  );
+  return ELISION_PREVIEW;
 }
 
 /** Главное меню: небо, трава, три окна миров и живой счётчик. */
@@ -293,7 +306,20 @@ export function WanderMenu() {
             </a>
           );
         })}
+        {!IS_ELYRIA ? (
+          <a className="wander-window" href="https://phainonsmilk.ru/">
+            <span className="wander-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="wander-name">Wanderpaws: Elysiae</span>
+            <span className="wander-blurb">Закрытый мир — вход по аккаунту, отдельный сайт</span>
+            <span className="wander-count">отдельный сайт →</span>
+          </a>
+        ) : null}
       </div>
+      {IS_ELYRIA ? <SiteHeader /> : null}
     </NightSky>
   );
 }

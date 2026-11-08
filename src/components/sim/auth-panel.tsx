@@ -1,14 +1,25 @@
 'use client';
 
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { useEffect, useRef, useState } from 'react';
+import { Button, Field, Input, Panel } from '@/components/ui';
 import type { CoopWhoami } from '@/lib/net/protocol';
+import { localAuthError, localFieldNameError, localNewLoginError, reasonText, roleLabel } from './auth-reasons';
 
 /**
- * Вход и регистрация на русском. Пароль не показывается. Гость гротов
- * эту панель может пропустить; Элизия без сессии на сервере не откроется.
+ * Боковая панель входа на русском. Пароль не показывается. Панель монтируется
+ * только в elyria-варианте (гейт — в entry-screen): в гротах входа нет.
+ *
+ * Подписи отказов сервера и локальные проверки — общие с полноэкранным гейтом
+ * входа (menu/auth-gate.tsx): они живут в auth-reasons.ts (контракты
+ * server/accounts.js + server/auth.js handleAuthHttp. Register v2: при
+ * создании логин — латиница/цифры/._- 2–24, имя на поле — опционально 2–24
+ * видимых символов; вход — прежние мягкие правила, старые логины живы).
+ *
+ * UI-кирпичи — из внутренних наборов (ui-kit, docs/UI-KIT.md): панель — Panel,
+ * поля — Field+Input, главная кнопка — Button variant="primary" (пара
+ * --uk-accent-*: та же зелёная с тёмными чернилами, что была инлайном).
  */
+
 export function AuthPanel({
   whoami,
   busy,
@@ -21,81 +32,143 @@ export function AuthPanel({
   busy?: boolean;
   message?: string | null;
   onLogin: (login: string, pass: string) => void;
-  onRegister: (login: string, pass: string) => void;
+  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт логином). */
+  onRegister: (login: string, pass: string, name?: string) => void;
   onLogout: () => void;
 }) {
   const [login, setLogin] = useState(whoami?.login || '');
   const [pass, setPass] = useState('');
+  const [fieldName, setFieldName] = useState('');
+  /** Ошибка локальной проверки — показывается до отправки и гаснет при вводе. */
+  const [localFail, setLocalFail] = useState<string | null>(null);
   const inAccount = !!(whoami?.ok && whoami.accountId);
-  const role = whoami?.role === 'admin' ? 'админ' : whoami?.role === 'registered' ? 'свой кот' : 'гость';
+  const role = roleLabel(whoami?.role);
+  /** Сетевая/серверная ошибка — из message; отказ из ответа — по reason. */
   const fail =
-    message ||
-    (!whoami?.ok && whoami?.reason === 'taken'
-      ? 'Это имя уже занято.'
-      : !whoami?.ok && whoami?.reason === 'weak'
-        ? 'Пароль слишком короткий (минимум 8 символов).'
-        : !whoami?.ok && whoami?.reason === 'short'
-          ? 'Имя слишком короткое.'
-          : !whoami?.ok && whoami?.reason === 'full'
-            ? 'Регистрация закрыта: места для новых аккаунтов закончились.'
-            : !whoami?.ok && whoami?.reason === 'rate'
-              ? 'Слишком часто. Подождите немного.'
-              : !whoami?.ok && whoami?.reason === 'bad'
-                ? 'Неверный логин или пароль.'
-                : !whoami?.ok && whoami?.reason
-                  ? 'Не получилось войти.'
-                  : null);
+    localFail || message || (!whoami?.ok ? reasonText(whoami?.reason) : null);
+
+  /** После выхода не оставлять прошлый пароль в поле. */
+  const wasAccount = useRef(inAccount);
+  useEffect(() => {
+    if (wasAccount.current && !inAccount) {
+      setPass('');
+      setLocalFail(null);
+    }
+    wasAccount.current = inAccount;
+  }, [inAccount]);
+
+  const editLogin = (v: string) => {
+    setLogin(v);
+    setLocalFail(null);
+  };
+  const editPass = (v: string) => {
+    setPass(v);
+    setLocalFail(null);
+  };
+  const editFieldName = (v: string) => {
+    setFieldName(v);
+    setLocalFail(null);
+  };
+  const submit = (action: 'login' | 'register') => {
+    if (busy) return;
+    const local = localAuthError(login, pass);
+    if (local) {
+      setLocalFail(local);
+      return;
+    }
+    // Register v2: логин при создании — строгий формат; имя на поле — опция.
+    if (action === 'register') {
+      const newLogin = localNewLoginError(login);
+      const fieldErr = localFieldNameError(fieldName);
+      if (newLogin || fieldErr) {
+        setLocalFail(newLogin || fieldErr || null);
+        return;
+      }
+    }
+    setLocalFail(null);
+    // Логин режем так же, как сервер (обрезка пробелов); пароль — как набран.
+    if (action === 'login') onLogin(login.trim(), pass);
+    else onRegister(login.trim(), pass, fieldName.trim() || undefined);
+  };
 
   if (inAccount) {
     return (
-      <div className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+      <Panel className="p-4">
         <h2 className="text-base font-bold text-[var(--sim-text)]">Вы вошли</h2>
         <p className="mt-1 text-sm text-[var(--sim-text-soft)]">
           {whoami?.login} · {role}. Имя на поле — из персонажа, его не подменить в join.
         </p>
+        <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
+          Сессия держится в защищённой куке: после перезагрузки страницы вход сохраняется.
+        </p>
         <Button type="button" size="sm" variant="outline" className="mt-3 h-8 text-xs" onClick={onLogout} disabled={busy}>
           Выйти
         </Button>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <form
-      className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4"
+    <Panel
+      as="form"
+      className="p-4"
       onSubmit={(ev) => {
         ev.preventDefault();
-        onLogin(login, pass);
+        submit('login');
       }}
     >
       <h2 className="text-base font-bold text-[var(--sim-text)]">Аккаунт</h2>
       <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
-        Для Элизии нужен вход. Пивные гроты, бой и голодные игры открыты гостям — регистрироваться
-        не обязательно.
+        Закрытый мир: чтобы играть под своим именем, войдите или создайте аккаунт. Логин при создании — латиница, цифры
+        и ._-, 2–24 символа; пароль — от 8.
       </p>
-      <label className="mt-3 block text-[11px] text-[var(--sim-text-faint)]">
-        Имя
+      <Field className="mt-3" label="Имя" htmlFor="auth-login" describedBy="auth-fail">
         <Input
+          id="auth-login"
           className="mt-1 h-8 text-sm"
           value={login}
           maxLength={24}
           autoComplete="username"
-          onChange={(e) => setLogin(e.target.value)}
+          placeholder="От 2 до 24 символов"
+          autoFocus
+          onChange={(e) => editLogin(e.target.value)}
         />
-      </label>
-      <label className="mt-2 block text-[11px] text-[var(--sim-text-faint)]">
-        Пароль (от 8 символов)
+      </Field>
+      <Field
+        className="mt-2"
+        label="Имя на поле (для регистрации)"
+        htmlFor="auth-field-name"
+        hint="необязательно — без него вас будут звать логином"
+        describedBy="auth-fail"
+      >
         <Input
+          id="auth-field-name"
+          className="mt-1 h-8 text-sm"
+          value={fieldName}
+          maxLength={24}
+          autoComplete="off"
+          placeholder="как вас будут звать (можно кириллицей)"
+          onChange={(e) => editFieldName(e.target.value)}
+        />
+      </Field>
+      <Field className="mt-2" label="Пароль" htmlFor="auth-pass" describedBy="auth-fail">
+        <Input
+          id="auth-pass"
           type="password"
           className="mt-1 h-8 text-sm"
           value={pass}
           autoComplete="current-password"
-          onChange={(e) => setPass(e.target.value)}
+          placeholder="Не короче 8 символов"
+          onChange={(e) => editPass(e.target.value)}
         />
-      </label>
-      {fail ? <p className="mt-2 text-xs font-semibold text-red-400">{fail}</p> : null}
+      </Field>
+      {fail ? (
+        <p id="auth-fail" role="status" className="mt-2 text-xs font-semibold text-[var(--uk-danger-soft-text)]">
+          {fail}
+        </p>
+      ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button type="submit" size="sm" className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]" disabled={busy}>
+        <Button type="submit" size="sm" variant="primary" className="h-8 text-xs" disabled={busy}>
           Войти
         </Button>
         <Button
@@ -104,11 +177,14 @@ export function AuthPanel({
           variant="outline"
           className="h-8 text-xs"
           disabled={busy}
-          onClick={() => onRegister(login, pass)}
+          onClick={() => submit('register')}
         >
           Зарегистрироваться
         </Button>
       </div>
-    </form>
+      <p className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
+        «Войти» — по существующему имени. «Зарегистрироваться» — создаст аккаунт с этим логином; имя на поле — как вас будут звать (пустое → логином).
+      </p>
+    </Panel>
   );
 }

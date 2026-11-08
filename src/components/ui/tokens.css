@@ -1,0 +1,137 @@
+/* ============================================================================
+   tokens.css — semantic PAIRED design tokens of the coop-field UI kit
+   ----------------------------------------------------------------------------
+   CONTRACT (grammar inherited from the stage-0 ui-kit stand):
+   every colour lives ONLY as a "surface + ink" pair:
+     --uk-<role>-bg   — the surface an element paints;
+     --uk-<role>-text — the ink painted ON that exact surface.
+   A lone bg/text outside a pair is forbidden: a theme that changes a
+   --uk-<role>-bg MUST resupply a readable --uk-<role>-text for it.
+
+   SINGLE-PALETTE RULE (owner mandate, 2026-11-08):
+   the UI kit is an INTERNAL part of coop-field, not a separate repo. Tokens
+   are SEMANTIC ALIASES over the live theme engine in src/app/globals.css:
+     :root / [data-theme='night' | 'light' | 'beer']  →  --sim-*
+   Aliases are declared once in :root and resolve var(--sim-*) at computed-
+   value time on <html>, so every data-theme switch repaints the whole tree
+   exactly like the --sim-* variables themselves — theme switchers and the
+   .app-bg glass/transition mechanics keep working untouched.
+
+   THREE exceptions declare their own values and are marked "pair completion"
+   (roles the --sim-* palette never had) or "fix AA" (a --sim-* hue adjusted
+   to/kept at WCAG AA, stage-0 precedent):
+     - ink on accent buttons (the palette had the accent, not the ink);
+     - success pairs (semantic green absent from --sim-*: night accent is
+       green, beer accent is amber — success must NOT follow the accent);
+     - solid danger / soft danger in the light theme (kept at AA).
+   All hues come from the existing coop-field palettes (globals.css,
+   .wander-* greens/golds, the stage-0 stand).
+
+   WCAG AA gate (main theme = night): every TEXT pair ratio >= 4.5:1 on the
+   realistic rgba compositions (glass panels over app-background points,
+   fields, tints over panels). Borders/rings are non-text (checked to 3:1
+   informationally). Checker table + minimums: see docs/UI-KIT.md.
+   ============================================================================ */
+
+/* ---------- scalars: geometry, not colours (theme-independent) ---------- */
+:root {
+  --uk-radius: 12px;       /* glass panel / dialog — mirrors Tailwind rounded-xl */
+  --uk-radius-field: 6px;  /* inputs, selects — mirrors rounded-md */
+  --uk-radius-chip: 4px;   /* chips, badges — mirrors rounded */
+  --uk-focus-ring-offset: 2px;
+  --uk-glass-blur: 6px;    /* same blur the .app-bg glass hook applies */
+}
+
+/* ============================================================================
+   PAIRED TOKENS — aliases over the live --sim-* theme variables.
+   Declared once; they follow [data-theme] on <html> automatically.
+   ============================================================================ */
+:root {
+  /* page: solid app background (the gradient stays in globals.css mechanics) */
+  --uk-page-bg: var(--sim-app-bg);
+  --uk-page-text: var(--sim-text);
+  --uk-page-muted-bg: var(--sim-app-bg);
+  --uk-page-muted-text: var(--sim-text-muted);
+
+  /* panel: the standard glass surface (auth boxes, side cards, dashboards) */
+  --uk-panel-bg: var(--sim-panel);
+  --uk-panel-text: var(--sim-text);
+  --uk-panel-muted-bg: var(--sim-panel);
+  --uk-panel-muted-text: var(--sim-text-muted);
+  --uk-panel-soft-bg: var(--sim-frame); /* stronger glass for overlays/dialogs */
+  --uk-panel-soft-text: var(--sim-text);
+
+  /* inset: recessed strips INSIDE panels (holders, tab well, muted fields) */
+  --uk-inset-bg: var(--sim-inset);
+  --uk-inset-text: var(--sim-text-soft);
+
+  /* field: native input/select surface + placeholder */
+  --uk-field-bg: var(--sim-input-bg);
+  --uk-field-text: var(--sim-text);
+  --uk-field-muted-bg: var(--sim-input-bg);
+  --uk-field-muted-text: var(--sim-text-muted);
+
+  /* accent: the main CTA button (identity: today's accent + black ink) */
+  --uk-accent-bg: var(--sim-accent);
+  --uk-accent-bg-hover: var(--sim-accent-hover);
+  --uk-accent-text: #000000; /* pair completion: ink on accent (was ad-hoc text-black) */
+
+  /* accent-soft: tinted wash + accent ink (active hints, success-ish accents) */
+  --uk-accent-soft-bg: var(--sim-accent-tint);
+  --uk-accent-soft-text: var(--sim-accent-text);
+
+  /* muted: quiet blocks inside surfaces */
+  --uk-muted-bg: var(--sim-inset);
+  --uk-muted-text: var(--sim-text-muted);
+
+  /* disabled: WCAG exempts inactive controls; kept readable anyway */
+  --uk-disabled-bg: var(--sim-inset-soft);
+  --uk-disabled-text: var(--sim-text-faint);
+
+  /* danger-soft: validation errors, destructive hints (alias of the theme red) */
+  --uk-danger-soft-bg: color-mix(in srgb, var(--sim-danger) 7%, transparent);
+  --uk-danger-soft-text: var(--sim-danger);
+
+  /* danger-strong: the destructive action itself (confirm dialogs) */
+  --uk-danger-strong-bg: #b91c1c;   /* pair completion; red family of --sim-danger */
+  --uk-danger-strong-bg-hover: color-mix(in srgb, #b91c1c 85%, #ffffff 15%);
+  --uk-danger-strong-text: #fff7f5;
+
+  /* success: semantic green — does NOT follow the accent (beer = amber)      */
+  /* night + beer default: the palette green of the shared star world         */
+  --uk-success-soft-bg: color-mix(in srgb, #8ee0a8 10%, transparent);
+  --uk-success-soft-text: #8ee0a8;
+
+  /* borders, dividers, focus ring: non-text scalars (3:1 informational) */
+  --uk-border: var(--sim-line);
+  --uk-border-strong: var(--sim-line-strong);
+  --uk-border-hover: var(--sim-line-hover);
+  --uk-divider: var(--sim-divider);
+  --uk-focus-ring: var(--sim-accent);
+}
+
+/* ============================================================================
+   Per-theme overrides — ONLY pair completions / fix-AA steps that the
+   --sim-* palette cannot express. Everything else stays a live alias above.
+   ============================================================================ */
+
+/* DAY (light): darker red/green ink keep the soft pairs at AA on milk glass */
+[data-theme='light'] {
+  --uk-danger-soft-bg: color-mix(in srgb, #b91c1c 9%, transparent);
+  --uk-danger-soft-text: #b91c1c; /* fix AA: one step darker than --sim-danger */
+  --uk-success-soft-bg: color-mix(in srgb, #03684a 10%, transparent);
+  --uk-success-soft-text: #03684a; /* fix AA: lednevoy green readable on milk */
+  --uk-scrim: rgba(38, 36, 31, 0.45);
+}
+
+/* BEER (amber night): same greens/reds as the default dark branch; only the
+   scrim warms up. Success green is checked against the amber glass. */
+[data-theme='beer'] {
+  --uk-scrim: rgba(12, 7, 2, 0.60);
+}
+
+/* NIGHT (default branch of :root): fallback values for the values that live
+   outside the alias graph. Declared separately so the file is exhaustive. */
+:root {
+  --uk-scrim: rgba(4, 6, 14, 0.60);
+}

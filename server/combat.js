@@ -8,7 +8,9 @@
  * mirror is NOT touched by W4). Damage stays client-authoritative (accepted
  * debt): the server only normalizes and cuts it.
  */
-import { EV, ARMOR_CURVE, STRIKE_ZONES, STRIKE_CATCH_MS, STRIKE_CATCH_MAX_MS, AIM_MIN_GAP_MS } from "./protocol.js";
+import { EV, STRIKE_ZONES, STRIKE_CATCH_MS, STRIKE_CATCH_MAX_MS, AIM_MIN_GAP_MS } from "./protocol.js";
+import { maxStrikeDamage, snapArmorToUniverse } from "./cfg-registry.js";
+import { combatCaps, armorCurve } from "./runtime-config.js";
 import { STRIKE_COOLDOWN_MS } from "./config.js";
 import { send, broadcast, publicCat } from "./room.js";
 
@@ -114,35 +116,44 @@ function resolveZone(raw) {
 }
 
 // ---------------- Броня ----------------
-// Таблица ARMOR_CURVE — канон в server/protocol.js (W3); побайтовое зеркало — ARMOR_CURVE в src/lib/sim/settings.ts (клиент), паритет держит CI (test:protocol-parity).
+// Канон кривой — ARMOR_CURVE в server/protocol.js (W3, побайтовое зеркало —
+// src/lib/sim/settings.ts; паритет держит CI test:protocol-parity). Живой
+// расчёт ударов (мандат владелицы 2026-11-08) идёт по runtime-значению
+// combat.armorCurve реестра (админ-панель), absence/мусор → канон W3
+// (fail-safe в armorCurveFor). Клиентский прогноз урона считает по той же
+// опубликованной кривой из GET /cfg (src/lib/sim/armor-curve.ts).
 
 function armorMultiplier(armor) {
+  const curve = armorCurve();
   const a = Number.isFinite(armor) ? Math.min(0.9, Math.max(0, Number(armor))) : 0;
-  const base = ARMOR_CURVE[0][1];
-  if (a <= ARMOR_CURVE[0][0]) return 1;
-  for (let i = 1; i < ARMOR_CURVE.length; i++) {
-    const [a1, p1] = ARMOR_CURVE[i];
+  const base = curve[0][1];
+  if (a <= curve[0][0]) return 1;
+  for (let i = 1; i < curve.length; i++) {
+    const [a1, p1] = curve[i];
     if (a <= a1) {
-      const [a0, p0] = ARMOR_CURVE[i - 1];
-      return (p0 + ((p1 - p0) * (a - a0)) / (a1 - a0)) / base;
+      const [a0, p0] = curve[i - 1];
+      return Math.max(0, (p0 + ((p1 - p0) * (a - a0)) / (a1 - a0)) / base);
     }
   }
-  const [a0, p0] = ARMOR_CURVE[ARMOR_CURVE.length - 2];
-  const [a1, p1] = ARMOR_CURVE[ARMOR_CURVE.length - 1];
-  return (p1 + ((p1 - p0) * (a - a1)) / (a1 - a0)) / base;
+  const [a0, p0] = curve[curve.length - 2];
+  const [a1, p1] = curve[curve.length - 1];
+  return Math.max(0, (p1 + ((p1 - p0) * (a - a1)) / (a1 - a0)) / base);
 }
 
 /**
- * Пресет брони. Клиент → ["armor", { armor: 0.3 }]. Значение зажимается в 0–0,9
- * и округляется до десятых; хранится на коте. Соседям не бродкастится: удар и так
- * уходит всем в fight уже с порезанным бронёй урона (см. strike).
+ * Пресет брони. Клиент → [EV.ARMOR-кадр, { armor: 0.3 }]. Whitelist реестра
+ * (server/cfg-registry.js): значение снапится к НАИБОЛЬШЕЙ разрешённой десятой,
+ * не превышающей вход (меньше или равно — больше запрошенного никогда не даём);
+ * ниже наименьшей разрешённой — 0 (без брони). Хранится на коте. Соседям не
+ * бродкастится: удар и так уходит всем в fight уже с порезанным бронёй урона
+ * (см. strike).
  */
 function armor(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!room || !cat) return;
-  const raw = Number(payload.armor);
-  cat.armor = Number.isFinite(raw) ? Math.min(0.9, Math.max(0, Math.round(raw * 10) / 10)) : 0;
+  const allowed = combatCaps().armorTenths;
+  cat.armor = snapArmorToUniverse(Number(payload.armor), allowed);
 }
 
 /**
@@ -207,12 +218,21 @@ function strike(ws, payload = {}) {
   }
   // Урон присылает бьющий (его пресет «Урон игрока», проценты энергии 0..100).
   // Число округляем и зажимаем; нет числа — фолбэк на серверную таблицу зон.
+  // Whitelist P2: сверху режет формула зон из реестра по максимальному
+  // РАЗРЕШЁННОМУ уровню (server/cfg-registry.js, maxStrikeDamage) — легальный
+  // уровень игрока проходит без урезания, всё выше потолка срезается.
+  const caps = combatCaps();
+  const zoneCap = maxStrikeDamage(zoneId, caps.maxDamageLevel);
   const dmgRaw = Number(payload.damage);
-  const damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : zone.damage;
+  let damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : zone.damage;
+  damage = Math.min(damage, zoneCap);
   // Лаповый урон из пресета бьющего: если на моменте касания удар переводится
   // в «Лапы», списываем именно лаповый урон, а не урон исходной зоны.
+  const pawsCap = maxStrikeDamage("paws", caps.maxDamageLevel);
   const pawsRaw = Number(payload.pawsDamage);
-  const pawsDamage = Number.isFinite(pawsRaw) ? Math.min(100, Math.max(0, Math.round(pawsRaw))) : null;
+  const pawsDamage = Number.isFinite(pawsRaw)
+    ? Math.min(pawsCap, Math.min(100, Math.max(0, Math.round(pawsRaw))))
+    : null;
   // Окно полёта: блок, вставший после нажатия бьющего, но до касания, ловит удар.
   const flightRaw = Number(payload.flightMs);
   const flightMs = Number.isFinite(flightRaw)

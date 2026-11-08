@@ -11,10 +11,12 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
 import {
-  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS, isAllowedOrigin,
+  PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
+  REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest, WS_MAX_PER_IP,
+  assertStartupSecurity,
 } from "./config.js";
 import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
@@ -24,8 +26,19 @@ import { dummyToggle, dummyMove, dummyGrab, dummyDrop, rabToggle, rabHit } from 
 import { atmo, atmoset, atmoState, atmoBroadcast, atmoPhaseIdx } from "./atmo.js";
 import { setMap, testMap, MAP_FILE, saveTestMap } from "./testmap.js";
 import { flushCatBook } from "./persist.js";
-import { handleAuthHttp, handleAuthFrame, handshake, flushAuth } from "./auth.js";
+import { handleAuthHttp, handleAuthFrame, handshake, flushAuth, COOKIE } from "./auth.js";
 import { handleCfgHttp } from "./runtime-config.js";
+// F2: per-room admin-роуты (те же гейты /cfg-зоны: роль admin на сервере,
+// host-гейт public ниже прячет /cfg/rooms* целиком, CSRF-щит — общий apiZone).
+import { handleRoomCfgHttp } from "./room-config.js";
+// Админ-операции «Игроки на поле» (GET/POST /admin/players*): гейт session
+// + role=admin + общий apiZone-CSRF — сам домен в room.js (W4-граница).
+import { handleAdminOpsHttp } from "./admin-ops.js";
+// Менеджер спрайтов (server/sprites.js): публичный каталог + файлы загруженных
+// (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
+// админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
+import { handleSpritesHttp } from "./sprites.js";
+import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
   // Длина кадра в байтах: ws отдаёт Buffer (length уже октеты), byteLength —
@@ -74,6 +87,9 @@ function onMessage(ws, raw) {
   }
 }
 export function startServer() {
+  // §5 fail-closed: первым делом — инстанс-класс и запрет выключенного CSRF
+  // на production/preview. До любого listen и регистрации колбэков.
+  assertStartupSecurity();
   const MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -92,6 +108,28 @@ export function startServer() {
     ".txt": "text/plain; charset=utf-8",
     ".map": "application/json",
   };
+
+  /* S4 (аудит Z.AI 2026-11-08): экспозиция режима клиентского IP в /health и
+   * троттленное предупреждение о «голом» loopback-трафике на прод-классах.
+   * Логика зеркалит auth.js clientIp(): loopback-сокет + XFF → 'xff' (наш
+   * nginx, лимиты считают реальные адреса), loopback без XFF → 'loopback'
+   * (лимиты отключены), не-loopback → 'direct' (адрес сокета). */
+  function clientIpMode(req) {
+    const fwd = String(req.headers["x-forwarded-for"] || "");
+    const remote = String(req.socket.remoteAddress || "");
+    const loop = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    return fwd && loop ? "xff" : loop ? "loopback" : "direct";
+  }
+  /**
+   * S5a (аудит Z.AI 2026-11-08): счётчик ОДНОВРЕМЕННЫХ WS-сокетов на клиентский
+   * IP (ключ — clientIp из auth.js handshake: loopback+XFF → реальный адрес,
+   * иначе адрес сокета). Сверх WS_MAX_PER_IP — info 'too_many_sockets' и close.
+   * Карта ip → число живых сокетов; чистится на close/error (once-флаг, чтобы
+   * двойное срабатывание не съело чужой слот).
+   */
+  const socketsPerIp = new Map();
+  const LOOPBACK_PROD_WARN_EVERY_MS = 5 * 60_000;
+  let loopbackProdWarnAt = 0;
 
   function serveStatic(req, res, url) {
     const rel = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -112,18 +150,157 @@ export function startServer() {
     });
   }
 
+  /** 404 «зоны не существует» (P1): единый ответ host-гейта и скрытых маршрутов. */
+  function notFoundJson(res) {
+    res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, reason: "not_found" }));
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    if (url.pathname === "/health") {
+    const p = url.pathname;
+    if (p === "/health") {
+      // S4 (аудит Z.AI 2026-11-08): режим IP виден владелице без выхода в
+      // сеть. 'loopback' на прод-классе хоста = «голый» прокси без XFF (или
+      // локальная разработка): rate-лимиты auth для такого трафика отключены
+      // — предупреждаем в лог не чаще раза в 5 минут (не на каждый кадр).
+      const ipMode = clientIpMode(req);
+      const healthClass = siteClassOfRequest(req);
+      if (ipMode === "loopback" && healthClass !== "local") {
+        const now = Date.now();
+        if (now - loopbackProdWarnAt > LOOPBACK_PROD_WARN_EVERY_MS) {
+          loopbackProdWarnAt = now;
+          console.warn(
+            `[health] клиент пришёл loopback без X-Forwarded-For на хост-классе «${healthClass}»: ` +
+              `темп-лимиты auth не работают (см. deploy/vps — nginx-фрагмент x-forwarded-for), clientIpMode=${ipMode}`,
+          );
+        }
+      }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, rooms: rooms.size, maxPlayers: MAX_PLAYERS }));
+      res.end(JSON.stringify({
+        ok: true,
+        rooms: rooms.size,
+        maxPlayers: MAX_PLAYERS,
+        clientIpMode: ipMode, // S4: 'loopback' | 'xff' | 'direct'
+      }));
       return;
+    }
+    // B1: класс САЙТА destination (siteClassOfRequest: Host-классификация +
+    // доверенная loopback-метка прокси AUTH_TRUST_PROXY_HEADER) решает и
+    // host-гейт, и пары (Origin, destination) в CORS/CSRF ниже.
+    const destClass = siteClassOfRequest(req);
+    // Хост-гейт P1: public-фронт (пивные гроты) не должен знать про зоны
+    // Элизии — auth, profiles и admin отвечают «не существует», конфиг на
+    // нём читается, но не пишется (спек §11). P2: скрыты и admin-маршруты
+    // /cfg (дашборд/экспорт) — на public их нет.
+    if (destClass === "public") {
+      const hidden =
+        p === "/auth" ||
+        p.startsWith("/auth/") ||
+        p === "/profiles" ||
+        p.startsWith("/profiles/") ||
+        p === "/admin" ||
+        p.startsWith("/admin/") ||
+        p === "/cfg/admin" ||
+        p.startsWith("/cfg/admin/") ||
+        p === "/cfg/export" ||
+        // F2: per-room конфиг — admin-маршрут, на public-фронте его нет
+        // (как /cfg/admin): и чтение, и запись отвечают «не существует».
+        p === "/cfg/rooms" ||
+        p.startsWith("/cfg/rooms/") ||
+        (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
+      if (hidden) {
+        notFoundJson(res);
+        return;
+      }
+    }
+    // B1: CORS-надзор на ВСЕХ API-зонах. Обработчики (auth/cfg/profiles)
+    // отражают Origin по ГЛОБАЛЬНОМУ списку — над ними (крюк на res.setHeader)
+    // стоит per-destination политика: чужой Origin ответа не прочитает
+    // (Access-Control-* не выдаётся браузеру), свой получает ТОЧНЫЙ origin
+    // (никогда wildcard) + Allow-Credentials + Vary: Origin. Префлайты
+    // OPTIONS проходят ту же пару (Origin, класс destination).
+    const originHeader = String(req.headers.origin || "");
+    const originAllowed = originHeader && originAllowedHere(originHeader, destClass);
+    const apiZone =
+      p === "/auth" || p.startsWith("/auth/") ||
+      p === "/profiles" || p.startsWith("/profiles/") ||
+      p === "/cfg" || p.startsWith("/cfg/") ||
+      // Админ-операции «Игроки на поле» (/admin/players*): тот же CSRF-щит
+      // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
+      // в зону попадают ТОЛЬКО эти два API-пути.
+      p === "/admin/players" || p.startsWith("/admin/players/") ||
+      // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
+      // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
+      // и в зоне не нуждается: безопасный метод, сессию не несёт).
+      p === "/admin/sprites" || p.startsWith("/admin/sprites/");
+    if (apiZone) {
+      if (originHeader) res.setHeader("Vary", "Origin");
+      if (originAllowed) {
+        res.setHeader("Access-Control-Allow-Origin", originHeader);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
+    }
+    {
+      const rawSetHeader = res.setHeader.bind(res);
+      res.setHeader = (name, value) => {
+        const key = String(name).toLowerCase();
+        if (key.startsWith("access-control-")) {
+          if (!originAllowed) return res; // произвольный Origin не отражается
+          if (key === "access-control-allow-origin" || key === "access-control-allow-credentials") {
+            return res; // уже выставлены точно и только «своему» origin
+          }
+        }
+        return rawSetHeader(name, value);
+      };
+    }
+    // CSRF fail-closed (B1): unsafe-методы с cookie-аутентификацией на
+    // public/elyria обязаны нести Origin, точный для destination-класса
+    // (пустой Origin → 403 csrf_origin_required, чужой → 403 csrf_origin_mismatch);
+    // класс local — прежний щит ('0'/'1' в AUTH_CSRF_STRICT форсируют для всех).
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && apiZone) {
+      const hasAuth =
+        new RegExp(`(?:^|;\\s*)${COOKIE}=[0-9a-f]+`, "i").test(String(req.headers.cookie || "")) ||
+        Boolean(url.searchParams.get("t"));
+      const csrfBad = csrfDecision({
+        method: req.method,
+        origin: req.headers.origin,
+        destClass,
+        hasAuth,
+      });
+      if (csrfBad) {
+        res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, reason: csrfBad.reason }));
+        return;
+      }
     }
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
-      return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
-        if (cfgHit) return;
-        serveStatic(req, res, url);
+      // Админ-операции «Игроки на поле» (/admin/players*): разбираются ДО
+      // статики — страница /admin остаётся статичной (P1 их не прячет),
+      // а вот эти API-пути живой домен room.js должен перехватить.
+      return handleAdminOpsHttp(req, res).then((opsHit) => {
+        if (opsHit) return;
+      // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ: глобальный
+      // /cfg-хендлер заявляет всё /cfg-подпространство (fetch фолбэк-404),
+      // а room-роуты отвечают false на всё, что не /cfg/rooms*.
+      return Promise.resolve(handleRoomCfgHttp(req, res)).then((roomCfgHit) => {
+        if (roomCfgHit) return;
+        return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
+          if (cfgHit) return;
+          return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
+            if (profHit) return;
+            // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
+            // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
+            // в handler не попадают (маршруты длиннее и точнее), файловые 404
+            // отдаёт сам домен.
+            return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+              if (spritesHit) return;
+              serveStatic(req, res, url);
+            });
+          });
+        });
+      });
       });
     }).catch(() => {
       res.writeHead(500);
@@ -135,9 +312,15 @@ export function startServer() {
     server,
     maxPayload: MAX_PAYLOAD,
     verifyClient(info) {
+      // B1: Origin на upgrade — ПАРА (origin, класс destination-хоста).
+      // Отсутствие Origin допускается (гость-геймплей, originless-скрипты;
+      // cookie-аутентифицированные кадры register/login на public/elyria
+      // добьёт handleAuthFrame), но REQUIRE_ORIGIN=1 сохраняет старый смысл.
       const origin = info.origin || "";
-      const ok = isAllowedOrigin(origin);
-      if (!ok) console.warn("ws origin rejected:", origin || "(нет Origin)");
+      if (!origin) return !REQUIRE_ORIGIN;
+      const destClass = siteClassOfRequest(info.req);
+      const ok = originAllowedHere(origin, destClass);
+      if (!ok) console.warn("ws origin rejected:", origin);
       return ok;
     },
   });
@@ -161,14 +344,43 @@ export function startServer() {
 
   wss.on("connection", (ws, req) => {
     ws.isAlive = true;
-    handshake(ws, req);
+    handshake(ws, req); // назначает ws.clientIp (loopback+XFF → реальный адрес)
+    const ip = ws.clientIp || String(req.socket.remoteAddress || "0");
+    let counted = false;
+    const releaseSlot = () => {
+      if (!counted) return;
+      counted = false;
+      const n = (socketsPerIp.get(ip) || 1) - 1;
+      if (n > 0) socketsPerIp.set(ip, n);
+      else socketsPerIp.delete(ip);
+    };
+    const held = (socketsPerIp.get(ip) || 0) + 1;
+    socketsPerIp.set(ip, held);
+    counted = true;
+    if (held > WS_MAX_PER_IP) {
+      // S5a (аудит Z.AI 2026-11-08): SOCKET-флуд с одного адреса закрыт.
+      console.warn(`ws per-ip limit: ip=${ip} open=${held} max=${WS_MAX_PER_IP}`);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify([EV.INFO, `Слишком много соединений с одного адреса (too_many_sockets), лимит ${WS_MAX_PER_IP}.`]));
+      }
+      ws.close(1013, "too_many_sockets");
+      ws.on("close", releaseSlot);
+      ws.on("error", releaseSlot);
+      return;
+    }
     ws.on("pong", () => {
       ws.isAlive = true;
     });
     console.log(`ws open ${req.socket.remoteAddress || "?"} origin=${req.headers.origin || "-"}`);
     ws.on("message", (raw) => onMessage(ws, raw));
-    ws.on("close", () => leave(ws));
-    ws.on("error", () => leave(ws));
+    ws.on("close", () => {
+      releaseSlot();
+      leave(ws);
+    });
+    ws.on("error", () => {
+      releaseSlot();
+      leave(ws);
+    });
   });
 
   server.listen(PORT, HOST, () => {

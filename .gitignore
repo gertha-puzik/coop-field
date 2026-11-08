@@ -9,4 +9,3 @@ data/
 # корень репо: у них отдельные webroot'ы и они не коммитятся.
 www-grotto/
 www-elyria/
-node_modules

@@ -1,53 +1,30 @@
 /**
- * Browser session for the room server: opaque token in sessionStorage,
- * attached to the WebSocket URL as ?t=. The server session table is the
- * source of truth; this key only lets the tab reconnect.
+ * Сессия комнаты: HttpOnly-cookie (P3, спек §3). Токен клиенту не виден и
+ * нигде не хранится: кука ездит сама в каждом fetch/WS-хендшейке, а фигню
+ * вроде ?t= в URL спек запрещает. Этот модуль остаётся точкой сборки WS-кадра
+ * auth (hello/logout) и identity-пропуском whoami — профили и их HTTP-флои
+ * живут в ./http-auth.ts.
  */
 import { EV, type CoopWhoami } from "./protocol.ts";
 
-export const AUTH_STORAGE_KEY = "coop-field-session";
-
-export function readAuthToken(): string {
-  if (typeof window === "undefined") return "";
-  try {
-    return String(sessionStorage.getItem(AUTH_STORAGE_KEY) || "");
-  } catch {
-    return "";
-  }
-}
-
-export function writeAuthToken(token: string) {
-  if (typeof window === "undefined") return;
-  try {
-    if (token) sessionStorage.setItem(AUTH_STORAGE_KEY, token);
-    else sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  } catch {
-    /* private mode */
-  }
-}
-
-export function withAuthToken(wsUrl: string, token = readAuthToken()): string {
-  if (!token) return wsUrl;
-  try {
-    const u = new URL(wsUrl);
-    u.searchParams.set("t", token);
-    return u.toString();
-  } catch {
-    return wsUrl;
-  }
-}
-
+/**
+ * Ктоами-кадр с сервера: пропускаем как есть. Токен в кадре (legacy local)
+ * игнорируем — состояние сессии на клиенте только роль/имя/accId, правда в куке.
+ */
 export function applyWhoami(row: CoopWhoami): CoopWhoami {
-  if (row.ok && row.token) writeAuthToken(row.token);
-  else if (row.ok && row.role === "guest") writeAuthToken("");
   return row;
 }
 
+/**
+ * Пayload WS-кадра auth. hello — без токена: сессию сокет уже получил по куке
+ * на хендшейке (server/auth.js handshake → tokenFromRequest → cookie).
+ * logout остаётся кадром: им сокет отвязывает привязанную сессию.
+ */
 export function authPayload(
   action: "hello" | "register" | "login" | "logout",
-  fields: { login?: string; pass?: string; token?: string } = {},
+  fields: { login?: string; pass?: string } = {},
 ) {
-  return { action, ...fields, ...(action === "hello" ? { token: fields.token || readAuthToken() } : {}) };
+  return { action, ...fields };
 }
 
 export { EV };

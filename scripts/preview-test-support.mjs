@@ -144,59 +144,59 @@ export function sectionSlugHostGuards() {
   const okVal = run({ PREVIEW_SLUG: "cursor-test", PREVIEW_ACTION: "validate" });
   eq("validate good slug", okVal.status, 0);
   eq("validate prints app", okVal.stdout.includes("/opt/coop-field-preview/cursor-test"), true);
-  eq("validate default host", okVal.stdout.includes("host=cursor-test.abnocw.miew.ru"), true);
-  eq("validate default host2", okVal.stdout.includes("host2=cursor-test.elisium.miew.ru"), true);
+  eq("validate default host", okVal.stdout.includes("host=cursor-test.abnocw.phainonsmilk.ru"), true);
+  eq("validate default host2", okVal.stdout.includes("host2=cursor-test.elysiae.phainonsmilk.ru"), true);
   eq("validate prints both roots", okVal.stdout.includes("roots=/opt/coop-field-preview/cursor-test/www-grotto,/opt/coop-field-preview/cursor-test/www-elyria"), true);
 
   // ── Валидация хостов в ОБОИХ суффикс-зонах ────────────────────────────────
   const longHostAbnocw = run({
     PREVIEW_SLUG: "pr-41",
-    PREVIEW_HOST: "cursor-product-roadmap-and-platform-42e0.abnocw.miew.ru",
+    PREVIEW_HOST: "cursor-product-roadmap-and-platform-42e0.abnocw.phainonsmilk.ru",
     PREVIEW_ACTION: "validate",
   });
   eq("deny long server_name abnocw", longHostAbnocw.status === 0 ? "ok" : "fail", "fail");
 
   const longHostElisium = run({
     PREVIEW_SLUG: "pr-41",
-    PREVIEW_HOST: "pr-41.abnocw.miew.ru",
-    PREVIEW_HOST2: "cursor-product-roadmap-and-platform-42e0.elisium.miew.ru",
+    PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "cursor-product-roadmap-and-platform-42e0.elysiae.phainonsmilk.ru",
     PREVIEW_ACTION: "validate",
   });
   eq("deny long server_name elisium", longHostElisium.status === 0 ? "ok" : "fail", "fail");
 
   const prHostVal = run({
     PREVIEW_SLUG: "pr-41",
-    PREVIEW_HOST: "pr-41.abnocw.miew.ru",
-    PREVIEW_HOST2: "pr-41.elisium.miew.ru",
+    PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "pr-41.elysiae.phainonsmilk.ru",
     PREVIEW_ACTION: "validate",
   });
   eq("validate pr hosts", prHostVal.status, 0);
-  eq("validate pr host printed", prHostVal.stdout.includes("host=pr-41.abnocw.miew.ru"), true);
-  eq("validate pr host2 printed", prHostVal.stdout.includes("host2=pr-41.elisium.miew.ru"), true);
+  eq("validate pr host printed", prHostVal.stdout.includes("host=pr-41.abnocw.phainonsmilk.ru"), true);
+  eq("validate pr host2 printed", prHostVal.stdout.includes("host2=pr-41.elysiae.phainonsmilk.ru"), true);
   // Hosts взаимозаменяемы позициями: суффикс решает зону, не порядок аргументов.
   const swapped = run({
     PREVIEW_SLUG: "pr-41",
-    PREVIEW_HOST: "pr-41.elisium.miew.ru",
-    PREVIEW_HOST2: "pr-41.abnocw.miew.ru",
+    PREVIEW_HOST: "pr-41.elysiae.phainonsmilk.ru",
+    PREVIEW_HOST2: "pr-41.abnocw.phainonsmilk.ru",
     PREVIEW_ACTION: "validate",
   });
-  eq("hosts by suffix, not position", swapped.stdout.includes("host=pr-41.abnocw.miew.ru"), true);
-  eq("hosts by suffix, not position 2", swapped.stdout.includes("host2=pr-41.elisium.miew.ru"), true);
+  eq("hosts by suffix, not position", swapped.stdout.includes("host=pr-41.abnocw.phainonsmilk.ru"), true);
+  eq("hosts by suffix, not position 2", swapped.stdout.includes("host2=pr-41.elysiae.phainonsmilk.ru"), true);
 
   // Две зоны одного вида — отказ.
   for (const same of [
-    { PREVIEW_HOST: "pr-41.abnocw.miew.ru", PREVIEW_HOST2: "pr-42.abnocw.miew.ru" },
-    { PREVIEW_HOST: "pr-41.elisium.miew.ru", PREVIEW_HOST2: "pr-42.elisium.miew.ru" },
+    { PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru", PREVIEW_HOST2: "pr-42.abnocw.phainonsmilk.ru" },
+    { PREVIEW_HOST: "pr-41.elysiae.phainonsmilk.ru", PREVIEW_HOST2: "pr-42.elysiae.phainonsmilk.ru" },
   ]) {
     const r = run({ PREVIEW_SLUG: "pr-41", PREVIEW_ACTION: "validate", ...same });
     eq(`deny same-zone ${same.PREVIEW_HOST2}`, r.status === 0 ? "ok" : "fail", "fail");
   }
   // Чужой суффикс и мусор — отказ.
-  for (const bad of ["pr-41.example.com", "pr-41.abnocw.miew.ru.evil.ru", "PR-41.ABNOCW.MIEW.RU", "pr 41.abnocw.miew.ru"]) {
-    const r = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: bad, PREVIEW_HOST2: "pr-41.elisium.miew.ru", PREVIEW_ACTION: "validate" });
+  for (const bad of ["pr-41.example.com", "pr-41.abnocw.phainonsmilk.ru.evil.ru", "PR-41.ABNOCW.MIEW.RU", "pr 41.abnocw.phainonsmilk.ru"]) {
+    const r = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: bad, PREVIEW_HOST2: "pr-41.elysiae.phainonsmilk.ru", PREVIEW_ACTION: "validate" });
     eq(`deny host ${bad}`, r.status === 0 ? "ok" : "fail", "fail");
   }
-  const badSecond = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: "pr-41.abnocw.miew.ru", PREVIEW_HOST2: "pr-41.example.com", PREVIEW_ACTION: "validate" });
+  const badSecond = run({ PREVIEW_SLUG: "pr-41", PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru", PREVIEW_HOST2: "pr-41.example.com", PREVIEW_ACTION: "validate" });
   eq("deny second host foreign suffix", badSecond.status === 0 ? "ok" : "fail", "fail");
 }
 
@@ -224,7 +224,7 @@ export function sectionTlsMatrix(t, base) {
         "1",
         "-nodes",
         "-subj",
-        "/CN=abnocw.miew.ru",
+        "/CN=abnocw.phainonsmilk.ru",
         "-addext",
         `subjectAltName=${san}`,
       ],
@@ -235,16 +235,16 @@ export function sectionTlsMatrix(t, base) {
       process.exit(1);
     }
   }
-  makeCert(join(certDir, "apex"), "DNS:abnocw.miew.ru");
-  makeCert(join(certDir, "wild"), "DNS:*.abnocw.miew.ru,DNS:abnocw.miew.ru");
-  makeCert(join(certDir, "wild-el"), "DNS:*.elisium.miew.ru,DNS:elisium.miew.ru");
+  makeCert(join(certDir, "apex"), "DNS:abnocw.phainonsmilk.ru");
+  makeCert(join(certDir, "wild"), "DNS:*.abnocw.phainonsmilk.ru,DNS:abnocw.phainonsmilk.ru");
+  makeCert(join(certDir, "wild-el"), "DNS:*.elysiae.phainonsmilk.ru,DNS:phainonsmilk.ru");
   fillIncoming(t.incoming, "tlsapex");
   const apexTls = run({
     ...base,
     PREVIEW_SLUG: "tlsapex",
     PREVIEW_IN: join(t.incoming, "tlsapex"),
-    PREVIEW_HOST: "tlsapex.abnocw.miew.ru",
-    PREVIEW_HOST2: "tlsapex.elisium.miew.ru",
+    PREVIEW_HOST: "tlsapex.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "tlsapex.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41011",
     PREVIEW_TLS_WILD: join(certDir, "apex"),
   });
@@ -266,8 +266,8 @@ export function sectionTlsMatrix(t, base) {
     ...base,
     PREVIEW_SLUG: "tlswild",
     PREVIEW_IN: join(t.incoming, "tlswild"),
-    PREVIEW_HOST: "tlswild.abnocw.miew.ru",
-    PREVIEW_HOST2: "tlswild.elisium.miew.ru",
+    PREVIEW_HOST: "tlswild.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "tlswild.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41012",
     PREVIEW_TLS_WILD: join(certDir, "wild"),
   });
@@ -276,17 +276,17 @@ export function sectionTlsMatrix(t, base) {
   const wildFrag = readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8");
   eq(
     "abnocw wildcard covers grotto block only",
-    blockFor(wildFrag, "tlswild.abnocw.miew.ru").includes("ssl_certificate"),
+    blockFor(wildFrag, "tlswild.abnocw.phainonsmilk.ru").includes("ssl_certificate"),
     true,
   );
   eq(
     "abnocw wildcard does not cover elyria block",
-    blockFor(wildFrag, "tlswild.elisium.miew.ru").includes("ssl_certificate"),
+    blockFor(wildFrag, "tlswild.elysiae.phainonsmilk.ru").includes("ssl_certificate"),
     false,
   );
   eq(
     "wildcard adds https redirect in grotto block",
-    blockFor(wildFrag, "tlswild.abnocw.miew.ru").includes("return 301 https://"),
+    blockFor(wildFrag, "tlswild.abnocw.phainonsmilk.ru").includes("return 301 https://"),
     true,
   );
   eq(
@@ -294,15 +294,15 @@ export function sectionTlsMatrix(t, base) {
     wildFrag.includes("acme-challenge"),
     true,
   );
-  // Зеркало зоны elisium (tls/elisium.miew.ru) подхватывается вторым блоком.
-  mkdirSync(join(t.previewRoot, "tls", "elisium.miew.ru"), { recursive: true });
-  makeCert(join(t.previewRoot, "tls", "elisium.miew.ru"), "DNS:*.elisium.miew.ru,DNS:elisium.miew.ru");
+  // Зеркало зоны elisium (tls/phainonsmilk.ru) подхватывается вторым блоком.
+  mkdirSync(join(t.previewRoot, "tls", "phainonsmilk.ru"), { recursive: true });
+  makeCert(join(t.previewRoot, "tls", "elysiae.phainonsmilk.ru"), "DNS:*.elysiae.phainonsmilk.ru,DNS:phainonsmilk.ru");
   const wildTls2 = run({
     ...base,
     PREVIEW_SLUG: "tlswild",
     PREVIEW_IN: join(t.incoming, "tlswild"),
-    PREVIEW_HOST: "tlswild.abnocw.miew.ru",
-    PREVIEW_HOST2: "tlswild.elisium.miew.ru",
+    PREVIEW_HOST: "tlswild.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "tlswild.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41012",
     PREVIEW_TLS_WILD: join(certDir, "wild"),
     PREVIEW_SHA: "withzone",
@@ -312,25 +312,25 @@ export function sectionTlsMatrix(t, base) {
   const wildFrag2 = readFileSync(join(t.nginxD, "preview-tlswild.conf"), "utf8");
   eq(
     "elyria block got zone-wildcard cert",
-    blockFor(wildFrag2, "tlswild.elisium.miew.ru").includes(`ssl_certificate ${join(t.previewRoot, "tls", "elisium.miew.ru")}/fullchain.pem;`),
+    blockFor(wildFrag2, "tlswild.elysiae.phainonsmilk.ru").includes(`ssl_certificate ${join(t.previewRoot, "tls", "elysiae.phainonsmilk.ru")}/fullchain.pem;`),
     true,
   );
   eq(
     "grotto block still on abnocw wildcard",
-    blockFor(wildFrag2, "tlswild.abnocw.miew.ru").includes(`ssl_certificate ${join(certDir, "wild")}/fullchain.pem;`),
+    blockFor(wildFrag2, "tlswild.abnocw.phainonsmilk.ru").includes(`ssl_certificate ${join(certDir, "wild")}/fullchain.pem;`),
     true,
   );
 
   // Per-host зеркала tls/<host> (дефолт coop-preview-cert): каждый блок свой серт.
-  makeCert(join(t.previewRoot, "tls", "pr-41.abnocw.miew.ru"), "DNS:pr-41.abnocw.miew.ru");
-  makeCert(join(t.previewRoot, "tls", "pr-41.elisium.miew.ru"), "DNS:pr-41.elisium.miew.ru");
+  makeCert(join(t.previewRoot, "tls", "pr-41.abnocw.phainonsmilk.ru"), "DNS:pr-41.abnocw.phainonsmilk.ru");
+  makeCert(join(t.previewRoot, "tls", "pr-41.elysiae.phainonsmilk.ru"), "DNS:pr-41.elysiae.phainonsmilk.ru");
   const perDual = run({
     ...base,
     PREVIEW_SLUG: "pr-41",
     PREVIEW_IN: join(t.incoming, "pr-41"),
     PREVIEW_PORT: "41041",
-    PREVIEW_HOST: "pr-41.abnocw.miew.ru",
-    PREVIEW_HOST2: "pr-41.elisium.miew.ru",
+    PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "pr-41.elysiae.phainonsmilk.ru",
     PREVIEW_SHA: "perhost-dual",
   });
   dump("per-host dual tls", perDual);
@@ -338,33 +338,33 @@ export function sectionTlsMatrix(t, base) {
   const perFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
   eq(
     "grotto block got own per-host cert",
-    blockFor(perFrag, "pr-41.abnocw.miew.ru").includes(
-      `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.abnocw.miew.ru")}/fullchain.pem;`,
+    blockFor(perFrag, "pr-41.abnocw.phainonsmilk.ru").includes(
+      `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.abnocw.phainonsmilk.ru")}/fullchain.pem;`,
     ),
     true,
   );
   eq(
     "elyria block got own per-host cert",
-    blockFor(perFrag, "pr-41.elisium.miew.ru").includes(
-      `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.elisium.miew.ru")}/fullchain.pem;`,
+    blockFor(perFrag, "pr-41.elysiae.phainonsmilk.ru").includes(
+      `ssl_certificate ${join(t.previewRoot, "tls", "pr-41.elysiae.phainonsmilk.ru")}/fullchain.pem;`,
     ),
     true,
   );
   eq(
     "per-host certs differ between blocks",
-    blockFor(perFrag, "pr-41.abnocw.miew.ru").includes("pr-41.elisium.miew.ru/fullchain") ||
-      blockFor(perFrag, "pr-41.elisium.miew.ru").includes("pr-41.abnocw.miew.ru/fullchain"),
+    blockFor(perFrag, "pr-41.abnocw.phainonsmilk.ru").includes("pr-41.elysiae.phainonsmilk.ru/fullchain") ||
+      blockFor(perFrag, "pr-41.elysiae.phainonsmilk.ru").includes("pr-41.abnocw.phainonsmilk.ru/fullchain"),
     false,
   );
   // Один общий PREVIEW_TLS_PER с SAN обеих хостов — покрывает оба блока.
-  makeCert(join(certDir, "perboth"), "DNS:tlsper.abnocw.miew.ru,DNS:tlsper.elisium.miew.ru");
+  makeCert(join(certDir, "perboth"), "DNS:tlsper.abnocw.phainonsmilk.ru,DNS:tlsper.elysiae.phainonsmilk.ru");
   fillIncoming(t.incoming, "tlsper");
   const perTls = run({
     ...base,
     PREVIEW_SLUG: "tlsper",
     PREVIEW_IN: join(t.incoming, "tlsper"),
-    PREVIEW_HOST: "tlsper.abnocw.miew.ru",
-    PREVIEW_HOST2: "tlsper.elisium.miew.ru",
+    PREVIEW_HOST: "tlsper.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "tlsper.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41013",
     PREVIEW_TLS_PER: join(certDir, "perboth"),
   });
@@ -373,12 +373,12 @@ export function sectionTlsMatrix(t, base) {
   const perFrag2 = readFileSync(join(t.nginxD, "preview-tlsper.conf"), "utf8");
   eq(
     "shared cert covers grotto block",
-    blockFor(perFrag2, "tlsper.abnocw.miew.ru").includes("ssl_certificate"),
+    blockFor(perFrag2, "tlsper.abnocw.phainonsmilk.ru").includes("ssl_certificate"),
     true,
   );
   eq(
     "shared cert covers elyria block",
-    blockFor(perFrag2, "tlsper.elisium.miew.ru").includes("ssl_certificate"),
+    blockFor(perFrag2, "tlsper.elysiae.phainonsmilk.ru").includes("ssl_certificate"),
     true,
   );
   eq(
@@ -460,8 +460,8 @@ export function sectionSystemdSecurity(t, base) {
     PREVIEW_SLUG: "psec",
     PREVIEW_IN: join(t.incoming, "psec"),
     PREVIEW_PORT: "41699",
-    PREVIEW_HOST: "psec.abnocw.miew.ru",
-    PREVIEW_HOST2: "psec.elisium.miew.ru",
+    PREVIEW_HOST: "psec.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "psec.elysiae.phainonsmilk.ru",
     PREVIEW_SHA: "psecdeadbeef",
     PREVIEW_SKIP_SYSTEMD: "0",
     PREVIEW_SKIP_NGINX: "1",
@@ -491,7 +491,7 @@ export function sectionSystemdSecurity(t, base) {
   );
   eq(
     "full apply fragment has both hosts",
-    psecFrag.includes("server_name psec.abnocw.miew.ru;") && psecFrag.includes("server_name psec.elisium.miew.ru;"),
+    psecFrag.includes("server_name psec.abnocw.phainonsmilk.ru;") && psecFrag.includes("server_name psec.elysiae.phainonsmilk.ru;"),
     true,
   );
 
@@ -536,14 +536,14 @@ export function sectionLegacyContract(P) {
   }
 }
 {
-  const LEG = "legone.abnocw.miew.ru";
+  const LEG = "legone.abnocw.phainonsmilk.ru";
   fillIncoming(t.incoming, "legone");
   const dualFirst = run({
     ...base,
     PREVIEW_SLUG: "legone",
     PREVIEW_IN: join(t.incoming, "legone"),
     PREVIEW_HOST: LEG,
-    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_HOST2: "legone.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41071",
   });
   eq("legone starts as dual (variant roots)", dualFirst.status, 0);
@@ -568,19 +568,19 @@ export function sectionLegacyContract(P) {
   const legEnv = readFileSync(join(t.previewRoot, "legone/env"), "utf8");
   eq("legacy env sites mode honest", legEnv.includes("PREVIEW_SITES_MODE=legacy-single"), true);
   eq("legacy env has no elyria hosts key", legEnv.includes("ELYRIA_HOSTS="), false);
-  eq("legacy env single public host", legEnv.includes("PUBLIC_HOSTS=legone.abnocw.miew.ru"), true);
+  eq("legacy env single public host", legEnv.includes("PUBLIC_HOSTS=legone.abnocw.phainonsmilk.ru"), true);
   eq("legacy env origins single host", legEnv.includes(`ALLOWED_ORIGINS=http://${LEG},https://${LEG}`), true);
   const legFrag = readFileSync(join(t.nginxD, "preview-legone.conf"), "utf8");
   eq("legacy fragment single server block", legFrag.includes(`server_name ${LEG};`), true);
-  eq("legacy fragment has no elisium block", legFrag.includes("elisium.miew.ru"), false);
+  eq("legacy fragment has no Elysiae zone block", legFrag.includes(".elysiae.phainonsmilk.ru"), false);
   eq("legacy fragment roots app www", /root [^\n]*\/legone\/www;/.test(legFrag), true);
   // Легаси-артефакт с главным именем чужой зоны — отказ, выкладки нет.
   const legBad = run({
     ...base,
     PREVIEW_SLUG: "legbad",
     PREVIEW_IN: join(t.incoming, "legone-legacy"),
-    PREVIEW_HOST: "legbad.elisium.miew.ru",
-    PREVIEW_HOST2: "legbad.abnocw.miew.ru",
+    PREVIEW_HOST: "legbad.elysiae.phainonsmilk.ru",
+    PREVIEW_HOST2: "legbad.abnocw.phainonsmilk.ru",
     PREVIEW_PORT: "41072",
   });
   dump("legbad foreign-zone legacy", legBad);
@@ -598,7 +598,7 @@ export function sectionLegacyContract(P) {
     ...verifyBase,
     PREVIEW_SLUG: "legone",
     PREVIEW_HOST: LEG,
-    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_HOST2: "legone.elysiae.phainonsmilk.ru",
   });
   dump("verify legacy live", legV);
   eq("legacy verify live exit", legV.status, 0);
@@ -615,7 +615,7 @@ export function sectionLegacyContract(P) {
     ...verifyBase,
     PREVIEW_SLUG: "legone",
     PREVIEW_HOST: LEG,
-    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_HOST2: "legone.elysiae.phainonsmilk.ru",
   });
   dump("verify legacy ws dead", legWsDead);
   eq("legacy ws-dead not live (exit 4)", legWsDead.status, 4);
@@ -628,7 +628,7 @@ export function sectionLegacyContract(P) {
     ...verifyBase,
     PREVIEW_SLUG: "legone",
     PREVIEW_HOST: LEG,
-    PREVIEW_HOST2: "legone.elisium.miew.ru",
+    PREVIEW_HOST2: "legone.elysiae.phainonsmilk.ru",
   });
   eq("legacy needs-dns exit 6", legDns.status, 6);
   eq("legacy needs-dns honest", legDns.stdout.includes("grotto=needs-dns reasons=dns"), true);
@@ -669,7 +669,7 @@ export function makeVerifyShims(root) {
   writeFileSync(join(fakeTools, "nslookup"), fakeNsSh + "\n");
   chmodSync(join(fakeTools, "nslookup"), 0o755);
   // getent-шим: на linux-раннерах getent существует системно — без шима он
-  // реактивно резолвит wildcard pr-*.abnocw.miew.ru через /etc/resolv.conf,
+  // реактивно резолвит wildcard pr-*.abnocw.phainonsmilk.ru через /etc/resolv.conf,
   // и сцены needs-dns видят «DNS есть» (ран #42434980408/#42434980453).
   // macOS getent нет вовсе — поэтому локально сцены зелёные, CI падал.
   // Политика та же, что у dig/nslookup: имя в FAKE_DNS_OK → 127.0.0.127,

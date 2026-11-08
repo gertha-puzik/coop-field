@@ -12,6 +12,8 @@ on:
       - "vercel.json"
       - "package.json"
       - "package-lock.json"
+      - "scripts/prune-export.mjs"
+      - "scripts/prod-switch-www.mjs"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
 
@@ -19,8 +21,34 @@ permissions:
   contents: read
 
 jobs:
+  # Manual runs off main are refused honestly — a red step with a plain
+  # explanation, not a silent gray "skipped": production deploys arrive via
+  # PR + merge into main only (PR-only policy).
+  dispatch-guard:
+    name: Источник запуска (только main)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Отказ для dispatch вне main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Ручной запуск production-deploy разрешён только из main (сейчас: ${GITHUB_REF_NAME:-$GITHUB_REF}). Прод деплоится влитием PR в main."
+          exit 1
+      - name: Dispatch из main — продолжаем
+        run: echo "workflow_dispatch из main, продолжаем"
+
   vps:
-    name: Статика на VPS
+    name: Статика на VPS (только main)
+    needs: dispatch-guard
+    # Production job: main only. Push always arrives with this ref (on.push
+    # pins branches: [main]); workflow_dispatch is double-gated here — the
+    # guard job above explains the refusal in plain language.
+    if: ${{ github.ref == 'refs/heads/main' && !failure() && !cancelled() }}
+    # Deployment record in the 'production' environment. First reference
+    # auto-creates the environment UNPROTECTED; protection rules (required
+    # reviewers) are an owner action in repo Settings — see
+    # docs/DEPLOY-CHECKLIST.md.
+    environment: production
     runs-on: ubuntu-latest
     concurrency:
       group: coop-field-frontend-vps
@@ -32,12 +60,52 @@ jobs:
           node-version: 22
           cache: npm
       - name: Сборка статического экспорта
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           set -euo pipefail
           npm ci
           npm run build
           test -f out/index.html
-      - name: Заливка каталога www
+      - name: Сборка вариантов сайта (гроты + Элизия)
+        # Контракт preview-build.yml («Сборка обоих вариантов сайта»): скрипт
+        # build:variants оставляет в корне репо www-grotto/ и www-elyria/
+        # с index.html в каждом и обрезкой чужих для варианта маршрутов.
+        # Ванильный out/ собран и проверен шагом выше; build:variants дважды
+        # пересобирает out/ (NEXT_PUBLIC_SITE=grotto, затем elyria) — на VPS
+        # уезжает пара вариантных корней вместо одного полного out/.
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          npm run build:variants
+          test -f www-grotto/index.html
+          test -f www-elyria/index.html
+
+      # ── Staged deploy: согласованность двух сайтов ────────────────────────
+      #
+      # Проблема прошлой схемы: два независимых шага rsync. Заливка гротов
+      # проходит, заливка Элизии падает — на проде два сайта с несогласо-
+      # ванными версиями движка/протокола (комнаты кочуют между ними, ws
+      # ломается молча). Новая схема: ОБА корня сначала едут в stage-каталоги
+      # (/opt/coop-field/www.staging и /opt/coop-field/www-elyria.staging);
+      # затем ОДИН main-owned скрипт-транзакция (scripts/prod-switch-www.mjs)
+      # повторно валидирует пару и переключает её целиком: предыдущая выкладка
+      # остаётся в .prev (один снимок назад), ошибку на любом шаге он
+      # откатывает — результат строго бинарный: оба сайта обновлены или оба
+      # старые. Ошибка до/во время свитча — финальные корни не меняются.
+      - name: Изоляция вариантов (A1)
+        # Задача 3 (N4): проверка обрезки чужих маршрутов обязана жить в самом
+        # прод-деплое, не только в PR-пути (merge-коммит ≠ head-SHA PR;
+        # политика «PR-only» держится на дисциплине). Гейт стоит ДО staging-заливки:
+        # изолированный брак не уезжает на VPS даже в staging.
+        run: |
+          set -euo pipefail
+          node scripts/check-variants.mjs www-grotto www-elyria
+
+      - name: Staging-заливка обоих корней
+        # www.staging / www-elyria.staging — НЕ читаются nginx'ом: это
+        # «зелёная зона», сюда можно лить что угодно без риска для прода.
         env:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           SSH_HOST: 89.232.184.77
@@ -53,13 +121,54 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www && test -w /opt/coop-field/www"; then
-            echo "нет записи в /opt/coop-field/www. Один раз от root: mkdir, chown deploy:deploy. См. README." >&2
+          if ! $SSH "$SSH_USER@$SSH_HOST" "test -w /opt/coop-field && mkdir -p /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging && test -w /opt/coop-field/www.staging && test -w /opt/coop-field/www-elyria.staging"; then
+            echo "нет записи в stage-каталоги /opt/coop-field/www{,-elyria}.staging ИЛИ в сам /opt/coop-field" >&2
+            echo "промоушен делает mv в САМОМ /opt/coop-field (www -> www.prev и т.д.) — нужна запись в каталог, а не только в www-elyria/; без неё первый прод-деплой после мерджа упадёт на промоушене (fail-safe: прод цел, деплой сломан до ручной правки)" >&2
+            echo "один раз от root, вариант A: chgrp deploy /opt/coop-field && chmod g+w /opt/coop-field" >&2
+            echo "вариант B (жёстче): root-owned скрипт промоушна + sudoers-строка только на него — см. docs" >&2
+            echo "ПРОД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты" >&2
             exit 1
           fi
-          # --delete только внутри www. Код комнаты в /opt/coop-field этим rsync не затрагивается.
+          # --delete только внутри stage-каталогов: свежая пара гарантированно
+          # без файлов прошлых выкладок. Код комнаты (server) не затрагивается.
           rsync -az --delete -e "$SSH" \
-            out/ \
-            "$SSH_USER@$SSH_HOST:/opt/coop-field/www/"
-          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www"
-          echo "статика в /opt/coop-field/www. сайт abnocw.89-232-184-77.sslip.io отдаёт её после одноразовой вставки deploy/vps/nginx-www.conf. сервис coop-field не перезапускался."
+            www-grotto/ \
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www.staging/"
+          rsync -az --delete -e "$SSH" \
+            www-elyria/ \
+            "$SSH_USER@$SSH_HOST:/opt/coop-field/www-elyria.staging/"
+          # Права читаемости — на stage, ДО промоушена: после mv nginx сразу
+          # отдаёт файлы, отдельного chmod в финальных корнях больше нет.
+          $SSH "$SSH_USER@$SSH_HOST" "chmod -R a+rX /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging"
+          echo "оба корня в staging: /opt/coop-field/www.staging + /opt/coop-field/www-elyria.staging"
+
+      - name: Транзакционный промоушен (prod-switch-www.mjs)
+        # One transaction inside scripts/prod-switch-www.mjs replaces the old
+        # inline remote shell: it re-validates BOTH staging roots (index.html
+        # + non-empty _next/static) and refuses BEFORE a single rename when
+        # either is broken; per root it moves the previous release into .prev
+        # (NEVER deleted up front — old snapshots are only retired into a
+        # `.retired-<stamp>` pen and rm -rf'd after BOTH roots switched), then
+        # promotes staging. Any failure rolls BOTH roots back through the
+        # rename journal — strictly binary: both new, or both on the previous
+        # release. A lock dir serializes manual + CI runs. Contract is pinned
+        # by scripts/test-prod-switch.mjs (failure injection included).
+        #
+        # Trust: main-owned VPS tooling, changed only via merged PRs (same
+        # rule as preview-apply.sh). Node binary: the prod unit path
+        # /opt/coop-field/.node/bin/node — the deploy user's non-interactive
+        # shell has no node in PATH.
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: 89.232.184.77
+          SSH_USER: deploy
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/.deploy-tools"
+          rsync -az -e "$SSH" scripts/prod-switch-www.mjs "$SSH_USER@$SSH_HOST:/opt/coop-field/.deploy-tools/"
+          $SSH "$SSH_USER@$SSH_HOST" "cd /opt/coop-field && exec ./.node/bin/node ./.deploy-tools/prod-switch-www.mjs"

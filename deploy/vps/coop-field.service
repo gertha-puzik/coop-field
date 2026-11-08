@@ -27,6 +27,7 @@ Group=deploy
 WorkingDirectory=/opt/coop-field
 Environment=PORT=8787
 Environment=HOST=127.0.0.1
+Environment=COOP_INSTANCE_CLASS=production
 ExecStart=/opt/coop-field/.node/bin/node server.js
 Restart=on-failure
 RestartSec=2

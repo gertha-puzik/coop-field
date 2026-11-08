@@ -1,0 +1,55 @@
+/* Glass category side menu of the admin dashboard (Elysiae-only component:
+   dash-shell.tsx). Tokens match the gate glass panels. */
+
+.dashSide {
+  border-radius: 18px;
+  border: 1px solid rgba(226, 220, 255, 0.28);
+  background: rgba(10, 14, 32, 0.62);
+  backdrop-filter: blur(8px);
+}
+
+.dashSideNav {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* Desktop (>=768px): vertical list; below it degrades to a horizontal strip. */
+@media (min-width: 768px) {
+  .dashSideNav {
+    flex-direction: column;
+    overflow: visible;
+  }
+}
+
+.dashSideItem {
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.875rem;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  color: #b9b3d9;
+  background: transparent;
+  transition:
+    background-color 128ms ease,
+    border-color 128ms ease,
+    color 128ms ease;
+}
+
+.dashSideItem:hover {
+  color: #efe7ff;
+  background: rgba(239, 231, 255, 0.1);
+}
+
+.dashSideItem[data-active='true'] {
+  color: #f6d7a2;
+  background: rgba(246, 215, 162, 0.12);
+  border-color: rgba(246, 215, 162, 0.38);
+  font-weight: 700;
+}

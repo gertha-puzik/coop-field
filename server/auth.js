@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { EV } from "./protocol.js";
-import { DATA_DIR, isAllowedOrigin } from "./config.js";
+import { DATA_DIR, originAllowedHere, csrfDecision, siteClassOfRequest, instanceEnvClass } from "./config.js";
 import { send } from "./room.js";
 import {
   PASS_MIN,
@@ -30,8 +30,28 @@ const envMs = (name, def) => {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= 0 ? n : def;
 };
-const REGISTER_GAP_MS = envMs("AUTH_REGISTER_GAP_MS", 60_000);
-const REGISTER_HOUR_MAX = Math.max(1, Math.round(Number(process.env.AUTH_REGISTER_HOURLY_MAX) || 5));
+// Лимиты регистрации по классу инстанса (register v2, мандат владелицы
+// 2026-11-08: «на тест /dev окружениях можно убрать ограничения»): прод —
+// прежние строгие; preview — мягкие (мгновенных смоук-регистраций хватает,
+// тупой спам всё ещё затруднён); local/test — без ограничений. Env
+// AUTH_REGISTER_* остаётся override'ом ПОВЕРХ класса — владелец стенда
+// подстраивает под себя. Гейты входа (LOGIN_*) не затронуты.
+const REGISTER_CLASS_LIMITS = {
+  production: { gapMs: 60_000, hourMax: 5 },
+  preview: { gapMs: 5_000, hourMax: 60 },
+  local: { gapMs: 0, hourMax: Infinity },
+  test: { gapMs: 0, hourMax: Infinity },
+};
+
+/** Регистрационные лимиты сейчас: env-override > класс инстанса > прод-дефолт. */
+function registerLimits() {
+  const base = REGISTER_CLASS_LIMITS[instanceEnvClass()] || REGISTER_CLASS_LIMITS.production;
+  const maxRaw = Math.round(Number(process.env.AUTH_REGISTER_HOURLY_MAX));
+  return {
+    gapMs: envMs("AUTH_REGISTER_GAP_MS", base.gapMs),
+    hourMax: Number.isFinite(maxRaw) && maxRaw >= 1 ? maxRaw : base.hourMax,
+  };
+}
 const LOGIN_GAP_MS = envMs("AUTH_LOGIN_GAP_MS", 6_000);
 // Подбор пароля к ОДНОМУ логину (дополнение к per-IP bucket): счёт ведётся по
 // логину, поэтому ротация адресов не обходит, а владельца враг может лишь
@@ -102,6 +122,29 @@ function destroySession(token) {
     delete sessions[token];
     saveSessions();
   }
+}
+
+/**
+ * P5-редизайн каталога (read-only вью): аккаунт → время свежайшей ЖИВОЙ
+ * сессии (createdAt последней сессии в пределах TTL). Единственный честный
+ * источник «последний вход» без записи новых полей в аккаунты: сессии уже
+ * пишутся при каждом входе, честнее просто смотреть на них. Просроченные
+ * записи не учитываются (после 14 дней неактивности значение исчезает —
+ * это честное «неизвестно», а не выдуманная дата). Ничего не мутирует.
+ */
+function lastSeenByAccount() {
+  const out = new Map();
+  const now = Date.now();
+  for (const rec of Object.values(sessions)) {
+    if (!rec || typeof rec !== "object") continue;
+    if (now > Number(rec.expiresAt)) continue;
+    const t = Number(rec.createdAt) || 0;
+    if (!t) continue;
+    const id = String(rec.accountId || "");
+    if (!id) continue;
+    if (t > (out.get(id) || 0)) out.set(id, t);
+  }
+  return out;
 }
 
 /**
@@ -220,7 +263,20 @@ function queryToken(req) {
 }
 
 function tokenFromRequest(req) {
+  // Матрица токенов P1. Класс local — прежнее поведение (?t= работает, токен
+  // в телах и whoami — на нём стоят тесты). Класс elyria уходит от токенов в
+  // URL: принимает только cookie; AUTH_LEGACY_TOKEN=1 возвращает приём ?t=
+  // на переходный период. Класс public ?t= пока принимает (гейт net.js всё
+  // равно закрывает его HTTP-зоны; старые клиенты снимают ?t= в соседней фазе).
+  if (siteClassOfRequest(req) === "elyria" && process.env.AUTH_LEGACY_TOKEN !== "1") {
+    return cookieToken(req);
+  }
   return queryToken(req) || cookieToken(req);
+}
+
+/** Сессия запроса (cookie/заголовки) — HTTP-потребителям профилей и др. */
+function sessionFromRequest(req) {
+  return readSession(tokenFromRequest(req));
 }
 
 function bindAccount(ws, account, token) {
@@ -248,6 +304,8 @@ function reasonText(code) {
   if (code === "taken") return "Это имя уже занято.";
   if (code === "weak") return `Пароль слишком короткий (минимум ${PASS_MIN}).`;
   if (code === "short") return "Имя слишком короткое.";
+  if (code === "badlogin") return "Логин — латиница, цифры, точки, дефисы и подчёркивания; без пробелов. От 2 до 24 символов.";
+  if (code === "badname") return "Имя на поле — от 2 до 24 видимых символов.";
   if (code === "bad") return "Неверный логин или пароль.";
   if (code === "full") return "Регистрация закрыта: на сервере больше нет свободных мест для аккаунтов.";
   if (code === "rate") return "Слишком часто. Подождите немного.";
@@ -256,21 +314,33 @@ function reasonText(code) {
 
 function cookieHeader(token, secure) {
   const maxAge = Math.floor(TTL_MS / 1000);
+  // B1: host-only cookie — атрибута Domain намеренно НЕТ: кука привязана к
+  // точному хосту и не расползается на соседние поддомены зоны.
   const parts = [`${COOKIE}=${token}`, "HttpOnly", "Path=/", `Max-Age=${maxAge}`];
-  if (secure) parts.push("Secure", "SameSite=None");
-  else parts.push("SameSite=Lax");
+  // P1: https-кука — Secure + SameSite=Lax (браузерный ход Элизии был
+  // same-origin, None туда не нужен). COOKIE_LOOSE=1 возвращает легаси None
+  // для переходного периода старых кросс-доменных клиентов.
+  if (secure) {
+    const samesite = process.env.COOKIE_LOOSE === "1" ? "SameSite=None" : "SameSite=Lax";
+    parts.push("Secure", samesite);
+  } else parts.push("SameSite=Lax");
   return parts.join("; ");
 }
 
+/** B1: CORS решается парой (Origin, класс destination-хоста): Access-Control-
+ *  Allow-Origin — только точный origin и только если он «свой» для класса
+ *  destination. Никогда wildcard, чужой origin не отражается; куки по нему
+ *  браузер не прочитает (ACAO не выдан), даже если запрос дойдёт. */
 function setCors(req, res) {
-  const origin = req.headers.origin || "";
-  if (origin && isAllowedOrigin(origin)) {
+  const origin = String(req.headers.origin || "");
+  const destClass = siteClassOfRequest(req);
+  res.setHeader("Vary", "Origin");
+  if (origin && originAllowedHere(origin, destClass)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "content-type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   }
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
 
 function readJson(req, limit = 4096) {
@@ -304,6 +374,24 @@ function sendWhoami(ws, body) {
 
 async function handleAuthFrame(ws, payload = {}, ip = "0") {
   const action = String(payload.action || "").trim();
+  // Хост-гейт P1: на public-хосте регистрации и входа нет вовсе — спокойный
+  // отказ без деталей (ни «нет такой комнаты», ни подсказок о причине). Гость
+  // в гротах по-прежнему получает hello/logout как обычно, а аккаунт на
+  // elyria/local — прежний вход (см. матрицу токенов в tokenFromRequest).
+  if ((action === "register" || action === "login") && ws.hostClass === "public") {
+    sendWhoami(ws, { ok: false, reason: "error" });
+    return;
+  }
+  // B1: register/login — «cookie-аутентифицированные» WS-операции (кадры
+  // создают/поднимают сессию): на public/elyria они требуют Origin, точный
+  // для destination-класса (upgrade-гейт в net.js отказывает чужому Origin
+  // ПРИ подключении; здесь — отказ кадрам без Origin). Гость-геймплей,
+  // hello/logout и прочие кадры работают, как раньше; на local классе
+  // прежнее пермиссивное поведение (легаси-тесты и originless-скрипты).
+  if ((action === "register" || action === "login") && ws.hostClass !== "local" && !ws.originOk) {
+    sendWhoami(ws, { ok: false, reason: "error" });
+    return;
+  }
   if (action === "hello") {
     const token = String(payload.token || ws.sessionToken || "");
     if (token) bindToken(ws, token);
@@ -317,12 +405,13 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     return;
   }
   if (action === "register") {
-    if (!rate(ip, "register", REGISTER_GAP_MS, REGISTER_HOUR_MAX)) {
+    const lim = registerLimits();
+    if (!rate(ip, "register", lim.gapMs, lim.hourMax)) {
       sendWhoami(ws, { ok: false, reason: "rate" });
       send(ws, EV.INFO, reasonText("rate"));
       return;
     }
-    const out = await createAccount(payload.login, payload.pass);
+    const out = await createAccount(payload.login, payload.pass, payload.name);
     if (out.error) {
       sendWhoami(ws, { ok: false, reason: out.error });
       send(ws, EV.INFO, reasonText(out.error));
@@ -377,6 +466,24 @@ async function handleAuthHttp(req, res) {
   }
   const ip = clientIp(req);
   const secure = req.headers["x-forwarded-proto"] === "https" || url.protocol === "https:";
+  // Класс САЙТА запроса (B1: Host-классификация + доверенная метка прокси) —
+  // матрица тел-токенов (cookie-only на elyria).
+  const siteClass = siteClassOfRequest(req);
+  // CSRF fail-closed (B1): unsafe-методы с cookie-аутентификацией на
+  // public/elyria обязаны нести Origin, точный для destination-класса:
+  // пустой Origin → 403 csrf_origin_required, чужой → 403 csrf_origin_mismatch.
+  // Класс local — прежнее пермиссивное поведение (AUTH_CSRF_STRICT='0'/'1'
+  // форсирует режим для всех классов — контроль тестовых стендов).
+  const csrfBad = csrfDecision({
+    method: req.method,
+    origin: req.headers.origin,
+    destClass: siteClass,
+    hasAuth: Boolean(cookieToken(req) || queryToken(req)),
+  });
+  if (csrfBad) {
+    json(res, csrfBad.status, { ok: false, reason: csrfBad.reason });
+    return true;
+  }
   try {
     if (url.pathname === "/auth/me" && req.method === "GET") {
       const hit = readSession(tokenFromRequest(req));
@@ -393,18 +500,23 @@ async function handleAuthHttp(req, res) {
       return true;
     }
     if (url.pathname === "/auth/register" && req.method === "POST") {
-      if (!rate(ip, "register", REGISTER_GAP_MS, REGISTER_HOUR_MAX)) {
+      const lim = registerLimits();
+      if (!rate(ip, "register", lim.gapMs, lim.hourMax)) {
         json(res, 429, { ok: false, reason: "rate" });
         return true;
       }
       const body = await readJson(req);
-      const out = await createAccount(body.login, body.pass);
+      const out = await createAccount(body.login, body.pass, body.name);
       if (out.error) {
         json(res, 400, { ok: false, reason: out.error });
         return true;
       }
       const token = createSession(out.account.id);
-      json(res, 200, { ok: true, token, ...publicAccount(out.account) }, { "Set-Cookie": cookieHeader(token, secure) });
+      // Элизия — cookie-only: токен в теле HTTP-ответа не выдаётся (кука та же).
+      // local — прежнее поведение, тесты и dev завязаны на токен в теле.
+      const resp = { ok: true, ...publicAccount(out.account) };
+      if (siteClass !== "elyria") resp.token = token;
+      json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
     if (url.pathname === "/auth/login" && req.method === "POST") {
@@ -425,7 +537,10 @@ async function handleAuthHttp(req, res) {
       }
       clearLoginFails(body.login);
       const token = createSession(out.account.id);
-      json(res, 200, { ok: true, token, ...publicAccount(out.account) }, { "Set-Cookie": cookieHeader(token, secure) });
+      // Матрица тел-токенов P1: elyria — cookie-only, local — токен в теле.
+      const resp = { ok: true, ...publicAccount(out.account) };
+      if (siteClass !== "elyria") resp.token = token;
+      json(res, 200, resp, { "Set-Cookie": cookieHeader(token, secure) });
       return true;
     }
   } catch {
@@ -437,6 +552,14 @@ async function handleAuthHttp(req, res) {
 }
 
 function handshake(ws, req) {
+  // Класс САЙТА хендшейка (B1: siteClassOfRequest — Host + доверенная метка
+  // прокси): WS-кадры auth гейтятся по нему в handleAuthFrame — register/login
+  // не работают на public-хосте, а на elyria требуют Origin своего класса.
+  ws.hostClass = siteClassOfRequest(req);
+  ws.clientOrigin = String(req?.headers?.origin || "");
+  // B1: origin сокета — ПАРА (origin, destination-класс): чужой origin на
+  // upgrade уже отклонён в net.js; сюда попадают «свои» и пустые (гость).
+  ws.originOk = Boolean(ws.clientOrigin) && originAllowedHere(ws.clientOrigin, ws.hostClass);
   const token = tokenFromRequest(req);
   if (token) bindToken(ws, token);
   ws.clientIp = clientIp(req);
@@ -455,7 +578,10 @@ export {
   bindToken,
   whoamiBody,
   tokenFromRequest,
+  sessionFromRequest,
+  lastSeenByAccount,
   flushAuth,
+  registerLimits,
   COOKIE,
   TTL_MS,
 };

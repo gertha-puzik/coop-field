@@ -1,10 +1,31 @@
 # Coop field — котобитвы на общем canvas-поле
 
-Агентам: карта репо и контракт комнаты — в [AGENTS.md](AGENTS.md), глубина (слои, зеркала, цель рефакторинга) — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Агентам: карта репо и контракт комнаты — в [AGENTS.md](AGENTS.md), глубина (слои, зеркала, цель рефакторинга) — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), платформа (аккаунты, два сайта, реестр настроек) — в [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md).
 
 Фронт — канвас-симулятор из [abnocw](https://github.com/ggaymelini/abnocw) + WebSocket-комната: до 30 котов,
 ходьба WASD (та же раскладка на русской клавиатуре), стрелы-удары, скины, панель настроек, чат и боевой лог.
 Сервер комнаты — авторитет клеток: двоих в одну клетку не сажает, отказы приходят событием `refuse`.
+
+## Два сайта из одного движка
+
+Один и тот же движок и один сервер комнаты собираются в два сайта (вариант задаётся при сборке,
+`NEXT_PUBLIC_SITE`):
+
+- **«Пивные гроты»** — `abnocw.phainonsmilk.ru` (превью-PR: `pr-<N>.abnocw.phainonsmilk.ru`). Публичный сайт:
+  меню, гроты «Пивной грот №1–3» на `/combat/` и заглушка «Голодных игр» на `/hunger/`.
+  Заходят без аккаунта. Про Элизию сайт не знает вовсе: ни ссылок в меню, ни страниц, ни
+  API (серверные зоны входа/профилей/админки на его домене отвечают «не найдено»).
+- **Элизия** — `phainonsmilk.ru` (превью-PR: `pr-<N>.elysiae.phainonsmilk.ru`). Закрытый сайт: регистрация
+  и вход по аккаунту, рисованная локация `/elision/` (вход только с сессией), каталог игроков
+  `/players` с карточками, панель админа `/admin` — реестр разрешённых настроек (уровни урона и
+  брони, периоды оборота стрелы, длины суток и погоды).
+
+Сервер один и различает сайты по домену (`Host`-заголовок): что открыто каждому классу хостов —
+таблица в [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md#3-хост-изоляция-и-матрица-токенов-p1).
+
+Совместимость старых ссылок: `/combat/` осталась страницей гротов, а комната с кодом `combat`
+(отдельный режим снят) сервером молча алиасится в «Пивной грот №1» — `?room=combat` ведёт в настоящий грот,
+`/?room=grot-1&name=Сырь` по-прежнему уходит на `/combat/`.
 
 ## Быстрый старт
 
@@ -16,43 +37,86 @@ npm start
 npm run dev
 ```
 
-Откройте `http://localhost:3000/` — меню Wanderpaws. Гроты: `/combat/`, Элизия: `/elision/`, голодные игры: `/hunger/` (страница в разработке).
-Старая ссылка `/?room=grot-1&name=Сырь` сама уходит на `/combat/`.
+`npm run dev` без переменных собирает вариант «гроты» (так безопаснее: пустой env — публичный сайт).
+Чтобы увидеть Элизию локально, поднимите фронт с флагом варианта:
 
-Тесты: `npm run test:queue` — очередь шагов (сервер поднимает сам); `npm run test:ws` — контракт комнаты,
-нужен уже поднятый сервер (`npm start`, либо `WS_URL=ws://...`); `npm run test:unit` — юнит-тесты движка
-(нужен node ≥22.6, на старых печатает SKIP); `npm run arch:check` — гейт архитектуры; `npm run check:protocol` и `npm run test:protocol-parity` — сверка док-таблиц
-протокола и клиент/серверного паритета; `npm run check:landmarks` — актуальность чисел в доках.
+```bash
+NEXT_PUBLIC_SITE=elyria npm run dev   # меню Элизии, вход, /players, /admin
+```
 
-## Что уже есть в игре
+Комната одна и та же: `http://localhost:3000/` — меню Wanderpaws; `/combat/` — гроты;
+`/elision/` — Элизия (нужна регистрация; аккаунты создаются на локальном сервере, живут в `data/`);
+`/hunger/` — страница «в разработке».
 
-Эпохи после базовой сетки: редактор локаций с кистью и entry-клетками, террейн с обрывами и
-заряжёнными прыжками, смена дня-ночи и погоды, мирный режим с манекеном и мишенью «РАБ»,
-комната «тест» 19×7 «Элизия Эйдес», наборы спрайтов Malyshochki/Puzik и пиксельная отрисовка локации.
+## Сборка обоих вариантов (локально/CI)
+
+```bash
+npm run build:grotto   # NEXT_PUBLIC_SITE=grotto
+npm run build:elyria   # NEXT_PUBLIC_SITE=elyria
+npm run build:variants # оба по очереди + обрезка чужих маршрутов
+```
+
+`build:variants` оставляет в корне репо `www-grotto/` и `www-elyria/` (git-ignored): скрипт
+`scripts/prune-export.mjs` копирует статический экспорт `out/` в вариантный корень и вырезает
+каталоги чужого варианта — в сборке гротов физически нет маршрутов `elision/players/admin`, в сборке
+Элизии — `combat/hunger`. `_next/` и корневые файлы копируются целиком. Именно эта пара корней
+уезжает на VPS (прод) и в превью (PR).
+
+## Тесты
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:$PATH"   # нужен node ≥ 22 (test:unit — ≥ 22.6)
+npm run typecheck            # типы (tsc --noEmit)
+npm run test:unit            # юнит-тесты движка (keys/remote-aim/move-book/elev-rules/handbook/elision-scene)
+npm run test:protocol-parity  # клиент == сервер == golden значения (реестры и константы)
+npm run check:protocol       # протокольные таблицы AGENTS.md == реестры server/protocol.js
+npm run check:landmarks      # размеры модулей в доках == wc -l
+npm run arch:check           # гейт архитектуры: файлы ≤800 строк, границы слоёв
+npm run test:queue           # очередь шагов (поднимает свой сервер)
+npm run test:ws              # контракт комнаты против живого сервера (npm start либо WS_URL=ws://...)
+npm run test:auth            # аккаунты: регистрация/вход, cookie/CSRF, закрытая Элизия, host-гейт
+npm run test:cfg             # реестр конфига (whitelist 6 ключей вкл. allowPlayerAtmosphereControl, клэмпы)
+npm run test:profiles        # HTTP-профили: каталог, карточка, правка своей
+npm run test:server-modules  # смоук серверных модулей (золотые значения)
+```
+
+Пишущие серверные гейты сами поднимают песочницы; `test:ws` и `test:elev` хотят уже поднятую
+комнату. Прод-эндпоинты скрипты не трогают без явного `--prod`.
 
 ## Прод
 
-- Фронт: https://coop-field.vercel.app и https://abnocw.89-232-184-77.sslip.io (статика `/opt/coop-field/www` на VPS)
+- Гроты: https://abnocw.phainonsmilk.ru — статика `/opt/coop-field/www` на VPS (легаси-домен `abnocw.89-232-184-77.sslip.io` продолжает работать)
+- Элизия: https://phainonsmilk.ru — статика `/opt/coop-field/www-elyria`; откроется после
+  одноразового шага владелицы (каталог на VPS + nginx-vhost для домена)
 - Комната: `wss://coop.89-232-184-77.sslip.io` — VPS 89.232.184.77, systemd-сервис `coop-field`,
   **порт 8787** за nginx (локальный дефолт — 3780)
 
 Мерж PR в `main` [gertha-puzik/coop-field](https://github.com/gertha-puzik/coop-field) — это деплой прода, поэтому прямой пуш в `main` запрещён (branch protection): изменения идут через ветка + PR. Мерж запускает Actions:
 
+**Права на атомарный промоушн (одноразовый шаг владелицы, задача 2 / N2).**
+Атомарный промоушн пары корней (`mv www → www.staging → www.prev …`) делает `mv`/`rm` в **самом** `/opt/coop-field` — права только на `www-elyria/` для staged-схемы недостаточны. Префлайт «Staging-заливка обоих корней» честно падает раньше любой заливки, если записи нет. Варианты (один раз от root):
+- **A (использован на проде 2026-11-08):** `chgrp deploy /opt/coop-field && chmod g+w /opt/coop-field` — deploy уже раскатывает весь серверный код, уровень доверия тот же;
+- **B (жёстче, по желанию):** root-owned скрипт промоушна + sudoers-строка только на него.
+
 | Workflow | Когда стартует | Что делает / ловит |
 |----------|---------------|--------------------|
-| «Проверки» (ci.yml) | push в `main`, PRы по путям кода | typecheck, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков |
-| «Фронтенд на VPS» | изменения `src/`, `public/`, Next-конфига, зависимостей | rsync `out/` → `/opt/coop-field/www` (зеркало на Vercel удалено) |
-| «Сервер комнаты на VPS» | изменения `server.js`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
-| «Preview PR» | PR своего репо | тот же VPS, `deploy-preview`, снос при close/merge; живой URL после секрета `PREVIEW_SSH_KEY` и `preview-bootstrap.sh`, см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
+| «Проверки» (ci.yml) | push в `main`, PRы по путям кода | типы, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков, смоук модулей сервера, аккаунты, превью-гейты |
+| «Фронтенд на VPS» (deploy-frontend.yml) | изменения `src/`, `public/`, Next-конфига, зависимостей, `scripts/prune-export.mjs` | собирает оба варианта (`build:variants`) и льёт ДВЕ статики: `www-grotto/` → `/opt/coop-field/www` и `www-elyria/` → `/opt/coop-field/www-elyria` |
+| «Сервер комнаты на VPS» (deploy-backend.yml) | изменения `server.js`, `server/`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
+| «Preview PR» (preview-build.yml + preview-deploy.yml) | PR своего репо | тот же VPS, два сайта на PR: `pr-<N>.abnocw.phainonsmilk.ru` (гроты) + `pr-<N>.elysiae.phainonsmilk.ru` (Элизия), один инстанс комнаты; снос при close/merge; см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
-Секреты в GitHub: `VPS_SSH_KEY`; для preview ещё нужен `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
+Секреты в GitHub: `VPS_SSH_KEY`; для превью — `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
+
+**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`phainonsmilk` и все превью) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08); требование закреплено в docs/PREVIEW-ENVIRONMENTS.md.
+
 
 ## Для разработки — куда смотреть
 
 - Протокол комнаты `[event, payload]`, лимиты и refuse-коды — [AGENTS.md](AGENTS.md).
-- Слои модулей, зеркала-константы клиент↔сервер, план разреза god-файлов — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- Что уже есть в продукте и что наращиваем (аккаунты, режимы, админка) — [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md).
-- Целевая модель аккаунта, режимов и сессий — [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md).
+- Слои модулей, зеркала-константы клиент↔сервер, координаты — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- Аккаунт/профиль/персонаж, роли, хост-изоляция, реестр настроек админки — [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md).
+- Что уже есть в продукте и что наращиваем — [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md).
+- Превью-окружения PR (dual-host, снос, bootstrap) — [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md).
 
 ## Работа с ИИ
 

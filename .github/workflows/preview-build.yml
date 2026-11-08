@@ -16,7 +16,7 @@ name: Preview PR (build)
 # есть scripts.build:variants → dual (www-grotto/ + www-elyria/), нет →
 # legacy-single (одна сборка `npm run build` из out/ в www/). Легаси —
 # честный одно-сайтовый артефакт с metadata {mode:'legacy-single'}:
-# деплоер поднимет один хост pr-<N>.abnocw.miew.ru, второй сайт не
+# деплоер поднимет один хост pr-<N>.abnocw.phainonsmilk.ru, второй сайт не
 # заявляется. Это НЕ фейк и НЕ ослабление — dual-превью появится после
 # мерджа продуктового PR #49. Логика НЕ размазана по YAML-шеллу: упаковку
 # и валидации делает тестируемый node-модуль preview-build-lib.mjs.
@@ -93,7 +93,7 @@ jobs:
       - name: Сборка одного сайта (legacy-single)
         # Легаси-контракт main-линейных PR: одна сборка в out/. НЕ фейк:
         # артефакт честно одно-сайтовый, деплой поднимет только хост
-        # pr-<N>.abnocw.miew.ru, никаких заявлений про второй сайт.
+        # pr-<N>.abnocw.phainonsmilk.ru, никаких заявлений про второй сайт.
         if: steps.mode.outputs.build_mode == 'legacy-single'
         run: |
           set -euo pipefail

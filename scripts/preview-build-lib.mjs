@@ -113,7 +113,15 @@ export function validateDualRoots(distDir, opts = {}) {
       // корня (легаси-артефакт старого main); маркерная дифференциация НЕ
       // требуется — применяющий пометит PREVIEW_SITES_MODE=mirror.
     } else {
-      if (ELISION_MARKERS.some((m) => text["www-grotto"].includes(m))) {
+      // Мост на сайт Элизии (карточка на главной гротто, мандат владелицы
+      // 2026-11-08): строки карточки вычитаем из текста ДО маркер-проверки —
+      // точечная легализация; всё прочее (любые другие вхождения маркеров)
+      // остаётся утечкой «варианты перепутаны». Строки обязаны присутствовать
+      // ровно в этой форме (см. wander-gate.tsx bridge card + check-variants).
+      const BRIDGE_NEEDLES = ["https://phainonsmilk.ru/", "Wanderpaws: Elysiae"];
+      let grottoText = text["www-grotto"];
+      for (const needle of BRIDGE_NEEDLES) grottoText = grottoText.split(needle).join("");
+      if (ELISION_MARKERS.some((m) => grottoText.includes(m))) {
         errors.push("www-grotto/index.html содержит признак Элизии — варианты перепутаны/склеены");
       }
       if (!ELISION_MARKERS.some((m) => text["www-elyria"].includes(m))) {

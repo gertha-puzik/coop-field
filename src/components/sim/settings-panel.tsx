@@ -7,7 +7,6 @@ import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
 import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, SpriteMeta, StrikeZone, WindowKey, ZoneSide, DayPart, WeatherKind } from '@/lib/sim/settings';
 import {
-  DAMAGE_LEVELS,
   DAYPARTS,
   DAYPART_LABEL,
   DIRECTIONS,
@@ -15,17 +14,25 @@ import {
   SPRITE_GROUPS,
   WEATHERS,
   WEATHER_LABEL,
-  armorLevelMultiplier,
   damageLevelLabel,
   throatDamageFor,
   wrap360,
 } from '@/lib/sim/settings';
+import { armorLevelMultiplierOn } from '@/lib/sim/armor-curve';
 import type { CoopAtmo } from '@/lib/net/coop';
 import { GertaHandbook } from './gerta-handbook';
-import { AdminRoomConfig } from './admin-room-config';
+import { loadUniverses, snapPeriodToAllowed, universesNow, type Universes } from '@/lib/net/cfg-live';
+
+/**
+ * Compile-time вариант сайта (P3, спек §2A): подсказки про мир уточняются
+ * по варианту, сворачивается при сборке — тексты Элизии в grotto не едут.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 interface Props {
   settings: SimSettings;
+  /** Роль сессии из whoami (P3): админ-вкладки рендерятся только при 'admin'. */
+  role?: 'guest' | 'registered' | 'admin';
   /** Комната «тест»: чистый полигон — манекен и мишень РАБ недоступны. */
   testField?: boolean;
   /** Атмосфера комнаты (общая): время суток и погода. */
@@ -218,43 +225,24 @@ function ColorInput({
 /* ---------- разделы настроек ---------- */
 
 /** Идентификатор раздела настроек (квадратик-иконка в переключателе). */
-type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'config' | 'handbook';
+type TabId = 'field' | 'arrow' | 'slowdown' | 'combat' | 'io' | 'handbook';
 
-/** Вкладки расширенных настроек — клиентский UX-фильтр, а не защита:
- *  открываются любым непустым вводом. Настоящий арбитр — сервер: тот же
- *  пароль уходит с событием setmap, и без совпадения с серверным ADMIN_PASS
- *  правка локации не применяется. Значения пароля в коде клиента НЕТ. */
-
-/** sessionStorage помнит, что пароль уже введён: доступ переживает сворачивание панели
- *  и перезагрузку страницы, пропадает только при закрытии вкладки/браузера. */
-const ADMIN_KEY = 'sim-admin-unlocked';
-
-function readAdminUnlocked(): boolean {
-  try {
-    return sessionStorage.getItem(ADMIN_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeAdminUnlocked(on: boolean) {
-  try {
-    if (on) sessionStorage.setItem(ADMIN_KEY, '1');
-    else sessionStorage.removeItem(ADMIN_KEY);
-  } catch {
-    /* без хранилища доступ живёт только пока панель открыта */
-  }
-}
+/**
+ * Разделы настроек. Права решает серверная роль на сессии (whoami.role),
+ * локальных паролей больше нет (P3, спек §5): вкладки admin:true рендерятся
+ * только админу; «Данные» (личный JSON экспорта/импорта этого браузера)
+ * доступны всем. Сервер по-прежнему арбитр любых сетевых правок.
+ */
 
 /** Разделы: квадратик с иконкой темы, клик открывает содержимое.
- *  «Общий» (#) виден всем; разделы с admin: true — только после пароля. */
+ *  «Общий» (#) и «Справочник» — всем; admin: true — только роли admin. */
 const TABS: { id: TabId; icon: string; label: string; admin?: boolean }[] = [
   { id: 'field', icon: '#', label: 'Общий' },
   { id: 'handbook', icon: '📖', label: 'Справочник' },
+  { id: 'io', icon: '📋', label: 'Данные' },
   { id: 'arrow', icon: '🏹', label: 'Стрела', admin: true },
   { id: 'slowdown', icon: '⛔', label: 'Замедление', admin: true },
   { id: 'combat', icon: '💥', label: 'Удары и энергия', admin: true },
-  { id: 'config', icon: '⚙️', label: 'Конфиг', admin: true },
 ];
 
 /* ---------- панель ---------- */
@@ -506,40 +494,30 @@ export function SettingsPanel(props: Props) {
   const [zoneHover, setZoneHover] = useState<string | null>(null);
   /** Открытый раздел (квадратик-иконка сверху). */
   const [tab, setTab] = useState<TabId>('field');
-  /** Расширенные настройки открыты паролем админа. Доступ запоминается в sessionStorage:
-   *  сворачивание панели и перезагрузка страницы его не сбрасывают — снова
-   *  запрашивать пароль придётся только в новой вкладке. */
-  const [admin, setAdmin] = useState(readAdminUnlocked);
-  /** Форма ввода пароля открыта / набранный пароль / неверный пароль. */
-  const [pwOpen, setPwOpen] = useState(false);
-  const [pw, setPw] = useState('');
-  const [pwErr, setPwErr] = useState(false);
+  /** Живые universes (GET /cfg, кэш на вкладку): предлагаемые значения СП. */
+  const [universes, setUniverses] = useState<Universes>(universesNow());
+  useEffect(() => {
+    let dead = false;
+    void loadUniverses().then((u) => {
+      if (!dead) setUniverses(u);
+    });
+    return () => {
+      dead = true;
+    };
+  }, []);
 
-  /** Видимые вкладки: без пароля — только «Общий». */
-  const visibleTabs = TABS.filter((t) => admin || !t.admin);
+  /** Админ-вкладки рендерит только сессия с ролью admin (truth на сервере). */
+  const isAdmin = props.role === 'admin';
+  /** Видимые вкладки: без роли admin — общие разделы. */
+  const visibleTabs = TABS.filter((t) => !t.admin || isAdmin);
   const requestedTab = TABS.find((t) => t.id === tab) ?? TABS[0];
-  /** Если вкладка админская, а пароль не введён — показываем «Общий». */
-  const activeTab = admin || !requestedTab.admin ? requestedTab : TABS[0];
-
-  const tryUnlock = (ev: React.FormEvent) => {
-    ev.preventDefault();
-    // Локальный гейт вкладок — не защита: достаточно непустого ввода.
-    // Настоящий арбитр — сервер (setmap с этим же паролём).
-    if (pw.trim() !== '') {
-      setAdmin(true);
-      writeAdminUnlocked(true);
-      setPw('');
-      setPwOpen(false);
-      setPwErr(false);
-    } else {
-      setPwErr(true);
-    }
-  };
+  /** Если админская вкладка открыта, а роль не админ — показываем «Общий». */
+  const activeTab = isAdmin || !requestedTab.admin ? requestedTab : TABS[0];
 
   return (
     <div className="flex flex-col gap-2.5">
       {/* переключатель разделов: квадратики с иконками тем.
-          Без админ-пароля виден только «Общий» (#). */}
+          Роль admin (whoami) открывает админ-вкладки — паролей больше нет. */}
       <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Разделы настроек">
         {visibleTabs.map((t) => {
           const active = tab === t.id;
@@ -564,61 +542,6 @@ export function SettingsPanel(props: Props) {
           );
         })}
       </div>
-
-      {/* Кнопка входа в расширенные настройки — видна, пока пароль не введён */}
-      {!admin ? (
-        <div className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset-soft)] p-2">
-          {!pwOpen ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 w-full text-xs"
-              onClick={() => {
-                setPwOpen(true);
-                setPwErr(false);
-              }}
-            >
-              🔒 Перейти к расширенным настройкам
-            </Button>
-          ) : (
-            <form className="flex flex-col gap-1.5" onSubmit={tryUnlock}>
-              <div className="flex items-center gap-1.5">
-                <Input
-                  type="password"
-                  autoFocus
-                  value={pw}
-                  placeholder="Пароль администратора"
-                  aria-label="Пароль администратора"
-                  aria-invalid={pwErr || undefined}
-                  className={`h-8 flex-1 text-xs ${pwErr ? 'border-red-400' : ''}`}
-                  onChange={(e) => {
-                    setPw(e.target.value);
-                    setPwErr(false);
-                  }}
-                />
-                <Button type="submit" size="sm" className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]">
-                  Открыть
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  onClick={() => {
-                    setPwOpen(false);
-                    setPw('');
-                    setPwErr(false);
-                  }}
-                >
-                  Отмена
-                </Button>
-              </div>
-              {pwErr ? <div className="text-[10px] font-semibold text-red-400">Неверный пароль. Доступ к расширенным настройкам не открыт.</div> : null}
-            </form>
-          )}
-        </div>
-      ) : null}
 
       {/* содержимое выбранного раздела */}
       <section aria-label={activeTab.label} className="rounded-lg border border-[var(--sim-line)] bg-[var(--sim-inset)]">
@@ -780,8 +703,8 @@ export function SettingsPanel(props: Props) {
         <SlideNum
           label="Скорость вращения (период оборота)"
           value={s.arrow.periodSec}
-          min={1.8}
-          max={5}
+          min={universes.arrowPeriods[0] ?? 1.8}
+          max={universes.arrowPeriods[universes.arrowPeriods.length - 1] ?? 5}
           step={0.1}
           suffix="сек"
           onChange={(v) => props.patchArrow({ periodSec: v })}
@@ -789,7 +712,7 @@ export function SettingsPanel(props: Props) {
         <div className="pb-1.5">
           <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--sim-text-faint)]">Готовые значения:</div>
           <div className="flex flex-wrap gap-1">
-            {[1.8, 2.5, 3.5, 4, 4.5, 5].map((v) => {
+            {universes.arrowPeriods.map((v) => {
               const active = Math.abs(s.arrow.periodSec - v) < 0.05;
               return (
                 <Button
@@ -890,7 +813,11 @@ export function SettingsPanel(props: Props) {
           max={800}
           step={10}
           suffix="px/с"
-          hint="Свободная ходьба по траве «Элизии Эйдес»: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель)."
+          hint={
+            IS_ELYRIA
+              ? 'Свободная ходьба по траве «Элизии Эйдес»: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель).'
+              : 'Свободная ходьба по полю: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель).'
+          }
           onChange={(v) => props.patchCharacter({ peaceSpeed: v })}
         />
         <div className="mb-1 text-[11px] leading-snug text-[var(--sim-text-muted)]">
@@ -1059,7 +986,7 @@ export function SettingsPanel(props: Props) {
             <span className="text-[10px] text-[var(--sim-text-faint)]">горло сейчас: {throatDamageFor(s.combat.damageLevel)}%</span>
           </div>
           <div className="flex flex-wrap gap-1">
-            {DAMAGE_LEVELS.map((k) => {
+            {universes.damage.map((k) => {
               const active = s.combat.damageLevel === k;
               return (
                 <Button
@@ -1103,11 +1030,11 @@ export function SettingsPanel(props: Props) {
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <span className="text-[11px] font-medium text-[var(--sim-text-soft)]">Броня — готовые пресеты:</span>
             <span className="text-[10px] text-[var(--sim-text-faint)]">
-              урон по вам проходит: {Math.round(armorLevelMultiplier(s.combat.armorLevel) * 100)}%
+              урон по вам проходит: {Math.round(armorLevelMultiplierOn(universes.armorCurve, s.combat.armorLevel) * 100)}%
             </span>
           </div>
           <div className="flex flex-wrap gap-1">
-            {DAMAGE_LEVELS.map((k) => {
+            {universes.armor.map((k) => {
               const active = s.combat.armorLevel === k;
               return (
                 <Button
@@ -1127,8 +1054,8 @@ export function SettingsPanel(props: Props) {
             })}
           </div>
           <div className="mt-1 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-            Броня режет получаемый урон по замерам владельца: 0,0 — проходит весь урон, 0,8 — половина,
-            0,9 — {Math.round(armorLevelMultiplier(9) * 100)}%. Режет любой входящий удар, включая хвост:
+            Броня режет получаемый урон по кривой сервера: 0,0 — проходит весь урон, а при 0,9 через вас идёт{' '}
+            {Math.round(armorLevelMultiplierOn(universes.armorCurve, 9) * 100)}%. Режет любой входящий удар, включая хвост:
             блок хвост не ловит, а броня — режет.
           </div>
         </div>
@@ -1247,14 +1174,12 @@ export function SettingsPanel(props: Props) {
             </>
           )}
           {tab === 'handbook' && <GertaHandbook />}
-          {tab === 'config' && (
+          {tab === 'io' && (
             <>
         <p className="text-[11px] leading-snug text-[var(--sim-text-muted)]">
           Этот JSON — настройки <b>этого браузера</b> (стрела, зоны, поле). Применяются сразу
-          у вас. Соседи их не видят. Сетевые длины суток — ниже, их хранит сервер: новые
-          комнаты возьмут default, уже открытая комната меняется ползунком «Сутки» сразу.
+          у вас, соседи их не видят. Панель «Данные» личная: она не управляет сервером.
         </p>
-        <AdminRoomConfig />
         <div className="flex flex-wrap gap-2 py-1">
           <Button
             size="sm"

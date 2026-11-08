@@ -4,6 +4,17 @@ import { Button } from '@/components/ui/button';
 import type { CoopRoomInfo } from '@/lib/net/coop';
 import { namedRoom } from '@/lib/net/modes';
 
+/**
+ * Compile-time вариант сайта (P3): сворачивается сборщиком, так что текст
+ * Элизии не попадает в grotto-бандл (спек §2A).
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
+/** Подпись карточки закрытой комнаты: строка Элизии — только elyria-ветка. */
+const TEST_ROOM_HINT = IS_ELYRIA
+  ? '«Элизия Эйдес» — нарисованная лужайка. Без аккаунта сервер сюда не пускает.'
+  : 'Состав комнат обновляется сам.';
+
 /** Строка списка комнат: состав с сервера + людское имя и пометка «вы здесь». */
 export type RoomRow = CoopRoomInfo & { title: string; here: boolean };
 
@@ -57,7 +68,7 @@ export function RoomPicker({
             ? rows.every((row) => row.id.startsWith('grot-'))
               ? 'Пивной грот №1–№3 — одно поле, три комнаты. Гости заходят без аккаунта.'
               : rows.length === 1 && rows[0]?.id === 'test'
-                ? '«Элизия Эйдес» — нарисованная лужайка. Без аккаунта сервер сюда не пускает.'
+                ? TEST_ROOM_HINT
                 : 'Состав комнат обновляется сам.'
             : 'Состав комнат обновляется сам. Текущая комната помечена «вы здесь».'}
         </p>

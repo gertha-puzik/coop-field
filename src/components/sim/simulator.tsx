@@ -106,8 +106,15 @@ import {
 } from '@/lib/sim/targeting';
 import { ROOMS, createCoopClient, nameFromUrl, roomFromUrl, roomTitle, type CoopAtmo, type CoopAtmoAnchor, type CoopChatMessage, type CoopDummyPos, type CoopFight, type CoopRoomInfo } from '@/lib/net/coop';
 import { JUMP_MAX_CELLS, type CoopWhoami } from '@/lib/net/protocol';
-import { authPayload } from '@/lib/net/auth';
-import { roomsForMode, namedRoom } from '@/lib/net/modes';
+import { httpLogin, httpLogout, httpMe, httpRegister } from '@/lib/net/http-auth';
+import { loadUniverses, snapToAllowed, snapPeriodToAllowed, universesNow, type Universes } from '@/lib/net/cfg-live';
+import { roomsForMode, namedRoom, isRegisteredOnlyCode, type PlayMode } from '@/lib/net/modes';
+
+/**
+ * Compile-time вариант сайта (P3, спек §2A): сворачивается сборщиком, гейты
+ * аккаунтного флоу в grotto вымирают целиком вместе с сетевыми вызовами.
+ */
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 import {
   type RemoteDraw,
 } from '@/lib/net/move-book';
@@ -243,7 +250,7 @@ import type { ElisionView } from '@/lib/sim/elision-scene';
 
 
 
-export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' | 'combat' | 'hunger' } = {}) {
+export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   /** Экран: вход (кот + скрытые параметры + выбор комнаты) → поле. */
@@ -259,7 +266,28 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
   /** roomsinfo не приходит дольше 5 с (старый сервер без протокола) — предупреждение в карточках. */
   const [roomsStale, setRoomsStale] = useState(false);
   const [whoami, setWhoami] = useState<CoopWhoami | null>(null);
+  /**
+   * Фонический WS-кадр whoami (use-network) не должен затирать только что
+   * показанный пользователю HTTP-отказ входа ({ok:false, reason:'bad'} и др.)
+   * — иначе при реконнекте сокета ошибка «Неверный логин или пароль» мигала
+   * и мгновенно исчезала, сменяясь гостем. Окно 8 с; ok:true пишется всегда
+   * (реальная сессия важнее), как и httpMe-восстановление (:4579 ok-only).
+   */
+  const whoamiFailUntilRef = useRef(0);
+  const setWhoamiGuarded = useCallback((row: CoopWhoami) => {
+    if (row.ok) {
+      whoamiFailUntilRef.current = 0;
+      setWhoami(row);
+      return;
+    }
+    if (Date.now() < whoamiFailUntilRef.current) return;
+    setWhoami(row);
+  }, []);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  /** HTTP-запрос аккаунта (вход/регистрация/выход) в полёте — кнопки выключены. */
+  const [authBusy, setAuthBusy] = useState(false);
+  /** Живые universes из GET /cfg: что предлагать экрану входа (спек §6A). */
+  const [universes, setUniverses] = useState<Universes>(universesNow());
   /** Модалка «Перейти в другую комнату» поверх поля. */
   const [switchOpen, setSwitchOpen] = useState(false);
   const [combat, setCombat] = useState<CombatState>(() => defaultCombat(100));
@@ -806,9 +834,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
       .map((r) => r.id);
     if (mode === 'hub') {
       const urlRoom = roomFromUrl();
-      if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom)) {
-        const gate = namedRoom(urlRoom);
-        if (!gate || gate.access !== 'registered' || inAccount) ids.push(urlRoom);
+      // Код закрытой комнаты (Элизия) из ссылки не опрашиваем в guest-режиме —
+      // даже если его нет в каталоге варианта (grotto про него не знает).
+      if (urlRoom && urlRoom !== 'demo' && !ids.includes(urlRoom) &&
+          (!isRegisteredOnlyCode(urlRoom) || inAccount)) {
+        ids.push(urlRoom);
       }
     }
     return ids;
@@ -1072,7 +1102,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
     setRoomCode,
     setRoomsRows,
     setRoomsStale,
-    setWhoami,
+    setWhoami: setWhoamiGuarded,
     setSettings,
     aimSyncRef,
     battleEntryRef,
@@ -4512,12 +4542,96 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
     return true;
   }, []);
 
-  /** Вход с экрана entry: подтверждённые кот/имя/размер + комната. Сокет уже
-   *  слушает комнаты — join уходит в ту же связь. Настройки персонажа применяем
-   *  здесь же: дальше экран входа размонтируется. */
-  const sendAuth = useCallback((action: 'register' | 'login' | 'logout', login = '', pass = '') => {
-    setAuthMessage(null);
-    netRef.current?.emit('auth', authPayload(action, { login, pass }));
+  /**
+   * HTTP-флоу аккаунта (P3, спек §3): вход/регистрация/выход — fetch по
+   * same-origin /auth/*, сессия в HttpOnly-cookie, токен нигде не хранится и
+   * в WS-URL не ездит. Работает только в elyria-варианте (панель входа в
+   * гротах не монтируется, а на public-хосте этих маршрутов нет).
+   * Ответ сервера совместим с CoopWhoami: им и обновляем состояние.
+   */
+  const rebindSocket = useCallback(() => {
+    // Сервер биндит сессию по куке на хендшейке: после HTTP-входа поднимаем
+    // связь заново, иначе сокет продолжал бы жить гостем (или старой сессией).
+    const pending = pendingJoinRef.current;
+    netRef.current?.connect({
+      room: pending?.room,
+      login: (pending?.login || nameFromUrl() || '').trim(),
+      sprite: pending?.sprite || settingsRef.current.character.sprite,
+    });
+  }, []);
+
+  const sendAuth = useCallback(
+    async (action: 'register' | 'login' | 'logout', login = '', pass = '', name?: string) => {
+      if (!IS_ELYRIA) return;
+      setAuthBusy(true);
+      setAuthMessage(null);
+      let row: CoopWhoami;
+      try {
+        row =
+          action === 'login'
+            ? await httpLogin(login, pass)
+            : action === 'register'
+              ? await httpRegister(login, pass, name)
+              : await httpLogout();
+      } catch {
+        setAuthMessage('Сервер входа недоступен. Попробуйте ещё раз.');
+        setAuthBusy(false);
+        return;
+      }
+      setWhoami(row);
+      // Отказ показывается из whoami.reason (тексты — в AuthPanel);
+      // authMessage остаётся для сетевых ошибок. Свежий отказ защищаем от
+      // фонового WS-кадра whoami (см. setWhoamiGuarded, окно 8 с).
+      if (!row.ok) whoamiFailUntilRef.current = Date.now() + 8000;
+      else whoamiFailUntilRef.current = 0;
+      if (row.ok) rebindSocket();
+      setAuthBusy(false);
+    },
+    [rebindSocket],
+  );
+
+  /** Восстановление сессии Элизии после перезагрузки: GET /auth/me по куке.
+   *  Дальше придёт whoami-кадр хендшейка — он подтвердит то же состояние. */
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    let dead = false;
+    void httpMe().then((row) => {
+      if (!dead && row.ok) setWhoami(row);
+    });
+    return () => {
+      dead = true;
+    };
+  }, []);
+
+  /** Живые universes: согласовать сохранённый выбор СП с разрешённым списком.
+   *  Значение вне списка снапится к дефолту (спек §6A): загрузка профиля не
+   *  ломается, а сервер всё равно клэмпит входящие удары. */
+  useEffect(() => {
+    let dead = false;
+    void loadUniverses().then((u) => {
+      if (dead) return;
+      setUniverses(u);
+      setSettings((s) => {
+        const damageLevel = snapToAllowed(s.combat.damageLevel, u.damage, u.damageDefault);
+        const armorLevel = snapToAllowed(s.combat.armorLevel, u.armor, u.armorDefault);
+        const periodSec = snapPeriodToAllowed(s.arrow.periodSec, u);
+        if (
+          damageLevel === s.combat.damageLevel &&
+          armorLevel === s.combat.armorLevel &&
+          periodSec === s.arrow.periodSec
+        ) {
+          return s;
+        }
+        return {
+          ...s,
+          combat: { ...s.combat, damageLevel, armorLevel },
+          arrow: { ...s.arrow, periodSec },
+        };
+      });
+    });
+    return () => {
+      dead = true;
+    };
   }, []);
 
   const joinFromEntry = useCallback(
@@ -4610,7 +4724,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
       here: r.id === roomCode,
     }));
     const urlRoom = roomFromUrl();
-    if (urlRoom && urlRoom !== 'demo' && !ROOMS.some((r) => r.id === urlRoom)) {
+    // Карточка «из ссылки» — только для открытых кодов: закрытую комнату
+    // (Элизия) не показываем даже по прямой ссылке (спек §11 room discovery).
+    if (urlRoom && urlRoom !== 'demo' && !isRegisteredOnlyCode(urlRoom) && !ROOMS.some((r) => r.id === urlRoom)) {
       rows.push({
         id: urlRoom,
         title: `Комната из ссылки: ${urlRoom}`,
@@ -4640,10 +4756,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
               roomsStale={roomsStale}
               whoami={whoami}
               authMessage={authMessage}
+              authBusy={authBusy}
               playMode={mode}
-              onLogin={(login, pass) => sendAuth('login', login, pass)}
-              onRegister={(login, pass) => sendAuth('register', login, pass)}
-              onLogout={() => sendAuth('logout')}
+              universes={universes}
+              onLogin={IS_ELYRIA ? (login, pass) => void sendAuth('login', login, pass) : undefined}
+              onRegister={IS_ELYRIA ? (login, pass, name) => void sendAuth('register', login, pass, name) : undefined}
+              onLogout={IS_ELYRIA ? () => void sendAuth('logout') : undefined}
               onPickRoom={joinFromEntry}
               onApplySpeed={(v) => patchArrow({ periodSec: v })}
               onApplyDamage={(k) => {
@@ -4789,6 +4907,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: 'hub' | 'elision' |
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
       {settingsOpen ? <SettingsPanelOverlay
         setSettingsOpen={setSettingsOpen}
+        role={whoami?.role}
         settings={settings}
         testField={testField}
         atmoState={atmoState}
