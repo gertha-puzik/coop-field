@@ -1,2 +1,2 @@
-# Keep uploaded OBJ source bytes unchanged for catalog provenance hashes.
-assets/models/source/*.obj -text
+# Imported model sources are immutable assets; preserve exact uploaded bytes.
+assets/models/source/*.obj binary
