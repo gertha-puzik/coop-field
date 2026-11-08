@@ -269,20 +269,60 @@ export function EntryScreen({
   const armorDone = armorOk !== null && armorOk === armorVal;
   const doneCount = [speedDone, damageDone, armorDone].filter(Boolean).length;
 
-  /** Кто идёт на поле (Элизия): всё из профиля — ник на поле, скин и рост
-   *  активного персонажа. Пока профиль не пришёл (или фетч не удался) —
-   *  стартовые значения движка: сервер всё равно применяет сохранённую
-   *  внешность по cookie-сессии, а пустой скин сохранённое не перезапишет. */
+  /** Кто идёт на поле (Элизия): полный профиль → всё из профиля. Неполный
+   *  (скина нет) → ник из профиля, скин и рост — текущий выбор карусели
+   *  на входе: join сохранит его в аккаунт, второй вход уже пройдёт мимо.
+   *  Фетч не удался — пустой скин: сохранённая внешность не затрётся,
+   *  сервер применит её сам по сессии. */
   const elyWho = () => {
     const ch = meProfile
       ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
       : null;
+    const nick = (meProfile?.displayName || accountName || name).trim() || 'Кот';
+    if (!ch || !ch.sprite) {
+      return {
+        name: nick,
+        sprite: (meProfile ? sprite : '') as SpriteId,
+        scale: meProfile ? scale : initialScale,
+      };
+    }
     return {
-      name: (meProfile?.displayName || accountName || name).trim(),
-      sprite: (ch?.sprite || '') as SpriteId,
-      scale: ch && Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : initialScale,
+      name: nick,
+      sprite: ch.sprite,
+      scale: Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : initialScale,
     };
   };
+
+  /** Профиль «всё выбрано» (Элизия): у персонажа скин (непустой и из базового
+   *  каталога движка — так честно решает появление на поле) и ник. Скрытые
+   *  параметры в критерий не входят: у них всегда есть значения. */
+  const meChar = meProfile
+    ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
+    : null;
+  const profileComplete = !!(
+    meProfile &&
+    meChar &&
+    meChar.sprite &&
+    SPRITES.some((s) => s.id === meChar.sprite) &&
+    (meProfile.displayName.trim() || meChar.name.trim())
+  );
+
+  /** Комната Элизии этого экрана: первый ряд «по аккаунту» из текущего
+   *  режима — тот же id, что ушла бы из кнопки выбора комнаты. */
+  const elyRoomId = roomRows.find((row) => namedRoom(row.id)?.access === 'registered')?.id ?? null;
+
+  /** Автовход (Элизия): профиль полон → на поле сразу, минуя выбор комнаты.
+   *  Один раз на аккаунт (перевход не долбит второй join), только по
+   *  живой сессии; гостей нет — экран за гейтом, но проверяем всё равно. */
+  const autoTriedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!IS_ELYRIA || !profileComplete) return;
+    if (!whoami?.ok || !whoami.accountId || !elyRoomId) return;
+    if (autoTriedRef.current === whoami.accountId) return;
+    autoTriedRef.current = whoami.accountId;
+    onPickRoom(elyRoomId, elyWho());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileComplete, whoami?.ok, whoami?.accountId, elyRoomId]);
 
   // Элизия: СП и внешность применяются молча из профиля — ручных блоков нет;
   // комнаты ждут профиль (миллисекунды того же fetch), фетч не удался — не
@@ -364,13 +404,30 @@ export function EntryScreen({
         </nav>
       </header>
 
-      {/* Элизия: блоков выбора нет — скин, рост и имя берутся из профиля,
-          экран остаётся только выбором комнаты. Гроты — прежние три блока
-          с ручным выбором. */}
-      {IS_ELYRIA ? null : (
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]">
+      {/* Элизия: полный профиль → сразу на поле (автовход), экран выбора не
+          рендерим вовсе. Неполный — единственная недостающая выборалка:
+          скин (ник в аккаунте есть всегда), join сохранит выбор в аккаунт.
+          Гроты — прежние три блока с ручным выбором. */}
+      {IS_ELYRIA && profileComplete ? (
+        <section
+          aria-live="polite"
+          className="mt-5 rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-4 py-6 text-center"
+        >
+          <p className="text-sm font-semibold text-[var(--sim-text)]">Заходим на поле…</p>
+          <p className="mt-1 text-xs text-[var(--sim-text-faint)]">Внешность — из вашего профиля.</p>
+        </section>
+      ) : (
+      <div
+        className={
+          IS_ELYRIA
+            ? 'mt-5 grid items-start gap-4'
+            : 'mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,230px)_minmax(0,1fr)]'
+        }
+      >
         {/* Блок 1: имя сверху, под ним карусель скинов в 2 ряда */}
         <section aria-label="Кот" className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+          {/* Имя — только для гостей гротов: в Элизии ник живёт в аккаунте. */}
+          {!IS_ELYRIA && (
           <label className="flex flex-col gap-1.5" htmlFor="entry-name">
             <span className="text-sm font-semibold text-[var(--sim-text)]">Имя</span>
             <Input
@@ -388,6 +445,7 @@ export function EntryScreen({
               {accountName ? NAME_HINT_ACCOUNT : 'Обязательное поле. Пустое имя на поле не пускает.'}
             </span>
           </label>
+          )}
 
           <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -524,6 +582,14 @@ export function EntryScreen({
             ) : null}
           </div>
 
+          {IS_ELYRIA && meProfile ? (
+            <p className="mt-2 text-xs text-[var(--sim-text-faint)]">
+              Скин сохранится в вашем аккаунте — на поле и в профиле.
+            </p>
+          ) : null}
+
+          {/* Размер — гроты: в Элизии рост хранится в профиле. */}
+          {!IS_ELYRIA && (
           <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <span id="entry-scale-label" className="text-sm font-semibold text-[var(--sim-text)]">
@@ -544,8 +610,11 @@ export function EntryScreen({
               className="py-1 [&_[data-slot=slider-range]]:bg-[var(--sim-accent-hover)] [&_[data-slot=slider-thumb]]:border-[var(--sim-accent-hover)] [&_[data-slot=slider-thumb]]:bg-zinc-100 [&_[data-slot=slider-track]]:bg-[var(--sim-line-strong)]"
             />
           </div>
+          )}
         </section>
 
+        {IS_ELYRIA ? null : (
+          <>
         {/* Средний блок: записанный выбор СП — стрела, дамаг, броня. Значения обновляются
             сразу при выборе; ✓ отмечает уже подтверждённые пункты. */}
         <section
@@ -648,6 +717,8 @@ export function EntryScreen({
             </ParamCard>
           </div>
         </section>
+          </>
+        )}
       </div>
       )}
 
