@@ -267,17 +267,52 @@ function validateLogin(raw) {
   return { login };
 }
 
+/**
+ * Логин при СОЗДАНИИ аккаунта (register v2, мандат владелицы 2026-11-08:
+ * «отдельно логин с какими-то ограничениями»): латиница/цифры и ._-, 2–24
+ * символа, первый и последний — буква/цифра (края из ./-/ _ запрещены),
+ * без пробелов. ТОЛЬКО на пути регистрации: loginAccount не трогаем — вход
+ * старых аккаунтов с пробелами/кириллицей («myster syr») обязан работать.
+ */
+function validateNewLogin(raw) {
+  const login = String(raw ?? "").trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,22}[a-zA-Z0-9]$/.test(login)) return { error: "badlogin" };
+  return { login };
+}
+
+/**
+ * Имя на игровом поле (register v2): любые видимые символы — кириллица и
+ * пробелы легальны («Дым Лунный»). Те же примитивы, что у логина (sanitizeLogin:
+ * вырез invisible-символов, одинарные пробелы, trim), 2–24 код-поинта.
+ * НЕ уникально — однофамильцы допустимы: уникален только логин. Отсутствует/
+ * пустая строка → 'no name' (звать логином, полная совместимость со старым
+ * клиентом); задан, но мусор (короткое/длинное/пробельно-пустое) → badname.
+ */
+function validateDisplayName(raw) {
+  if (raw === undefined || raw === null || String(raw) === "") return { noName: true };
+  const text = String(raw);
+  if (Array.from(text).length > LOGIN_MAX) return { error: "badname" };
+  const name = sanitizeLogin(text, "");
+  if (Array.from(name).length < 2) return { error: "badname" };
+  return { name };
+}
+
 function validatePassword(raw) {
   const pass = String(raw ?? "");
   if (Array.from(pass).length < PASS_MIN) return { error: "weak" };
   return { pass };
 }
 
-async function createAccount(rawLogin, rawPass) {
-  const L = validateLogin(rawLogin);
+async function createAccount(rawLogin, rawPass, rawName) {
+  // Register v2: логин — только строгий формат (латиница/цифры/._-),
+  // видимое имя — отдельно и опционально (нет → логин, как раньше).
+  const L = validateNewLogin(rawLogin);
   if (L.error) return { error: L.error };
   const P = validatePassword(rawPass);
   if (P.error) return { error: P.error };
+  const N = validateDisplayName(rawName);
+  if (N.error) return { error: N.error };
+  const displayName = N.name || L.login;
   if (findByLogin(L.login)) return { error: "taken" };
   // Флуд-предохранитель: глобальный потолок аккаунтов сервера. Считаем ДО
   // создания (учётной записи может добавлять только этот же код — гонок нет).
@@ -299,8 +334,8 @@ async function createAccount(rawLogin, rawPass) {
     pass: await hashPassword(P.pass),
     role: "registered",
     createdAt: Date.now(),
-    profile: { displayName: L.login },
-    characters: [newCharacter(L.login)],
+    profile: { displayName },
+    characters: [newCharacter(displayName)],
     activeCharacterId: null,
   };
   acc.activeCharacterId = acc.characters[0].id;

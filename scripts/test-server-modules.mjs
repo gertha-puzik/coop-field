@@ -239,15 +239,15 @@ eq("cfg sanitize weather floor", runtimeConfig.sanitizeConfig({ atmo: { phaseMin
 {
   const stamp = Date.now();
   process.env.MAX_ACCOUNTS = "0"; // 0/мусор → дефолт 500 (bounded override)
-  const zeroRes = await accounts.createAccount(`мх-0-${stamp}`, "password123");
+  const zeroRes = await accounts.createAccount(`mh0_${stamp}`, "password123");
   eq("MAX_ACCOUNTS env=0/мусор → дефолт 500 (регистрация проходит)", zeroRes.error, undefined);
   process.env.MAX_ACCOUNTS = "3"; // в песочнице уже есть 1 аккаунт (мх-0)
-  const a1 = await accounts.createAccount(`мх-1-${stamp}`, "password123");
-  const a2 = await accounts.createAccount(`мх-2-${stamp}`, "password123");
-  const a3 = await accounts.createAccount(`мх-3-${stamp}`, "password123");
+  const a1 = await accounts.createAccount(`mh1_${stamp}`, "password123");
+  const a2 = await accounts.createAccount(`mh2_${stamp}`, "password123");
+  const a3 = await accounts.createAccount(`mh3_${stamp}`, "password123");
   delete process.env.MAX_ACCOUNTS;
   eq("MAX_ACCOUNTS: env-потолок достижим — лишний аккаунт 'full', лимитные созданы", [!!a1.account, !!a2.account, a3.error], [true, true, "full"]);
-  eq("MAX_ACCOUNTS: env снят — дефолт 2000, регистрация снова свободна", (await accounts.createAccount(`мх-4-${stamp}`, "password123")).error, undefined);
+  eq("MAX_ACCOUNTS: env снят — дефолт 2000, регистрация снова свободна", (await accounts.createAccount(`mh4_${stamp}`, "password123")).error, undefined);
 }
 
 /* ---------- F2: room-config.js — per-room модель (слой поверх B2) ---------- */

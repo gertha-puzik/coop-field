@@ -5,7 +5,7 @@
  * dev/legacy — origin сокета.
  *
  * Контракты сервера (server/auth.js handleAuthHttp):
- *   POST /auth/register {login,pass} → 200 {ok, accountId…} | 400 {ok:false,reason} | 429 rate
+ *   POST /auth/register {login,pass,name?} → 200 {ok, accountId…} | 400 {ok:false,reason} | 429 rate
  *   POST /auth/login    {login,pass} → 200 {ok, accountId…} | 401 {ok:false,reason:'bad'} | 429 rate
  *   POST /auth/logout           → 200 {ok:true, role:'guest'} + Set-Cookie deleted
  *   GET  /auth/me               → 200 {ok:true, role:'guest'} | 200 {ok, accountId…}
@@ -31,8 +31,11 @@ async function post(path: string, body: Record<string, unknown>): Promise<CoopWh
   return isCoopWhoami(row) ? row : { ok: false, reason: "error" };
 }
 
-export async function httpRegister(login: string, pass: string): Promise<CoopWhoami> {
-  return post("/auth/register", { login, pass });
+/** Имя на поле отправляем ТОЛЬКО заданным и непустым: без поля сервер зовёт
+ *  игрока логином (register v2, контракт {login, pass, name?}). */
+export async function httpRegister(login: string, pass: string, name?: string): Promise<CoopWhoami> {
+  const display = (name ?? "").trim();
+  return post("/auth/register", display ? { login, pass, name: display } : { login, pass });
 }
 
 export async function httpLogin(login: string, pass: string): Promise<CoopWhoami> {

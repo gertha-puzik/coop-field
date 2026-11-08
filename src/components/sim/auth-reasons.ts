@@ -5,10 +5,13 @@
  * дрейфуют между формами.
  *
  * Контракты сервера (server/accounts.js + server/auth.js handleAuthHttp,
- * сверены живыми пробами): логин 2–24 символа после обрезки пробелов, пароль —
- * от 8; занятое имя → reason 'taken', короткие имя/пароль → 'short'/'weak',
- * неверные данные входа → 'bad', флуд → 'rate' (429), реестр полон → 'full'.
- * Сервер отвечает кодом в теле — русский текст для пользователя живёт здесь.
+ * сверены живыми пробами): при СОЗДАНИИ логин — латиница/цифры и ._-, 2–24
+ * (register v2; отказ → 'badlogin'); имя на поле — 2–24 видимых символа, любой
+ * алфавит, опционально (мусор → 'badname'); пароль — от 8; занятое имя →
+ * 'taken', короткие поля старых форм → 'short'/'weak', неверные данные
+ * входа → 'bad' (вход старых логинов с пробелами/кириллицей жив), флуд →
+ * 'rate' (429), реестр полон → 'full'. Сервер отвечает кодом в теле —
+ * русский текст для пользователя живёт здесь.
  */
 
 /** Серверный reason → человекочитаемая строка. Прочие коды (сбой, CSRF) —
@@ -17,6 +20,8 @@ export const REASON_TEXTS: Record<string, string> = {
   taken: 'Это имя уже занято — придумайте другое.',
   weak: 'Пароль слишком короткий: нужно минимум 8 символов.',
   short: 'Имя слишком короткое: нужно минимум 2 символа.',
+  badlogin: 'Логин — латиница, цифры, точки, дефисы и подчёркивания; без пробелов. От 2 до 24 символов.',
+  badname: 'Имя на поле — от 2 до 24 видимых символов.',
   full: 'Регистрация закрыта: места для новых аккаунтов закончились.',
   rate: 'Слишком часто. Подождите немного и попробуйте снова.',
   bad: 'Неверный логин или пароль.',
@@ -57,17 +62,52 @@ export function localAuthError(login: string, pass: string): string | null {
   return null;
 }
 
+/** Формат НОВОГО логина при регистрации (register v2; зерно серверного
+ *  validateNewLogin): латиница/цифры и ._-, 2–24, края — буква/цифра.
+ *  Для входа формат НЕ проверяем — старые логины бывают с пробелами/кириллицей.
+ *  null — ок, строка — показать у формы. */
+export const NEW_LOGIN_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,22}[a-zA-Z0-9]$/;
+
+export function localNewLoginError(login: string): string | null {
+  return NEW_LOGIN_RE.test(String(login || '').trim()) ? null : REASON_TEXTS.badlogin;
+}
+
+/** Имя на поле при регистрации: опционально (пусто — звать логином),
+ *  задано — 2–24 видимых символа. null — ок. */
+export function localFieldNameError(fieldName: string): string | null {
+  const clean = String(fieldName || '').trim();
+  if (!clean) return null;
+  const cp = Array.from(clean).length;
+  return cp >= 2 && cp <= 24 ? null : REASON_TEXTS.badname;
+}
+
 /**
  * Та же проверка для гейтовой формы с повтором пароля (регистрация): подписи
  * полей другие («Логин»), но правила — те же контракты сервера. null — можно
- * отправлять; строка — показать у формы.
+ * отправлять; строка — показать у формы. В register-режиме проверяет и формат
+ * нового логина, и имя на поле (арбитр всё равно сервер — это быстрая отсечка).
  */
-export function localGateError(mode: 'login' | 'register', login: string, pass: string, pass2?: string): string | null {
-  const name = login.trim();
-  if (!name) return 'Введите логин — без него не войти.';
-  if (name.length < 2) return 'Логин слишком короткий: нужно минимум 2 символа.';
+export function localGateError(
+  mode: 'login' | 'register',
+  login: string,
+  pass: string,
+  pass2?: string,
+  fieldName?: string,
+): string | null {
+  const loginClean = login.trim();
+  if (!loginClean) return 'Введите логин — без него не войти.';
+  if (mode === 'register') {
+    const newLogin = localNewLoginError(login);
+    if (newLogin) return newLogin;
+  } else if (loginClean.length < 2) {
+    return 'Логин слишком короткий: нужно минимум 2 символа.';
+  }
   if (!pass) return 'Введите пароль.';
   if (Array.from(pass).length < 8) return 'Пароль слишком короткий: нужно минимум 8 символов.';
-  if (mode === 'register' && pass2 !== pass) return 'Пароли не совпадают.';
+  if (mode === 'register') {
+    const fieldErr = localFieldNameError(fieldName ?? '');
+    if (fieldErr) return fieldErr;
+    if (pass2 !== pass) return 'Пароли не совпадают.';
+  }
   return null;
 }

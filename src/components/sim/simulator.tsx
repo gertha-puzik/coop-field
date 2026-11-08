@@ -4561,7 +4561,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   }, []);
 
   const sendAuth = useCallback(
-    async (action: 'register' | 'login' | 'logout', login = '', pass = '') => {
+    async (action: 'register' | 'login' | 'logout', login = '', pass = '', name?: string) => {
       if (!IS_ELYRIA) return;
       setAuthBusy(true);
       setAuthMessage(null);
@@ -4571,7 +4571,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           action === 'login'
             ? await httpLogin(login, pass)
             : action === 'register'
-              ? await httpRegister(login, pass)
+              ? await httpRegister(login, pass, name)
               : await httpLogout();
       } catch {
         setAuthMessage('Сервер входа недоступен. Попробуйте ещё раз.');
@@ -4760,7 +4760,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               playMode={mode}
               universes={universes}
               onLogin={IS_ELYRIA ? (login, pass) => void sendAuth('login', login, pass) : undefined}
-              onRegister={IS_ELYRIA ? (login, pass) => void sendAuth('register', login, pass) : undefined}
+              onRegister={IS_ELYRIA ? (login, pass, name) => void sendAuth('register', login, pass, name) : undefined}
               onLogout={IS_ELYRIA ? () => void sendAuth('logout') : undefined}
               onPickRoom={joinFromEntry}
               onApplySpeed={(v) => patchArrow({ periodSec: v })}

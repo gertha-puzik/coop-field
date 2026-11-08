@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { EV } from "./protocol.js";
-import { DATA_DIR, originAllowedHere, csrfDecision, siteClassOfRequest } from "./config.js";
+import { DATA_DIR, originAllowedHere, csrfDecision, siteClassOfRequest, instanceEnvClass } from "./config.js";
 import { send } from "./room.js";
 import {
   PASS_MIN,
@@ -30,8 +30,28 @@ const envMs = (name, def) => {
   const n = Number(process.env[name]);
   return Number.isFinite(n) && n >= 0 ? n : def;
 };
-const REGISTER_GAP_MS = envMs("AUTH_REGISTER_GAP_MS", 60_000);
-const REGISTER_HOUR_MAX = Math.max(1, Math.round(Number(process.env.AUTH_REGISTER_HOURLY_MAX) || 5));
+// Лимиты регистрации по классу инстанса (register v2, мандат владелицы
+// 2026-11-08: «на тест /dev окружениях можно убрать ограничения»): прод —
+// прежние строгие; preview — мягкие (мгновенных смоук-регистраций хватает,
+// тупой спам всё ещё затруднён); local/test — без ограничений. Env
+// AUTH_REGISTER_* остаётся override'ом ПОВЕРХ класса — владелец стенда
+// подстраивает под себя. Гейты входа (LOGIN_*) не затронуты.
+const REGISTER_CLASS_LIMITS = {
+  production: { gapMs: 60_000, hourMax: 5 },
+  preview: { gapMs: 5_000, hourMax: 60 },
+  local: { gapMs: 0, hourMax: Infinity },
+  test: { gapMs: 0, hourMax: Infinity },
+};
+
+/** Регистрационные лимиты сейчас: env-override > класс инстанса > прод-дефолт. */
+function registerLimits() {
+  const base = REGISTER_CLASS_LIMITS[instanceEnvClass()] || REGISTER_CLASS_LIMITS.production;
+  const maxRaw = Math.round(Number(process.env.AUTH_REGISTER_HOURLY_MAX));
+  return {
+    gapMs: envMs("AUTH_REGISTER_GAP_MS", base.gapMs),
+    hourMax: Number.isFinite(maxRaw) && maxRaw >= 1 ? maxRaw : base.hourMax,
+  };
+}
 const LOGIN_GAP_MS = envMs("AUTH_LOGIN_GAP_MS", 6_000);
 // Подбор пароля к ОДНОМУ логину (дополнение к per-IP bucket): счёт ведётся по
 // логину, поэтому ротация адресов не обходит, а владельца враг может лишь
@@ -261,6 +281,8 @@ function reasonText(code) {
   if (code === "taken") return "Это имя уже занято.";
   if (code === "weak") return `Пароль слишком короткий (минимум ${PASS_MIN}).`;
   if (code === "short") return "Имя слишком короткое.";
+  if (code === "badlogin") return "Логин — латиница, цифры, точки, дефисы и подчёркивания; без пробелов. От 2 до 24 символов.";
+  if (code === "badname") return "Имя на поле — от 2 до 24 видимых символов.";
   if (code === "bad") return "Неверный логин или пароль.";
   if (code === "full") return "Регистрация закрыта: на сервере больше нет свободных мест для аккаунтов.";
   if (code === "rate") return "Слишком часто. Подождите немного.";
@@ -360,12 +382,13 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     return;
   }
   if (action === "register") {
-    if (!rate(ip, "register", REGISTER_GAP_MS, REGISTER_HOUR_MAX)) {
+    const lim = registerLimits();
+    if (!rate(ip, "register", lim.gapMs, lim.hourMax)) {
       sendWhoami(ws, { ok: false, reason: "rate" });
       send(ws, EV.INFO, reasonText("rate"));
       return;
     }
-    const out = await createAccount(payload.login, payload.pass);
+    const out = await createAccount(payload.login, payload.pass, payload.name);
     if (out.error) {
       sendWhoami(ws, { ok: false, reason: out.error });
       send(ws, EV.INFO, reasonText(out.error));
@@ -454,12 +477,13 @@ async function handleAuthHttp(req, res) {
       return true;
     }
     if (url.pathname === "/auth/register" && req.method === "POST") {
-      if (!rate(ip, "register", REGISTER_GAP_MS, REGISTER_HOUR_MAX)) {
+      const lim = registerLimits();
+      if (!rate(ip, "register", lim.gapMs, lim.hourMax)) {
         json(res, 429, { ok: false, reason: "rate" });
         return true;
       }
       const body = await readJson(req);
-      const out = await createAccount(body.login, body.pass);
+      const out = await createAccount(body.login, body.pass, body.name);
       if (out.error) {
         json(res, 400, { ok: false, reason: out.error });
         return true;
@@ -533,6 +557,7 @@ export {
   tokenFromRequest,
   sessionFromRequest,
   flushAuth,
+  registerLimits,
   COOKIE,
   TTL_MS,
 };

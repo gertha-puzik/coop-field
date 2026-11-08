@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import { localAuthError, reasonText, roleLabel } from './auth-reasons';
+import { localAuthError, localFieldNameError, localNewLoginError, reasonText, roleLabel } from './auth-reasons';
 
 /**
  * Боковая панель входа на русском. Пароль не показывается. Панель монтируется
@@ -12,8 +12,9 @@ import { localAuthError, reasonText, roleLabel } from './auth-reasons';
  *
  * Подписи отказов сервера и локальные проверки — общие с полноэкранным гейтом
  * входа (menu/auth-gate.tsx): они живут в auth-reasons.ts (контракты
- * server/accounts.js + server/auth.js handleAuthHttp: логин 2–24, пароль от 8,
- * отказы taken/weak/short/full/rate/bad).
+ * server/accounts.js + server/auth.js handleAuthHttp. Register v2: при
+ * создании логин — латиница/цифры/._- 2–24, имя на поле — опционально 2–24
+ * видимых символов; вход — прежние мягкие правила, старые логины живы).
  */
 
 export function AuthPanel({
@@ -28,11 +29,13 @@ export function AuthPanel({
   busy?: boolean;
   message?: string | null;
   onLogin: (login: string, pass: string) => void;
-  onRegister: (login: string, pass: string) => void;
+  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт логином). */
+  onRegister: (login: string, pass: string, name?: string) => void;
   onLogout: () => void;
 }) {
   const [login, setLogin] = useState(whoami?.login || '');
   const [pass, setPass] = useState('');
+  const [fieldName, setFieldName] = useState('');
   /** Ошибка локальной проверки — показывается до отправки и гаснет при вводе. */
   const [localFail, setLocalFail] = useState<string | null>(null);
   const inAccount = !!(whoami?.ok && whoami.accountId);
@@ -59,6 +62,10 @@ export function AuthPanel({
     setPass(v);
     setLocalFail(null);
   };
+  const editFieldName = (v: string) => {
+    setFieldName(v);
+    setLocalFail(null);
+  };
   const submit = (action: 'login' | 'register') => {
     if (busy) return;
     const local = localAuthError(login, pass);
@@ -66,10 +73,19 @@ export function AuthPanel({
       setLocalFail(local);
       return;
     }
+    // Register v2: логин при создании — строгий формат; имя на поле — опция.
+    if (action === 'register') {
+      const newLogin = localNewLoginError(login);
+      const fieldErr = localFieldNameError(fieldName);
+      if (newLogin || fieldErr) {
+        setLocalFail(newLogin || fieldErr || null);
+        return;
+      }
+    }
     setLocalFail(null);
     // Логин режем так же, как сервер (обрезка пробелов); пароль — как набран.
     if (action === 'login') onLogin(login.trim(), pass);
-    else onRegister(login.trim(), pass);
+    else onRegister(login.trim(), pass, fieldName.trim() || undefined);
   };
 
   if (inAccount) {
@@ -99,8 +115,8 @@ export function AuthPanel({
     >
       <h2 className="text-base font-bold text-[var(--sim-text)]">Аккаунт</h2>
       <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
-        Закрытый мир: чтобы играть под своим именем, войдите или создайте аккаунт. Имя — от 2 до 24
-        символов, пароль — от 8.
+        Закрытый мир: чтобы играть под своим именем, войдите или создайте аккаунт. Логин при создании — латиница, цифры
+        и ._-, 2–24 символа; пароль — от 8.
       </p>
       <label className="mt-3 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-login">
         Имя
@@ -115,6 +131,22 @@ export function AuthPanel({
           aria-describedby="auth-fail"
           onChange={(e) => editLogin(e.target.value)}
         />
+      </label>
+      <label className="mt-2 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-field-name">
+        Имя на поле (для регистрации)
+        <Input
+          id="auth-field-name"
+          className="mt-1 h-8 text-sm"
+          value={fieldName}
+          maxLength={24}
+          autoComplete="off"
+          placeholder="как вас будут звать (можно кириллицей)"
+          aria-describedby="auth-fail"
+          onChange={(e) => editFieldName(e.target.value)}
+        />
+        <span className="mt-0.5 block text-[10px] leading-snug">
+          необязательно — без него вас будут звать логином
+        </span>
       </label>
       <label className="mt-2 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-pass">
         Пароль
@@ -155,7 +187,7 @@ export function AuthPanel({
         </Button>
       </div>
       <p className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-        «Войти» — по существующему имени, «Зарегистрироваться» — создаст новый аккаунт с этими именем и паролем.
+        «Войти» — по существующему имени. «Зарегистрироваться» — создаст аккаунт с этим логином; имя на поле — как вас будут звать (пустое → логином).
       </p>
     </form>
   );

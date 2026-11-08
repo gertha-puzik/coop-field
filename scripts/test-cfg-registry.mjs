@@ -37,7 +37,7 @@ const HOST = "127.0.0.1";
 const HTTP = `http://${HOST}:${PORT}`;
 const WS = `ws://${HOST}:${PORT}`;
 
-process.env.BOOTSTRAP_ADMIN = "Герта";
+process.env.BOOTSTRAP_ADMIN = "gertha_q";
 
 const reg = await import("../server/cfg-registry.js");
 
@@ -114,7 +114,7 @@ writeFileSync(FILE, JSON.stringify({ v: 1, atmo: { phaseMin: 5, weatherMin: 12 }
 
 let server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stderr.on("data", (d) => process.stderr.write(d));
@@ -122,7 +122,7 @@ server.stderr.on("data", (d) => process.stderr.write(d));
 function startServer() {
   server = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stderr.on("data", (d) => process.stderr.write(d));
@@ -198,7 +198,7 @@ try {
   const guestAdmin = await httpJson("/cfg/admin");
   check(guestAdmin.status === 403 && guestAdmin.json?.reason === "auth_required", "cfg: GET /cfg/admin гость → 403");
 
-  const regRes = await httpJson("/auth/register", { method: "POST", body: { login: "Обычный", pass: "password1" } });
+  const regRes = await httpJson("/auth/register", { method: "POST", body: { login: "ordinary_q", pass: "password1" } });
   const userTok = regRes.json?.token;
   check(!!userTok, "cfg: регистрация обычного юзера");
   const userPost = await httpJson("/cfg", { method: "POST", body: { atmo: { phaseMin: 3 } }, token: userTok });
@@ -211,19 +211,19 @@ try {
   // S1: bootstrap-имя при регистрации НЕ даёт роли — единственный путь admin
   // теперь одноразовый CLI make-admin.mjs (как владелица на проде):
   // стоп сервера → повышение → рестарт с тем же DATA_DIR → логин.
-  const adminReg = await httpJson("/auth/register", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const adminReg = await httpJson("/auth/register", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   check(!!adminReg.json?.token, "cfg: регистрация будущего админа прошла");
   const plainWho = await httpJson("/auth/me", { token: adminReg.json?.token });
   check(plainWho.json?.role === "registered", "cfg: S1 — bootstrap-имя зарегистрировано БЕЗ роли (registered)");
   await stopServer();
-  const cliOut = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+  const cliOut = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: "utf8",
   });
   check(/повышен|уже админ/.test(cliOut), "cfg: make-admin повышает аккаунт (CLI, код возврата 0)");
   startServer();
   await waitReady();
-  const adminLogin = await httpJson("/auth/login", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const adminLogin = await httpJson("/auth/login", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   const adminTok = adminLogin.json?.token;
   check(!!adminTok, "cfg: логин админа после CLI-повышения");
   const adminWho = await httpJson("/auth/me", { token: adminTok });

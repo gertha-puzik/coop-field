@@ -129,14 +129,14 @@ check(badSnapshot.ok !== false && (badSnapshot.error === undefined || badSnapsho
 const DATA = mkdtempSync(path.join(tmpdir(), "coop-room-live-"));
 const ROOM_FILE = path.join(DATA, "room-configs.json");
 process.env.DATA_DIR = DATA; // spawned-процессы берут env теста
-process.env.BOOTSTRAP_ADMIN = "Герта";
+process.env.BOOTSTRAP_ADMIN = "gertha_q";
 
 let server = null;
 let stderrBuf = "";
 function startServer(dataDir = DATA) {
   server = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: dataDir, BOOTSTRAP_ADMIN: "Герта" },
+    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: dataDir, BOOTSTRAP_ADMIN: "gertha_q" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stderr.on("data", (d) => {
@@ -209,7 +209,7 @@ try {
   // (а) Роли: и чтение, и запись /cfg/rooms* — только admin на сервере.
   const guestList = await httpJson("/cfg/rooms");
   check(guestList.status === 403 && guestList.json?.reason === "auth_required", "room: GET /cfg/rooms гость → 403 auth_required");
-  const regRes = await httpJson("/auth/register", { method: "POST", body: { login: "Пивной", pass: "password1" } });
+  const regRes = await httpJson("/auth/register", { method: "POST", body: { login: "beer_q", pass: "password1" } });
   const userTok = regRes.json?.token;
   check(!!userTok, "room: регистрация обычного юзера");
   const userList = await httpJson("/cfg/rooms", { token: userTok });
@@ -218,17 +218,17 @@ try {
   check(userPut.status === 403, "room: PUT /cfg/rooms/<id> юзер → 403");
 
   // Лестница S1: регистрируем будущего админа → стоп → make-admin CLI → старт → login.
-  const adminRegRes = await httpJson("/auth/register", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const adminRegRes = await httpJson("/auth/register", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   check(!!adminRegRes.json?.token, "room: регистрация будущего админа (bootstrap-роль НЕ назначается)");
   await stopServer();
-  const cliOut = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+  const cliOut = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: "utf8",
   });
   check(/повышен|уже админ/.test(cliOut), "room: make-admin повышает аккаунт (CLI)");
   startServer();
   await waitReady();
-  const login = await httpJson("/auth/login", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const login = await httpJson("/auth/login", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   const adminTok = login.json?.token;
   check(!!adminTok, "room: логин админа после CLI-повышения");
 
@@ -318,7 +318,7 @@ try {
   await stopServer();
   startServer();
   await waitReady();
-  const relogin = await httpJson("/auth/login", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  const relogin = await httpJson("/auth/login", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   const tok2 = relogin.json?.token;
   check(!!tok2, "room: повторный логин после рестарта");
   const after = await httpJson("/cfg/rooms/grot-1", { token: tok2 });
@@ -374,15 +374,15 @@ try {
   startServer(DATA_LEG);
   await waitReady();
   // для чтения нужен админ — регистрируем «Герту» и повышаем через CLI (лестница S1)
-  await httpJson("/auth/register", { method: "POST", body: { login: "Герта", pass: "password1" } });
+  await httpJson("/auth/register", { method: "POST", body: { login: "gertha_q", pass: "password1" } });
   await stopServer();
-  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Герта"], {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
     env: { ...process.env, DATA_DIR: DATA_LEG },
     encoding: "utf8",
   });
   startServer(DATA_LEG);
   await waitReady();
-  const legTok = (await httpJson("/auth/login", { method: "POST", body: { login: "Герта", pass: "password1" } })).json?.token;
+  const legTok = (await httpJson("/auth/login", { method: "POST", body: { login: "gertha_q", pass: "password1" } })).json?.token;
   check(!!legTok, "migrate: логин админа во втором data-каталоге");
   const legacy = await httpJson("/cfg/rooms/grot-3", { token: legTok });
   check(
@@ -397,7 +397,7 @@ try {
   writeFileSync(LEG_FILE, "йцукен — не JSON");
   startServer(DATA_LEG);
   await waitReady();
-  const brokenTok = (await httpJson("/auth/login", { method: "POST", body: { login: "Герта", pass: "password1" } })).json?.token;
+  const brokenTok = (await httpJson("/auth/login", { method: "POST", body: { login: "gertha_q", pass: "password1" } })).json?.token;
   const broken = await httpJson("/cfg/rooms/grot-3", { token: brokenTok });
   check(
     broken.status === 200 && broken.json?.room?.hasOverrides === false && broken.json?.room?.effective?.phaseMin === 7,
