@@ -1,11 +1,14 @@
 /**
  * HTTP-профили игроков — P4: рабочий каталог и правка СВОЕГО профиля.
  *
- *   GET    /profiles/me    200 { ok, ...publicProfile } | гость → 401 auth_required
- *   PATCH  /profiles/me    200 { ok, ...publicProfile } — по cookie-сессии,
+ *   GET    /profiles/me    200 { ok, ...publicProfile, sp? } | гость → 401
+ *   PATCH  /profiles/me    200 { ok, ...publicProfile, sp? } — по cookie-сессии,
  *                          только своей записи; правятся profile.displayName,
- *                          profile.bio и avatarCharacterId; никакой
- *                          идентификации из body (id/логин/роль — unknown_keys)
+ *                          profile.bio, avatarCharacterId и sp (скрытые
+ *                          параметры: periodSec/damageLevel/armorLevel —
+ *                          partial, отсутствие поля не трогает сохранённое);
+ *                          никакой идентификации из body (id/логин/роль —
+ *                          unknown_keys)
  *   GET    /profiles       200 { ok:true, items, total, nextCursor } — каталог
  *                          публичных карточек с серверной пагинацией/поиском:
  *                          ?limit (default 24; выше 48 — клэмп, НЕ 400;
@@ -31,6 +34,11 @@
  * параметр тела запроса не выбирает чужую запись. Карточка — accounts.publicProfile,
  * единый источник DTO: без login, без role и без парольных полей.
  *
+ * СП профиля (sp: periodSec/damageLevel/armorLevel) — приватные настройки
+ * владельца: они читаются ТОЛЬКО владельцу (GET/PATCH /profiles/me и ответ
+ * PATCH). В каталог GET /profiles и в карточку /profiles/:id sp НЕ входит —
+ * публичный DTO не расширяется.
+ *
  * «Публичный профиль» — запись profile, которую создаёт платформенная
  * регистрация (accounts.createAccount). Строки стора БЕЗ profile (легаси/ручные
  * правки файла) в каталоге не показываются и по :id отвечают «не найден» —
@@ -50,6 +58,17 @@ const NAME_MAX = 24;
 const BIO_MAX = 280;
 const ID_MAX = 128;
 const BODY_LIMIT = 16 * 1024;
+
+/* ------------- СП профиля: контракт скрытых параметров игрока ------------- */
+/* Хранение: profile.sp = { periodSec, damageLevel, armorLevel } (partial: PATCH
+ * без поля не трогает сохранённое — как bio). Отдаются только владельцу.
+ * Диапазоны — те же, что предлагает экран входа (клиент шлёт готовые пресеты):
+ * период оборота стрелы 1,8–5,0 сек (округление до 0,1), урон/броня —
+ * целые пресеты 0–9, на клиенте они подписаны как 0,0–0,9. */
+const SP_PERIOD_MIN = 1.8;
+const SP_PERIOD_MAX = 5;
+const SP_LEVEL_MIN = 0;
+const SP_LEVEL_MAX = 9;
 
 /* ------------- B3: пагинация и поиск каталога GET /profiles ------------- */
 
@@ -240,12 +259,32 @@ function parseQuery(raw) {
 
 const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId"];
 
+/** СП профиля для владельца — читанье из стора (только честные значения:
+ *  мусор молча прячется, битые поля не отдаются). None → ключа нет вовсе. */
+function spView(acc) {
+  const raw = acc?.profile?.sp;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out = {};
+  if (typeof raw.periodSec === "number" && Number.isFinite(raw.periodSec)) {
+    out.periodSec = Math.round(raw.periodSec * 10) / 10;
+  }
+  for (const key of ["damageLevel", "armorLevel"]) {
+    const n = raw[key];
+    if (Number.isInteger(n) && n >= SP_LEVEL_MIN && n <= SP_LEVEL_MAX) out[key] = n;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
  * Разбор тела PATCH. Принимает плоские поля (displayName, bio,
- * avatarCharacterId) и вложенные profile.{displayName,bio} —ради той же
- * терминологии, что в /auth/me. Идентификационные ключи (id, accountId, login,
- * role, characters...) не входят в белый список и отбиваются unknown_keys —
- * «никакого идентификатора из body».
+ * avatarCharacterId), вложенный объект sp {periodSec?, damageLevel?,
+ * armorLevel?} (и то же под profile.sp — ради терминологии /auth/me) и
+ * вложенные profile.{displayName,bio,avatarCharacterId}. Идентификационные
+ * ключи (id, accountId, login, role, characters...) не входят в белый
+ * список и отбиваются unknown_keys — «никакого идентификатора из body».
+ * СП — только готовые числа: период 1,8–5,0 сек с округлением до 0,1, пресеты
+ * урона/брони — целые 0–9; выход за диапазон = 400 invalid, НЕ молчаливый
+ * зажим (сохраниться должно ровно то, что игрок выставил в профиле).
  * Возвращает { values, invalid, unknown, seen }.
  */
 function sanitizePatch(body, account) {
@@ -259,6 +298,42 @@ function sanitizePatch(body, account) {
       .map((c) => (c && typeof c === "object" && typeof c.id === "string" ? c.id : null))
       .filter(Boolean),
   );
+
+  /** Один вложенный объект СП: знакомые ключи валидируются по строгим
+   *  диапазонам, незнакомые — unknown_keys (как profile.*). */
+  const applySp = (raw) => {
+    seen += 1;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      invalid.push({ key: "sp", error: "объект полей: periodSec, damageLevel, armorLevel" });
+      return;
+    }
+    for (const [key, v] of Object.entries(raw)) {
+      if (key === "periodSec") {
+        if (typeof v !== "number" || !Number.isFinite(v)) {
+          invalid.push({ key: "sp.periodSec", error: "число от 1,8 до 5,0" });
+          continue;
+        }
+        const p = Math.round(v * 10) / 10;
+        if (p < SP_PERIOD_MIN || p > SP_PERIOD_MAX) {
+          invalid.push({ key: "sp.periodSec", error: "число от 1,8 до 5,0" });
+          continue;
+        }
+        values.sp = values.sp || {};
+        values.sp.periodSec = p;
+        continue;
+      }
+      if (key === "damageLevel" || key === "armorLevel") {
+        if (typeof v !== "number" || !Number.isInteger(v) || v < SP_LEVEL_MIN || v > SP_LEVEL_MAX) {
+          invalid.push({ key: `sp.${key}`, error: "пресет от 0 до 9" });
+          continue;
+        }
+        values.sp = values.sp || {};
+        values.sp[key] = v;
+        continue;
+      }
+      unknown.push(`sp.${key}`);
+    }
+  };
 
   const applyField = (key, raw) => {
     seen += 1;
@@ -297,6 +372,10 @@ function sanitizePatch(body, account) {
 
   for (const [key, raw] of Object.entries(body)) {
     if (key === "profile") continue; // разобран ниже, плоские ключи не дублируются
+    if (key === "sp") {
+      applySp(raw);
+      continue;
+    }
     if (PATCH_FLAT.includes(key)) applyField(key, raw);
     else unknown.push(key);
   }
@@ -307,6 +386,10 @@ function sanitizePatch(body, account) {
     return { values, invalid, unknown, seen };
   }
   for (const [key, raw] of Object.entries(nested)) {
+    if (key === "sp") {
+      applySp(raw);
+      continue;
+    }
     if (PATCH_FLAT.includes(key)) applyField(key, raw);
     else unknown.push(`profile.${key}`);
   }
@@ -333,7 +416,8 @@ export async function handleProfilesHttp(req, res) {
         json(res, 401, { ok: false, reason: "auth_required" });
         return true;
       }
-      json(res, 200, { ok: true, ...publicProfile(session.account) });
+      // СП — только владельцу своей записи (см. spView и шапку модуля).
+      json(res, 200, { ok: true, ...publicProfile(session.account), sp: spView(session.account) });
       return true;
     }
     if (req.method === "PATCH") {
@@ -383,8 +467,16 @@ export async function handleProfilesHttp(req, res) {
       if (values.displayName !== undefined) acc.profile.displayName = values.displayName;
       if (values.bio !== undefined) acc.profile.bio = values.bio;
       if (values.avatarCharacterId !== undefined) acc.profile.avatarCharacterId = values.avatarCharacterId;
+      // СП — partial-merge: в PATCH нет поля → сохранённое не трогаем.
+      if (values.sp) {
+        const cur =
+          acc.profile.sp && typeof acc.profile.sp === "object" && !Array.isArray(acc.profile.sp)
+            ? acc.profile.sp
+            : {};
+        acc.profile.sp = { ...cur, ...values.sp };
+      }
       flushAccounts(true); // форс-проход: markDirty внутри accounts не экспортирован
-      json(res, 200, { ok: true, ...publicProfile(acc) });
+      json(res, 200, { ok: true, ...publicProfile(acc), sp: spView(acc) });
       return true;
     }
   }

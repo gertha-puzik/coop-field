@@ -12,7 +12,9 @@
  * Чего в аккаунтах нет — того на странице нет: боевые счётчики («убито
  * мышей» и пр.) сервер не собирает, поэтому достижения и статистика —
  * только вычислимые факты карточки, без выдуманных чисел.
- * Свою карточку можно править инлайн (PATCH /profiles/me, P4) — поток тот же.
+ * Свою карточку можно править инлайн (PATCH /profiles/me, P4) — поток тот же;
+ * там же «Игровые параметры» (скрытые настройки: скорость стрелы, урон,
+ * броня) — только владелец, сервер хранит их в записи профиля.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -20,7 +22,16 @@ import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { ProfileCard, PublicProfile } from '@/lib/net/http-profiles';
+import { Slider } from '@/components/ui/slider';
+import type { ProfileCard, ProfileMe, ProfilePatch, ProfileSp, PublicProfile } from '@/lib/net/http-profiles';
+import {
+  DAMAGE_LEVELS,
+  DEFAULT_SETTINGS,
+  SP_PROFILE_PERIOD_MAX,
+  SP_PROFILE_PERIOD_MIN,
+  damageLevelLabel,
+  persistProfileSp,
+} from '@/lib/sim/settings';
 import {
   ACTIVITY_TEXT,
   STATUS_TEXT,
@@ -307,6 +318,38 @@ function Portrait({ card, name }: { card: ProfileCard; name: string }) {
 
 /* ——— инлайн-редактор своей карточки (P4, поток прежний) ——— */
 
+/** Черновик СП: все три значения заполнены (незаданное в профиле берётся из
+ *  дефолтов движка) — контролам всегда есть что показать. */
+type SpDraft = { periodSec: number; damageLevel: number; armorLevel: number };
+
+const fmtSec = (v: number) => `${v.toFixed(1).replace('.', ',')} сек`;
+
+/** Стартовые СП редактора: сохранённые в профиле, недостающее — дефолты
+ *  симулятора (те же значения, с которых начинался экран входа). */
+const spDefaults = (sp: ProfileSp | undefined): SpDraft => ({
+  periodSec: typeof sp?.periodSec === 'number' ? sp.periodSec : DEFAULT_SETTINGS.arrow.periodSec,
+  damageLevel: typeof sp?.damageLevel === 'number' ? sp.damageLevel : DEFAULT_SETTINGS.combat.damageLevel,
+  armorLevel: typeof sp?.armorLevel === 'number' ? sp.armorLevel : DEFAULT_SETTINGS.combat.armorLevel,
+});
+
+/** Кнопка-пресет урона/брони: как чипы экрана входа, компактная. */
+function SpChip({ active, onClick, children: label }: { active: boolean; onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      onClick={onClick}
+      className={
+        active
+          ? 'h-6 shrink-0 rounded bg-[var(--sim-accent)] px-2 text-[10px] font-semibold leading-none text-black'
+          : 'h-6 shrink-0 rounded border border-[var(--sim-line-strong)] px-2 text-[10px] font-semibold leading-none text-[var(--sim-text)] hover:border-[var(--sim-line-hover)]'
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
 function humanEditError(reason: string | undefined): string {
   switch (reason) {
     case 'auth_required':
@@ -326,10 +369,11 @@ function humanEditError(reason: string | undefined): string {
   }
 }
 
-function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSaved: (fresh: PublicProfile) => void }) {
+function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (fresh: PublicProfile) => void }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
   const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
+  const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -338,7 +382,16 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
     setDraftAvatar(profile.avatarCharacterId || '');
+    setDraftSp(spDefaults(profile.sp));
   }, [profile]);
+
+  /** СП едут в PATCH только если игрок их реально тронул: неточно равные
+   *  наборы не перезаписывают профиль (и не мешают правке имени/био). */
+  const spOrigin = spDefaults(profile.sp);
+  const spChanged =
+    draftSp.periodSec !== spOrigin.periodSec ||
+    draftSp.damageLevel !== spOrigin.damageLevel ||
+    draftSp.armorLevel !== spOrigin.armorLevel;
 
   const save = async () => {
     setFail(null);
@@ -349,11 +402,13 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     }
     setBusy(true);
     const { httpPatchProfile, httpMyProfile } = await import('@/lib/net/http-profiles');
-    const res = await httpPatchProfile({
+    const patch: ProfilePatch = {
       displayName: name,
       bio: draftBio.trim(),
       avatarCharacterId: draftAvatar || null,
-    });
+    };
+    if (spChanged) patch.sp = { ...draftSp };
+    const res = await httpPatchProfile(patch);
     if (!res.ok) {
       setFail({ title: humanEditError(res.reason), details: res.details || undefined });
       setBusy(false);
@@ -363,6 +418,9 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
     const fresh = await httpMyProfile();
     setBusy(false);
     if (fresh.ok && fresh.profile) {
+      // применяем подтверждённые сервером СП к локальным настройкам сессии —
+      // тот же стор, что и панель настроек; вход Элизии применит их при входе
+      if (spChanged) persistProfileSp({ ...draftSp, ...(fresh.profile.sp ?? {}) });
       onSaved(fresh.profile);
       setNote('Сохранено.');
       window.setTimeout(() => setNote(null), 2500);
@@ -415,6 +473,62 @@ function OwnProfileEditor({ profile, onSaved }: { profile: PublicProfile; onSave
           onChange={(e) => setDraftBio(e.target.value)}
         />
       </label>
+
+      {/* Игровые параметры: приватные настройки владельца — применяются на
+          поле в этой игре; меняются отсюда и на входе больше не спрашиваются. */}
+      <h3 className={`${styles.edTitle} mt-4`}>Игровые параметры</h3>
+      <div className={styles.edRow}>
+        <label className={styles.edField}>
+          <span className={styles.edLabel}>Скорость стрелы ({fmtSec(SP_PROFILE_PERIOD_MIN)}–{fmtSec(SP_PROFILE_PERIOD_MAX)})</span>
+          <div className="mt-2 flex items-center gap-2">
+            <Slider
+              className="flex-1"
+              value={[draftSp.periodSec]}
+              min={SP_PROFILE_PERIOD_MIN}
+              max={SP_PROFILE_PERIOD_MAX}
+              step={0.1}
+              aria-label="Скорость стрелы"
+              onValueChange={(vals) => {
+                const v = vals[0];
+                if (typeof v === 'number') setDraftSp((d) => ({ ...d, periodSec: Math.round(v * 10) / 10 }));
+              }}
+            />
+            <span className="w-14 text-right text-sm tabular-nums text-[var(--sim-text-soft)]">
+              {fmtSec(draftSp.periodSec)}
+            </span>
+          </div>
+        </label>
+      </div>
+      <div className={styles.edRow}>
+        <div className={styles.edField}>
+          <span className={styles.edLabel}>Урон</span>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {DAMAGE_LEVELS.map((k) => (
+              <SpChip
+                key={k}
+                active={draftSp.damageLevel === k}
+                onClick={() => setDraftSp((d) => ({ ...d, damageLevel: k }))}
+              >
+                {damageLevelLabel(k)}
+              </SpChip>
+            ))}
+          </div>
+        </div>
+        <div className={styles.edField}>
+          <span className={styles.edLabel}>Броня</span>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {DAMAGE_LEVELS.map((k) => (
+              <SpChip
+                key={k}
+                active={draftSp.armorLevel === k}
+                onClick={() => setDraftSp((d) => ({ ...d, armorLevel: k }))}
+              >
+                {damageLevelLabel(k)}
+              </SpChip>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className={styles.edActions}>
         <Button
           type="submit"
@@ -447,7 +561,7 @@ export default function PlayerProfile({
 }: {
   card: ProfileCard;
   mine: boolean;
-  myProfile: PublicProfile | null;
+  myProfile: ProfileMe | null;
   onSaved: (fresh: PublicProfile) => void;
   onClose: () => void;
 }) {
