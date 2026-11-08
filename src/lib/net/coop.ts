@@ -1,6 +1,13 @@
 import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
 import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
+// Менеджер спрайтов: динамический каталог сервера применяется поверх
+// статичного settings.SPRITES in place (side-effect boot: кэш localStorage +
+// GET /sprites/catalog, деградация на статичный массив при недоступности).
+// Сам этот модуль coop-протокола остаётся чистым: защищённые потребители
+// SPRITES (entry-screen, simulator, settings-panel) читают массив при
+// каждом рендере и видят каталог без собственных правок.
+import "@/lib/sim/sprite-catalog";
 // Протокол-реестр W3: имена событий (EV), guard-валидаторы и типы payload
 // живут в ./protocol — вместе с каноном значений, который паритетит CI
 // против server/protocol.js (см. scripts/test-protocol-parity.mjs).

@@ -8,7 +8,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { DATA_DIR, SPRITES } from "./config.js";
+import { DATA_DIR } from "./config.js";
+// Динамический каталог спрайтов (менеджер спрайтов): attachSprite принимает
+// id из манифеста sprites.js — и загруженные, и базовые. Цикл импортов
+// accounts.js ↔ sprites.js здесь осознанный: spriteIdAllowed вызывается
+// ТОЛЬКО внутри тел функций (top-level инициализации не пересекаются),
+// ESM live-биндинги держат порядок; spriteWearers в sprites.js — обратное
+// ребро того же ограничения.
+import { spriteIdAllowed } from "./sprites.js";
 
 const INVISIBLE_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
@@ -327,13 +334,37 @@ async function loginAccount(rawLogin, rawPass) {
 function attachSprite(acc, sprite, size) {
   const ch = activeCharacter(acc);
   if (!ch) return;
-  // Тот же whitelist, что в pickSprite (server/room.js): персистим в аккаунт
-  // только легальный id спрайта — чужой join-payload не может протащить произвольную
-  // строку в сторе (и дальше в whoami/поле).
+  // Whitelist — ДИНАМИЧЕСКИЙ каталог (server/sprites.js, менеджер спрайтов):
+  // персистим в аккаунт только легальный id — базовый или загруженный админом;
+  // произвольная строка из join-payload в стор (и дальше в whoami/поле) не
+  // попадает. Проверка по памяти (манифест грузится при старте) — await не нужен.
   const want = typeof sprite === "string" ? sprite.trim() : "";
-  if (want && SPRITES.includes(want)) ch.sprite = want;
+  if (want && spriteIdAllowed(want)) ch.sprite = want;
   if (Number.isFinite(Number(size))) ch.size = Math.min(100, Math.max(60, Math.round(Number(size))));
   markDirty();
+}
+
+/**
+ * Кто носит спрайт (менеджер спрайтов, DELETE /admin/sprites/:id): полный проход
+ * по стору аккаунтов — characters И activeCharacterId (одетым считаем любой
+ * персонаж с c.sprite === id; активный одет всегда, неактивный — тоже занимает
+ * id — смена аватара не должна освобождать занятый скин молча). Результат:
+ * [{login: логин аккаунта, character: имя персонажа}] — админ-панель показывает
+ * «кол-во + ники», DELETE отказывает с этим же списком.
+ */
+function spriteWearers(spriteId) {
+  const id = String(spriteId || "");
+  const out = [];
+  if (!id) return out;
+  for (const acc of Object.values(store.accounts)) {
+    if (!acc || !Array.isArray(acc.characters)) continue;
+    for (const ch of acc.characters) {
+      if (ch && typeof ch.sprite === "string" && ch.sprite === id) {
+        out.push({ login: acc.login, character: ch.name });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -367,6 +398,7 @@ export {
   promoteToAdmin,
   loginAccount,
   attachSprite,
+  spriteWearers,
   verifyPassword,
   hashPassword,
   migrateStore,

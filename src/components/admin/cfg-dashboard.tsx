@@ -71,6 +71,9 @@ import { PlayersFieldTab } from './players-field-tab';
 // combat.armorCurve + предпросмотр «было → станет» — общие сателлиты.
 import { ArmorTab } from './armor-tab';
 import { ApplyPreview } from './cfg-apply-preview';
+// Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
+// загрузка/удаление/категории, динамический каталог сервера.
+import { SpritesTab } from './sprites-tab';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
@@ -85,9 +88,10 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
 export default function CfgDashboard() {
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Вкладка панели: реестр конфига (по умолчанию), «Игроки на поле» и
-   *  «Броня» — редактор кривой защиты (мандат владелицы 2026-11-08). */
-  const [tab, setTab] = useState<'cfg' | 'field' | 'armor'>('cfg');
+  /** Вкладка панели: реестр конфига (по умолчанию), «Игроки на поле»,
+   *  «Броня» — редактор кривой защиты (мандат владелицы 2026-11-08) — и
+   *  «Спрайты» (менеджер спрайтов: загрузка/категории/удаление). */
+  const [tab, setTab] = useState<'cfg' | 'field' | 'armor' | 'sprites'>('cfg');
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -374,6 +378,17 @@ export default function CfgDashboard() {
         >
           Игроки на поле
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('sprites')}
+          className={`h-8 rounded-md border px-3 text-sm ${
+            tab === 'sprites'
+              ? 'border-[var(--sim-line-strong)] bg-[var(--sim-panel)] font-bold text-[var(--sim-text)]'
+              : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:bg-black/20'
+          }`}
+        >
+          Спрайты
+        </button>
       </nav>
 
       {/* Предпросмотр «было → станет» — общий над вкладками: apply-кнопки и
@@ -394,6 +409,8 @@ export default function CfgDashboard() {
           onPoints={(pts) => setPoints('armorCurve', pts)}
           onApply={requestApply}
         />
+      ) : tab === 'sprites' ? (
+        <SpritesTab />
       ) : snap && draft ? (
         <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
