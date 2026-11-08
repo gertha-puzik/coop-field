@@ -108,7 +108,8 @@ eq(
   true,
 );
 // Полный набор проксируемых маршрутов в ОБОИХ блоках.
-for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin", "/ws"]) {
+// /admin здесь быть НЕ должно: он статика (www-elyria/admin), а не API.
+for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/ws"]) {
   eq(
     `both blocks proxy ${loc}`,
     blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`location ${loc} `) &&

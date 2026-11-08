@@ -312,14 +312,9 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
-    location /admin {
-        proxy_pass http://127.0.0.1:$port;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header Cookie \$http_cookie;
-    }
+    # NB: /admin НЕ проксируется: серверных /admin/*-ручек нет — панель админа
+    # это статическая страница варианта (GET /admin/ отдаётся try_files, как
+    # на прод-конфиге). Проксирование префикса ломало страницу 404.
     location /ws {
         proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;
