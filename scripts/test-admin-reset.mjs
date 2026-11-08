@@ -42,8 +42,11 @@ const HOST = "127.0.0.1";
 const HTTP = `http://${HOST}:${PORT}`;
 const WS = `ws://${HOST}:${PORT}`;
 const ORIGIN = `http://${HOST}:${PORT}`; // цикличный origin: классу local разрешён
-const ADMIN = "Герта";
-const USER = "Пивной";
+// qa-логин приведён к строгому формату создания (register v2, мандат 2026-11-08:
+// кириллица в логине регистрации больше не проходит; видимым именем «Герта»
+// тест-аккаунт подписывается через поле name профиля).
+const ADMIN = "gertha_q";
+const USER = "pivnoy_q";
 const CAT = `reset-target-${Math.floor(Math.random() * 1e6)}`;
 const FM = { x: 8.4, y: 5.7 }; // дальняя точка freemove (та же, что в test-position-persist)
 
@@ -143,7 +146,7 @@ try {
   await waitReady();
 
   // Аккаунты: обычный игрок (403-ветка) и будущий админ.
-  const userReg = await httpJson("/auth/register", { method: "POST", body: { login: USER, pass: "password1" } });
+  const userReg = await httpJson("/auth/register", { method: "POST", body: { login: USER, pass: "password1", name: "Пивной" } });
   const userTok = userReg.json?.token;
   check(!!userTok, "регистрация не-админа");
   const adminReg = await httpJson("/auth/register", { method: "POST", body: { login: ADMIN, pass: "password1" } });
