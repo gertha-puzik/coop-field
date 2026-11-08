@@ -328,6 +328,28 @@ eq(
   testmap.testMap.elev = oldElev;
 }
 
+// Тело кота, а не только точка опоры: зеркальные проверки контакта с обрывом.
+{
+  const oldElev=testmap.testMap.elev;testmap.testMap.elev={"4,3":2};
+  const foot={dx:.4666666666666666,dy:140/150,rx:.28,ry:28/150};
+  const attempt=(x0,y0,x1,y1)=>{
+    const cat={id:"body-test",fx:x0-foot.dx,fy:y0-foot.dy,x:4,y:3,freeFoot:foot};
+    const ws={};ws.room={fmt:"test",sockets:new Map([[ws,cat]])};
+    movement.freeMove(ws,{x:x1-foot.dx,y:y1-foot.dy,foot,stop:true});
+    return Math.abs(cat.fx-(x1-foot.dx))<1e-8&&Math.abs(cat.fy-(y1-foot.dy))<1e-8;
+  };
+  eq("тело у западной стены: контакт",attempt(3.6,3.5,3.72,3.5),true);
+  eq("тело у западной стены: пересечение",attempt(3.72,3.5,3.74,3.5),false);
+  eq("тело у южной стены: контакт",attempt(4.5,4.4,4.5,4+foot.ry),true);
+  eq("тело у южной стены: пересечение",attempt(4.5,4+foot.ry,4.5,4+foot.ry-.02),false);
+  eq("на плато тело не свешивается в пропасть",attempt(4.5,3.5,4.05,3.5),false);
+  eq("из наложения после посадки можно выйти",attempt(4.05,3.5,4.12,3.5),true);
+  eq("в наложение нельзя углубиться",attempt(4.12,3.5,4.05,3.5),false);
+  const levelAt=(c,r)=>c===4&&r===3?2:0;
+  eq("сервер: скругление у диагонального угла",world.terrainBodyOverlap(3.8,2.8,.28,28/150,0,levelAt),0);
+  testmap.testMap.elev=oldElev;
+}
+
 // ---------- отчёт ----------
 if (failed > 0) {
   console.error(`\nсмоук модулей сервера: FAIL — ${failed} провалено, ${passed} прошло.`);

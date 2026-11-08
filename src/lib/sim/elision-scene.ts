@@ -305,3 +305,27 @@ export function elisionRotatedSize(w: number, h: number, yaw: number) {
   const c=Math.abs(Math.cos(yaw)),s=Math.abs(Math.sin(yaw));
   return {w:w*c+h*s,h:w*s+h*c};
 }
+
+/** Высота дуги, достаточная для пересечения границ допустимой поверхности.
+ * Проверяем обе стороны каждого пересечения сетки, а не только середину полёта.
+ * Промежуточные скалы выше старта/посадки не становятся проходимыми от этой поправки. */
+export function elisionLeapClearance(
+  x0:number,y0:number,x1:number,y1:number,l0:number,l1:number,zH:number,liftStep:number,
+  levelAt:(c:number,r:number)=>number,
+):number {
+  const cuts=[.000001,.5,.999999];
+  for(const [a,b] of [[x0,x1],[y0,y1]]) {
+    if(Math.abs(b-a)<1e-9) continue;
+    for(let n=Math.ceil(Math.min(a,b));n<=Math.floor(Math.max(a,b));n++) {
+      const t=(n-a)/(b-a);
+      if(t>0&&t<1) cuts.push(Math.max(.000001,t-.000001),Math.min(.999999,t+.000001));
+    }
+  }
+  for(const t of cuts) {
+    const floor=levelAt(Math.floor(x0+(x1-x0)*t),Math.floor(y0+(y1-y0)*t))*liftStep;
+    if(floor>Math.max(l0,l1)+.001) continue;
+    const base=l0+(l1-l0)*t;
+    zH=Math.max(zH,(floor-base)/Math.sin(Math.PI*t)+.5);
+  }
+  return zH;
+}

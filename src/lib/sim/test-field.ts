@@ -846,10 +846,11 @@ export function testBattleRouteBlocked(): { c: number; r: number }[] {
  * позицией, масштабом и поворотом (увеличенный или развёрнутый объект занимает
  * столько же места, сколько нарисован); земля, покрытие и заходы — не тела.
  */
-export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH: number): boolean {
+export function testPeaceObjectDepth(x: number, y: number, cellW: number, cellH: number, bodyRadius = 5): number {
   const px = x * cellW;
   const py = y * cellH;
-  const m = 5; // запас на ширину корпуса кота у земли
+  const m = bodyRadius; // физическое тело кота у лап, а не нулевая точка
+  let overlap = 0;
   for (const b of objectIndex().obstacles) {
     const dx = px - b.x * cellW;
     const dy = py - b.y * cellH;
@@ -863,9 +864,13 @@ export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH:
       ux = dx * cos - dy * sin;
       uy = dx * sin + dy * cos;
     }
-    if ((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry) <= 1) return false;
+    overlap = Math.max(overlap,1-Math.hypot(ux/rx,uy/ry));
   }
-  return true;
+  return overlap;
+}
+
+export function testPeaceObjectsFree(x: number, y: number, cellW: number, cellH: number, bodyRadius = 5): boolean {
+  return testPeaceObjectDepth(x,y,cellW,cellH,bodyRadius) <= 0;
 }
 
 /* ---------- точки мира: область боя, кромка, проходимость ---------- */

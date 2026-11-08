@@ -734,3 +734,36 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     },
   };
 }
+
+
+/** Пересечение круглого тела у лап с клетками, отделёнными непроходимым перепадом.
+ * rx/ry — радиус в долях клетки; результат 0..1 — глубина проникновения.
+ * Переданный level фиксирует текущую опору, чтобы граница не меняла сторону проверки. */
+export function terrainBodyOverlap(
+  x: number, y: number, rx: number, ry: number, level: number,
+  levelAt: (c: number, r: number) => number,
+): number {
+  if (!(rx > 0 && ry > 0)) return 0;
+  let overlap = 0;
+  for (let r = Math.floor(y-ry); r <= Math.floor(y+ry); r++) {
+    for (let c = Math.floor(x-rx); c <= Math.floor(x+rx); c++) {
+      if (Math.abs(levelAt(c,r)-level) <= ELEV_STEP_MAX) continue;
+      const dx = (x-Math.max(c,Math.min(c+1,x)))/rx;
+      const dy = (y-Math.max(r,Math.min(r+1,y)))/ry;
+      overlap = Math.max(overlap,1-Math.hypot(dx,dy));
+    }
+  }
+  return overlap;
+}
+
+/** Доходим до касания, вместо остановки за целый шаг перед препятствием. */
+export function contactFraction(blocked:(fraction:number)=>boolean):number {
+  if(!blocked(1)) return 1;
+  let safe=0,hit=1;
+  for(let i=0;i<10;i++) {
+    const middle=(safe+hit)/2;
+    if(blocked(middle)) hit=middle;
+    else safe=middle;
+  }
+  return safe;
+}

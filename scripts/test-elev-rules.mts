@@ -5,6 +5,8 @@ import {
   objectSprite, sanitizeTestMap, TEST_MAP_DEFAULT,
   elevJumpOk,
   elevStepOk,
+  terrainBodyOverlap,
+  contactFraction,
   jumpFillOf,
   pointInSouthWallOf,
   surfaceLevelOf,
@@ -55,3 +57,19 @@ const restoredTree = sanitizeTestMap(retiredTreeMap).map?.objects?.[0];
 assert(restoredTree?.spr === 'tree-1', 'снятая модель становится обычным деревом');
 assert(restoredTree?.x === 2.5 && restoredTree?.y === 3 && restoredTree?.s === 1.2 && restoredTree?.rot === 37, 'дерево сохраняет позицию и трансформации');
 assert(objectSprite({kind:'tree',spr:'tree3d-001'}) === 'tree-1', 'сырой старый ID также имеет видимый fallback');
+
+const highAt=(c:number,r:number)=>c===4&&r===3?2:0;
+const rx=.28,ry=28/150;
+for(const [x,y] of [[3.72,3.5],[5.28,3.5],[4.5,3-ry],[4.5,4+ry]])
+  assert(terrainBodyOverlap(x,y,rx,ry,0,highAt)<1e-7,'тело касается стены, лапы остаются снаружи');
+for(const [x,y] of [[3.74,3.5],[5.26,3.5],[4.5,3-ry+.02],[4.5,4+ry-.02]])
+  assert(terrainBodyOverlap(x,y,rx,ry,0,highAt)>0,'корпус не проходит внутрь стены ни с одной стороны');
+assert(terrainBodyOverlap(3.99,3.5,rx,ry,0,(c,r)=>c===4&&r===3?1:0)===0,'один уровень по-прежнему перешагивается');
+assert(terrainBodyOverlap(4.5,3.5,rx,ry,2,highAt)===0,'на плато тело помещается');
+assert(terrainBodyOverlap(4.02,3.5,rx,ry,2,highAt)>0,'край плато удерживает тело, а не одну точку');
+assert(terrainBodyOverlap(3.8,2.8,rx,ry,0,highAt)===0,'скруглённое тело не цепляет дальний диагональный угол');
+
+const touch=contactFraction(t=>t>.3723);
+assert(touch<=.3723&&.3723-touch<.001,'шаг доводится до касания без просвета размером в кадр');
+assert(contactFraction(()=>false)===1,'свободный шаг проходит целиком');
+assert(contactFraction(()=>true)===0,'прижатое тело не углубляется в стену');

@@ -11,6 +11,7 @@ import { Frustum } from '@babylonjs/core/Maths/math.frustum.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
+  elisionLeapClearance,
   elisionScreenX, elisionDayTint, elisionRotatedSize,
   elisionSpritePose,
   elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha,
@@ -173,3 +174,14 @@ for(const boundary of [0,1,2,3,4]) {
 assert(elisionDayTint(NaN).every(Number.isFinite),'нет NaN до сетевого якоря суток');
 const rotated=elisionRotatedSize(1200,600,Math.PI/2);
 assert(Math.abs(rotated.w-600)<1e-8&&Math.abs(rotated.h-1200)<1e-8,'редактор вписывает повёрнутую карту');
+
+const leapFloor=(c:number,r:number)=>c===4&&r>=3&&r<=4?2:0;
+for(const [y0,y1,l0,l1] of [[5.19,3.5,0,52],[3.5,5.19,52,0]]) {
+  const z=elisionLeapClearance(4.5,y0,4.5,y1,l0,l1,70,26,leapFloor);
+  for(let t=.001;t<1;t+=.001) {
+    const floor=leapFloor(4,Math.floor(y0+(y1-y0)*t))*26;
+    const lift=l0+(l1-l0)*t+Math.sin(Math.PI*t)*z;
+    assert(lift>=floor-1e-4,'дуга на подъёме/спуске не проходит внутри верхней поверхности');
+  }
+}
+assert(elisionLeapClearance(0,0,2,0,0,0,60,26,()=>0)===60,'прыжок по ровной земле не меняется');
