@@ -166,6 +166,12 @@ The agent (or owner) opens a PR, waits for green checks, then **may merge it its
 (`gh pr merge`); if merge rights fail — hand the PR link to the owner and continue other
 work. Either way: never a direct push to `main`.
 
+PR descriptions are a contract (owner directive, 2026-11-08): attach links to BOTH
+feature environments — `https://pr-<N>.abnocw.miew.ru` + `https://pr-<N>.elisium.miew.ru`
+(the preview bot fills the marked block) — AND a short bullet list of what was ADDED
+and what was CHANGED, with the verification done (gates + live checks). Shape:
+`.github/PULL_REQUEST_TEMPLATE.md`.
+
 ## Working through a human intermediary (your chat protocol)
 
 - Ask her to **paste the WHOLE files** you are going to change — not fragments. Partial
