@@ -17,8 +17,8 @@
 
 | Сайт | Домен | Что видит игрок | Сборка (P6) |
 | --- | --- | --- | --- |
-| **Пивные гроты** (public) | `abnocw.miew.ru` (+ превью `pr-N.abnocw.miew.ru`, легаси `abnocw.89-232-184-77.sslip.io`) | меню с гротами и «Голодными играми», `/combat/`, `/hunger/`. Без аккаунтов, без Элизии: ни ссылок, ни API, ни её комнат | `NEXT_PUBLIC_SITE=grotto` + `prune-export` — корень `www-grotto/` (маршруты elision/players/admin вырезаны) |
-| **Элизия** (elyria) | `elisium.miew.ru` (+ превью `pr-N.elisium.miew.ru`) | вход/регистрация, каталог игроков, панель админа, `/elision/`; комнаты гротов остаются доступными из её меню | `NEXT_PUBLIC_SITE=elyria` + `prune-export` — корень `www-elyria/` (маршруты combat/hunger вырезаны) |
+| **Пивные гроты** (public) | `abnocw.phainonsmilk.ru` (+ превью `pr-N.abnocw.phainonsmilk.ru`, легаси `abnocw.89-232-184-77.sslip.io`) | меню с гротами и «Голодными играми», `/combat/`, `/hunger/`. Без аккаунтов, без Элизии: ни ссылок, ни API, ни её комнат | `NEXT_PUBLIC_SITE=grotto` + `prune-export` — корень `www-grotto/` (маршруты elision/players/admin вырезаны) |
+| **Элизия** (elyria) | `phainonsmilk.ru` (+ превью `pr-N.elysiae.phainonsmilk.ru`) | вход/регистрация, каталог игроков, панель админа, `/elision/`; комнаты гротов остаются доступными из её меню | `NEXT_PUBLIC_SITE=elyria` + `prune-export` — корень `www-elyria/` (маршруты combat/hunger вырезаны) |
 
 Изоляция четырёхрубежная, каждый рубеж самодостаточен:
 
@@ -65,8 +65,8 @@ createdAt                             позиция в Элизии — по na
 
 Один process обслуживает оба сайта; класс запроса считает `server/config.js hostClassOf(host)`:
 `local | elyria | public`. Списки — дефолты + env `PUBLIC_HOSTS` / `ELYRIA_HOSTS`
-(через запятую; точное имя ИЛИ суффикс зоны через точку — `pr-7.abnocw.miew.ru` наследует
-`abnocw.miew.ru`). Неизвестный хост → `public` (самый закрытый). `local` — loopback-имена.
+(через запятую; точное имя ИЛИ суффикс зоны через точку — `pr-7.abnocw.phainonsmilk.ru` наследует
+`abnocw.phainonsmilk.ru`). Неизвестный хост → `public` (самый закрытый). `local` — loopback-имена.
 
 | Класс | HTTP-API | WS auth-кадры | Токены |
 | --- | --- | --- | --- |
@@ -260,8 +260,8 @@ reset/restore с подтверждением.
 Один VPS с продом, каталог `/opt/coop-field-preview/pr-<N>/`, один room-инстанс
 (порт `41000 + PR%1000`), **два** сайта:
 
-- `https://pr-<N>.abnocw.miew.ru` → `…/pr-N/www-grotto/` (публичные гроты);
-- `https://pr-<N>.elisium.miew.ru` → `…/pr-N/www-elyria/` (Элизия).
+- `https://pr-<N>.abnocw.phainonsmilk.ru` → `…/pr-N/www-grotto/` (публичные гроты);
+- `https://pr-<N>.elysiae.phainonsmilk.ru` → `…/pr-N/www-elyria/` (Элизия).
 
 Оба хоста проксируются в один инстанс; Host-классы разруливает сервер (env `PUBLIC_HOSTS` /
 `ELYRIA_HOSTS` пишет preview-apply). Конвейер из двух workflow: `preview-build.yml`

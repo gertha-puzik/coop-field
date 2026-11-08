@@ -23,7 +23,7 @@ name: Preview PR (deploy)
 # обязан работать в любой комбинации): режим определяет preview-build-lib.mjs
 # artifact-mode по metadata.json, а если билд старого формата без меты —
 # по корневым каталогам (www-grotto+www-elyria → dual; www/ → legacy-single).
-# dual — оба сайта (pr-<N>.abnocw.miew.ru гроты + pr-<N>.elisium.miew.ru
+# dual — оба сайта (pr-<N>.abnocw.phainonsmilk.ru гроты + pr-<N>.elysiae.phainonsmilk.ru
 # Элизия). legacy-single — ЧЕСТНЫЙ один сайт на abnocw-хосте: второй хост
 # не заявляем (пометка «dual-host появится после мерджа PR #49»), это не
 # ослабление и не «частичная неудача».

@@ -49,8 +49,8 @@ const base = {
   HOME: t.root,
   PREVIEW_IN: join(t.incoming, "alpha"),
   PREVIEW_SLUG: "alpha",
-  PREVIEW_HOST: "alpha.abnocw.miew.ru",
-  PREVIEW_HOST2: "alpha.elisium.miew.ru",
+  PREVIEW_HOST: "alpha.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "alpha.elysiae.phainonsmilk.ru",
   PREVIEW_PORT: "41001",
   PREVIEW_ACTION: "apply",
   PREVIEW_SHA: "deadbeef",
@@ -67,12 +67,12 @@ eq("alpha env preview data", alphaEnv.includes(join(t.previewRoot, "alpha/data")
 eq(
   "alpha env origins four values",
   alphaEnv.includes(
-    "ALLOWED_ORIGINS=http://alpha.abnocw.miew.ru,https://alpha.abnocw.miew.ru,http://alpha.elisium.miew.ru,https://alpha.elisium.miew.ru",
+    "ALLOWED_ORIGINS=http://alpha.abnocw.phainonsmilk.ru,https://alpha.abnocw.phainonsmilk.ru,http://alpha.elysiae.phainonsmilk.ru,https://alpha.elysiae.phainonsmilk.ru",
   ),
   true,
 );
-eq("alpha env public hosts", alphaEnv.includes("PUBLIC_HOSTS=alpha.abnocw.miew.ru"), true);
-eq("alpha env elyria hosts", alphaEnv.includes("ELYRIA_HOSTS=alpha.elisium.miew.ru"), true);
+eq("alpha env public hosts", alphaEnv.includes("PUBLIC_HOSTS=alpha.abnocw.phainonsmilk.ru"), true);
+eq("alpha env elyria hosts", alphaEnv.includes("ELYRIA_HOSTS=alpha.elysiae.phainonsmilk.ru"), true);
 eq(
   "apex cert without wildcard is not hung on preview vhost",
   readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8").includes("ssl_certificate"),
@@ -82,29 +82,29 @@ const alphaFrag = readFileSync(join(t.nginxD, "preview-alpha.conf"), "utf8");
 eq("alpha fragment two server blocks", (alphaFrag.match(/^server \{$/gm) || []).length, 2);
 eq(
   "alpha abnocw block root is www-grotto",
-  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-grotto;`),
+  blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-grotto;`),
   true,
 );
 eq(
   "alpha elyria block root is www-elyria",
-  blockFor(alphaFrag, "alpha.elisium.miew.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-elyria;`),
+  blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes(`root ${join(t.previewRoot, "alpha")}/www-elyria;`),
   true,
 );
 eq(
   "grotto block has no elyria root",
-  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("www-elyria"),
+  blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes("www-elyria"),
   false,
 );
 eq(
   "elyria block has no grotto root",
-  blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("www-grotto"),
+  blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes("www-grotto"),
   false,
 );
 // ACME-challenge на СВОЁМ root в каждом блоке (webroot certbot = root блока).
 eq(
   "both blocks own acme location",
-  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("location /.well-known/acme-challenge/") &&
-    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /.well-known/acme-challenge/"),
+  blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes("location /.well-known/acme-challenge/") &&
+    blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes("location /.well-known/acme-challenge/"),
   true,
 );
 // Полный набор проксируемых маршрутов в ОБОИХ блоках. /admin как ПРЕФИКС
@@ -117,8 +117,8 @@ eq(
 for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/admin/sprites", "/sprites/catalog", "/sprites/file", "/ws"]) {
   eq(
     `both blocks proxy ${loc}`,
-    blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes(`location ${loc} `) &&
-      blockFor(alphaFrag, "alpha.elisium.miew.ru").includes(`location ${loc} `),
+    blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes(`location ${loc} `) &&
+      blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes(`location ${loc} `),
     true,
   );
 }
@@ -139,20 +139,20 @@ eq(
 );
 eq(
   "admin page falls to try_files, api prefix is exact",
-  !/location \/admin \{/.test(blockFor(alphaFrag, "alpha.elisium.miew.ru")) &&
-    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /admin/players {"),
+  !/location \/admin \{/.test(blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru")) &&
+    blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes("location /admin/players {"),
   true,
 );
 eq(
   "both blocks keep ws upgrade headers",
-  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("proxy_set_header Upgrade $http_upgrade;") &&
-    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("proxy_set_header Upgrade $http_upgrade;"),
+  blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes("proxy_set_header Upgrade $http_upgrade;") &&
+    blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes("proxy_set_header Upgrade $http_upgrade;"),
   true,
 );
 eq(
   "both blocks keep static immutable",
-  blockFor(alphaFrag, "alpha.abnocw.miew.ru").includes("location /_next/static/") &&
-    blockFor(alphaFrag, "alpha.elisium.miew.ru").includes("location /_next/static/"),
+  blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes("location /_next/static/") &&
+    blockFor(alphaFrag, "alpha.elysiae.phainonsmilk.ru").includes("location /_next/static/"),
   true,
 );
 
@@ -162,15 +162,15 @@ const prApply = run({
   PREVIEW_SLUG: "pr-41",
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
-  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
-  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
+  PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "pr-41.elysiae.phainonsmilk.ru",
   PREVIEW_SHA: "deadbeefcafebabe",
 });
 dump("pr host apply", prApply);
 eq("apply pr host", prApply.status, 0);
 const prFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
-eq("nginx server_name is pr id (grotto)", prFrag.includes("server_name pr-41.abnocw.miew.ru;"), true);
-eq("nginx server_name is pr id (elyria)", prFrag.includes("server_name pr-41.elisium.miew.ru;"), true);
+eq("nginx server_name is pr id (grotto)", prFrag.includes("server_name pr-41.abnocw.phainonsmilk.ru;"), true);
+eq("nginx server_name is pr id (elyria)", prFrag.includes("server_name pr-41.elysiae.phainonsmilk.ru;"), true);
 eq("dir is pr-id (grotto)", existsSync(join(t.previewRoot, "pr-41/www-grotto/index.html")), true);
 eq("dir is pr-id (elyria)", existsSync(join(t.previewRoot, "pr-41/www-elyria/index.html")), true);
 chmodSync(join(t.nginxD, "preview-pr-41.conf"), 0o444);
@@ -179,19 +179,19 @@ const overwrite = run({
   PREVIEW_SLUG: "pr-41",
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
-  PREVIEW_HOST: "pr-41.abnocw.miew.ru",
-  PREVIEW_HOST2: "pr-41.elisium.miew.ru",
+  PREVIEW_HOST: "pr-41.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "pr-41.elysiae.phainonsmilk.ru",
   PREVIEW_SHA: "overwrite1",
 });
 dump("overwrite read-only fragment", overwrite);
 eq("overwrite read-only fragment", overwrite.status, 0);
 const owFrag = readFileSync(join(t.nginxD, "preview-pr-41.conf"), "utf8");
-eq("fragment replaced after unlink (grotto)", owFrag.includes("server_name pr-41.abnocw.miew.ru;"), true);
-eq("fragment replaced after unlink (elyria)", owFrag.includes("server_name pr-41.elisium.miew.ru;"), true);
+eq("fragment replaced after unlink (grotto)", owFrag.includes("server_name pr-41.abnocw.phainonsmilk.ru;"), true);
+eq("fragment replaced after unlink (elyria)", owFrag.includes("server_name pr-41.elysiae.phainonsmilk.ru;"), true);
 eq(
   "pr-41 env origins follow both hosts",
   readFileSync(join(t.previewRoot, "pr-41/env"), "utf8").includes(
-    "ALLOWED_ORIGINS=http://pr-41.abnocw.miew.ru,https://pr-41.abnocw.miew.ru,http://pr-41.elisium.miew.ru,https://pr-41.elisium.miew.ru",
+    "ALLOWED_ORIGINS=http://pr-41.abnocw.phainonsmilk.ru,https://pr-41.abnocw.phainonsmilk.ru,http://pr-41.elysiae.phainonsmilk.ru,https://pr-41.elysiae.phainonsmilk.ru",
   ),
   true,
 );
@@ -199,7 +199,7 @@ eq(
 // артефакта обязателен (оба корня обязательны).
 {
   const brokenDir = join(t.incoming, "broken");
-  const noElyria = { ...base, PREVIEW_IN: brokenDir, PREVIEW_SLUG: "broken", PREVIEW_HOST: "broken.abnocw.miew.ru", PREVIEW_HOST2: "broken.elisium.miew.ru", PREVIEW_PORT: "41009" };
+  const noElyria = { ...base, PREVIEW_IN: brokenDir, PREVIEW_SLUG: "broken", PREVIEW_HOST: "broken.abnocw.phainonsmilk.ru", PREVIEW_HOST2: "broken.elysiae.phainonsmilk.ru", PREVIEW_PORT: "41009" };
   fillIncoming(t.incoming, "broken");
   rmSync(join(brokenDir, "www-elyria/index.html"));
   const r1 = run(noElyria);
@@ -211,7 +211,7 @@ eq(
 }
 // Легаси-env без ALLOWED_ORIGINS (какой был на VPS до фикса): re-apply добавляет
 // новые ключи вместе с ОБЕИМИ хостами и не теряет ADMIN_PASS. HOST2 не передан —
-// дефолт от slug (pr-41.elisium.miew.ru), как в deploy-конвейере.
+// дефолт от slug (pr-41.elysiae.phainonsmilk.ru), как в deploy-конвейере.
 writeFileSync(
   join(t.previewRoot, "pr-41/env"),
   "PORT=41041\nHOST=127.0.0.1\nDATA_DIR=/tmp/coop-legacy/data\nADMIN_PASS=zz\nREQUIRE_ORIGIN=0\n",
@@ -223,7 +223,7 @@ const legacy = run({
   PREVIEW_SLUG: "pr-41",
   PREVIEW_IN: join(t.incoming, "pr-41"),
   PREVIEW_PORT: "41041",
-  PREVIEW_HOST: "cafebabe.abnocw.miew.ru",
+  PREVIEW_HOST: "cafebabe.abnocw.phainonsmilk.ru",
   PREVIEW_SHA: "cafebabe1205719",
 });
 eq("apply over legacy env", legacy.status, 0);
@@ -231,14 +231,14 @@ const legacyEnv = readFileSync(join(t.previewRoot, "pr-41/env"), "utf8");
 eq(
   "legacy env gained four origins",
   legacyEnv.includes(
-    "ALLOWED_ORIGINS=http://cafebabe.abnocw.miew.ru,https://cafebabe.abnocw.miew.ru,http://pr-41.elisium.miew.ru,https://pr-41.elisium.miew.ru",
+    "ALLOWED_ORIGINS=http://cafebabe.abnocw.phainonsmilk.ru,https://cafebabe.abnocw.phainonsmilk.ru,http://pr-41.elysiae.phainonsmilk.ru,https://pr-41.elysiae.phainonsmilk.ru",
   ),
   true,
 );
-eq("legacy env gained public hosts", legacyEnv.includes("PUBLIC_HOSTS=cafebabe.abnocw.miew.ru"), true);
-eq("legacy env gained elyria hosts", legacyEnv.includes("ELYRIA_HOSTS=pr-41.elisium.miew.ru"), true);
+eq("legacy env gained public hosts", legacyEnv.includes("PUBLIC_HOSTS=cafebabe.abnocw.phainonsmilk.ru"), true);
+eq("legacy env gained elyria hosts", legacyEnv.includes("ELYRIA_HOSTS=pr-41.elysiae.phainonsmilk.ru"), true);
 eq("legacy env kept admin pass", legacyEnv.includes("ADMIN_PASS=zz"), true);
-eq("legacy env erased stale hosts", legacyEnv.includes("pr-41.abnocw.miew.ru") || legacyEnv.includes("alpha.elisium.miew.ru"), false);
+eq("legacy env erased stale hosts", legacyEnv.includes("pr-41.abnocw.phainonsmilk.ru") || legacyEnv.includes("alpha.elysiae.phainonsmilk.ru"), false);
 
 const b = run({
   ...base,
@@ -357,8 +357,8 @@ const verifyPath = makeVerifyShims(t.root);
 const vDir = join(t.root, "verify-http");
 mkdirSync(vDir, { recursive: true });
 const dnsOk = join(t.root, "verify-dns.txt");
-const PR41_G = "pr-41.abnocw.miew.ru";
-const PR41_E = "pr-41.elisium.miew.ru";
+const PR41_G = "pr-41.abnocw.phainonsmilk.ru";
+const PR41_E = "pr-41.elysiae.phainonsmilk.ru";
 
 const verifyBase = {
   ...base,
@@ -504,29 +504,29 @@ const m1 = run({
   ...base,
   PREVIEW_SLUG: "mirror1",
   PREVIEW_IN: join(t.incoming, "mirror1"),
-  PREVIEW_HOST: "mirror1.abnocw.miew.ru",
-  PREVIEW_HOST2: "mirror1.elisium.miew.ru",
+  PREVIEW_HOST: "mirror1.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "mirror1.elysiae.phainonsmilk.ru",
   PREVIEW_PORT: "41067",
 });
 eq("apply mirror artifact", m1.status, 0);
 eq("mirror mode recorded in env", readFileSync(join(t.previewRoot, "mirror1/env"), "utf8").includes("PREVIEW_SITES_MODE=mirror"), true);
-writeFileSync(dnsOk, "mirror1.abnocw.miew.ru\nmirror1.elisium.miew.ru\n");
-httpScene(vDir, "get", "https://mirror1.abnocw.miew.ru/", "200", GROTTO_INDEX);
-httpScene(vDir, "get", "https://mirror1.abnocw.miew.ru/health", "200", HEALTH_OK);
-httpScene(vDir, "get", "https://mirror1.abnocw.miew.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
-httpScene(vDir, "get", "https://mirror1.elisium.miew.ru/", "200", GROTTO_INDEX);
-httpScene(vDir, "get", "https://mirror1.elisium.miew.ru/health", "200", HEALTH_OK);
-httpScene(vDir, "get", "https://mirror1.elisium.miew.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
-httpScene(vDir, "head", "http://mirror1.abnocw.miew.ru/", "301", "location: https://mirror1.abnocw.miew.ru/");
-httpScene(vDir, "head", "http://mirror1.elisium.miew.ru/", "301", "location: https://mirror1.elisium.miew.ru/");
+writeFileSync(dnsOk, "mirror1.abnocw.phainonsmilk.ru\nmirror1.elysiae.phainonsmilk.ru\n");
+httpScene(vDir, "get", "https://mirror1.abnocw.phainonsmilk.ru/", "200", GROTTO_INDEX);
+httpScene(vDir, "get", "https://mirror1.abnocw.phainonsmilk.ru/health", "200", HEALTH_OK);
+httpScene(vDir, "get", "https://mirror1.abnocw.phainonsmilk.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
+httpScene(vDir, "get", "https://mirror1.elysiae.phainonsmilk.ru/", "200", GROTTO_INDEX);
+httpScene(vDir, "get", "https://mirror1.elysiae.phainonsmilk.ru/health", "200", HEALTH_OK);
+httpScene(vDir, "get", "https://mirror1.elysiae.phainonsmilk.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
+httpScene(vDir, "head", "http://mirror1.abnocw.phainonsmilk.ru/", "301", "location: https://mirror1.abnocw.phainonsmilk.ru/");
+httpScene(vDir, "head", "http://mirror1.elysiae.phainonsmilk.ru/", "301", "location: https://mirror1.elysiae.phainonsmilk.ru/");
 //mirror: единый движок без Host-политики — WS жив на обоих, смоук не честится.
-wsScene(vDir, "mirror1.abnocw.miew.ru");
-wsScene(vDir, "mirror1.elisium.miew.ru");
+wsScene(vDir, "mirror1.abnocw.phainonsmilk.ru");
+wsScene(vDir, "mirror1.elysiae.phainonsmilk.ru");
 const v9 = run({
   ...verifyBase,
   PREVIEW_SLUG: "mirror1",
-  PREVIEW_HOST: "mirror1.abnocw.miew.ru",
-  PREVIEW_HOST2: "mirror1.elisium.miew.ru",
+  PREVIEW_HOST: "mirror1.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "mirror1.elysiae.phainonsmilk.ru",
 });
 dump("verify mirror live", v9);
 eq("mirror live exit", v9.status, 0);
@@ -550,40 +550,40 @@ const mk = run({
   ...base,
   PREVIEW_SLUG: "marked",
   PREVIEW_IN: join(t.incoming, "marked"),
-  PREVIEW_HOST: "marked.abnocw.miew.ru",
-  PREVIEW_HOST2: "marked.elisium.miew.ru",
+  PREVIEW_HOST: "marked.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "marked.elysiae.phainonsmilk.ru",
   PREVIEW_PORT: "41068",
 });
 eq("apply marked artifact", mk.status, 0);
-writeFileSync(dnsOk, "marked.abnocw.miew.ru\nmarked.elisium.miew.ru\n");
-httpScene(vDir, "get", "https://marked.abnocw.miew.ru/", "200", GROTTO_INDEX);
-httpScene(vDir, "get", "https://marked.abnocw.miew.ru/health", "200", HEALTH_OK);
-httpScene(vDir, "get", "https://marked.abnocw.miew.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
-httpScene(vDir, "get", "https://marked.abnocw.miew.ru/site.marker", "200", "elyria\n");
-httpScene(vDir, "get", "https://marked.elisium.miew.ru/", "200", ELYRIA_INDEX);
-httpScene(vDir, "get", "https://marked.elisium.miew.ru/health", "200", HEALTH_OK);
-httpScene(vDir, "get", "https://marked.elisium.miew.ru/profiles", "200", '{"ok":true,"items":[]}');
-httpScene(vDir, "get", "https://marked.elisium.miew.ru/site.marker", "200", "elyria\n");
-httpScene(vDir, "head", "http://marked.abnocw.miew.ru/", "301", "location: https://marked.abnocw.miew.ru/");
-httpScene(vDir, "head", "http://marked.elisium.miew.ru/", "301", "location: https://marked.elisium.miew.ru/");
-wsScene(vDir, "marked.abnocw.miew.ru");
-wsScene(vDir, "marked.elisium.miew.ru");
-smokeScenes(vDir, "marked.abnocw.miew.ru", "grotto");
-smokeScenes(vDir, "marked.elisium.miew.ru", "elyria");
+writeFileSync(dnsOk, "marked.abnocw.phainonsmilk.ru\nmarked.elysiae.phainonsmilk.ru\n");
+httpScene(vDir, "get", "https://marked.abnocw.phainonsmilk.ru/", "200", GROTTO_INDEX);
+httpScene(vDir, "get", "https://marked.abnocw.phainonsmilk.ru/health", "200", HEALTH_OK);
+httpScene(vDir, "get", "https://marked.abnocw.phainonsmilk.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
+httpScene(vDir, "get", "https://marked.abnocw.phainonsmilk.ru/site.marker", "200", "elyria\n");
+httpScene(vDir, "get", "https://marked.elysiae.phainonsmilk.ru/", "200", ELYRIA_INDEX);
+httpScene(vDir, "get", "https://marked.elysiae.phainonsmilk.ru/health", "200", HEALTH_OK);
+httpScene(vDir, "get", "https://marked.elysiae.phainonsmilk.ru/profiles", "200", '{"ok":true,"items":[]}');
+httpScene(vDir, "get", "https://marked.elysiae.phainonsmilk.ru/site.marker", "200", "elyria\n");
+httpScene(vDir, "head", "http://marked.abnocw.phainonsmilk.ru/", "301", "location: https://marked.abnocw.phainonsmilk.ru/");
+httpScene(vDir, "head", "http://marked.elysiae.phainonsmilk.ru/", "301", "location: https://marked.elysiae.phainonsmilk.ru/");
+wsScene(vDir, "marked.abnocw.phainonsmilk.ru");
+wsScene(vDir, "marked.elysiae.phainonsmilk.ru");
+smokeScenes(vDir, "marked.abnocw.phainonsmilk.ru", "grotto");
+smokeScenes(vDir, "marked.elysiae.phainonsmilk.ru", "elyria");
 const v10 = run({
   ...verifyBase,
   PREVIEW_SLUG: "marked",
-  PREVIEW_HOST: "marked.abnocw.miew.ru",
-  PREVIEW_HOST2: "marked.elisium.miew.ru",
+  PREVIEW_HOST: "marked.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "marked.elysiae.phainonsmilk.ru",
 });
 eq("marker mismatch verdict", v10.stdout.includes("grotto=broken reasons=marker-mismatch"), true);
 eq("marker mismatch partial", v10.status, 3);
-httpScene(vDir, "get", "https://marked.abnocw.miew.ru/site.marker", "200", "grotto\n");
+httpScene(vDir, "get", "https://marked.abnocw.phainonsmilk.ru/site.marker", "200", "grotto\n");
 const v10b = run({
   ...verifyBase,
   PREVIEW_SLUG: "marked",
-  PREVIEW_HOST: "marked.abnocw.miew.ru",
-  PREVIEW_HOST2: "marked.elisium.miew.ru",
+  PREVIEW_HOST: "marked.abnocw.phainonsmilk.ru",
+  PREVIEW_HOST2: "marked.elysiae.phainonsmilk.ru",
 });
 eq("marker restored live", v10b.status, 0);
 // Снос marked — лимит 8: следующий apply (shastale) не должен упереться в
@@ -604,8 +604,8 @@ writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
     ...base,
     PREVIEW_SLUG: "shastale",
     PREVIEW_IN: join(t.incoming, "shastale"),
-    PREVIEW_HOST: "shastale.abnocw.miew.ru",
-    PREVIEW_HOST2: "shastale.elisium.miew.ru",
+    PREVIEW_HOST: "shastale.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "shastale.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41069",
     PREVIEW_TRUSTED_SHA: "bbb222",
   });
@@ -616,30 +616,30 @@ writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
     ...base,
     PREVIEW_SLUG: "shastale",
     PREVIEW_IN: join(t.incoming, "shastale"),
-    PREVIEW_HOST: "shastale.abnocw.miew.ru",
-    PREVIEW_HOST2: "shastale.elisium.miew.ru",
+    PREVIEW_HOST: "shastale.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "shastale.elysiae.phainonsmilk.ru",
     PREVIEW_PORT: "41069",
     PREVIEW_TRUSTED_SHA: "aaa111",
   });
   eq("matching stamp deploys fine", okApply.status, 0);
-  writeFileSync(dnsOk, "shastale.abnocw.miew.ru\nshastale.elisium.miew.ru\n");
-  httpScene(vDir, "get", "https://shastale.abnocw.miew.ru/", "200", GROTTO_INDEX);
-  httpScene(vDir, "get", "https://shastale.abnocw.miew.ru/health", "200", HEALTH_OK);
-  httpScene(vDir, "get", "https://shastale.abnocw.miew.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
-  httpScene(vDir, "get", "https://shastale.elisium.miew.ru/", "200", ELYRIA_INDEX);
-  httpScene(vDir, "get", "https://shastale.elisium.miew.ru/health", "200", HEALTH_OK);
-  httpScene(vDir, "get", "https://shastale.elisium.miew.ru/profiles", "200", '{"ok":true,"items":[]}');
-  httpScene(vDir, "head", "http://shastale.abnocw.miew.ru/", "301", "location: https://shastale.abnocw.miew.ru/");
-  httpScene(vDir, "head", "http://shastale.elisium.miew.ru/", "301", "location: https://shastale.elisium.miew.ru/");
-  wsScene(vDir, "shastale.abnocw.miew.ru");
-  wsScene(vDir, "shastale.elisium.miew.ru");
-  smokeScenes(vDir, "shastale.abnocw.miew.ru", "grotto");
-  smokeScenes(vDir, "shastale.elisium.miew.ru", "elyria");
+  writeFileSync(dnsOk, "shastale.abnocw.phainonsmilk.ru\nshastale.elysiae.phainonsmilk.ru\n");
+  httpScene(vDir, "get", "https://shastale.abnocw.phainonsmilk.ru/", "200", GROTTO_INDEX);
+  httpScene(vDir, "get", "https://shastale.abnocw.phainonsmilk.ru/health", "200", HEALTH_OK);
+  httpScene(vDir, "get", "https://shastale.abnocw.phainonsmilk.ru/profiles", "404", '{"ok":false,"reason":"not_found"}');
+  httpScene(vDir, "get", "https://shastale.elysiae.phainonsmilk.ru/", "200", ELYRIA_INDEX);
+  httpScene(vDir, "get", "https://shastale.elysiae.phainonsmilk.ru/health", "200", HEALTH_OK);
+  httpScene(vDir, "get", "https://shastale.elysiae.phainonsmilk.ru/profiles", "200", '{"ok":true,"items":[]}');
+  httpScene(vDir, "head", "http://shastale.abnocw.phainonsmilk.ru/", "301", "location: https://shastale.abnocw.phainonsmilk.ru/");
+  httpScene(vDir, "head", "http://shastale.elysiae.phainonsmilk.ru/", "301", "location: https://shastale.elysiae.phainonsmilk.ru/");
+  wsScene(vDir, "shastale.abnocw.phainonsmilk.ru");
+  wsScene(vDir, "shastale.elysiae.phainonsmilk.ru");
+  smokeScenes(vDir, "shastale.abnocw.phainonsmilk.ru", "grotto");
+  smokeScenes(vDir, "shastale.elysiae.phainonsmilk.ru", "elyria");
   const v11 = run({
     ...verifyBase,
     PREVIEW_SLUG: "shastale",
-    PREVIEW_HOST: "shastale.abnocw.miew.ru",
-    PREVIEW_HOST2: "shastale.elisium.miew.ru",
+    PREVIEW_HOST: "shastale.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "shastale.elysiae.phainonsmilk.ru",
     PREVIEW_TRUSTED_SHA: "bbb222",
   });
   eq("stale sha fails verify", v11.status, 4);
@@ -648,8 +648,8 @@ writeFileSync(dnsOk, `${PR41_G}\n${PR41_E}\n`);
   const v11b = run({
     ...verifyBase,
     PREVIEW_SLUG: "shastale",
-    PREVIEW_HOST: "shastale.abnocw.miew.ru",
-    PREVIEW_HOST2: "shastale.elisium.miew.ru",
+    PREVIEW_HOST: "shastale.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "shastale.elysiae.phainonsmilk.ru",
     PREVIEW_TRUSTED_SHA: "aaa111",
   });
   eq("matching sha verifies live", v11b.status, 0);
@@ -669,8 +669,8 @@ sectionLegacyContract({ t, base, verifyBase, vDir, dnsOk, pr41G: PR41_G, pr41E: 
   const v13 = run({
     ...verifyBase,
     PREVIEW_SLUG: "ghost",
-    PREVIEW_HOST: "ghost.abnocw.miew.ru",
-    PREVIEW_HOST2: "ghost.elisium.miew.ru",
+    PREVIEW_HOST: "ghost.abnocw.phainonsmilk.ru",
+    PREVIEW_HOST2: "ghost.elysiae.phainonsmilk.ru",
   });
   eq("verify without app refuses", v13.status === 0 ? "live" : "refused", "refused");
   eq("verify refusal names missing root", (v13.stderr || "").includes("верифицировать нечего"), true);

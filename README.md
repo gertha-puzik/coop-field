@@ -11,11 +11,11 @@
 Один и тот же движок и один сервер комнаты собираются в два сайта (вариант задаётся при сборке,
 `NEXT_PUBLIC_SITE`):
 
-- **«Пивные гроты»** — `abnocw.miew.ru` (превью-PR: `pr-<N>.abnocw.miew.ru`). Публичный сайт:
+- **«Пивные гроты»** — `abnocw.phainonsmilk.ru` (превью-PR: `pr-<N>.abnocw.phainonsmilk.ru`). Публичный сайт:
   меню, гроты «Пивной грот №1–3» на `/combat/` и заглушка «Голодных игр» на `/hunger/`.
   Заходят без аккаунта. Про Элизию сайт не знает вовсе: ни ссылок в меню, ни страниц, ни
   API (серверные зоны входа/профилей/админки на его домене отвечают «не найдено»).
-- **Элизия** — `elisium.miew.ru` (превью-PR: `pr-<N>.elisium.miew.ru`). Закрытый сайт: регистрация
+- **Элизия** — `phainonsmilk.ru` (превью-PR: `pr-<N>.elysiae.phainonsmilk.ru`). Закрытый сайт: регистрация
   и вход по аккаунту, рисованная локация `/elision/` (вход только с сессией), каталог игроков
   `/players` с карточками, панель админа `/admin` — реестр разрешённых настроек (уровни урона и
   брони, периоды оборота стрелы, длины суток и погоды).
@@ -85,8 +85,8 @@ npm run test:server-modules  # смоук серверных модулей (з�
 
 ## Прод
 
-- Гроты: https://abnocw.miew.ru — статика `/opt/coop-field/www` на VPS (легаси-домен `abnocw.89-232-184-77.sslip.io` продолжает работать)
-- Элизия: https://elisium.miew.ru — статика `/opt/coop-field/www-elyria`; откроется после
+- Гроты: https://abnocw.phainonsmilk.ru — статика `/opt/coop-field/www` на VPS (легаси-домен `abnocw.89-232-184-77.sslip.io` продолжает работать)
+- Элизия: https://phainonsmilk.ru — статика `/opt/coop-field/www-elyria`; откроется после
   одноразового шага владелицы (каталог на VPS + nginx-vhost для домена)
 - Комната: `wss://coop.89-232-184-77.sslip.io` — VPS 89.232.184.77, systemd-сервис `coop-field`,
   **порт 8787** за nginx (локальный дефолт — 3780)
@@ -103,11 +103,11 @@ npm run test:server-modules  # смоук серверных модулей (з�
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | типы, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков, смоук модулей сервера, аккаунты, превью-гейты |
 | «Фронтенд на VPS» (deploy-frontend.yml) | изменения `src/`, `public/`, Next-конфига, зависимостей, `scripts/prune-export.mjs` | собирает оба варианта (`build:variants`) и льёт ДВЕ статики: `www-grotto/` → `/opt/coop-field/www` и `www-elyria/` → `/opt/coop-field/www-elyria` |
 | «Сервер комнаты на VPS» (deploy-backend.yml) | изменения `server.js`, `server/`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
-| «Preview PR» (preview-build.yml + preview-deploy.yml) | PR своего репо | тот же VPS, два сайта на PR: `pr-<N>.abnocw.miew.ru` (гроты) + `pr-<N>.elisium.miew.ru` (Элизия), один инстанс комнаты; снос при close/merge; см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
+| «Preview PR» (preview-build.yml + preview-deploy.yml) | PR своего репо | тот же VPS, два сайта на PR: `pr-<N>.abnocw.phainonsmilk.ru` (гроты) + `pr-<N>.elysiae.phainonsmilk.ru` (Элизия), один инстанс комнаты; снос при close/merge; см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
 Секреты в GitHub: `VPS_SSH_KEY`; для превью — `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
 
-**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`elisium` и все превью) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08); требование закреплено в docs/PREVIEW-ENVIRONMENTS.md.
+**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`phainonsmilk` и все превью) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08); требование закреплено в docs/PREVIEW-ENVIRONMENTS.md.
 
 
 ## Для разработки — куда смотреть

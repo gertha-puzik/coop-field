@@ -184,20 +184,20 @@ function wsUrlBase(): string {
   if (hostname === "coop.89-232-184-77.sslip.io") {
     return `wss://${host}`;
   }
-  // Preview PR: front + комната на одном имени *.abnocw.miew.ru.
+  // Preview PR: front + комната на одном имени *.abnocw.phainonsmilk.ru.
   // Сокет — /ws того же хоста (nginx), не прод coop.sslip.io.
-  if (hostname === "abnocw.miew.ru" || hostname.endsWith(".abnocw.miew.ru")) {
+  if (hostname === "abnocw.phainonsmilk.ru" || hostname.endsWith(".abnocw.phainonsmilk.ru")) {
     const scheme = protocol === "https:" ? "wss:" : "ws:";
     return `${scheme}//${host}/ws`;
   }
-  // Элизия (elisium.miew.ru и PR-превью *.elisium.miew.ru): same-origin /ws —
+  // Элизия (phainonsmilk.ru и PR-превью *.elysiae.phainonsmilk.ru): same-origin /ws —
   // кука сессии ездит в хендшейке, отдельного сокет-хоста у Элизии нет.
   // Вариант свёрнут env-инлайном (канон — src/lib/site.ts: межмодульный
   // импорт константы не фолдится) — в grotto-сборке ветка выкидывается
   // целиком вместе с хостами Элизии (A1: артефакты grotto без 'elisium').
   if (
     process.env.NEXT_PUBLIC_SITE === "elyria" &&
-    (hostname === "elisium.miew.ru" || hostname.endsWith(".elisium.miew.ru"))
+    (hostname === "phainonsmilk.ru" || hostname.endsWith(".elysiae.phainonsmilk.ru"))
   ) {
     const scheme = protocol === "https:" ? "wss:" : "ws:";
     return `${scheme}//${host}/ws`;

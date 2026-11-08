@@ -201,19 +201,20 @@ eq("modes: combat нет в каталоге MODE_ROOMS", modes.MODE_ROOMS.some(
 eq("modes: снятый код не закрыт аккаунтом (замок только у живых комнат)", modes.requiresAccount("combat"), false);
 
 // env-листы host-политики читаются в момент вызова hostClassOf — задаём ДО проверок.
-process.env.PUBLIC_HOSTS = "pub.example";
-process.env.ELYRIA_HOSTS = "ely.example";
+process.env.PUBLIC_HOSTS = "pub.example,.pub-zone.example";
+process.env.ELYRIA_HOSTS = "ely.example,.ely-zone.example";
 eq("hostClassOf: env PUBLIC_HOSTS — точное имя", cfg.hostClassOf("pub.example"), "public");
-eq("hostClassOf: env PUBLIC_HOSTS — суффикс поддомена", cfg.hostClassOf("pr-45.pub.example"), "public");
-eq("hostClassOf: дефолт abnocw.miew.ru", cfg.hostClassOf("abnocw.miew.ru"), "public");
-eq("hostClassOf: дефолт суффикс .abnocw.miew.ru", cfg.hostClassOf("pr-12.abnocw.miew.ru"), "public");
+eq("hostClassOf: env PUBLIC_HOSTS — суффикс поддомена", cfg.hostClassOf("pr-45.pub-zone.example"), "public");
+eq("hostClassOf: точка-метка не поглощает соседей", cfg.hostClassOf("stranger.pub.example"), "public");
+eq("hostClassOf: дефолт abnocw.phainonsmilk.ru", cfg.hostClassOf("abnocw.phainonsmilk.ru"), "public");
+eq("hostClassOf: дефолт суффикс .abnocw.phainonsmilk.ru", cfg.hostClassOf("pr-12.abnocw.phainonsmilk.ru"), "public");
 eq("hostClassOf: дефолт coop.sslip", cfg.hostClassOf("coop.89-232-184-77.sslip.io"), "public");
 eq("hostClassOf: дефолт abnocw.sslip", cfg.hostClassOf("abnocw.89-232-184-77.sslip.io"), "public");
 eq("hostClassOf: дефолт суффикс .89-232-184-77.sslip.io", cfg.hostClassOf("pr-7.89-232-184-77.sslip.io"), "public");
 eq("hostClassOf: env ELYRIA_HOSTS — точное имя", cfg.hostClassOf("ely.example"), "elyria");
-eq("hostClassOf: env ELYRIA_HOSTS — суффикс", cfg.hostClassOf("pr-9.ely.example"), "elyria");
-eq("hostClassOf: дефолт elisium.miew.ru", cfg.hostClassOf("elisium.miew.ru"), "elyria");
-eq("hostClassOf: дефолт суффикс .elisium.miew.ru", cfg.hostClassOf("pr-33.elisium.miew.ru"), "elyria");
+eq("hostClassOf: env ELYRIA_HOSTS — суффикс", cfg.hostClassOf("pr-9.ely-zone.example"), "elyria");
+eq("hostClassOf: дефолт phainonsmilk.ru", cfg.hostClassOf("phainonsmilk.ru"), "elyria");
+eq("hostClassOf: дефолт суффикс .elysiae.phainonsmilk.ru", cfg.hostClassOf("pr-33.elysiae.phainonsmilk.ru"), "elyria");
 eq("hostClassOf: localhost — local", cfg.hostClassOf("localhost"), "local");
 eq("hostClassOf: порт не мешает классу (127.0.0.1)", cfg.hostClassOf("127.0.0.1:3780"), "local");
 eq("hostClassOf: 127.* — local", cfg.hostClassOf("127.0.0.99"), "local");

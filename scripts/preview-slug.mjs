@@ -6,8 +6,8 @@
  * readable beats per-commit URL churn (owner decision, 2026-11-07).
  *
  * Dual-host preview (P5): каждый PR получает ДВА сайта — публичные «Пивные
- * гротты» pr-<number>.abnocw.miew.ru (root www-grotto) и Элизия
- * pr-<number>.elisium.miew.ru (root www-elyria). Инстанс комнаты на PR
+ * гротты» pr-<number>.abnocw.phainonsmilk.ru (root www-grotto) и Элизия
+ * pr-<number>.elysiae.phainonsmilk.ru (root www-elyria). Инстанс комнаты на PR
  * остаётся один: оба хоста ходят в один и тот же порт, разделение
  * возможностей — по Host-политике на сервере (env PUBLIC_HOSTS/ELYRIA_HOSTS).
  */
@@ -31,11 +31,11 @@ export function previewId(prNumber) {
   return `pr-${n}`;
 }
 
-/** Оба сайта PR: [pr-N.abnocw.miew.ru, pr-N.elisium.miew.ru]. Порядок
+/** Оба сайта PR: [pr-N.abnocw.phainonsmilk.ru, pr-N.elysiae.phainonsmilk.ru]. Порядок
  * фиксирован: элемент 0 — гроты (главный хост), элемент 1 — Элизия. */
 export function previewSiteHosts(prNumber) {
   const label = previewId(prNumber);
-  return [`${label}.abnocw.miew.ru`, `${label}.elisium.miew.ru`];
+  return [`${label}.abnocw.phainonsmilk.ru`, `${label}.elysiae.phainonsmilk.ru`];
 }
 
 /** @deprecated Со времён single-host. Возвращает только ПЕРВЫЙ хост (гроты);
@@ -46,7 +46,7 @@ export function previewSiteHost(prNumber) {
 }
 
 export function previewHost(slug) {
-  return `${previewSlug(slug)}.abnocw.miew.ru`;
+  return `${previewSlug(slug)}.abnocw.phainonsmilk.ru`;
 }
 
 export function previewPort(prNumber) {

@@ -22,7 +22,7 @@ export function isGrotto(): boolean {
   return SITE === 'grotto';
 }
 
-/** Элизия (elisium.miew.ru): аккаунты, вход, справочник Элизии. */
+/** Элизия (phainonsmilk.ru): аккаунты, вход, справочник Элизии. */
 export function isElyria(): boolean {
   return SITE === 'elyria';
 }

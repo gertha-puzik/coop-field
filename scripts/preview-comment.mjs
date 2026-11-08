@@ -91,7 +91,7 @@ export function commentBody(ctx) {
     case "needs-tls":
       return `${m}Beer Grottoes:\n${url} — выложено, https-сертификат ещё не готов.\nElyria Eides:\n${url2} — выложено, тот же сертификат-конвейер.\nroot-cron на VPS выпускает per-host сертификаты каждые ~5 минут; по http сайты уже отвечает. Ссылку можно открывать, как только статус станет live (следующий push или через повторную проверку). Причины последней проверки: ${not(ctx.reasons, "none")}. Проверено ${when}.`;
     case "needs-dns":
-      return `${m}Beer Grottoes:\n${url} — не резолвится.\nElyria Eides:\n${url2} — не резолвится.\nСервер честно отказывается звать несуществующее имя live: нужен wildcard pr-*.abnocw.miew.ru / pr-*.elisium.miew.ru (см. docs/PREVIEW-ENVIRONMENTS.md). Причины: ${not(ctx.reasons, "dns")}. Проверено ${when}.`;
+      return `${m}Beer Grottoes:\n${url} — не резолвится.\nElyria Eides:\n${url2} — не резолвится.\nСервер честно отказывается звать несуществующее имя live: нужен wildcard pr-*.abnocw.phainonsmilk.ru / pr-*.elysiae.phainonsmilk.ru (см. docs/PREVIEW-ENVIRONMENTS.md). Причины: ${not(ctx.reasons, "dns")}. Проверено ${when}.`;
     case "failed":
       return `${m}Beer Grottoes:\n${url} — не выложен или не прошёл верификацию (${grotto("?")}).\nElyria Eides:\n${url2} — не выложен или не прошёл верификацию (${elyria("?")}).\nПричины: ${not(ctx.reasons, "unknown")}. Коммит \`${sha7}\`, проверено ${when}.\nЛог: ${ctx.runUrl}.`;
     case "needs-secret":

@@ -142,11 +142,11 @@ const waitFor = (ws, pred, ms = 5000) =>
 /* ════════════════ Sandbox A: превью-топология ( основной matrix ) ════════════════ */
 const PORT_A = 4270 + Math.floor(Math.random() * 60);
 const sandboxA = spawnServer(PORT_A, LOOP, {
-  PUBLIC_HOSTS: "grot.example,pr-49.abnocw.miew.ru",
-  ELYRIA_HOSTS: "ely.example,pr-49.elisium.miew.ru",
+  PUBLIC_HOSTS: "grot.example,pr-49.abnocw.phainonsmilk.ru",
+  ELYRIA_HOSTS: "ely.example,pr-49.elysiae.phainonsmilk.ru",
   // «один общий список с обоими сайтами» — как пишут preview-скрипты.
   ALLOWED_ORIGINS:
-    "https://grot.example,https://ely.example,https://pr-49.abnocw.miew.ru,https://pr-49.elisium.miew.ru",
+    "https://grot.example,https://ely.example,https://pr-49.abnocw.phainonsmilk.ru,https://pr-49.elysiae.phainonsmilk.ru",
 });
 
 try {
@@ -183,22 +183,22 @@ try {
     b.status === 403 && b.json?.reason === "csrf_origin_mismatch",
     "(b) POST /auth/logout elyria+cookie+Origin гротов → 403 csrf_origin_mismatch",
   );
-  const c2 = await probe(PORT_A, { method: "POST", path: "/auth/login", host: "pr-49.elisium.miew.ru",
-    origin: "https://pr-49.abnocw.miew.ru", cookie: cookieV,
+  const c2 = await probe(PORT_A, { method: "POST", path: "/auth/login", host: "pr-49.elysiae.phainonsmilk.ru",
+    origin: "https://pr-49.abnocw.phainonsmilk.ru", cookie: cookieV,
     body: { login: "Victim", pass: "password1" } });
   check(
     c2.status === 403 && c2.json?.reason === "csrf_origin_mismatch",
     "(c2) POST /auth/login с Origin сиблинг-класса pr-49.abnocw (из общего env-списка!) на elisium → 403",
   );
-  const c1 = await probe(PORT_A, { method: "PATCH", path: "/profiles/me", host: "pr-49.elisium.miew.ru",
-    origin: "https://pr-48.elisium.miew.ru", cookie: cookieV, body: { displayName: "Hacked" } });
+  const c1 = await probe(PORT_A, { method: "PATCH", path: "/profiles/me", host: "pr-49.elysiae.phainonsmilk.ru",
+    origin: "https://pr-48.elysiae.phainonsmilk.ru", cookie: cookieV, body: { displayName: "Hacked" } });
   check(
     c1.status === 403 && c1.json?.reason === "csrf_origin_mismatch",
     "(c1) PATCH /profiles/me с Origin чужого превью pr-48.elisium на pr-49.elisium → 403",
   );
   // Уже добавленный профиль не должен был измениться.
-  const c1Verify = await probe(PORT_A, { method: "GET", path: "/profiles/me", host: "pr-49.elisium.miew.ru",
-    origin: "https://pr-49.elisium.miew.ru", cookie: cookieV });
+  const c1Verify = await probe(PORT_A, { method: "GET", path: "/profiles/me", host: "pr-49.elysiae.phainonsmilk.ru",
+    origin: "https://pr-49.elysiae.phainonsmilk.ru", cookie: cookieV });
   check(
     c1Verify.status === 200 && c1Verify.json?.displayName !== "Hacked",
     "(c1b) профиль жертвы НЕ изменён после отказа 403 (запись не дошла)",
@@ -281,7 +281,7 @@ try {
   const g1 = await wsClient(PORT_A, { host: ELY, origin: originGrot });
   check(g1.open === false, "(g1) WS upgrade на elyria-хост с origin гротов → отказ соединения");
   if (g1.ws) try { g1.ws.close(); } catch {}
-  const g6 = await wsClient(PORT_A, { host: "pr-49.elisium.miew.ru", origin: "https://pr-48.elisium.miew.ru" });
+  const g6 = await wsClient(PORT_A, { host: "pr-49.elysiae.phainonsmilk.ru", origin: "https://pr-48.elysiae.phainonsmilk.ru" });
   check(g6.open === false, "(g6) WS upgrade на pr-49.elisium с origin чужого превью pr-48 → отказ");
   if (g6.ws) try { g6.ws.close(); } catch {}
 

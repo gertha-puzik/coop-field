@@ -88,3 +88,49 @@ directory and two extra contracts:
 - A refused deployment ("REFUSED: staging …") means the build artifact never
   reached production — no cleanup is needed, staging is left in place for
   inspection.
+
+## 6. Domain migration to phainonsmilk.ru (owner decision, 2026-11-08)
+
+Target map (one domain root, worlds on subdomains; the SHA-based sslip front
+stays as a legacy alias):
+
+| Host | Site | Notes |
+| --- | --- | --- |
+| `phainonsmilk.ru` (apex) | Elysiae base — registration + main menu (the current www-elyria build), later also the wiki | room entry `/elision/`, profiles, `/admin/` |
+| `abnocw.phainonsmilk.ru` | Beer Grottoes (www-grotto) | open guest rooms, combat, hunger |
+| `elysiae.phainonsmilk.ru` | reserved for the future Elysiae-world split; TODAY it serves only PR previews: `pr-<N>.elysiae.phainonsmilk.ru` | preview zone, wildcard |
+| `icelation.phainonsmilk.ru` | reserved for the future Hunger-Games split (today `/hunger` inside grotto build) | DNS may be pre-created now |
+
+Owner steps (Panel: Selectel DNS zone `phainonsmilk.ru`):
+
+- [ ] `@ A 89.232.184.77` — the base site
+- [ ] `abnocw A 89.232.184.77` — the grottoes site
+- [ ] `icelation A 89.232.184.77` — reserved (unused until the games split)
+- [ ] `elysiae A 89.232.184.77` — reserved (Elysiae base may later move off the apex)
+- [ ] `*.abnocw A 89.232.184.77` — **PR previews, grottoes** (one record covers all `pr-<N>.*`)
+- [ ] `*.elysiae A 89.232.184.77` — **PR previews, Elysiae**
+- [ ] (optional now) `*.icelation A 89.232.184.77` — for future games previews
+
+Owner steps (VPS, root):
+
+- [ ] Production front vhosts: replace/mirror the `abnocw` + `elisium` vhost
+  blocks (miew-domains.conf) with `phainonsmilk.ru` (root `/opt/coop-field/www-elyria`,
+  API locations unchanged) and `abnocw.phainonsmilk.ru` (root `/opt/coop-field/www`);
+  keep the old `*.miew.ru` blocks during the transition so both names work.
+- [ ] HTTPS: `certbot -d phainonsmilk.ru -d abnocw.phainonsmilk.ru …` (webroot
+  `/opt/coop-field/www`); preview hosts keep the automatic per-host HTTP-01 cron
+  (coop-preview-cert) — it follows the new `server_name` values by itself.
+- [ ] Unit env: nothing to change — host classes come from `server/config.js`
+  defaults (apex exact + `.suffix` zone matches); `PREVIEW_SITES_MODE=dual`
+  for preview units stays.
+
+Agent-side migration (already in this PR — see AGENTS.md §Publishing item 7):
+all client `wsUrlBase`/origin branches, preview pipelines, cert scans, checks
+and tests follow the map above; the grotto→Elysiae bridge card now points to
+`https://phainonsmilk.ru/`.
+
+Rollback note: until the DNS records exist, pr-previews of this branch resolve
+by the OLD names (pr-<N>.abnocw.miew.ru) — those hosts are NOT served by the
+new preview nginx anymore. After the records are in, previews come back under
+`pr-<N>.abnocw.phainonsmilk.ru` / `pr-<N>.elysiae.phainonsmilk.ru` with fresh
+TLS from the cron (needs-tls ≈ 10 min is normal).

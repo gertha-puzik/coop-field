@@ -23,12 +23,12 @@ chat, day/night + weather, a drawn location with an in-game editor). One GitHub 
 
 **One engine, two public sites** (platform work, branch above):
 
-- **Beer Grottoes** (grotto site, `abnocw.miew.ru`) — public, guest-only, `/combat/` grotto
+- **Beer Grottoes** (grotto site, `abnocw.phainonsmilk.ru`) — public, guest-only, `/combat/` grotto
   rooms and a `/hunger/` placeholder. No accounts, no Elision traces in UI, bundle or server
   answers (the API zones are 404 on that host class).
-- **Elysiae / Elision** (elyria site, `elisium.miew.ru`) — registration/login (HttpOnly
+- **Elysiae / Elision** (elyria site, `phainonsmilk.ru`) — registration/login (HttpOnly
   cookie), the closed drawn location `/elision/`, player catalog `/players`, admin dashboard
-  `/admin`. Preview PRs get BOTH: `pr-<N>.abnocw.miew.ru` + `pr-<N>.elisium.miew.ru`.
+  `/admin`. Preview PRs get BOTH: `pr-<N>.abnocw.phainonsmilk.ru` + `pr-<N>.elysiae.phainonsmilk.ru`.
 
 The two loops share **no code**. The only link is the wire protocol: JSON frames `[event, payload]`.
 The server is the cell authority — two cats never share a cell; every step gets exactly
@@ -65,8 +65,8 @@ A push to `main` IS a production deploy (merge only by PR; branch protection is 
 PR preview (same VPS, `/opt/coop-field-preview/`) is TWO more workflows: `preview-build.yml`
 (on `pull_request`, no secrets, artifact carries both `www-grotto/` and `www-elyria/`) and
 `preview-deploy.yml` (on `workflow_run`, executed from `main`, holds `PREVIEW_SSH_KEY`).
-Deploy of a PR serves both hosts `pr-<N>.abnocw.miew.ru` (grottoes) and
-`pr-<N>.elisium.miew.ru` (Elysiae) from one room instance; TLS per-host by a root cron
+Deploy of a PR serves both hosts `pr-<N>.abnocw.phainonsmilk.ru` (grottoes) and
+`pr-<N>.elysiae.phainonsmilk.ru` (Elysiae) from one room instance; TLS per-host by a root cron
 (~5 min). See `docs/PREVIEW-ENVIRONMENTS.md`.
 
 ## Module map (top files; path — responsibility; sizes = wc -l, 2026-11-08)
@@ -167,7 +167,7 @@ The agent (or owner) opens a PR, waits for green checks, then **may merge it its
 work. Either way: never a direct push to `main`.
 
 PR descriptions are a contract (owner directive, 2026-11-08): attach links to BOTH
-feature environments — `https://pr-<N>.abnocw.miew.ru` + `https://pr-<N>.elisium.miew.ru`
+feature environments — `https://pr-<N>.abnocw.phainonsmilk.ru` + `https://pr-<N>.elysiae.phainonsmilk.ru`
 (the preview bot fills the marked block) — AND a short bullet list of what was ADDED
 and what was CHANGED, with the verification done (gates + live checks). Shape:
 `.github/PULL_REQUEST_TEMPLATE.md`.

@@ -22,8 +22,8 @@ NGINX_D="/etc/nginx/preview.d"
 HOST="$(basename "${1:-${RENEWED_LINEAGE:-}}")"
 [ -n "$HOST" ] && [ "$HOST" != "${RENEWED_LINEAGE:-SAME}" ] || true
 case "$HOST" in
-  *.abnocw.miew.ru|*.elisium.miew.ru) ;;
-  *) echo "coop-preview-tls-sync: $HOST не preview-хост — зеркалю только *.abnocw.miew.ru и *.elisium.miew.ru" >&2; exit 0 ;;
+  *.abnocw.phainonsmilk.ru|*.elysiae.phainonsmilk.ru) ;;
+  *) echo "coop-preview-tls-sync: $HOST не preview-хост — зеркалю только *.abnocw.phainonsmilk.ru и *.elysiae.phainonsmilk.ru" >&2; exit 0 ;;
 esac
 
 SRC="/etc/letsencrypt/live/$HOST"

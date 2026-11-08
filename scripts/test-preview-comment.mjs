@@ -46,8 +46,8 @@ const CTX_BASE = {
   pr: "41",
   status: "live",
   mode: "dual",
-  url: "https://pr-41.abnocw.miew.ru",
-  url2: "https://pr-41.elisium.miew.ru",
+  url: "https://pr-41.abnocw.phainonsmilk.ru",
+  url2: "https://pr-41.elysiae.phainonsmilk.ru",
   sha: "501a936deadbeef",
   slug: "pr-41",
   grotto: "ok",
@@ -102,7 +102,7 @@ for (const [status, needle] of truthful) {
   // The destroyed wording (verbatim port) does not name the hosts — only this
   // status is exempt from the both-hosts requirement.
   if (status !== "destroyed") {
-    ok(`body ${status}: both hosts named`, body.includes("abnocw.miew.ru") && body.includes("elisium.miew.ru"));
+    ok(`body ${status}: both hosts named`, body.includes("abnocw.phainonsmilk.ru") && body.includes("phainonsmilk.ru"));
   }
 }
 ok("body unknown: job-error fallback", commentBody(ctx({ status: "" })).includes("ошибка джобы"));
@@ -114,14 +114,14 @@ ok("body partial: grotto/elyria verdicts", commentBody(ctx({ status: "partial-fa
 // ── Header block: live links both hosts, pre-live NEVER publishes hrefs ──
 {
   const hdrLive = headerLine(ctx({ status: "live" }));
-  ok("header live dual: grotto href", hdrLive.includes("[https://pr-41.abnocw.miew.ru](https://pr-41.abnocw.miew.ru)"));
-  ok("header live dual: elyria href", hdrLive.includes("[https://pr-41.elisium.miew.ru](https://pr-41.elisium.miew.ru)"));
+  ok("header live dual: grotto href", hdrLive.includes("[https://pr-41.abnocw.phainonsmilk.ru](https://pr-41.abnocw.phainonsmilk.ru)"));
+  ok("header live dual: elyria href", hdrLive.includes("[https://pr-41.elysiae.phainonsmilk.ru](https://pr-41.elysiae.phainonsmilk.ru)"));
 }
 for (const status of ["needs-tls", "needs-secret", "needs-bootstrap", "failed", "partial-failure", ""]) {
   const h = headerLine(ctx({ status }));
   ok(`header ${status || "unknown"}: no speculative href`, !h.includes("](http"));
 }
-ok("header destroyed dual: both hosts named", headerLine(ctx({ status: "destroyed" })).includes("pr-41.elisium.miew.ru"));
+ok("header destroyed dual: both hosts named", headerLine(ctx({ status: "destroyed" })).includes("pr-41.elysiae.phainonsmilk.ru"));
 ok("header legacy live: PR #49 note", headerLine(ctx({ mode: "legacy-single", status: "live" })).includes("legacy single-site"));
 ok("header legacy unknown: capital note", headerLine(ctx({ mode: "legacy-single", status: "" })).includes("Legacy single-site"));
 
@@ -143,7 +143,7 @@ ok("header legacy unknown: capital note", headerLine(ctx({ mode: "legacy-single"
   ok("create: marker comment posted", post != null && post.body.body.startsWith(PREVIEW_COMMENT_MARKER) && res.commentId === 999 && !res.updated);
   ok("create: badge deployment recorded", badge != null && badge.body.ref === "501a936deadbeef" && badge.body.auto_merge === false && res.badgePosted);
   ok("create: badge status live", statusPost != null && statusPost.body.state === "success" && statusPost.body.environment_url === ctx().url);
-  ok("create: header patch carries block", hdrPatch != null && hdrPatch.body.body.includes("pr-41.elisium.miew.ru") && res.headerUpdated);
+  ok("create: header patch carries block", hdrPatch != null && hdrPatch.body.body.includes("pr-41.elysiae.phainonsmilk.ru") && res.headerUpdated);
 }
 
 // ── Scenario: marker already exists -> PATCH, zero duplicate POSTs ────────

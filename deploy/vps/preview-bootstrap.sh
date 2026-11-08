@@ -119,11 +119,11 @@ else
   echo "Приватный ключ на сервере не создавали: вход идёт ключом из Secrets."
 fi
 echo
-echo "TLS /etc/letsencrypt/live/abnocw.miew.ru:"
-WILD_PEM="/etc/letsencrypt/live/abnocw.miew.ru/fullchain.pem"
-if [ -f "$WILD_PEM" ] && openssl x509 -in "$WILD_PEM" -noout -ext subjectAltName 2>/dev/null | grep -q 'DNS:\*\.abnocw\.miew\.ru'; then
+echo "TLS /etc/letsencrypt/live/abnocw.phainonsmilk.ru:"
+WILD_PEM="/etc/letsencrypt/live/abnocw.phainonsmilk.ru/fullchain.pem"
+if [ -f "$WILD_PEM" ] && openssl x509 -in "$WILD_PEM" -noout -ext subjectAltName 2>/dev/null | grep -q 'DNS:\*\.abnocw\.phainonsmilk\.ru'; then
   echo "  wildcard SAN есть — preview-apply повесит :443"
 else
-  echo "  wildcard SAN нет (апекс abnocw.miew.ru на поддомен не ставим)."
-  echo "  preview слушает :80, пока не будет DNS-01 на *.abnocw.miew.ru"
+  echo "  wildcard SAN нет (апекс abnocw.phainonsmilk.ru на поддомен не ставим)."
+  echo "  preview слушает :80, пока не будет DNS-01 на *.abnocw.phainonsmilk.ru"
 fi

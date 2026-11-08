@@ -15,4 +15,4 @@
 
 ## Verification
 - Gates run: (typecheck / arch:check / check:variants / battery items …)
-- Live checks on the preview: (what was opened and verified on pr-<N>.abnocw.miew.ru and pr-<N>.elisium.miew.ru)
+- Live checks on the preview: (what was opened and verified on pr-<N>.abnocw.phainonsmilk.ru and pr-<N>.elysiae.phainonsmilk.ru)

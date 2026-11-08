@@ -307,7 +307,7 @@ export function WanderMenu() {
           );
         })}
         {!IS_ELYRIA ? (
-          <a className="wander-window" href="https://elisium.miew.ru/">
+          <a className="wander-window" href="https://phainonsmilk.ru/">
             <span className="wander-dots" aria-hidden>
               <i />
               <i />

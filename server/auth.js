@@ -315,7 +315,7 @@ function reasonText(code) {
 function cookieHeader(token, secure) {
   const maxAge = Math.floor(TTL_MS / 1000);
   // B1: host-only cookie — атрибута Domain намеренно НЕТ: кука привязана к
-  // точному хосту и не расползается на соседние поддомены miew.ru.
+  // точному хосту и не расползается на соседние поддомены зоны.
   const parts = [`${COOKIE}=${token}`, "HttpOnly", "Path=/", `Max-Age=${maxAge}`];
   // P1: https-кука — Secure + SameSite=Lax (браузерный ход Элизии был
   // same-origin, None туда не нужен). COOKIE_LOOSE=1 возвращает легаси None

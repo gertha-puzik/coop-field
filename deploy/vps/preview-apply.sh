@@ -7,8 +7,8 @@
 # PR-коду исполнить произвольный юнит от root.
 #
 # Dual-host (P5): одно окружение = ДВА сайта и ДВА веб-корня:
-#   pr-<номер>.abnocw.miew.ru  -> $APP/www-grotto  (публичные «Пивные гротты»)
-#   pr-<номер>.elisium.miew.ru -> $APP/www-elyria  (Элизия Эйдес)
+#   pr-<номер>.abnocw.phainonsmilk.ru  -> $APP/www-grotto  (публичные «Пивные гротты»)
+#   pr-<номер>.elysiae.phainonsmilk.ru -> $APP/www-elyria  (Элизия Эйдес)
 # Инстанс комнаты на PR остаётся один (один порт): оба server-блока nginx
 # проксируют на один и тот же 127.0.0.1:$PORT; что именно разрешено на
 # каждом хосте, решает сервер по env PUBLIC_HOSTS/ELYRIA_HOSTS (фаза P1) —
@@ -65,8 +65,8 @@ PORT="${PREVIEW_PORT:-}"
 ACTION="${PREVIEW_ACTION:-apply}"
 SHA="${PREVIEW_SHA:-unknown}"
 IN="${PREVIEW_IN:-$HOME/incoming-preview/$SLUG}"
-HOST="${PREVIEW_HOST:-$SLUG.abnocw.miew.ru}"
-HOST2="${PREVIEW_HOST2:-$SLUG.elisium.miew.ru}"
+HOST="${PREVIEW_HOST:-$SLUG.abnocw.phainonsmilk.ru}"
+HOST2="${PREVIEW_HOST2:-$SLUG.elysiae.phainonsmilk.ru}"
 
 fail() { echo "$*" >&2; exit 1; }
 
@@ -87,13 +87,13 @@ valid_host() {
   local h="$1"
   local label=""
   case "$h" in
-    *.abnocw.miew.ru)
-      label="${h%.abnocw.miew.ru}"
-      [ "$h" = "$label.abnocw.miew.ru" ] || return 1
+    *.abnocw.phainonsmilk.ru)
+      label="${h%.abnocw.phainonsmilk.ru}"
+      [ "$h" = "$label.abnocw.phainonsmilk.ru" ] || return 1
       ;;
-    *.elisium.miew.ru)
-      label="${h%.elisium.miew.ru}"
-      [ "$h" = "$label.elisium.miew.ru" ] || return 1
+    *.elysiae.phainonsmilk.ru)
+      label="${h%.elysiae.phainonsmilk.ru}"
+      [ "$h" = "$label.elysiae.phainonsmilk.ru" ] || return 1
       ;;
     *)
       return 1
@@ -114,11 +114,11 @@ GROTTO_HOST=""
 ELYRIA_HOST=""
 for h in "$HOST" "$HOST2"; do
   case "$h" in
-    *.abnocw.miew.ru)
+    *.abnocw.phainonsmilk.ru)
       [ -z "$GROTTO_HOST" ] || fail "два abnocw-хоста: нужен ровно один (${HOST} + ${HOST2})"
       GROTTO_HOST="$h"
       ;;
-    *.elisium.miew.ru)
+    *.elysiae.phainonsmilk.ru)
       [ -z "$ELYRIA_HOST" ] || fail "два elisium-хоста: нужен ровно один (${HOST} + ${HOST2})"
       ELYRIA_HOST="$h"
       ;;
@@ -150,7 +150,7 @@ if [ "$ARTIFACT_MODE" = "legacy-single" ]; then
   # abnocw-зоной: Элизия-суффикс для одно-сайтового артефакта — чужой хост,
   # отказ, а не тихая подмена хостом из HOST2.
   case "$HOST" in
-    *.abnocw.miew.ru) [ -n "$GROTTO_HOST" ] || GROTTO_HOST="$HOST" ;;
+    *.abnocw.phainonsmilk.ru) [ -n "$GROTTO_HOST" ] || GROTTO_HOST="$HOST" ;;
     *) fail "legacy-single артефакт деплоится на один abnocw-хост (получили ${HOST})" ;;
   esac
 else
@@ -204,8 +204,8 @@ cert_covers_host() {
   pem="$dir/fullchain.pem"
   [ -f "$pem" ] && [ -f "$dir/privkey.pem" ] || return 1
   case "$host" in
-    *.abnocw.miew.ru) wild="DNS:\\*\\.abnocw\\.miew\\.ru" ;;
-    *.elisium.miew.ru) wild="DNS:\\*\\.elisium\\.miew\\.ru" ;;
+    *.abnocw.phainonsmilk.ru) wild="DNS:\\*\\.abnocw\\.phainonsmilk\\.ru" ;;
+    *.elysiae.phainonsmilk.ru) wild="DNS:\\*\\.elysiae\\.phainonsmilk\\.ru" ;;
     *) return 1 ;;
   esac
   sans="$(openssl x509 -in "$pem" -noout -text 2>/dev/null || true)"
@@ -217,7 +217,7 @@ cert_dir_for_host() {
   # Печатает первый каталог с сертификатом, покрывающим $1, либо пусто.
   # Приоритет: per-host зеркало (${PREVIEW_TLS_PER:-tls/<host>} — штатный
   # HTTP-01 поток coop-preview-cert) — потом зеркало зоны
-  # tls/abnocw.miew.ru|tls/elisium.miew.ru (wildcard DNS-01) — в конце
+  # tls/abnocw.phainonsmilk.ru|tls/elysiae.phainonsmilk.ru (wildcard DNS-01) — в конце
   # легаси-слот PREVIEW_TLS_WILD (один SAN-набор теоретически мог бы покрыть
   # обе зоны сразу).
   local host="$1"
@@ -225,12 +225,12 @@ cert_dir_for_host() {
   local per="${PREVIEW_TLS_PER:-$PREVIEW_ROOT/tls/$host}"
   local zone=""
   case "$host" in
-    *.abnocw.miew.ru) zone="abnocw" ;;
-    *.elisium.miew.ru) zone="elisium" ;;
+    *.abnocw.phainonsmilk.ru) zone="abnocw" ;;
+    *.elysiae.phainonsmilk.ru) zone="elysiae" ;;
     *) return 1 ;;
   esac
   local d=""
-  for d in "$per" "$PREVIEW_ROOT/tls/${zone}.miew.ru" "$wild"; do
+  for d in "$per" "$PREVIEW_ROOT/tls/${zone}.phainonsmilk.ru" "$wild"; do
     if cert_covers_host "$host" "$d"; then
       printf '%s\n' "$d"
       return 0

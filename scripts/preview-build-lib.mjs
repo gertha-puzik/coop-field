@@ -118,7 +118,7 @@ export function validateDualRoots(distDir, opts = {}) {
       // точечная легализация; всё прочее (любые другие вхождения маркеров)
       // остаётся утечкой «варианты перепутаны». Строки обязаны присутствовать
       // ровно в этой форме (см. wander-gate.tsx bridge card + check-variants).
-      const BRIDGE_NEEDLES = ["https://elisium.miew.ru/", "Wanderpaws: Elysiae"];
+      const BRIDGE_NEEDLES = ["https://phainonsmilk.ru/", "Wanderpaws: Elysiae"];
       let grottoText = text["www-grotto"];
       for (const needle of BRIDGE_NEEDLES) grottoText = grottoText.split(needle).join("");
       if (ELISION_MARKERS.some((m) => grottoText.includes(m))) {

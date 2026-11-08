@@ -39,7 +39,7 @@ const ELYRIA = path.isAbsolute(elyriaArg) ? elyriaArg : path.resolve(ROOT, elyri
  * «Панель админа» — тексты страниц Элизии).
  */
 const GROTTO_FORBIDDEN = [
-  "Элизи", "elisium", "/players/", "/admin/", "/auth/",
+  "Элизи", "elisium", "phainonsmilk", "/players/", "/admin/", "/auth/",
   "coop_session", "Зарегистри", "Каталог игроков", "Панель админа",
 ];
 /** Снятые легаси-маршруты, которых НЕ должно быть в актуальной Элизии. */
@@ -93,24 +93,28 @@ function checkNoMarkers(label, root, markers) {
       continue;
     }
     for (const marker of markers) {
-      // Мост на сайт Элизии (карточка на главной гротто, мандат владелицы
-      // 2026-11-08): «elisium» в сборке гротто легален ТОЛЬКО полной формой
-      // адреса https://elisium.miew.ru/ — точечно, с квотой; любое иное
-      // написание остаётся утечкой, как и все прочие маркеры.
-      if (label === "www-grotto" && marker === "elisium") {
+      // Мост на основную зону Элизии (карточка на главной гротто, мандат
+      // 2026-11-08; домен мигрирован на phainonsmilk.ru в тот же день).
+      // Легальные формы в www-grotto: (1) полный адрес моста
+      // https://phainonsmilk.ru/ — точечно, с квотой; (2) собственный домен
+      // гротто abnocw.phainonsmilk.ru (гостевая ветка wsUrlBase — общий корень
+      // зоны после миграции, не утечка). Любое иное написание — утечка.
+      if (label === "www-grotto" && marker === "phainonsmilk") {
         let pos = 0;
         let legal = 0;
+        let legalGrottoHost = 0;
         const broken = [];
         while ((pos = text.indexOf(marker, pos)) !== -1) {
-          const left = text.slice(Math.max(0, pos - 8), pos);
-          const right = text.slice(pos + marker.length, pos + marker.length + 9);
-          if (left === "https://" && right === ".miew.ru/") legal += 1;
+          const left = text.slice(Math.max(0, pos - 16), pos);
+          const right = text.slice(pos + marker.length, pos + marker.length + 4);
+          if (left.endsWith("https://") && right === ".ru/") legal += 1;
+          else if (left.endsWith("abnocw.")) legalGrottoHost += 1;
           else broken.push(pos);
           pos += marker.length;
         }
         if (broken.length) {
           const sample = text.slice(Math.max(0, broken[0] - 30), broken[0] + 40).replace(/\s+/g, " ");
-          hits.push(`${path.relative(ROOT, file)}: «elisium» вне моста (пример: …${sample}…)`);
+          hits.push(`${path.relative(ROOT, file)}: «phainonsmilk» вне моста (пример: …${sample}…)`);
         }
         if (legal > 64) {
           hits.push(`${path.relative(ROOT, file)}: мост- адресов подозрительно много (${legal}) — норма карточки ≤ ~16`);

@@ -56,7 +56,7 @@ A4 (shared-JSON), A3 (резка simulator), S7 (displayName), WS-broadcast, D3 
 справочник Герты, безопасный `/cfg`). Фаза 6 — скрипты и workflow в репо.
 
 **Решения владелицы (2026-11-06).** Preview — **тот же VPS**, каталог
-`/opt/coop-field-preview/` (не отдельный хост). Wildcard DNS `*.abnocw.miew.ru`
+`/opt/coop-field-preview/` (не отдельный хост). Wildcard DNS `*.abnocw.phainonsmilk.ru`
 уже смотрит на `89.232.184.77`. Репозиторий должен стать **private** (кнопка в
 GitHub Settings; агент visibility не меняет). Живой preview: агент SSH не
 открыл (нет ключа). Остался `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` —
@@ -81,7 +81,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 без правил (страница-заглушка). Страницы режимов живут на своих адресах: `/combat/`
 (гроты), `/elision/` (закрытая локация сессией), `/hunger/` (каркас), плюс `/players/`
 и `/admin/` на Элизии. Preview-окружения для пул-реквестов есть, двухсайтовые
-(`pr-<N>.abnocw.miew.ru` + `pr-<N>.elisium.miew.ru`), см.
+(`pr-<N>.abnocw.phainonsmilk.ru` + `pr-<N>.elysiae.phainonsmilk.ru`), см.
 [PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md); мерж в `main` по-прежнему является
 деплоем прода — но теперь через CI и два rsync, а не мгновенно.
 
@@ -185,7 +185,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 - маршрутов кроме `src/app/page.tsx` (никаких `/elision`, `/combat`, `/hunger`);
 - комнат hunger / arena / combat как отдельных режимов;
 - ролей guest / registered / moderator / admin как модели прав;
-- GitHub Deployments для PR, slug-нормализации, `*.abnocw.miew.ru`;
+- GitHub Deployments для PR, slug-нормализации, `*.abnocw.phainonsmilk.ru`;
 - встроенного LLM или UI-чата «помощника».
 
 ---
@@ -206,7 +206,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 8. **Конфиги по режимам** на сервере: сохранение, сброс, import/export, backup,
    история, сравнение.
 9. **Справочник Герты** из типизированных метаданных реальных файлов.
-10. **Preview PR**: `https://<ветка>.abnocw.miew.ru`, front+WS одной ветки,
+10. **Preview PR**: `https://<ветка>.abnocw.phainonsmilk.ru`, front+WS одной ветки,
     изоляция от прода, один комментарий, без форков на VPS.
 
 ---
@@ -324,7 +324,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 8. **ИИ:** не строить. Cursor читает этот справочник и `AGENTS.md`.
 9. **Preview (решение владелицы):** тот же VPS, каталог
    `/opt/coop-field-preview/<slug>/` + отдельный порт + свои `data/` + nginx
-   `*.abnocw.miew.ru`. Сборка из SHA коммита. Прод-пайплайн не менять.
+   `*.abnocw.phainonsmilk.ru`. Сборка из SHA коммита. Прод-пайплайн не менять.
    DNS wildcard уже в зоне. Агент на VPS не заходит; остаток шагов — у Сырь.
 
 ---
@@ -371,7 +371,7 @@ GitHub Settings; агент visibility не меняет). Живой preview: �
 | Контент локаций и скинов | Редактор + whitelist скинов | Расширять их, не второй редактор | `editor-ops.ts`, `settings.ts` SPRITES |
 | Справочник «как устроена игра» | Документы для агентов (`AGENTS.md`, `ARCHITECTURE.md`, `AI-CONTEXT.md`) | Внутриадминные карточки на простом русском из метаданных | `src/lib/handbook/*`, вкладка панели |
 | ИИ-помощник в игре | Нет, и **не делать** | Cursor + справочник + AGENTS.md | этот документ §10 |
-| Preview PR `*.abnocw.miew.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview-build.yml` + `preview-deploy.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
+| Preview PR `*.abnocw.phainonsmilk.ru` | Workflow + destroy + bootstrap в репо; DNS есть; SSH агента нет | `preview-bootstrap.sh` + секрет `PREVIEW_SSH_KEY` | `.github/workflows/preview-build.yml` + `preview-deploy.yml`, `deploy/vps/`, `docs/PREVIEW-ENVIRONMENTS.md` |
 | Не грузить все режимы сразу | Next code-split по маршрутам сам | Не импортировать hunger-каркас в грот без нужды | `src/app/*/page.tsx` |
 | Не три копии движка | Один `Simulator` | Проп `mode` / стартовая комната | `simulator.tsx` (тонкий проп, без роста логики) |
 

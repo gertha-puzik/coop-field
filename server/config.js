@@ -54,7 +54,7 @@ function isAllowedOrigin(origin) {
 
 /* ---------- B1: per-destination Origin-политика ----------
  * Один инстанс обслуживает оба сайта (гроты и Элизию), превью повторяет
- * топологию: pr-<N>.abnocw.miew.ru и pr-<N>.elisium.miew.ru на одном сервере,
+ * топологию: pr-<N>.abnocw.phainonsmilk.ru и pr-<N>.elysiae.phainonsmilk.ru на одном сервере,
  * а env ALLOWED_ORIGINS — один общий список. Поэтому «разрешён» — это ПАРА
  * (Origin, класс destination-хоста), а не вхождение в общий список: origin
  * гротов не может читать credentialed-ответы Элизии и наоборот. Origin-хост
@@ -235,18 +235,19 @@ const HEIGHT = 6;
  * Класс решает доступность API-зон: на public сетевой гейт (net.js) закрывает
  * /auth/*, /profiles/*, /admin/* и пишущий /cfg; elyria и local работают как
  * раньше. Хост сравнивается точным именем или суффиксом через точку (метка
- * зоны), поэтому превью-поддомены pr-<N>.abnocw.miew.ru наследуют класс.
+ * зоны), поэтому превью-поддомены pr-<N>.abnocw.phainonsmilk.ru наследуют класс.
  * env PUBLIC_HOSTS / ELYRIA_HOSTS (имена через запятую) ДОПОЛНЯЮТ дефолты.
  * Неизвестный хост → public: класс по умолчанию — самый закрытый.
  */
 const PUBLIC_DEFAULT_HOSTS = [
-  "abnocw.miew.ru",
+  "abnocw.phainonsmilk.ru",
   "coop.89-232-184-77.sslip.io",
   "abnocw.89-232-184-77.sslip.io",
 ];
-/** Суффиксы, которых нет в точных дефолтах: *.abnocw и *.sslip-зона. */
-const PUBLIC_SUFFIX_HOSTS = [".89-232-184-77.sslip.io"];
-const ELYRIA_DEFAULT_HOSTS = ["elisium.miew.ru"];
+/** Зоны превью под суффиксом грот: pr-<N>.abnocw.phainonsmilk.ru (+ sslip-легаси). */
+const PUBLIC_SUFFIX_HOSTS = [".89-232-184-77.sslip.io", ".abnocw.phainonsmilk.ru"];
+/** Основа = apex точное имя (рега/меню); превью Элизии — зона *.elysiae.phainonsmilk.ru. */
+const ELYRIA_DEFAULT_HOSTS = ["phainonsmilk.ru", ".elysiae.phainonsmilk.ru"];
 const LOCAL_HOST_ALIASES = new Set(["ip6-localhost", "ip6-loopback"]);
 
 /** Host из req.headers.host: trim + lower, порт отрезан, IPv6-литерал в скобках цел. */
@@ -265,9 +266,20 @@ function bareHost(raw) {
   return host.slice(0, colon);
 }
 
-/** Точное имя ИЛИ суб-домен зоны через точку-метку (host = entry | *.entry). */
+/**
+ * Метка имени хоста: запись с ВЕДУЩЕЙ ТОЧКОЙ (".89-232-184-77.sslip.io")
+ * — зона: матчит любой поддомен; запись без точки ("abnocw.phainonsmilk.ru")
+ * — ТОЛЬКО точное имя. Точка-метка обязательна с миграцией на apex-домен
+ * phainonsmilk.ru (2026-11-08): запись "phainonsmilk.ru" без метки обязана
+ * НЕ поглощать поддомены соседних сайтов зоны (abnocw.*, icelation.*,
+ * elysiae.*) — иначе zone-suffix-матч уводит гроты в класс elyria и
+ * закрывает гостевые комнаты (регрессия ловится test-server-modules:
+ * "дефолт abnocw.phainonsmilk.ru" / "дефолт суффикс .abnocw.phainonsmilk.ru").
+ */
 function hostMatches(host, entry) {
-  return host === entry || host.endsWith("." + entry);
+  return entry.startsWith(".")
+    ? host.endsWith(entry)
+    : host === entry;
 }
 
 function envHostList(name) {
