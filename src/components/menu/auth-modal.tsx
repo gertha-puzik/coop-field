@@ -250,9 +250,6 @@ export function AuthModal({
             >
               {busy ? 'Подождите…' : mode === 'register' ? 'Зарегистрироваться' : 'Войти'}
             </button>
-            <p className="mt-3.5 text-center text-[12px] leading-snug text-[rgba(185,179,217,0.6)]">
-              Сессия сохраняется в cookie — пароль не придётся вводить заново
-            </p>
           </form>
         </>
       )}
