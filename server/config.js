@@ -135,6 +135,48 @@ function csrfStrictFor(destClass) {
   return destClass === "public" || destClass === "elyria";
 }
 
+/* ---------- §5: инстанс-класс для fail-closed startup CSRF ----------
+ * COOP_INSTANCE_CLASS: 'production' | 'preview' | 'local' | 'test'.
+ *  - unknown значения → throw (fail closed, §5 «Unknown environment names»);
+ *  - без явного env: preview-маркеры (PREVIEW_SITES_MODE|PREVIEW_SLUG, их
+ *    пишет preview-apply.sh в env инстанса) → 'preview', иначе 'local';
+ *  - «production» НИКОГДА не выводится по косвенным признакам — прод обязан
+ *    заявить себя явно через systemd-юнит (deploy/vps/coop-field.service:
+ *    Environment=COOP_INSTANCE_CLASS=production); неявный дефолт — local.
+ * Это контекст ЗАПУСКА процесса, а не Host-класс запроса (destClass выше) —
+ * разные оси: per-request destClass решает origin/CSRF для конкретного хоста,
+ * инстанс-класс решает,ему ли вообще разрешено стартовать с ослаблениями.
+ */
+export function instanceEnvClass() {
+  const v = String(process.env.COOP_INSTANCE_CLASS || "").trim().toLowerCase();
+  if (v) {
+    if (v === "production" || v === "preview" || v === "local" || v === "test") {
+      return v;
+    }
+    throw new Error(
+      `COOP_INSTANCE_CLASS='${process.env.COOP_INSTANCE_CLASS}': неизвестное значение — допустимы production|preview|local|test (fail-closed, §5).`,
+    );
+  }
+  if (process.env.PREVIEW_SITES_MODE || process.env.PREVIEW_SLUG) return "preview";
+  return "local";
+}
+
+/** Fail-closed старт инстанса (§5): на production/preview выключенный
+ *  AUTH_CSRF_STRICT — ошибка старта, а не тихое ослабление. Локальная
+ *  разработка и тест-стенды (class local/test) сохраняют легаси-режим,
+ *  им нужен AUTH_CSRF_STRICT='0' для контрольных сценариев B1. */
+export function assertStartupSecurity() {
+  const cls = instanceEnvClass();
+  const v = String(process.env.AUTH_CSRF_STRICT ?? "auto").trim().toLowerCase();
+  if (cls === "production" || cls === "preview") {
+    if (["0", "no", "off", "false"].includes(v)) {
+      throw new Error(
+        `AUTH_CSRF_STRICT='${v}' запрещён на инстансе '${cls}': CSRF-защита не может быть выключена — старт отменён (fail-closed, §5).`,
+      );
+    }
+  }
+}
+
 /** Решение по unsafe-запросу: null — пропустить, иначе {status, reason} = 403.
  *  hasAuth = запрос несёт сессию-реквизиты (cookie coop_session / ?t=token,
  *  в т.ч. невалидные — fail-closed: серверу не важно, жив ли токен, чтобы

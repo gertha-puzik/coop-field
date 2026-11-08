@@ -66,6 +66,15 @@ jobs:
       # атомарно (mv) в финальные имена; предыдущая выкладка остаётся в
       # .prev (один снимок назад). Ошибка на любом шаге — финальные корни
       # не меняются вовсе.
+      - name: Изоляция вариантов (A1)
+        # Задача 3 (N4): проверка обрезки чужих маршрутов обязана жить в самом
+        # прод-деплое, не только в PR-пути (merge-коммит ≠ head-SHA PR;
+        # политика «PR-only» держится на дисциплине). Гейт стоит ДО staging-заливки:
+        # изолированный брак не уезжает на VPS даже в staging.
+        run: |
+          set -euo pipefail
+          node scripts/check-variants.mjs www-grotto www-elyria
+
       - name: Staging-заливка обоих корней
         # www.staging / www-elyria.staging — НЕ читаются nginx'ом: это
         # «зелёная зона», сюда можно лить что угодно без риска для прода.
@@ -84,8 +93,12 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' '89.232.184.77 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxM5G0ydWqnLcTcPAPUWYgBRspDlaV1oQzkUO2lJzNF' >> ~/.ssh/known_hosts
           SSH="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
-          if ! $SSH "$SSH_USER@$SSH_HOST" "mkdir -p /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging && test -w /opt/coop-field/www.staging && test -w /opt/coop-field/www-elyria.staging"; then
-            echo "нет записи в stage-каталоги /opt/coop-field/www{,-elyria}.staging. Один раз от root: install -d -o deploy -g deploy /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging. ПРЕД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты." >&2
+          if ! $SSH "$SSH_USER@$SSH_HOST" "test -w /opt/coop-field && mkdir -p /opt/coop-field/www.staging /opt/coop-field/www-elyria.staging && test -w /opt/coop-field/www.staging && test -w /opt/coop-field/www-elyria.staging"; then
+            echo "нет записи в stage-каталоги /opt/coop-field/www{,-elyria}.staging ИЛИ в сам /opt/coop-field" >&2
+            echo "промоушн делает mv/rm в САМОМ /opt/coop-field (mv www www.prev и т.д.) — нужна запись в каталог, а не только в www-elyria/; без неё первый прод-деплой после мерджа упадёт на промоушне (fail-safe: прод цел, деплой сломан до ручной правки)" >&2
+            echo "один раз от root, вариант A: chgrp deploy /opt/coop-field && chmod g+w /opt/coop-field" >&2
+            echo "вариант B (жёстче): root-owned скрипт промоушна + sudoers-строка только на него — см. docs" >&2
+            echo "ПРЕД НЕ СОСКОЛЬЗНУЛ: финальные www/ и www-elyria/ не тронуты" >&2
             exit 1
           fi
           # --delete только внутри stage-каталогов: свежая пара гарантированно

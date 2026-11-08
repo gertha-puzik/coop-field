@@ -75,7 +75,7 @@ npm run arch:check           # гейт архитектуры: файлы ≤80
 npm run test:queue           # очередь шагов (поднимает свой сервер)
 npm run test:ws              # контракт комнаты против живого сервера (npm start либо WS_URL=ws://...)
 npm run test:auth            # аккаунты: регистрация/вход, cookie/CSRF, закрытая Элизия, host-гейт
-npm run test:cfg             # реестр конфига (whitelist 5 ключей, клэмпы)
+npm run test:cfg             # реестр конфига (whitelist 6 ключей вкл. allowPlayerAtmosphereControl, клэмпы)
 npm run test:profiles        # HTTP-профили: каталог, карточка, правка своей
 npm run test:server-modules  # смоук серверных модулей (золотые значения)
 ```
@@ -93,6 +93,11 @@ npm run test:server-modules  # смоук серверных модулей (з�
 
 Мерж PR в `main` [gertha-puzik/coop-field](https://github.com/gertha-puzik/coop-field) — это деплой прода, поэтому прямой пуш в `main` запрещён (branch protection): изменения идут через ветка + PR. Мерж запускает Actions:
 
+**Права на атомарный промоушн (одноразовый шаг владелицы, задача 2 / N2).**
+Атомарный промоушн пары корней (`mv www → www.staging → www.prev …`) делает `mv`/`rm` в **самом** `/opt/coop-field` — права только на `www-elyria/` для staged-схемы недостаточны. Префлайт «Staging-заливка обоих корней» честно падает раньше любой заливки, если записи нет. Варианты (один раз от root):
+- **A (использован на проде 2026-11-08):** `chgrp deploy /opt/coop-field && chmod g+w /opt/coop-field` — deploy уже раскатывает весь серверный код, уровень доверия тот же;
+- **B (жёстче, по желанию):** root-owned скрипт промоушна + sudoers-строка только на него.
+
 | Workflow | Когда стартует | Что делает / ловит |
 |----------|---------------|--------------------|
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | типы, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков, смоук модулей сервера, аккаунты, превью-гейты |
@@ -101,6 +106,9 @@ npm run test:server-modules  # смоук серверных модулей (з�
 | «Preview PR» (preview-build.yml + preview-deploy.yml) | PR своего репо | тот же VPS, два сайта на PR: `pr-<N>.abnocw.miew.ru` (гроты) + `pr-<N>.elisium.miew.ru` (Элизия), один инстанс комнаты; снос при close/merge; см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
 Секреты в GitHub: `VPS_SSH_KEY`; для превью — `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
+
+**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`elisium` и все превью) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08); требование закреплено в docs/PREVIEW-ENVIRONMENTS.md.
+
 
 ## Для разработки — куда смотреть
 

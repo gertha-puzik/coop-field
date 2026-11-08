@@ -74,6 +74,15 @@ jobs:
         run: node scripts/test-move-queue.mjs
       - name: Аккаунты и закрытая Элизия
         run: npm run test:auth
+      # B1: ~44 живых пробы кросс-доменной изоляции — сам поднимает
+      # sandbox-сервер с обоими классами хостов (задача 4 / N3:
+      # конвенция без гейта — AGENTS.md обещает, CI обязан гонять).
+      - name: Кросс-доменная изоляция (B1)
+        run: npm run test:cross-origin
+      # §5 fail-closed: production/preview не могут стартовать с выключенным
+      # CSRF (COOP_INSTANCE_CLASS-контракт), unknown-класс — тоже отказ.
+      - name: CSRF fail-closed старт (§5)
+        run: npm run test:csrf-startup
       # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
       # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
       - name: Реестр конфига

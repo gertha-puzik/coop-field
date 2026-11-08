@@ -16,6 +16,7 @@ import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
 import {
   PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
   REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest, WS_MAX_PER_IP,
+  assertStartupSecurity,
 } from "./config.js";
 import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
@@ -79,6 +80,9 @@ function onMessage(ws, raw) {
   }
 }
 export function startServer() {
+  // §5 fail-closed: первым делом — инстанс-класс и запрет выключенного CSRF
+  // на production/preview. До любого listen и регистрации колбэков.
+  assertStartupSecurity();
   const MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",

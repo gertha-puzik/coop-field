@@ -299,6 +299,9 @@ ${https_jump}
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        # §6: /cfg — credentialed admin-зона, auth rate-limits считаются по
+        # клиентскому IP так же, как в /auth (прод-блоки уже так делают).
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
     location /profiles {
@@ -873,15 +876,15 @@ if [ "$ARTIFACT_MODE" = "legacy-single" ]; then
   # grep -v ниже гарантирует, что ключ от прошлого dual-окружения удалён.
   SITES_MODE="legacy-single"
   AO="http://$GROTTO_HOST,https://$GROTTO_HOST"
-  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE)=' "$APP/env" > "$APP/env.n" || true
-  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\n' \
+  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE|COOP_INSTANCE_CLASS)=' "$APP/env" > "$APP/env.n" || true
+  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\nCOOP_INSTANCE_CLASS=preview\n' \
     "$PORT" "$AO" "$GROTTO_HOST" "$SHA" "$SITES_MODE" >> "$APP/env.n"
 else
   SITES_MODE="dual"
   cmp -s "$APP/www-grotto/index.html" "$APP/www-elyria/index.html" && SITES_MODE="mirror"
   AO="http://$GROTTO_HOST,https://$GROTTO_HOST,http://$ELYRIA_HOST,https://$ELYRIA_HOST"
-  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE)=' "$APP/env" > "$APP/env.n" || true
-  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nELYRIA_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\n' \
+  grep -v -E '^(PORT|ALLOWED_ORIGINS|PUBLIC_HOSTS|ELYRIA_HOSTS|PREVIEW_SHA|PREVIEW_SITES_MODE|COOP_INSTANCE_CLASS)=' "$APP/env" > "$APP/env.n" || true
+  printf 'PORT=%s\nALLOWED_ORIGINS=%s\nPUBLIC_HOSTS=%s\nELYRIA_HOSTS=%s\nPREVIEW_SHA=%s\nPREVIEW_SITES_MODE=%s\nCOOP_INSTANCE_CLASS=preview\n' \
     "$PORT" "$AO" "$GROTTO_HOST" "$ELYRIA_HOST" "$SHA" "$SITES_MODE" >> "$APP/env.n"
 fi
 mv "$APP/env.n" "$APP/env"

@@ -166,6 +166,21 @@ ACME-challenge-локация на СВОЁМ root (важно: webroot для c
 `nginx -t` перед reload, с бэкапом и откатом. Сервер (не nginx) различает
 хосты по env `PUBLIC_HOSTS` / `ELYRIA_HOSTS` и по заголовку Host.
 
+Trusted proxy и клиентский IP (§6): бэкенд доверяет `X-Forwarded-For`
+ТОЛЬКО когда TCP-сокет пришёл с loopback (реверс-прокси на той же машине,
+`server/auth.js`), и берёт ПОСЛЕДНЮЮ запись — nginx обязан
+**перезаписывать** заголовок, а не сохранять клиентский, поэтому каждый
+проксируемый vhost (прод и превью) обязан отправлять:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+Без этого (или при слепом preserve) auth rate-лимиты видят loopback и
+выключены — фрагменты `preview-apply.sh` (/auth, /cfg, /profiles, /admin,
+/ws) и прод-блоки nginx уже это делают; новые локации обязаны продолжать.
+
+
 Origin сокета: `preview-apply.sh` держит в env юнита
 `ALLOWED_ORIGINS=http://<гроты>,https://<гроты>,http://<элизия>,https://<элизия>`
 (все четыре значения) и обновляет на каждый apply: сервер

@@ -763,8 +763,8 @@ try {
   });
   check(
     cfgAdminOk.status === 200 && cfgAdminOk.json?.ok === true &&
-      Object.keys(cfgAdminOk.json?.registry || {}).length === 5 && Array.isArray(cfgAdminOk.json?.history),
-    "cfg-admin: админ на /cfg/admin → 200 + registry (5 параметров) + history",
+      Object.keys(cfgAdminOk.json?.registry || {}).length === 6 && Array.isArray(cfgAdminOk.json?.history),
+    "cfg-admin: админ на /cfg/admin → 200 + registry (6 параметров: 5 глобальных + atmo.allowPlayerAtmosphereControl) + history",
   );
 
   // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;
