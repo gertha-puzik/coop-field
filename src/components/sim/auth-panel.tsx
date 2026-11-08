@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Button, Field, Input, Panel } from '@/components/ui';
 import type { CoopWhoami } from '@/lib/net/protocol';
 import { localAuthError, localFieldNameError, localNewLoginError, reasonText, roleLabel } from './auth-reasons';
 
@@ -15,6 +14,10 @@ import { localAuthError, localFieldNameError, localNewLoginError, reasonText, ro
  * server/accounts.js + server/auth.js handleAuthHttp. Register v2: при
  * создании логин — латиница/цифры/._- 2–24, имя на поле — опционально 2–24
  * видимых символов; вход — прежние мягкие правила, старые логины живы).
+ *
+ * UI-кирпичи — из внутренних наборов (ui-kit, docs/UI-KIT.md): панель — Panel,
+ * поля — Field+Input, главная кнопка — Button variant="primary" (пара
+ * --uk-accent-*: та же зелёная с тёмными чернилами, что была инлайном).
  */
 
 export function AuthPanel({
@@ -90,7 +93,7 @@ export function AuthPanel({
 
   if (inAccount) {
     return (
-      <div className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+      <Panel className="p-4">
         <h2 className="text-base font-bold text-[var(--sim-text)]">Вы вошли</h2>
         <p className="mt-1 text-sm text-[var(--sim-text-soft)]">
           {whoami?.login} · {role}. Имя на поле — из персонажа, его не подменить в join.
@@ -101,13 +104,14 @@ export function AuthPanel({
         <Button type="button" size="sm" variant="outline" className="mt-3 h-8 text-xs" onClick={onLogout} disabled={busy}>
           Выйти
         </Button>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <form
-      className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4"
+    <Panel
+      as="form"
+      className="p-4"
       onSubmit={(ev) => {
         ev.preventDefault();
         submit('login');
@@ -118,8 +122,7 @@ export function AuthPanel({
         Закрытый мир: чтобы играть под своим именем, войдите или создайте аккаунт. Логин при создании — латиница, цифры
         и ._-, 2–24 символа; пароль — от 8.
       </p>
-      <label className="mt-3 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-login">
-        Имя
+      <Field className="mt-3" label="Имя" htmlFor="auth-login" describedBy="auth-fail">
         <Input
           id="auth-login"
           className="mt-1 h-8 text-sm"
@@ -128,12 +131,16 @@ export function AuthPanel({
           autoComplete="username"
           placeholder="От 2 до 24 символов"
           autoFocus
-          aria-describedby="auth-fail"
           onChange={(e) => editLogin(e.target.value)}
         />
-      </label>
-      <label className="mt-2 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-field-name">
-        Имя на поле (для регистрации)
+      </Field>
+      <Field
+        className="mt-2"
+        label="Имя на поле (для регистрации)"
+        htmlFor="auth-field-name"
+        hint="необязательно — без него вас будут звать логином"
+        describedBy="auth-fail"
+      >
         <Input
           id="auth-field-name"
           className="mt-1 h-8 text-sm"
@@ -141,15 +148,10 @@ export function AuthPanel({
           maxLength={24}
           autoComplete="off"
           placeholder="как вас будут звать (можно кириллицей)"
-          aria-describedby="auth-fail"
           onChange={(e) => editFieldName(e.target.value)}
         />
-        <span className="mt-0.5 block text-[10px] leading-snug">
-          необязательно — без него вас будут звать логином
-        </span>
-      </label>
-      <label className="mt-2 block text-[11px] text-[var(--sim-text-faint)]" htmlFor="auth-pass">
-        Пароль
+      </Field>
+      <Field className="mt-2" label="Пароль" htmlFor="auth-pass" describedBy="auth-fail">
         <Input
           id="auth-pass"
           type="password"
@@ -157,22 +159,16 @@ export function AuthPanel({
           value={pass}
           autoComplete="current-password"
           placeholder="Не короче 8 символов"
-          aria-describedby="auth-fail"
           onChange={(e) => editPass(e.target.value)}
         />
-      </label>
+      </Field>
       {fail ? (
-        <p id="auth-fail" role="status" className="mt-2 text-xs font-semibold text-red-400">
+        <p id="auth-fail" role="status" className="mt-2 text-xs font-semibold text-[var(--uk-danger-soft-text)]">
           {fail}
         </p>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          size="sm"
-          className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-          disabled={busy}
-        >
+        <Button type="submit" size="sm" variant="primary" className="h-8 text-xs" disabled={busy}>
           Войти
         </Button>
         <Button
@@ -189,6 +185,6 @@ export function AuthPanel({
       <p className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
         «Войти» — по существующему имени. «Зарегистрироваться» — создаст аккаунт с этим логином; имя на поле — как вас будут звать (пустое → логином).
       </p>
-    </form>
+    </Panel>
   );
 }
