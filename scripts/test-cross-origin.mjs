@@ -204,6 +204,24 @@ try {
     "(c1b) профиль жертвы НЕ изменён после отказа 403 (запись не дошла)",
   );
 
+  // Regression: a host approved by the shared policy need not be duplicated
+  // in ALLOWED_ORIGINS. The old profile handler rejected it as plain `csrf`.
+  const skinOrigin = "https://phainonsmilk.ru";
+  const skinSave = await probe(PORT_A, { method: "PATCH", path: "/profiles/me",
+    host: "phainonsmilk.ru", origin: skinOrigin, cookie: cookieV,
+    body: { sprite: "puhlyashik", scale: 90 } });
+  check(skinSave.status === 200 && skinSave.json?.ok === true,
+    "profile skin: trusted same-site origin absent from ALLOWED_ORIGINS saves successfully");
+  const skinResave = await probe(PORT_A, { method: "PATCH", path: "/profiles/me",
+    host: "phainonsmilk.ru", origin: skinOrigin, cookie: cookieV,
+    body: { sprite: "puzatik", scale: 95 } });
+  check(skinResave.status === 200 && skinResave.json?.ok === true,
+    "profile skin: a second save can replace the selected skin");
+  const skinRead = await probe(PORT_A, { path: "/profiles/me", host: "phainonsmilk.ru",
+    origin: skinOrigin, cookie: cookieV });
+  check(skinRead.json?.characters?.some(c => c.id === skinRead.json.activeCharacterId && c.sprite === "puzatik" && c.size === 95),
+    "profile skin: fresh GET preserves the replacement skin and scale");
+
   // (d) FAIL-CLOSED: unsafe+cookie БЕЗ Origin → 403 csrf_origin_required.
   const d = await probe(PORT_A, { method: "POST", path: "/auth/logout", host: ELY, cookie: cookieV });
   check(
