@@ -13,10 +13,18 @@
  *     второй — cell_busy;
  *  3. сервер никогда не ставит двух котов в одну клетку;
  *  4. залп из 10 ходов подряд отвечает полностью.
+ *  5. S5 (аудит Z.AI 2026-11-08, отдельная песочница с заниженными лимитами):
+ *     per-IP потолок WS-сокетов (WS_MAX_PER_IP) — сверх close с info
+ *     'too_many_sockets'; потолок ЖИВЫХ комнат (ROOMS_MAX) — новая комната
+ *     сверх даёт noplace 'rooms_full' и НЕ создаётся, вход в существующие
+ *     комнаты лимитом не затрагивается.
  *
  * Запуск: node scripts/test-move-queue.mjs
  */
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { WebSocket } from "ws";
 
 const PORT = 3793 + Math.floor(Math.random() * 50);
@@ -146,6 +154,112 @@ try {
   check(ez.length + rz.length >= 10, `залп из 10 отвечен полностью: ${ez.length}+${rz.length}`);
   check(rz.length >= 6, `большая часть честно отказана cooldown: refuse=${rz.length}`);
   z.terminate();
+
+  // --- 4. S5 (аудит Z.AI 2026-11-08): ресурсные лимиты -----------------
+  // Вторая песочница с заниженными потолками: 3 сокета на IP, 2 живые
+  // комнаты. Проверяем ЗАКОННЫЙ отказ (info/noplace), а не разрыв.
+  const PORT5 = 4100 + Math.floor(Math.random() * 120);
+  const WS5 = `ws://127.0.0.1:${PORT5}`;
+  const data5 = mkdtempSync(path.join(tmpdir(), "coop-s5-"));
+  const server5 = spawn(process.execPath, ["server.js"], {
+    cwd: new URL("..", import.meta.url).pathname,
+    env: {
+      ...process.env,
+      PORT: String(PORT5),
+      HOST: "127.0.0.1",
+      DATA_DIR: data5,
+      WS_MAX_PER_IP: "3",
+      ROOMS_MAX: "2",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  server5.stdout.on("data", () => {});
+  server5.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    for (let i = 0; i < 100; i += 1) {
+      const ok = await new Promise((resolve) => {
+        const probe = new WebSocket(WS5);
+        probe.once("open", () => { probe.terminate(); resolve(true); });
+        probe.once("error", () => resolve(false));
+      });
+      if (ok) break;
+      await sleep(100);
+    }
+
+    // (a) per-IP сокеты: 3 живут, 4-й — info too_many_sockets + закрытие.
+    const bare = [];
+    for (let i = 0; i < 3; i += 1) {
+      bare.push(await new Promise((resolve, reject) => {
+        const ws = new WebSocket(WS5);
+        ws.once("open", () => resolve(ws));
+        ws.once("error", reject);
+      }));
+    }
+    check(bare.length === 3, `S5 per-ip: 3 соединения с одного IP живут (WS_MAX_PER_IP=3)`);
+    const extra = await new Promise((resolve, reject) => {
+      const ws = new WebSocket(WS5);
+      const inbox = [];
+      ws.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
+      ws.once("open", () => resolve({ ws, inbox }));
+      ws.once("error", reject);
+    });
+    const tooMany = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(null), 3000);
+      extra.ws.on("close", () => { clearTimeout(t); resolve(extra.inbox); });
+    });
+    check(
+      !!tooMany && tooMany.some((m) => m[0] === "info" && String(m[1]).includes("too_many_sockets")),
+      "S5 per-ip: 4-е соединение получило info too_many_sockets и закрыто (не молчком)",
+    );
+    for (const ws of bare) ws.terminate();
+    extra.ws.terminate();
+    await sleep(150); // сервер освобождает слоты
+
+    // (b) комнаты: 2 живые — по потолку; новая — noplace rooms_full, НЕ создана.
+    const roomNo = Date.now().toString(36);
+    const joiner = (name, room) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(WS5);
+      const inbox = [];
+      ws.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
+      ws.on("error", reject);
+      ws.once("open", () => {
+        ws.send(JSON.stringify(["join", { room, login: name }]));
+        ws.inbox = inbox;
+        resolve(ws);
+      });
+    });
+    const inRoom = async (ws) => await waitFor(ws, (m) => m[0] === "you");
+    const r1 = await joiner("Хозяин1", `s5a${roomNo}`);
+    await inRoom(r1);
+    const r2 = await joiner("Хозяин2", `s5b${roomNo}`);
+    await inRoom(r2);
+    check(true, "S5 rooms: 2 живые комнаты созданы (ROOMS_MAX=2)");
+    const r3 = await joiner("Третий", `s5c${roomNo}`);
+    const refused3 = await waitFor(r3, (m) => m[0] === "noplace");
+    check(
+      refused3[1]?.reason === "rooms_full" && r3.inbox.every((m) => m[0] !== "you"),
+      `S5 rooms: новая комната сверх потолка → noplace reason='rooms_full' (получено ${JSON.stringify(refused3[1])})`,
+    );
+    // Комната со отказом НЕ создана: roomsinfo отдаёт count 0 без создания.
+    r3.inbox.length = 0;
+    r3.send(JSON.stringify(["rooms", { ids: [`s5c${roomNo}`] }]));
+    const info3 = await waitFor(r3, (m) => m[0] === "roomsinfo");
+    check(
+      Array.isArray(info3[1]) && info3[1][0]?.count === 0,
+      "S5 rooms: отказная комната НЕ создана (roomsinfo count 0)",
+    );
+    // Существующие комнаты доступны сверх потолка: третий входит в первую.
+    // Перед повторным join — пауза больше JOIN_COOLDOWN_MS (1 с).
+    await sleep(1200);
+    r3.send(JSON.stringify(["join", { room: `s5a${roomNo}`, login: "Третий" }]));
+    await inRoom(r3);
+    check(true, "S5 rooms: вход в СУЩЕСТВУЮЩУЮ комнату сверх потолка жив (лимит только на новые)");
+    r1.terminate();
+    r2.terminate();
+    r3.terminate();
+  } finally {
+    server5.kill("SIGTERM");
+  }
 } catch (err) {
   failures += 1;
   console.error("FAIL", err.message);

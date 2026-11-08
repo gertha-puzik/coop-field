@@ -9,7 +9,7 @@
  */
 import { WebSocket } from "ws";
 import { EV, MAX_PLAYERS, JOIN_COOLDOWN_MS, RAB_CELL } from "./protocol.js";
-import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM } from "./config.js";
+import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM, ROOMS_MAX } from "./config.js";
 import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition } from "./persist.js";
@@ -269,6 +269,16 @@ function refuseJoin(ws, room, reason) {
   send(ws, EV.NOPLACE, { room: room.code, reason });
 }
 
+/** S5b (аудит Z.AI 2026-11-08): живые комнаты — в которых есть хотя бы один
+ * сокет; пустые (в 10-минутном удержании) слот потолка не занимают. */
+function liveRoomsCount() {
+  let n = 0;
+  for (const room of rooms.values()) {
+    if (room.sockets.size > 0) n += 1;
+  }
+  return n;
+}
+
 function join(ws, payload = {}) {
   const now = Date.now();
   if (now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
@@ -277,6 +287,18 @@ function join(ws, payload = {}) {
   }
   ws.lastJoin = now;
   if (ws.room) leave(ws);
+  // S5b (аудит Z.AI 2026-11-08): потолок ЖИВЫХ комнат на процесс. Новую
+  // комнату сверх ROOMS_MAX не создаём — отказ noplace 'rooms_full'
+  // (не молчаливое создание). Существующая комната и вход по алиасу
+  // RETIRED_ROOMS в УЖЕ созданную цель лимитом не затрагиваются:
+  // alias резолвится в ключ target-комнаты и «новой» не считается.
+  const rawKey = normalizeRoomCode(payload.room);
+  const joinKey = RETIRED_ROOMS[rawKey] || rawKey;
+  if (!rooms.has(joinKey) && liveRoomsCount() >= ROOMS_MAX) {
+    send(ws, EV.INFO, "Сервер временно не открывает новые комнаты — попробуйте позже.");
+    send(ws, EV.NOPLACE, { room: joinKey, reason: "rooms_full" });
+    return;
+  }
   const room = roomOf(payload.room);
   if (requiresAccount(room.code) && !ws.account) {
     send(ws, EV.REFUSE, { code: "auth_required", text: "Эта комната недоступна без входа." });

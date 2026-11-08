@@ -11,11 +11,11 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
 import {
   PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
-  REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest,
+  REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest, WS_MAX_PER_IP,
 } from "./config.js";
 import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
@@ -95,6 +95,28 @@ export function startServer() {
     ".map": "application/json",
   };
 
+  /* S4 (аудит Z.AI 2026-11-08): экспозиция режима клиентского IP в /health и
+   * троттленное предупреждение о «голом» loopback-трафике на прод-классах.
+   * Логика зеркалит auth.js clientIp(): loopback-сокет + XFF → 'xff' (наш
+   * nginx, лимиты считают реальные адреса), loopback без XFF → 'loopback'
+   * (лимиты отключены), не-loopback → 'direct' (адрес сокета). */
+  function clientIpMode(req) {
+    const fwd = String(req.headers["x-forwarded-for"] || "");
+    const remote = String(req.socket.remoteAddress || "");
+    const loop = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    return fwd && loop ? "xff" : loop ? "loopback" : "direct";
+  }
+  /**
+   * S5a (аудит Z.AI 2026-11-08): счётчик ОДНОВРЕМЕННЫХ WS-сокетов на клиентский
+   * IP (ключ — clientIp из auth.js handshake: loopback+XFF → реальный адрес,
+   * иначе адрес сокета). Сверх WS_MAX_PER_IP — info 'too_many_sockets' и close.
+   * Карта ip → число живых сокетов; чистится на close/error (once-флаг, чтобы
+   * двойное срабатывание не съело чужой слот).
+   */
+  const socketsPerIp = new Map();
+  const LOOPBACK_PROD_WARN_EVERY_MS = 5 * 60_000;
+  let loopbackProdWarnAt = 0;
+
   function serveStatic(req, res, url) {
     const rel = url.pathname === "/" ? "/index.html" : url.pathname;
     const file = path.normalize(path.join(PUBLIC, rel));
@@ -124,8 +146,29 @@ export function startServer() {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     const p = url.pathname;
     if (p === "/health") {
+      // S4 (аудит Z.AI 2026-11-08): режим IP виден владелице без выхода в
+      // сеть. 'loopback' на прод-классе хоста = «голый» прокси без XFF (или
+      // локальная разработка): rate-лимиты auth для такого трафика отключены
+      // — предупреждаем в лог не чаще раза в 5 минут (не на каждый кадр).
+      const ipMode = clientIpMode(req);
+      const healthClass = siteClassOfRequest(req);
+      if (ipMode === "loopback" && healthClass !== "local") {
+        const now = Date.now();
+        if (now - loopbackProdWarnAt > LOOPBACK_PROD_WARN_EVERY_MS) {
+          loopbackProdWarnAt = now;
+          console.warn(
+            `[health] клиент пришёл loopback без X-Forwarded-For на хост-классе «${healthClass}»: ` +
+              `темп-лимиты auth не работают (см. deploy/vps — nginx-фрагмент x-forwarded-for), clientIpMode=${ipMode}`,
+          );
+        }
+      }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, rooms: rooms.size, maxPlayers: MAX_PLAYERS }));
+      res.end(JSON.stringify({
+        ok: true,
+        rooms: rooms.size,
+        maxPlayers: MAX_PLAYERS,
+        clientIpMode: ipMode, // S4: 'loopback' | 'xff' | 'direct'
+      }));
       return;
     }
     // B1: класс САЙТА destination (siteClassOfRequest: Host-классификация +
@@ -256,14 +299,43 @@ export function startServer() {
 
   wss.on("connection", (ws, req) => {
     ws.isAlive = true;
-    handshake(ws, req);
+    handshake(ws, req); // назначает ws.clientIp (loopback+XFF → реальный адрес)
+    const ip = ws.clientIp || String(req.socket.remoteAddress || "0");
+    let counted = false;
+    const releaseSlot = () => {
+      if (!counted) return;
+      counted = false;
+      const n = (socketsPerIp.get(ip) || 1) - 1;
+      if (n > 0) socketsPerIp.set(ip, n);
+      else socketsPerIp.delete(ip);
+    };
+    const held = (socketsPerIp.get(ip) || 0) + 1;
+    socketsPerIp.set(ip, held);
+    counted = true;
+    if (held > WS_MAX_PER_IP) {
+      // S5a (аудит Z.AI 2026-11-08): SOCKET-флуд с одного адреса закрыт.
+      console.warn(`ws per-ip limit: ip=${ip} open=${held} max=${WS_MAX_PER_IP}`);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify([EV.INFO, `Слишком много соединений с одного адреса (too_many_sockets), лимит ${WS_MAX_PER_IP}.`]));
+      }
+      ws.close(1013, "too_many_sockets");
+      ws.on("close", releaseSlot);
+      ws.on("error", releaseSlot);
+      return;
+    }
     ws.on("pong", () => {
       ws.isAlive = true;
     });
     console.log(`ws open ${req.socket.remoteAddress || "?"} origin=${req.headers.origin || "-"}`);
     ws.on("message", (raw) => onMessage(ws, raw));
-    ws.on("close", () => leave(ws));
-    ws.on("error", () => leave(ws));
+    ws.on("close", () => {
+      releaseSlot();
+      leave(ws);
+    });
+    ws.on("error", () => {
+      releaseSlot();
+      leave(ws);
+    });
   });
 
   server.listen(PORT, HOST, () => {

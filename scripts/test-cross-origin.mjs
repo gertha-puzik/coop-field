@@ -47,7 +47,7 @@ const check = (cond, label) => {
 };
 
 /** HTTP-проба с ЯВНЫМ Host/Origin/cookie/x-coop-site (node:http не правит их). */
-function probe(port, { method = "GET", path = "/", host, origin, cookie, site, proto, body, target }) {
+function probe(port, { method = "GET", path = "/", host, origin, cookie, site, proto, xff, body, target }) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body);
     const headers = { host: host || `${target || LOOP}:${port}` };
@@ -56,6 +56,7 @@ function probe(port, { method = "GET", path = "/", host, origin, cookie, site, p
     if (cookie) headers.cookie = cookie;
     if (site) headers["x-coop-site"] = site;
     if (proto) headers["x-forwarded-proto"] = proto;
+    if (xff) headers["x-forwarded-for"] = xff;
     const req = http.request(
       { host: target || LOOP, port, method, path, headers },
       (res) => {
@@ -324,6 +325,40 @@ try {
     m1.status === 200 && m1.acao === null,
     "(m1) GET /cfg elyria+Origin гротов: читается сервером, но ACAO не выдан (крoss-читание закрыто)",
   );
+
+  // ===== S3 (Z.AI 2026-11-08): легаси-шаблон *.vercel.app удалён из isAllowedOrigin =====
+  // Verceil-хосты больше не «свои» ни в одном классе — ни в легаси-щите local,
+  // ни в per-destination парах; явный env ALLOWED_ORIGINS — единственный запасной выход.
+  const v1 = await probe(PORT_A, { method: "POST", path: "/auth/login",
+    origin: "https://coop-field-evil.vercel.app", body: { login: "VercelCat", pass: "password1" } });
+  check(
+    v1.status === 403 && v1.json?.reason === "csrf",
+    "(v1) S3: POST /auth/login (local, пермиссивный щит) с vercel-Origin → 403 csrf (прежде regex пропускал до логина)",
+  );
+  const v2 = await probe(PORT_A, { method: "POST", path: "/cfg", host: GROT,
+    origin: "https://coop-field-evil.vercel.app", body: {} });
+  check(
+    v2.status === 404 && v2.json?.reason === "not_found",
+    "(v2) S3: POST /cfg на public-dest с vercel-Origin → 404 not_found (host-гейт опережает CSRF; vercel не даёт ничего)",
+  );
+  const v3 = await wsClient(PORT_A, { origin: "https://coop-field-evil.vercel.app" });
+  check(
+    v3.open === false,
+    "(v3) S3: WS upgrade на local-хост с vercel-Origin → отказ (regex-ветка isAllowedOrigin удалена)",
+  );
+  if (v3.ws) try { v3.ws.close(); } catch {}
+
+  // ===== S4 (Z.AI 2026-11-08): /health экспонирует режим клиентского IP =====
+  const h1 = await probe(PORT_A, { method: "GET", path: "/health" });
+  check(
+    h1.status === 200 && h1.json?.clientIpMode === "loopback",
+    "(h1) S4: /health прямого loopback-коннекта → clientIpMode='loopback' (лимиты auth неактивны для этого трафика)",
+  );
+  const h2 = await probe(PORT_A, { method: "GET", path: "/health", xff: "203.0.113.7" });
+  check(
+    h2.status === 200 && h2.json?.clientIpMode === "xff",
+    "(h2) S4: /health с X-Forwarded-For с loopback-сокета → clientIpMode='xff' (как за нашим nginx)",
+  );
 } catch (e) {
   failures += 1;
   console.error("FAIL exception (sandbox A)", e);
@@ -450,6 +485,14 @@ try {
   check(
     req1.status === 403 && req1.json?.reason === "csrf_origin_required",
     "(33) AUTH_CSRF_STRICT=1: cookie+без Origin на local → 403 csrf_origin_required (strict форсирован)",
+  );
+  // S3 (Z.AI 2026-11-08): vercel-Origin под strict — двойной отказ (strict-щит
+  // + удалённый isAllowedOrigin-regex); валидная кука не спасает, причина точная.
+  const vS = await probe(PORT_E, { method: "POST", path: "/auth/logout",
+    origin: "https://coop-field-pr-evil.vercel.app", cookie: cookieOf(regE) });
+  check(
+    vS.status === 403 && vS.json?.reason === "csrf_origin_mismatch",
+    "(34) S3 strict: vercel-Origin на strict-local с валидной кукой → 403 csrf_origin_mismatch",
   );
 } catch (e) {
   failures += 1;
