@@ -302,6 +302,32 @@ eq(
   eq("§4 combatCaps: сброс к дефолтному реестру после теста", [back.armorTenths.length, back.maxDamageLevel], [10, 9]);
 }
 
+// Лапы, не верх картинки и не её экранная проекция, задают клетку опоры.
+{
+  const oldElev = testmap.testMap.elev;
+  testmap.testMap.elev = {"4,3":3};
+  const foot = {dx:0.3,dy:0.9};
+  const attempt = (fromX,fromY,toX,toY) => {
+    const cat = {id:"foot-test",fx:fromX-foot.dx,fy:fromY-foot.dy,x:4,y:3,freeFoot:foot};
+    const ws = {}; ws.room = {fmt:"test",sockets:new Map([[ws,cat]])};
+    movement.freeMove(ws,{x:toX-foot.dx,y:toY-foot.dy,foot,stop:true});
+    return Math.abs(cat.fx-(toX-foot.dx))<0.011 && Math.abs(cat.fy-(toY-foot.dy))<0.011;
+  };
+  eq("плато: северная кромка блокирует ровно по лапам",attempt(4.5,2.98,4.5,3.02),false);
+  eq("плато: южная кромка блокирует ровно по лапам",attempt(4.5,3.98,4.5,4.02),false);
+  eq("плато: западная кромка блокирует ровно по лапам",attempt(3.98,3.5,4.02,3.5),false);
+  eq("плато: восточная кромка блокирует ровно по лапам",attempt(4.98,3.5,5.02,3.5),false);
+  eq("на северном краю плато нет ранней невидимой стены",attempt(4.5,3.1,4.5,3.01),true);
+  eq("на южном краю плато нет экранной стены",attempt(4.5,3.8,4.5,3.99),true);
+  eq("под северным краем можно дойти вплотную",attempt(4.5,2.8,4.5,2.99),true);
+  const exactFoot = {dx:0.4666666666666666,dy:0.9333333333333333};
+  const exactCat = {id:"edge-test",fx:4.001-exactFoot.dx,fy:3.5-exactFoot.dy,x:5,y:4,freeFoot:exactFoot};
+  const exactWs = {};exactWs.room={fmt:"test",sockets:new Map([[exactWs,exactCat]])};
+  movement.freeMove(exactWs,{x:4.00001-exactFoot.dx,y:exactCat.fy,foot:exactFoot,stop:true});
+  eq("округление сетевой позиции не сбрасывает лапы с плато",Math.floor(exactCat.fx+exactFoot.dx),4);
+  testmap.testMap.elev = oldElev;
+}
+
 // ---------- отчёт ----------
 if (failed > 0) {
   console.error(`\nсмоук модулей сервера: FAIL — ${failed} провалено, ${passed} прошло.`);

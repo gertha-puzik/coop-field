@@ -11,6 +11,7 @@ import { Frustum } from '@babylonjs/core/Maths/math.frustum.js';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import {
+  elisionSpritePose,
   elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha,
   elisionCameraDown,
   elisionCameraPose,
@@ -150,3 +151,11 @@ for (const angle of [0, 45, 90, 180, 270]) {
   for(let i=0;i<4;i++) assert(Math.abs(vertices[i*3+2]-vertices[i*3+1]-expected[i])<1e-8,'old 2D rotation preserved above ground');
 }
 console.log('sprite depth, occlusion and rotated ground clearance ok');
+
+const crouch = elisionSpritePose(4100,0,140,{holding:true,since:100,releaseAt:0,charge:0});
+assert(Math.abs(crouch.scaleY - 0.58) < 1e-9 && crouch.scaleX === 1.2, 'полный присед виден в WebGL');
+const release = elisionSpritePose(4100,0,140,{holding:false,since:100,releaseAt:4100,charge:1});
+assert(release.scaleY > 1 && release.lift > 0, 'отпускание пробела растягивает и подбрасывает спрайт');
+const wobble = elisionSpritePose(115,0.5,140);
+assert(wobble.scaleX !== 1 && wobble.scaleY !== 1 && wobble.rot !== 0, 'поворот даёт желе');
+assert(wobble.scaleX > 0.8 && wobble.scaleY > 0.8, 'поворот не схлопывает спрайт в ноль');

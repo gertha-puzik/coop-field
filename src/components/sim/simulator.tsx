@@ -138,8 +138,6 @@ import {
   terrainCellClipPath,
   elevLiftAtPoint,
   groundPointAtWorld,
-  pointInSouthWall,
-  surfaceLevelAt,
   hashStr,
   nearestWalkableCell,
   ensurePaintDecoded,
@@ -232,7 +230,7 @@ import {
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
-import { drawFieldHud } from './simulator/hud-canvas';
+import { drawFieldHud, drawElisionJumpHud } from './simulator/hud-canvas';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
@@ -1292,9 +1290,15 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       e.step = null;
       e.path = [];
       freeSyncRef.current.moving = false;
-      net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+      net?.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, stop: true });
     }
   }, [fieldFormat, settings.arrow.battleMode]);
+
+  function freeFoot() {
+    const s = settingsRef.current;
+    const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+    return { dx: hb.dx, dy: hb.dy * 2 };
+  }
 
   /** Короткая подсказка над полем (гаснет сама). */
   const flashBattleHint = useCallback((text: string) => {
@@ -1682,7 +1686,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             e.fx = lp.x1;
             e.fy = lp.y1;
             const net = netRef.current;
-            if (net?.ready) net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+            if (net?.ready) net.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, stop: true });
             freeSyncRef.current.moving = false;
           }
           e.leap = null;
@@ -1696,7 +1700,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const net = netRef.current;
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
             freeSyncRef.current.at = now;
-            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), jp: 1 });
+            net.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, jp: 1 });
           }
           freeSyncRef.current.moving = true;
         }
@@ -1712,7 +1716,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const targetLift = testMode
           ? (s.arrow.battleMode
               ? elevLevelAt(e.col, e.row)
-              : surfaceLevelAt(e.fx + hbL.dx, e.fy + hbL.dy * 2)) * TERRAIN_LIFT_PX
+              : elevLevelAt(Math.floor(e.fx + hbL.dx), Math.floor(e.fy + hbL.dy * 2))) * TERRAIN_LIFT_PX
           : 0;
         e.liftV += (targetLift - e.liftV) * (1 - Math.exp(-dt / 110));
         if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
@@ -2037,8 +2041,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           // опоры и целевой — стенка. Один уровень кот перешагивает. В прыжке
           // правило отключено: дуга несёт кота через обрыв. Выталкивание ходит
           // через тот же blocked, поэтому не закинет кота на скалу.
-          // Столкновение по нарисованному верху, не по логической клетке: спина
-          // высокого плато рисуется севернее клетки и иначе проходится пешком.
+          // Коллизия в координатах мира: экранный сдвиг высоты считает только камера.
           // Точка опоры — лапы (низ спрайта). Центр холста у малышей пустой и
           // торчит над головой: он цеплял кромку локации и верх плато там, где
           // кот уже стоит в траве, и справа от него вырастала невидимая стена.
@@ -2046,8 +2049,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
             const [x0, y0] = stand(e.fx, e.fy);
             const [x1, y1] = stand(fxT, fyT);
-            if (pointInSouthWall(x1, y1)) return true;
-            return !elevStepOk(surfaceLevelAt(x0, y0), surfaceLevelAt(x1, y1));
+            return !elevStepOk(elevLevelAt(Math.floor(x0), Math.floor(y0)),
+              elevLevelAt(Math.floor(x1), Math.floor(y1)));
           };
           // Стенка боевых зон для мирной ходьбы — на кромке по обеим осям.
           const battleWall = (fxT: number, fyT: number, axis: 'x' | 'y') =>
@@ -2125,13 +2128,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           if (net?.ready && now - freeSyncRef.current.at >= FREE_EMIT_MS) {
             freeSyncRef.current.at = now;
             // sp — флаг спринта: чужие клиенты рисуют комочки из-под лап этого кота
-            net.emit('freemove', { x: round2(e.fx), y: round2(e.fy), sp: sprint ? 1 : 0 });
+            net.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, sp: sprint ? 1 : 0 });
           }
         } else if (freeSyncRef.current.moving) {
           e.pvx = 0;
           e.pvy = 0;
           freeSyncRef.current.moving = false;
-          net?.emit('freemove', { x: round2(e.fx), y: round2(e.fy), stop: true });
+          net?.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, stop: true });
         }
       }
 
@@ -4266,9 +4269,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           try {
             const sNow = settingsRef.current;
             const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
-            elision.frame(
-              collectElisionFrame({
+            const frame = collectElisionFrame({
                 now,
+                jelly: jellyRef.current,
+                space: spaceHoldRef.current,
+                remoteSpace: remoteSpaceRef.current,
                 editor: editorState().on,
                 day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
                 camX: cam.x,
@@ -4298,8 +4303,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 spriteImage: (id) => spritesRef.current[id as SpriteId],
                 objects: currentTestMap().objects ?? [],
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
-              }),
-            );
+              });
+            elision.frame(frame);
+            drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
           } catch (error) {
             console.warn('[elision] WebGL-вид упал — остаётся прежний холст', error);
             try {

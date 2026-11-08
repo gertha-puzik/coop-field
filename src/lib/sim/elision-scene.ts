@@ -19,6 +19,7 @@ export type ElisionDay = 'morning' | 'day' | 'evening' | 'night';
 export type ElisionActor = {
   id: string;
   isProp?: boolean;
+  pose?: { scaleX: number; scaleY: number; rot: number; sway: number; lift: number };
   x: number;
   y: number;
   w: number;
@@ -262,4 +263,24 @@ export function elisionSpriteVertices(w: number, h: number, rot: number, mirror:
     const rx = x*c - py*s, ry = x*s + py*c;
     return [rx, Math.max(0, ry), Math.max(0, -ry)];
   });
+}
+
+/** Общие с 2D параметры пружины: опора не меняется при сжатии и повороте. */
+export type ElisionSpace = { holding: boolean; since: number; releaseAt: number; charge: number };
+export function elisionSpritePose(now: number, amp: number, h: number, sp?: ElisionSpace) {
+  let scaleX = 1, scaleY = 1, rot = 0, sway = 0, lift = 0;
+  if (sp?.holding) {
+    const p = Math.min(1, Math.max(0, (now - sp.since) / 4000));
+    scaleY *= 1 - 0.42*p; scaleX *= 1 + 0.2*p;
+    rot += Math.sin(now*0.05)*0.05*p;
+    sway = Math.sin(now*0.031)*1.4*p;
+  } else if (sp?.releaseAt && now - sp.releaseAt < 1100) {
+    const t = Math.max(0, now - sp.releaseAt);
+    const q = Math.exp(-t/220)*Math.cos(t*0.042), ch = sp.charge;
+    scaleY *= 1 + 0.55*ch*q; scaleX *= 1 - 0.3*ch*q;
+    rot += 0.05*ch*q; lift = Math.max(0,h*0.22*ch*q);
+  }
+  const wob = Math.sin(now*0.045);
+  return {scaleX:scaleX*(1+amp*0.22*wob),scaleY:scaleY*(1-amp*0.22*wob),
+    rot:rot+amp*0.08*Math.cos(now*0.045),sway,lift};
 }

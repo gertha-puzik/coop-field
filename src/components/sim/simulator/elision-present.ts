@@ -21,6 +21,8 @@ import {
 } from '@/lib/sim/test-map';
 import type { Engine } from './sim-model';
 import {
+  elisionSpritePose,
+  type ElisionSpace,
   selfWorldPx,
   spriteSizePx,
   type ElisionActor,
@@ -32,6 +34,9 @@ type SpriteImg = { width: number; height: number };
 
 export type ElisionPresentInput = {
   now: number;
+  jelly: Record<string, number>;
+  space: ElisionSpace;
+  remoteSpace: Map<string, ElisionSpace>;
   editor: boolean;
   day: ElisionDay;
   camX: number;
@@ -214,6 +219,8 @@ function catActor(
     url: spriteUrl(sprite),
     mirror,
     rot: 0,
+    pose: elisionSpritePose(input.now, input.jelly[id === input.controlled ? 'main' : id] ?? 0, size.h,
+      id === input.controlled ? input.space : input.remoteSpace.get(id)),
   };
 }
 
@@ -283,7 +290,9 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
       const top = free
         ? { x: free.x * input.cellW, y: free.y * input.cellH }
         : { x: col * input.cellW, y: row * input.cellH };
-      const lift = elevLevelAt(Math.floor(col), Math.floor(row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
+      const size = spriteSizePx(input.cellH, remote.scale, aspectOf(input.spriteImage(remote.sprite)));
+      const lift = elevLevelAt(Math.floor(free ? free.x + size.w/2/input.cellW : col),
+        Math.floor(free ? free.y + size.h/input.cellH : row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
       pushActor(
         decals,
         catActor(remote.id, remote.sprite, remote.scale, top, lift, free?.face === -1, input, true),

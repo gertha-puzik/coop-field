@@ -7,6 +7,8 @@
  * Internal helpers (hudCloud/hudWeatherIcon) and geometry constants stay
  * module-private on purpose.
  */
+import { elisionActorFoot, type ElisionFrame, type ElisionSpace } from '@/lib/sim/elision-scene';
+import { jumpFillOf } from '@/lib/sim/test-map';
 import { DAYPART_LABEL, dayPartOfProgress, type DayPart, type WeatherKind } from '@/lib/sim/settings';
 
 /* ---------- HUD поля: вращающаяся плашка суток и значок погоды ---------- */
@@ -223,3 +225,27 @@ function drawFieldHud(
   g.globalAlpha = 1;
 }
 export { drawFieldHud };
+
+/** Заряд прыжка поверх WebGL и погоды; координаты из того же кадра, что спрайт. */
+export function drawElisionJumpHud(cv: HTMLCanvasElement | null, frame: ElisionFrame, sp: ElisionSpace, now: number) {
+  if (!cv || frame.editor || (!sp.holding && !(sp.releaseAt > 0 && now-sp.releaseAt < 420))) return;
+  const actor = frame.decals.find(a => a.id === frame.controlledId);
+  if (!actor) return;
+  const g = cv.getContext('2d');
+  if (!g) return;
+  const f = elisionActorFoot(actor), dx = f.x-frame.camX, dy = f.z-frame.camY;
+  const x = frame.viewW/2+(dx*Math.cos(frame.yaw)-dy*Math.sin(frame.yaw))*frame.zoom;
+  const y = frame.viewH/2+(dx*Math.sin(frame.yaw)+dy*Math.cos(frame.yaw)-f.y)*frame.zoom;
+  const h = Math.max(36,actor.h*0.55)*frame.zoom, w = Math.max(5,actor.h*0.045)*frame.zoom;
+  const bx = x+(actor.w/2+Math.max(8,actor.h*0.07))*frame.zoom;
+  const by = y-actor.h*frame.zoom+(actor.h*frame.zoom-h)*0.35;
+  const fill = sp.holding ? Math.min(1,(now-sp.since)/4000) : jumpFillOf(sp.charge);
+  g.save();
+  const dpr = Math.min(2,window.devicePixelRatio||1);
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.fillStyle='rgba(0,0,0,0.55)';g.fillRect(bx-1,by-1,w+2,h+2);
+  g.fillStyle=fill>=1?'#f6e7a1':fill>=0.5?'#8ef0b0':'#e7c48a';g.fillRect(bx,by+h*(1-fill),w,h*fill);
+  g.strokeStyle='rgba(255,255,255,0.9)';g.lineWidth=1;
+  g.strokeRect(bx-1,by-1,w+2,h+2);g.beginPath();g.moveTo(bx-2,by+h/2);g.lineTo(bx+w+2,by+h/2);g.stroke();
+  g.restore();
+}
