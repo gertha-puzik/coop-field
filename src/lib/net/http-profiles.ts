@@ -18,7 +18,12 @@ import { apiFetch, asId, asText, type ApiRow } from "./http-auth";
 
 export type ProfileCharacter = { id: string; name: string; sprite: string; size: number };
 
-/** Публичный DTO (accounts.publicProfile): без login, role и пароля. */
+/** Публичный DTO (accounts.publicProfile): без login, role и пароля.
+ *  P5-редизайн (аддитивно): lastSeenAt — время последнего появления
+ *  (максимум свежайшей сессии и последней записи кота; 0 = неизвестно,
+ *  честное «неизвестно» вместо выдумки), lastSeenRoom — комната последней
+ *  записи кота ("test" = Элизия; null = кота в поле не видели). Сервер
+ *  может не прислать поля (старый бэкенд) — поэтому необязательные. */
 export type PublicProfile = {
   displayName: string;
   bio: string;
@@ -26,6 +31,8 @@ export type PublicProfile = {
   characters: ProfileCharacter[];
   activeCharacterId: string | null;
   createdAt: number;
+  lastSeenAt?: number;
+  lastSeenRoom?: string | null;
 };
 
 /** Карточка каталога: DTO + accountId (для deep-link /players?id=). */
@@ -63,6 +70,10 @@ function parseProfile(row: ApiRow): PublicProfile {
     characters: parseCharacters(row.characters),
     activeCharacterId: asId(row.activeCharacterId),
     createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : 0,
+    // P5: только конечные числа и строки/NULL — мусор схлопывается в
+    // «неизвестно» (0/null), чтобы UI не рисовал выдуманное время.
+    lastSeenAt: Number.isFinite(Number(row.lastSeenAt)) ? Number(row.lastSeenAt) : 0,
+    lastSeenRoom: typeof row.lastSeenRoom === "string" && row.lastSeenRoom ? row.lastSeenRoom : null,
   };
 }
 

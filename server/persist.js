@@ -74,6 +74,20 @@ function rememberCat(cat) {
   catBookDirty = true;
 }
 
+/**
+ * P5-редизайн каталога (read-only вью): время последней записи позиции кота
+ * по логину персонажа, 0 — записи нет/устарела (TTL 30 дней). Честный источник
+ * «когда кота последний раз видели на поле» и комнаты-«дома» (книга ведётся
+ * только для комнаты «тест»/Элизия). Ключ — логин кота, т.е. ИМЯ персонажа
+ * (не логин аккаунта): одноимённые персонажи неразличимы — известное
+ * ограничение источника, см. карточку в profiles.js. Ничего не мутирует.
+ */
+function catSeenAt(login) {
+  const rec = catBook[String(login || "").toLowerCase()];
+  if (!rec || typeof rec !== "object") return 0;
+  return Number(rec.ts) || 0;
+}
+
 /** Мирная точка не внутри тела препятствия (эллипс с поворотом, чуть проще
  *  клиентского — на граничных точках лучше вернуть кота, чем оставить на спавне). */
 function peacePointFreeOfObjects(fx, fy) {
@@ -135,10 +149,7 @@ function restoreCatPosition(room, cat) {
  * Стык с книгой точек: убрать персистную запись кота (админ-сброс положения,
  * POST /admin/players/reset). После стирания повторный join не вернёт прежнюю
  * точку — восстановление пройдёт по свежей клетке спавна; новая ходьба честно
- * запишется сама. Конвенция записи не меняется: правится память, помечается
- * грязной, на диск списывается общим атомарным сливом flushCatBook.
- * true — запись была и удалена, false — записи и так не было (чистый no-op,
- * лишний флеш не поднимаем).
+ * запишется сама. true — запись была и удалена, false — записи и так не было.
  */
 function forgetCat(rawLogin) {
   const key = String(rawLogin || "").toLowerCase();
@@ -148,4 +159,4 @@ function forgetCat(rawLogin) {
   return true;
 }
 
-export { flushCatBook, rememberCat, restoreCatPosition, forgetCat };
+export { flushCatBook, rememberCat, restoreCatPosition, forgetCat, catSeenAt };
