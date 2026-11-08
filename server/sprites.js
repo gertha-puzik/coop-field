@@ -6,7 +6,7 @@
  *   <id>.png      — файлы ЗАГРУЖЕННЫХ спрайтов (builtin-файлы НЕ копируются:
  *                   их отдаёт статика www/sprites/<id>.png, src builtin = тот же
  *                   путь, как было до менеджера).
- * Сид: при загрузке модуля manifest.json отсутствует → записываем 31 базовый
+ * Сид: при загрузке модуля manifest.json отсутствует → записываем 32 базовых
  * id (config.SPRITES; имя = клиентский словарь settings.ts SPRITES — зеркало
  * меняется одним PR, счёт одинаковый), category «Базовые», builtin true,
  * addedAt 0. Загруженные: builtin false, src = /sprites/file/<id>.png.
@@ -66,6 +66,7 @@ const CATEGORY_MAX = 32;
 /** Базовая категория сида; свободные строки для загруженных (задача п.2). */
 const BASE_CATEGORY = "Базовые";
 const BASE_NAMES = {
+  "origami-cat": "Оригами-кот · 3D",
   puhlyashik: "Пухляшик",
   puhlyashshshshshshshsh: "Пухляшшшшшшшш",
   blestyashka: "Блестяшка",

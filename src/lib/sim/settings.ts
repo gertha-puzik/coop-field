@@ -112,6 +112,7 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'puhlyashik-kit', name: 'Пухляшик', src: '/sprites/puhlyashik-kit.png' },
   { id: 'blestyashka-kit', name: 'Блестяшка', src: '/sprites/blestyashka-kit.png' },
   { id: 'chistolapik-kit', name: 'Чистолапик', src: '/sprites/chistolapik-kit.png' },
+  { id: 'origami-cat', name: 'Оригами-кот · 3D', src: '/sprites/origami-cat.png' },
 ];
 
 /**
@@ -132,6 +133,7 @@ export interface SpriteGroup {
  *  Набор «Малышочки» — отдельно (см. MALYSHOCHKI_SET): он показывается своим
  *  разделом под общей каруселью, а не колонкой среди привычных скинов. */
 export const SPRITE_GROUPS: SpriteGroup[] = [
+  { id: 'origami', name: 'Оригами · 3D', spriteIds: ['origami-cat'] },
   { id: 'puzik', name: 'Пузик', spriteIds: ['puhlyashik', 'puhlyashshshshshshshsh', 'puzatik', 'razdora'] },
   { id: 'ryasha', name: 'Ряща', spriteIds: ['blestyashka', 'syrstyashka', 'pohititel', 'gromoryov', 'gremuchnik'] },
   { id: 'syr', name: 'Сырь', spriteIds: ['ryzhiy'] },

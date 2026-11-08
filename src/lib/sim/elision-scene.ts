@@ -18,6 +18,10 @@ export type ElisionDay = 'morning' | 'day' | 'evening' | 'night';
 /** Спрайт на плоскости земли. x/y — левый верх в px мира (y вниз). */
 export type ElisionActor = {
   id: string;
+  model?: string;
+  modelScale?: number;
+  heading?: number;
+  isProp?: boolean;
   x: number;
   y: number;
   w: number;
@@ -50,6 +54,7 @@ export type ElisionFrame = {
   day: ElisionDay;
   /** Коты и камни/деревья. Редактор прячет вид: список может быть пустым. */
   decals: ElisionActor[];
+  controlledId: string;
   /** Атлас поверхности: кисть/трава, покрытия, заходы и боевые клетки. */
   paint: HTMLCanvasElement | null;
   /** Растёт, когда пиксели paint сменились (тот же холст могли перерисовать). */
@@ -214,4 +219,50 @@ export function elisionTerrainGeometry(
     }
   }
   return { tops, walls };
+}
+
+
+/** Спрайт стоит у точки опоры, а не лежит на земле вместе с соседним спрайтом. */
+export function elisionActorFoot(actor: ElisionActor) {
+  return worldPxToScene(actor.x + actor.w / 2, actor.y + actor.h, actor.lift + 0.2);
+}
+
+/** Препятствие перед игроком мягко просвечивает, не меняя коллизий. */
+export function elisionObstacleAlpha(actor: ElisionActor, self: ElisionActor | undefined, yaw: number): number {
+  if (!actor.isProp || !self) return 1;
+  const rect = (item: ElisionActor) => {
+    const foot = elisionActorFoot(item);
+    const x = foot.x * Math.cos(yaw) - foot.z * Math.sin(yaw);
+    const y = foot.x * Math.sin(yaw) + foot.z * Math.cos(yaw) - foot.y;
+    return { x: x - item.w/2, y: y - item.h, w: item.w, h: item.h, footY: y };
+  };
+  const a = rect(actor), b = rect(self);
+  if (a.footY < b.footY - 1) return 1;
+  const width = Math.max(0, Math.min(a.x+a.w, b.x+b.w) - Math.max(a.x, b.x));
+  const height = Math.max(0, Math.min(a.y+a.h, b.y+b.h) - Math.max(a.y, b.y));
+  return width * height > b.w * b.h * 0.18 ? 0.38 : 1;
+}
+
+/** Постоянный малый bias разруливает точное совпадение плоскостей, без прыжков сортировки. */
+export function elisionDepthBias(id: string): number {
+  let hash = 0;
+  for (const letter of id) hash = (hash * 31 + letter.charCodeAt(0)) >>> 0;
+  return -(1 + hash % 997) / 1000;
+}
+
+
+/**
+ * Вершины карточки относительно ног: XY — картинка, Z — направление к камере.
+ * Поворот старого спрайта может опустить угол ниже ног. Поднимаем такой угол
+ * вдоль луча камеры (Y и Z одинаково), сохраняя экранную проекцию Z−Y.
+ * Поэтому повёрнутый камень не режется грунтом и не теряет прежний угол.
+ */
+export function elisionSpriteVertices(w: number, h: number, rot: number, mirror: boolean): number[] {
+  const angle = -rot * Math.PI/180;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  return [[-w/2,0], [w/2,0], [w/2,h], [-w/2,h]].flatMap(([px, py]) => {
+    const x = px * (mirror ? -1 : 1);
+    const rx = x*c - py*s, ry = x*s + py*c;
+    return [rx, Math.max(0, ry), Math.max(0, -ry)];
+  });
 }

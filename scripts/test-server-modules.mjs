@@ -59,7 +59,9 @@ function eq(label, actual, expected) {
 eq("config.PORT (без env)", cfg.PORT, 3780);
 eq("config.TEST_ROOM", cfg.TEST_ROOM, "test");
 eq("config.WIDTH/HEIGHT", [cfg.WIDTH, cfg.HEIGHT], [10, 6]);
-eq("config.SPRITES — whitelist размером 31", cfg.SPRITES.length, 31);
+// The original 31 skins remain, plus the explicitly added GLB player.
+eq("config.SPRITES — прежние 31 скин", cfg.SPRITES.filter((id) => id !== "origami-cat").length, 31);
+eq("config.SPRITES — origami-cat разрешён", cfg.SPRITES.includes("origami-cat"), true);
 eq("config.FRAME_LIMIT 64 КиБ", cfg.FRAME_LIMIT, 64 * 1024);
 eq("config.isAllowedOrigin: пустой Origin без REQUIRE_ORIGIN", cfg.isAllowedOrigin(""), true);
 eq("config.isAllowedOrigin: чужой https", cfg.isAllowedOrigin("https://random.example"), false);
