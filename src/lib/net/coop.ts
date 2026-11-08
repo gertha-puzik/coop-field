@@ -1,6 +1,13 @@
 import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
 import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
+// Менеджер спрайтов: динамический каталог сервера применяется поверх
+// статичного settings.SPRITES in place (side-effect boot: кэш localStorage +
+// GET /sprites/catalog, деградация на статичный массив при недоступности).
+// Сам этот модуль coop-протокола остаётся чистым: защищённые потребители
+// SPRITES (entry-screen, simulator, settings-panel) читают массив при
+// каждом рендере и видят каталог без собственных правок.
+import "@/lib/sim/sprite-catalog";
 // Протокол-реестр W3: имена событий (EV), guard-валидаторы и типы payload
 // живут в ./protocol — вместе с каноном значений, который паритетит CI
 // против server/protocol.js (см. scripts/test-protocol-parity.mjs).
@@ -24,7 +31,7 @@ import {
   type CoopRoomInfo,
   type CoopWhoami,
 } from "./protocol";
-import { applyWhoami, authPayload, withAuthToken } from "./auth";
+import { applyWhoami, authPayload } from "./auth";
 import { NAMED_ROOMS } from "./modes";
 
 // Типы протокола переехали в ./protocol (W3); прежние потребители
@@ -144,9 +151,12 @@ export function nameFromUrl(): string {
   return (params.get("name") || params.get("login") || "").trim();
 }
 
+/**
+ * URL сокета. Токена в URL нет и быть не может (спек §3): сессию сокет
+ * получает HttpOnly-кукой на хендшейке.
+ */
 export function wsUrl(): string {
-  const base = wsUrlBase();
-  return withAuthToken(base);
+  return wsUrlBase();
 }
 
 function wsUrlBase(): string {
@@ -174,15 +184,42 @@ function wsUrlBase(): string {
   if (hostname === "coop.89-232-184-77.sslip.io") {
     return `wss://${host}`;
   }
-  // Preview PR: front + комната на одном имени *.abnocw.miew.ru.
+  // Preview PR: front + комната на одном имени *.abnocw.phainonsmilk.ru.
   // Сокет — /ws того же хоста (nginx), не прод coop.sslip.io.
-  if (hostname === "abnocw.miew.ru" || hostname.endsWith(".abnocw.miew.ru")) {
+  if (hostname === "abnocw.phainonsmilk.ru" || hostname.endsWith(".abnocw.phainonsmilk.ru")) {
+    const scheme = protocol === "https:" ? "wss:" : "ws:";
+    return `${scheme}//${host}/ws`;
+  }
+  // Элизия (phainonsmilk.ru и PR-превью *.elysiae.phainonsmilk.ru): same-origin /ws —
+  // кука сессии ездит в хендшейке, отдельного сокет-хоста у Элизии нет.
+  // Вариант свёрнут env-инлайном (канон — src/lib/site.ts: межмодульный
+  // импорт константы не фолдится) — в grotto-сборке ветка выкидывается
+  // целиком вместе с хостами Элизии (A1: артефакты grotto без 'elisium').
+  if (
+    process.env.NEXT_PUBLIC_SITE === "elyria" &&
+    (hostname === "phainonsmilk.ru" || hostname.endsWith(".elysiae.phainonsmilk.ru"))
+  ) {
     const scheme = protocol === "https:" ? "wss:" : "ws:";
     return `${scheme}//${host}/ws`;
   }
   // abnocw.89-232-184-77.sslip.io и vercel.app ходят на сокет комнаты,
   // а не на wss своего имени. Локальный хост разобран выше.
   return PRODUCTION_WS;
+}
+
+/**
+ * HTTP-база API (/auth/*, /cfg): '' для same-origin (сокет — /ws этого же
+ * хоста, кука ездит сама) либо http(s)-origin абсолютного WS-адреса
+ * (dev-localhost и легаси-хосты). Держится в паре с wsUrl().
+ */
+export function httpOrigin(): string {
+  try {
+    const u = new URL(wsUrl());
+    const scheme = u.protocol === "wss:" ? "https:" : "http:";
+    return `${scheme}//${u.host}`;
+  } catch {
+    return "";
+  }
 }
 
 export function spriteOf(cat: { id?: number; sprite?: string; login?: string }): SpriteId {

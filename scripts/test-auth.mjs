@@ -1,21 +1,43 @@
 /**
- * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг).
+ * Аккаунты, сессии, доступ Элизии (фаза 2 + pr-41 харднинг + P1 сплит доменов
+ * + register v2 по мандату владелицы 2026-11-08: снятие register-лимитов на
+ * тест/dev и отдельное имя на поле при регистрации).
  *
+ *  0. register v2: юнит-таблица registerLimits() по классу инстанса
+ *     (production 60 c / 5 в час, preview 5 c / 60, local/test — без
+ *     ограничений; env-override сильнее класса), строгий формат НОВОГО
+ *     логина при создании (латиница/цифры/._-, 2–24, края — буква/цифра;
+ *     мусор → badlogin), опциональное имя на поле name → profile.displayName
+ *     и персонаж (пусто → логин — совместимость со старым клиентом), мусор в
+ *     имени → badname; вход легаси-логина с пробелом («myster syr») жив:
+ *     validateLogin/loginAccount не ужесточены;
  *  1. store: регистрация, повторный login, чужой пароль, короткое имя, занятое имя;
  *  2. гость входит в grot-1 (you+field), в test — refuse auth_required + noplace;
  *  3. register по WS → whoami + token; join test — you; login не с клиента;
  *  4. HTTP POST /auth/register и /auth/login;
  *  5. книга позиций: тот же login после регистрации поднимает fx/fy;
  *  6. guest join после logout снова не пускает в test;
- *  7. (pr-41) второй sandbox с заниженными порогами: BOOTSTRAP_ADMIN-СПИСОК
- *      (оба имени → admin), register-флуд с подделанным XFF ловится по
- *      ПОСЛЕДНЕМУ хопу, MAX_ACCOUNTS → 'full', per-LOGIN замок неудачных
- *      входов (успех сбрасывает, окно отпускает), rooms-lie (гость не видит
- *      occupancy закрытой комнаты — ответ как про несуществующую).
+ *  7. (pr-41→S1) второй sandbox с заниженными порогами: BOOTSTRAP_ADMIN-СПИСОК
+ *     (оба имени → роль registered, автоназначения admin больше нет;
+ *     роль даёт только CLI make-admin), register-флуд с подделанным XFF ловится по
+ *     ПОСЛЕДНЕМУ хопу, MAX_ACCOUNTS → 'full', per-LOGIN замок неудачных
+ *     входов (успех сбрасывает, окно отпускает), roomsinfo-«призрак»
+ *     (гость не видит ЗАНИМАЕМОСТЬ закрытой комнаты — комната как бы не
+ *     существует: count 0 без имён; аккаунт видит реальный состав);
+ *  8. (P1) третий sandbox с PUBLIC_HOSTS/ELYRIA_HOSTS: HTTP-гейт public-хоста
+ *     (/auth, POST /cfg, /profiles → 404, GET /cfg жив), WS-кадры register/
+ *     login на public — отказ без деталей (hello/logout гостя живы), CSRF
+ *     Origin (чужой → 403 csrf, белый → доходит до логина), матрица токенов
+ *     на elyria (тела без token, приём ?t= выключен, cookie работает),
+ *     https-cookie SameSite=Lax+Secure; join по коду combat → поле room
+ *     grot-1 (снятая комната алиасится в RETIRED_ROOMS);
+ *  9. (P2) там же: admin-маршруты конфига — /cfg/admin и /cfg/export на
+ *     public-хосте 404, гость/не-админ на elyria 403, админ 200 с registry.
  *
  * Запуск: node scripts/test-auth.mjs (сам спавнит server.js в песочнице DATA_DIR).
  */
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
+import http from "node:http";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,9 +51,10 @@ const WS = `ws://${HOST}:${PORT}`;
 const HTTP = `http://${HOST}:${PORT}`;
 
 process.env.DATA_DIR = DATA;
-process.env.BOOTSTRAP_ADMIN = "Герта";
+process.env.BOOTSTRAP_ADMIN = "gertha_q";
 
 const accounts = await import("../server/accounts.js");
+const auth = await import("../server/auth.js");
 const modes = await import("../server/modes.js");
 
 let failures = 0;
@@ -90,18 +113,82 @@ check(modes.requiresAccount("combat") === false, "modes: combat open");
 check(modes.requiresAccount("hunger") === false, "modes: hunger open");
 check(modes.requiresAccount("custom-xyz") === false, "modes: unknown code open");
 
-const made = await accounts.createAccount("Сырь", "password1");
-check(!!made.account, "store: register Сырь");
+/* ---------- 0. register v2: юнит-таблица registerLimits() ---------- */
+// Гейт регистций выбирает лимиты по классу инстанса (мандат 2026-11-08);
+// env-override сильнее класса. Мутации env гасим сразу — спавны ниже
+// наследуют process.env,rate-пробы харднинг-песочницы ждут прод-лимиты.
+const lim = (cls, env) => {
+  delete process.env.AUTH_REGISTER_GAP_MS;
+  delete process.env.AUTH_REGISTER_HOURLY_MAX;
+  if (cls === undefined) delete process.env.COOP_INSTANCE_CLASS;
+  else process.env.COOP_INSTANCE_CLASS = cls;
+  if (env) Object.assign(process.env, env);
+  const row = auth.registerLimits();
+  delete process.env.AUTH_REGISTER_GAP_MS;
+  delete process.env.AUTH_REGISTER_HOURLY_MAX;
+  delete process.env.COOP_INSTANCE_CLASS;
+  return row;
+};
+check(lim("production").gapMs === 60_000 && lim("production").hourMax === 5, "register-limits: production — 60 c / 5 в час (как прежде)");
+check(lim("preview").gapMs === 5_000 && lim("preview").hourMax === 60, "register-limits: preview — 5 с / 60 в час (смоуки без барьера)");
+check(lim("local").gapMs === 0 && lim("local").hourMax === Infinity, "register-limits: local — без ограничений");
+check(lim("test").gapMs === 0 && lim("test").hourMax === Infinity, "register-limits: test — без ограничений");
+const limOver = lim("production", { AUTH_REGISTER_GAP_MS: "111", AUTH_REGISTER_HOURLY_MAX: "7" });
+check(limOver.gapMs === 111 && limOver.hourMax === 7, "register-limits: env-override сильнее класса (production)");
+const limLocalOver = lim("local", { AUTH_REGISTER_GAP_MS: "500", AUTH_REGISTER_HOURLY_MAX: "2" });
+check(limLocalOver.gapMs === 500 && limLocalOver.hourMax === 2, "register-limits: env-override сильнее класса (local)");
+
+/* ---------- 1. store + register v2: создание ---------- */
+const made = await accounts.createAccount("Syr_q", "password1");
+check(!!made.account, "store: register Syr_q");
 check(made.account?.role === "registered" || made.account?.role === "admin", "store: role set");
-const again = await accounts.createAccount("Сырь", "password1");
+check(
+  made.account?.profile?.displayName === "Syr_q" && made.account?.characters?.[0]?.name === "Syr_q",
+  "store v2: без имени на поле displayName и персонаж = логин (совместимость)",
+);
+const again = await accounts.createAccount("Syr_q", "password1");
 check(again.error === "taken", "store: duplicate login");
-const weak = await accounts.createAccount("Пух", "123");
+const weak = await accounts.createAccount("Weak_q", "123");
 check(weak.error === "weak", "store: short password");
-const short = await accounts.createAccount("Я", "password1");
-check(short.error === "short", "store: short login");
-const bad = await accounts.loginAccount("Сырь", "wrongpass");
+const named = await accounts.createAccount("Dym_q", "password1", "Дым Лунный");
+check(
+  !!named.account && named.account?.login === "Dym_q" && named.account?.characters?.[0]?.name === "Дым Лунный",
+  "store v2: имя на поле → персонаж (независимо от логина)",
+);
+check(named.account?.profile?.displayName === "Дым Лунный", "store v2: имя на поле → profile.displayName");
+const omon = await accounts.createAccount("Omon_q", "password1", "Дым Лунный");
+check(!!omon.account, "store v2: имя на поле НЕ уникально (однофамильцы ок)");
+const nameShort = await accounts.createAccount("Ns1_q", "password1", "Д");
+check(nameShort.error === "badname", "store v2: имя 1 код-поинт → badname");
+const nameLong = await accounts.createAccount("Ns2_q", "password1", "Ы".repeat(25));
+check(nameLong.error === "badname", "store v2: имя 25 код-поинтов → badname");
+const nameBlank = await accounts.createAccount("Ns3_q", "password1", "   ");
+check(nameBlank.error === "badname", "store v2: пробельно-пустое имя → badname");
+const nameEmpty = await accounts.createAccount("Ns4_q", "password1", "");
+check(!!nameEmpty.account && nameEmpty.account?.profile?.displayName === "Ns4_q", "store v2: пустая строка имени → зовут логином");
+const blCyr = await accounts.createAccount("Вася", "password1");
+check(blCyr.error === "badlogin", "store v2: кириллический логин при создании → badlogin");
+const blSpace = await accounts.createAccount("two words", "password1");
+check(blSpace.error === "badlogin", "store v2: логин с пробелом при создании → badlogin");
+const blEdge = await accounts.createAccount("_edge", "password1");
+check(blEdge.error === "badlogin", "store v2: краевой ._- в начале логина → badlogin");
+const blOne = await accounts.createAccount("a", "password1");
+check(blOne.error === "badlogin", "store v2: односимвольный логин → badlogin");
+const okTwo = await accounts.createAccount("ab", "password1");
+check(!!okTwo.account, "store v2: двухсимвольный логин [a-zA-Z0-9]{2} легален");
+// Легаси-аккаунт с пробелом в логине («myster syr» на pr-51): создать теперь
+// нельзя, но существующий ОБЯЗАН входить — ужесточение не трогает login-in.
+// Сеем мутацией живого стора (тот же accounts.json читает спавн ниже).
+const legacy = await accounts.createAccount("legacy_probe", "password1");
+legacy.account.login = "myster syr";
+legacy.account.profile.displayName = "myster syr";
+legacy.account.characters[0].name = "myster syr";
+accounts.flushAccounts(true);
+const legacyIn = await accounts.loginAccount("myster syr", "password1");
+check(!!legacyIn.account && legacyIn.account?.login === "myster syr", "store v2: вход легаси-логина с пробелом жив (login-in не ужесточён)");
+const bad = await accounts.loginAccount("Syr_q", "wrongpass");
 check(bad.error === "bad", "store: bad password");
-const okLogin = await accounts.loginAccount("Сырь", "password1");
+const okLogin = await accounts.loginAccount("Syr_q", "password1");
 check(!!okLogin.account, "store: login ok");
 
 mkdirSync(DATA, { recursive: true });
@@ -110,14 +197,14 @@ writeFileSync(
   JSON.stringify({
     v: 1,
     cats: {
-      сырь: { login: "Сырь", fm: 1, fx: 3.25, fy: 2.5, x: 4, y: 3, ts: Date.now() },
+      syr_q: { login: "Syr_q", fm: 1, fx: 3.25, fy: 2.5, x: 4, y: 3, ts: Date.now() },
     },
   }),
 );
 
 const server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "Герта" },
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stderr.on("data", (d) => process.stderr.write(d));
@@ -156,19 +243,34 @@ try {
   guest2.close();
 
   const authed = await client();
-  authed.send(JSON.stringify(["auth", { action: "register", login: "Элис", pass: "password1" }]));
+  authed.send(JSON.stringify(["auth", { action: "register", login: "elis_q", pass: "password1" }]));
   const who = await waitFor(authed, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId);
   check(!!who[1].token, "ws register: token");
-  check(who[1].login === "Элис", "ws register: login");
+  check(who[1].login === "elis_q", "ws register: login");
   authed.send(JSON.stringify(["join", { room: "test", login: "Хакер", sprite: "blestyashka", size: 80 }]));
   const youTest = await waitFor(authed, (m) => m[0] === "you");
-  check(youTest[1].login === "Элис", "ws join test: identity from account, not payload.login");
+  check(youTest[1].login === "elis_q", "ws join test: identity from account, not payload.login");
   authed.close();
 
+  // register v2: WS-кадр с именем на поле — whoami несёт character+profile, join закрепляет персонажа, а не логин.
+  const namedWs = await client();
+  namedWs.send(JSON.stringify(["auth", { action: "register", login: "wsdym_q", pass: "password1", name: "Дым Лунный" }]));
+  const whoNamed = await waitFor(namedWs, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId);
+  check(
+    whoNamed[1]?.login === "wsdym_q" &&
+      whoNamed[1]?.profile?.displayName === "Дым Лунный" &&
+      whoNamed[1]?.character?.name === "Дым Лунный" &&
+      whoNamed[1]?.characters?.[0]?.name === "Дым Лунный",
+    "ws register v2: name → profile.displayName и персонаж (login другой)",
+  );
+  namedWs.close();
+
   const gertha = await client();
-  gertha.send(JSON.stringify(["auth", { action: "register", login: "Герта", pass: "password1" }]));
-  const whoAdmin = await waitFor(gertha, (m) => m[0] === "whoami" && m[1]?.login === "Герта");
-  check(whoAdmin[1].role === "admin", "bootstrap admin on first matching register");
+  gertha.send(JSON.stringify(["auth", { action: "register", login: "gertha_q", pass: "password1" }]));
+  const whoAdmin = await waitFor(gertha, (m) => m[0] === "whoami" && m[1]?.login === "gertha_q");
+  // S1 (аудит Z.AI): регистрация имени из BOOTSTRAP_ADMIN больше НЕ назначает
+  // роль admin — кто угодно мог занять имя раньше владелицы и стать админом.
+  check(whoAdmin[1].role !== "admin", "S1: bootstrap-имя регистрируется БЕЗ роли admin");
   gertha.close();
 
   const resReg = await fetch(`${HTTP}/auth/register`, {
@@ -178,6 +280,50 @@ try {
   });
   const httpReg = await resReg.json();
   check(resReg.ok && httpReg.ok && httpReg.token, "http register");
+  check(
+    httpReg.profile?.displayName === "HttpKot" && httpReg.character?.name === "HttpKot",
+    "http register v2: без name → displayName и персонаж = логин (совместимость)",
+  );
+
+  // register v2 (HTTP): имя на поле отдельно от логина.
+  const resName = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "httpdym_q", pass: "password1", name: "Дым Лунный" }),
+  });
+  const httpName = await resName.json();
+  check(
+    resName.ok &&
+      httpName.ok &&
+      httpName.login === "httpdym_q" &&
+      httpName.profile?.displayName === "Дым Лунный" &&
+      httpName.character?.name === "Дым Лунный",
+    "http register v2: name → profile.displayName и character.name (login другой)",
+  );
+  const resBadName = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "httpbadnm_q", pass: "password1", name: "Д" }),
+  });
+  const httpBadName = await resBadName.json();
+  check(resBadName.status === 400 && httpBadName.reason === "badname", "http register v2: короткое name → 400 badname");
+  const resBadLogin = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "myster syr v2", pass: "password1" }),
+  });
+  const httpBadLogin = await resBadLogin.json();
+  check(resBadLogin.status === 400 && httpBadLogin.reason === "badlogin", "http register v2: логин с пробелом при создании → 400 badlogin");
+  const resLegacyIn = await fetch(`${HTTP}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "myster syr", pass: "password1" }),
+  });
+  const httpLegacyIn = await resLegacyIn.json();
+  check(
+    resLegacyIn.ok && httpLegacyIn.ok && httpLegacyIn.login === "myster syr",
+    "http login v2: легаси-логин с пробелом входит (200) — старые аккаунты живы",
+  );
 
   const resLogin = await fetch(`${HTTP}/auth/login`, {
     method: "POST",
@@ -195,6 +341,19 @@ try {
   const httpBad = await resBad.json();
   check(resBad.status === 401 && httpBad.ok === false, "http bad password");
 
+  // (P1-б) https-сессия через x-forwarded-proto: Set-Cookie обязан стать
+  // Secure + SameSite=Lax (не None — кросс-сайт перенос кук больше не нужен).
+  const resSecure = await fetch(`${HTTP}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
+    body: JSON.stringify({ login: "HttpsKot", pass: "password1" }),
+  });
+  const setCookie = resSecure.headers.get("set-cookie") || "";
+  check(
+    setCookie.includes("SameSite=Lax") && setCookie.includes("Secure") && !setCookie.includes("None"),
+    "http register https: cookie SameSite=Lax + Secure (без None)",
+  );
+
   const withTok = await client(`/?t=${httpLogin.token}`);
   const hello = await waitFor(withTok, (m) => m[0] === "whoami" && m[1]?.accountId);
   check(hello[1].login === "HttpKot", "handshake query t binds session");
@@ -204,8 +363,8 @@ try {
   withTok.close();
 
   const pos = await client();
-  pos.send(JSON.stringify(["auth", { action: "login", login: "Сырь", pass: "password1" }]));
-  await waitFor(pos, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.login === "Сырь");
+  pos.send(JSON.stringify(["auth", { action: "login", login: "Syr_q", pass: "password1" }]));
+  await waitFor(pos, (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.login === "Syr_q");
   pos.send(JSON.stringify(["join", { room: "test" }]));
   const youPos = await waitFor(pos, (m) => m[0] === "you");
   const restored = youPos[1].fm === 1 && Math.abs(youPos[1].fx - 3.25) < 0.05 && Math.abs(youPos[1].fy - 2.5) < 0.05;
@@ -215,7 +374,7 @@ try {
   pos.close();
   const after = await client();
   await waitFor(after, (m) => m[0] === "whoami");
-  after.send(JSON.stringify(["join", { room: "test", login: "Сырь" }]));
+  after.send(JSON.stringify(["join", { room: "test", login: "Syr_q" }]));
   const afterOut = await waitFor(after, (m) => m[0] === "refuse" || m[0] === "noplace");
   check(afterOut[1]?.code === "auth_required" || afterOut[1]?.reason === "auth_required", "logout: test closed again");
   after.close();
@@ -225,6 +384,11 @@ try {
   combatGuest.send(JSON.stringify(["join", { room: "combat", login: "Боец" }]));
   const youCombat = await waitFor(combatGuest, (m) => m[0] === "you");
   check(youCombat[1].login === "Боец", "guest: combat you");
+  const fieldCombat = await waitFor(combatGuest, (m) => m[0] === "field");
+  check(
+    fieldCombat[1]?.room === "grot-1",
+    "retired combat: join по коду combat привёл в grot-1 (RETIRED_ROOMS)",
+  );
   combatGuest.close();
 
   const hungerGuest = await client();
@@ -243,13 +407,68 @@ try {
     body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
   });
   check(cfgGuest.status === 403, "cfg post guest forbidden");
-  const cfgAdmin = await fetch(`${HTTP}/cfg?t=${whoAdmin[1].token}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
+
+  // ---------- S1: назначение admin одноразовым CLI (как владелица на проде).
+  // Сервер останавливаем: он держит сте в памяти и перезапишет файл; CLI
+  // повышает существующий bootstrap-аккаунт, повтор — idempotent.
+  const waitExit = (child) =>
+    new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode) return resolve();
+      child.once("exit", resolve);
+    });
+  server.kill("SIGTERM");
+  await waitExit(server);
+  const cliEnv = { ...process.env, DATA_DIR: DATA };
+  const cli1 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
+    env: cliEnv,
+    encoding: "utf8",
   });
-  const cfgSaved = await cfgAdmin.json();
-  check(cfgAdmin.ok && cfgSaved.atmo?.phaseMin === 9, "cfg post admin");
+  check(/повышен/.test(cli1), "S1: make-admin повышает существующий аккаунт (CLI, код возврата 0)");
+  const cli2 = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "gertha_q"], {
+    env: cliEnv,
+    encoding: "utf8",
+  });
+  check(/уже админ/.test(cli2), "S1: make-admin повтор — idempotent (уже admin, код возврата 0)");
+  let cli3Code = 0;
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "Никогда-не-существует"], {
+      env: cliEnv,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (e) {
+    cli3Code = e.status ?? 1;
+  }
+  check(cli3Code !== 0, "S1: make-admin без пароля для нового имени — отказ (не создаёт вслепую)");
+
+  const serverB = spawn(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, BOOTSTRAP_ADMIN: "gertha_q" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  serverB.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await waitReady(WS);
+    const resAdminLogin = await fetch(`${HTTP}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ login: "gertha_q", pass: "password1" }),
+    });
+    const adminLogin = await resAdminLogin.json();
+    check(
+      resAdminLogin.ok && adminLogin.role === "admin" && adminLogin.login === "gertha_q",
+      "S1: после make-admin вход даёт роль admin (пароль-хеш сохранён)",
+    );
+    const cfgAdmin = await fetch(`${HTTP}/cfg?t=${adminLogin.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ atmo: { phaseMin: 9, weatherMin: 20 } }),
+    });
+    const cfgSaved = await cfgAdmin.json();
+    check(cfgAdmin.ok && cfgSaved.atmo?.phaseMin === 9, "cfg post admin");
+  } finally {
+    serverB.kill("SIGTERM");
+  }
 } catch (e) {
   failures += 1;
   console.error("FAIL exception", e);
@@ -259,8 +478,10 @@ try {
 
 /* ---------- pr-41: изоляция Элизии и auth-харднинг (второй sandbox) ----------
  * Свой server.js со заниженными порогами — детерминированные проверки без
- * sleep-магии: BOOTSTRAP_ADMIN="Герта, лИзА" (список), MAX_ACCOUNTS=8,
- * per-login замок = 2 неудачи за окно 300 мс. Порт — отдельный свободный. */
+ * sleep-магии: BOOTSTRAP_ADMIN="gertha_q, liza_q" (список), MAX_ACCOUNTS=8,
+ * per-login замок = 2 неудачи за окно 300 мс. Порт — отдельный свободный.
+ * Класс инстанса — production: register-гейт обязан работать в этих пробах
+ * (register v2: local/test без ограничений, прод-лимиты — здесь). */
 const DATA2 = mkdtempSync(path.join(tmpdir(), "coop-auth-hard-"));
 const PORT2 = 3960 + Math.floor(Math.random() * 30);
 const WS2 = `ws://${HOST}:${PORT2}`;
@@ -272,7 +493,8 @@ const server2 = spawn(process.execPath, ["server.js"], {
     PORT: String(PORT2),
     HOST,
     DATA_DIR: DATA2,
-    BOOTSTRAP_ADMIN: "Герта, лИзА",
+    COOP_INSTANCE_CLASS: "production",
+    BOOTSTRAP_ADMIN: "gertha_q, liza_q",
     MAX_ACCOUNTS: "8",
     AUTH_LOGIN_FAIL_MAX: "2",
     AUTH_LOGIN_FAIL_WINDOW_MS: "300",
@@ -316,18 +538,19 @@ try {
     ws.send(JSON.stringify(["auth", { action: "login", login, pass }]));
   const registeredOk = (m) => m[0] === "whoami" && m[1]?.ok && m[1]?.accountId;
 
-  // (в) BOOTSTRAP_ADMIN-СПИСОК: каждое имя из списка становится admin при
-  // СВОЕЙ первой регистрации — уже существующий админ не гасит роль второго.
+  // (в) BOOTSTRAP_ADMIN-СПИСОК (S1, аудит Z.AI): регистрация имени из списка
+  // больше НЕ даёт роли — у каждого НЕзависимо от списка обычная роль; роль
+  // назначает только CLI владелицы. Пробелы/регистр по-прежнему: trim+lower.
   const gA = await client2();
-  registerFrame(gA, "  гЕРТА "); // пробелы и регистр: список сравнивается после trim+lower
+  registerFrame(gA, "  gErThA_q "); // пробелы и регистр: список сравнивается после trim+lower
   const whoGA = await waitForFrom(gA, registeredOk, 0);
-  check(whoGA[1]?.role === "admin", "bootstrap list: имя №1 → admin");
+  check(whoGA[1]?.role === "registered", "S1 list: имя №1 из BOOTSTRAP_ADMIN → роль НЕ admin");
   gA.close();
 
   const gB = await client2();
-  registerFrame(gB, "  лИзА ");
+  registerFrame(gB, "  liZa_Q ");
   const whoGB = await waitForFrom(gB, registeredOk, 0);
-  check(whoGB[1]?.role === "admin", "bootstrap list: имя №2 → admin при живом админе №1");
+  check(whoGB[1]?.role === "registered", "S1 list: имя №2 из списка → тоже НЕ admin (независимо)");
   gB.close();
 
   // (б) register-флуд с ПОДДЕЛАННЫМ XFF: loopback-сокет + XFF → лимит
@@ -335,19 +558,19 @@ try {
   // (9.9.9.9 → 4.4.4.4) не должна обходить лимит (старый код доверял первому).
   const XFF_LAST = "203.0.113.7";
   const x1 = await client2({ "x-forwarded-for": `9.9.9.9, ${XFF_LAST}` });
-  registerFrame(x1, "Люся1");
+  registerFrame(x1, "xff_one_q");
   const x1r = await waitForFrom(x1, registeredOk, 0);
   check(!!x1r, "xff-харднинг: регистрация через «прокси» прошла");
   x1.close();
 
   const x2 = await client2({ "x-forwarded-for": `4.4.4.4, ${XFF_LAST}` });
-  registerFrame(x2, "Люся2");
+  registerFrame(x2, "xff_two_q");
   const x2r = await waitForFrom(x2, (m) => m[0] === "whoami" && m[1]?.ok === false, 0);
   check(x2r[1]?.reason === "rate", "xff-харднинг: тот же последний хоп → rate (подмена первого не помогает)");
   x2.close();
 
   const x3 = await client2({ "x-forwarded-for": "4.4.4.4, 198.51.100.77" });
-  registerFrame(x3, "Люся3");
+  registerFrame(x3, "xff_three_q");
   const x3r = await waitForFrom(x3, registeredOk, 0);
   check(!!x3r, "xff-харднинг: другой последний хоп — лимит чужой записи не задел");
   x3.close();
@@ -355,11 +578,11 @@ try {
   // Контроль: прямой коннект БЕЗ XFF (локальная разработка) — байпас лимитов
   // остался только для этого случая.
   const d1 = await client2();
-  registerFrame(d1, "Прямой1");
+  registerFrame(d1, "direct1_q");
   const d1r = await waitForFrom(d1, registeredOk, 0);
   check(!!d1r, "dev-байпас: прямой loopback без XFF не лимитируется (№1)");
   const d2 = await client2();
-  registerFrame(d2, "Прямой2");
+  registerFrame(d2, "direct2_q");
   const d2r = await waitForFrom(d2, registeredOk, 0);
   check(!!d2r, "dev-байпас: прямой loopback подряд (№2)");
   d1.close();
@@ -367,17 +590,17 @@ try {
 
   // (г) MAX_ACCOUNTS=8: счёт 6 — ещё две в потолок, дальше 'full'.
   const f1 = await client2();
-  registerFrame(f1, "ЕщёМесто");
+  registerFrame(f1, "seat7_q");
   const f1r = await waitForFrom(f1, registeredOk, 0);
   check(!!f1r, "max-accounts: 7-я регистрация внутри потолка");
   f1.close();
   const f2 = await client2();
-  registerFrame(f2, "ВосьмойКот");
+  registerFrame(f2, "seat8_q");
   const f2r = await waitForFrom(f2, registeredOk, 0);
   check(!!f2r, "max-accounts: 8-я регистрация — последняя в потолке");
   f2.close();
   const f3 = await client2();
-  registerFrame(f3, "ДевятыйКот");
+  registerFrame(f3, "seat9_q");
   const f3r = await waitForFrom(f3, (m) => m[0] === "whoami" && m[1]?.ok === false, 0);
   check(f3r[1]?.reason === "full", "max-accounts: за потолком WS-регистрация → 'full'");
   f3.close();
@@ -385,7 +608,7 @@ try {
   const res2Full = await fetch(`http://${HOST}:${PORT2}/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ login: "ХттпПолный", pass: "password1" }),
+    body: JSON.stringify({ login: "http_full_q", pass: "password1" }),
   });
   const http2Full = await res2Full.json();
   check(res2Full.status === 400 && http2Full?.reason === "full", "max-accounts: HTTP-регистрация → 400 'full'");
@@ -394,28 +617,29 @@ try {
   // успех сбрасывает счётчик; окно отпускает (лок поствременный).
   const lk = await client2();
   let mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "wrong-password");
+  loginFrame(lk, "liZa_Q", "wrong-password");
   const bad1 = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "bad", mark);
   check(!!bad1, "per-login: неудача №1 → 'bad'");
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "wrong-password");
+  loginFrame(lk, "liZa_Q", "wrong-password");
   const bad2 = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "bad", mark);
   check(!!bad2, "per-login: неудача №2 → 'bad' (счётчик на пороге)");
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "password1"); // верный пароль под замком
+  loginFrame(lk, "liZa_Q", "password1"); // верный пароль под замком
   const locked = await waitForFrom(lk, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "rate", mark);
   check(!!locked, "per-login: верный пароль при замке → 'rate'");
   await sleep(350); // окно 300 мс истекло — счётчик сгорел
   mark = lk.inbox.length;
-  loginFrame(lk, "лИзА", "password1");
+  loginFrame(lk, "liZa_Q", "password1");
   const unlocked = await waitForFrom(lk, registeredOk, mark);
-  check(!!unlocked && unlocked[1]?.login === "лИзА", "per-login: окно отпустило — верный пароль входит");
+  check(!!unlocked && unlocked[1]?.login === "liZa_Q", "per-login: окно отпустило — верный пароль входит");
   lk.close();
 
-  // Счётчик закрытой комнаты гостю виден (меню миров), имена — нет.
+  // Состав закрытой комнаты: аккаунту — реальный счётчик и имена; гость
+  // ниже получает «призрак» (count 0, пустые logins) — см. rooms-ghost.
   const sitter = await client2();
   let sMark = sitter.inbox.length;
-  loginFrame(sitter, "лИзА", "password1");
+  loginFrame(sitter, "liZa_Q", "password1");
   const sLogin = await waitForFrom(sitter, registeredOk, sMark);
   check(!!sLogin, "rooms-count: сиделка вошла в аккаунт");
   sitter.send(JSON.stringify(["join", { room: "test" }]));
@@ -435,13 +659,15 @@ try {
   const lie = await waitForFrom(spy, (m) => m[0] === "roomsinfo", 0);
   const lieTest = lie[1]?.[0];
   const lieGhost = lie[1]?.[1];
+  // P1 roomsinfo-ghost: гость не может даже СОСЧИТАТЬ сидящих закрытой комнаты —
+  // ответ неотличим от несуществующей (count 0, без имён; спек §11).
   check(
-    lieTest?.id === "test" && lieTest?.count >= 1 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
-    "rooms-count: гость видит число в закрытой комнате, но не имена",
+    lieTest?.id === "test" && lieTest?.count === 0 && Array.isArray(lieTest?.logins) && lieTest.logins.length === 0,
+    "rooms-ghost: гость в закрытой комнате видит «пустую» (count 0, без имён)",
   );
   check(
     lieGhost?.count === 0 && Array.isArray(lieGhost?.logins) && lieGhost.logins.length === 0,
-    "rooms-count: несуществующая комната по-прежнему пустая",
+    "rooms-ghost: несуществующая комната по-прежнему пустая",
   );
   spy.close();
   sitter.close();
@@ -450,6 +676,286 @@ try {
   console.error("FAIL exception (hardening sandbox)", e);
 } finally {
   server2.kill("SIGTERM");
+}
+
+/* ---------- P1: домен-гейты, CSRF и матрица токенов (третий sandbox) ----------
+ * PUBLIC_HOSTS=pub.example + ELYRIA_HOSTS=ely.example (+ белый Origin из
+ * ALLOWED_ORIGINS). Пробы шлют явный Host-заголовок (node:http — fetch его не
+ * переопределяет), поэтому один сервер показывает все три класса хоста. */
+const DATA3 = mkdtempSync(path.join(tmpdir(), "coop-auth-host-"));
+const PORT3 = 4015 + Math.floor(Math.random() * 40);
+const WS3 = `ws://${HOST}:${PORT3}`;
+const LOCAL3 = `127.0.0.1:${PORT3}`;
+
+// S1 (аудит Z.AI): админа для /cfg/admin-проб создаём ДО старта сервера
+// одноразовым CLI make-admin (создание аккаунта сразу с ролью admin);
+// регистрация bootstrap-имени роль больше не даёт.
+const ADMIN3_PASS = "b7-elision-admin1";
+const cliS3 = execFileSync(
+  process.execPath,
+  [path.join(ROOT, "scripts", "make-admin.mjs"), "Admin3_q", ADMIN3_PASS],
+  { env: { ...process.env, DATA_DIR: DATA3 }, encoding: "utf8" },
+);
+check(/создан с ролью admin/.test(cliS3), "S1: make-admin создаёт новый аккаунт с ролью admin (до старта сервера)");
+
+const server3 = spawn(process.execPath, ["server.js"], {
+  cwd: ROOT,
+  env: {
+    ...process.env,
+    PORT: String(PORT3),
+    HOST,
+    DATA_DIR: DATA3,
+    PUBLIC_HOSTS: "pub.example",
+    ELYRIA_HOSTS: "ely.example",
+    ALLOWED_ORIGINS: "https://ely.example",
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+server3.stderr.on("data", (d) => process.stderr.write(d));
+
+/** HTTP-проба с ЯВНЫМ Host-заголовком (и, по желанию, Origin/cookie/proto). */
+function probe3({ method = "GET", path = "/", host = LOCAL3, origin, proto, cookie, body }) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const headers = { host };
+    if (payload) headers["content-type"] = "application/json";
+    if (origin) headers.origin = origin;
+    if (proto) headers["x-forwarded-proto"] = proto;
+    if (cookie) headers.cookie = cookie;
+    const req = http.request({ host: HOST, port: PORT3, method, path, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        const setCookie = res.headers["set-cookie"] || [];
+        try {
+          resolve({ status: res.statusCode, json: JSON.parse(text), setCookie });
+        } catch {
+          resolve({ status: res.statusCode, json: null, setCookie });
+        }
+      });
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+try {
+  await waitReady(WS3);
+
+  // (P1-а) HTTP-гейт public-хоста: зоны Элизии «не существуют»…
+  const gateReg = await probe3({
+    method: "POST", path: "/auth/register", host: "pub.example",
+    body: { login: "PubBlocked", pass: "password1" },
+  });
+  check(
+    gateReg.status === 404 && gateReg.json?.reason === "not_found",
+    "host-gate: POST /auth/register на public → 404 not_found",
+  );
+  const gateCfgPost = await probe3({
+    method: "POST", path: "/cfg", host: "pub.example",
+    body: { atmo: { phaseMin: 9, weatherMin: 20 } },
+  });
+  check(
+    gateCfgPost.status === 404 && gateCfgPost.json?.reason === "not_found",
+    "host-gate: POST /cfg на public → 404 (конфиг на гротах read-only)",
+  );
+  const gateCfgGet = await probe3({ method: "GET", path: "/cfg", host: "pub.example" });
+  check(
+    gateCfgGet.status === 200 && gateCfgGet.json?.ok === true,
+    "host-gate: GET /cfg на public жив (публичный конфиг)",
+  );
+  const gateProfiles = await probe3({ method: "GET", path: "/profiles", host: "pub.example" });
+  check(
+    gateProfiles.status === 404 && gateProfiles.json?.reason === "not_found",
+    "host-gate: GET /profiles на public → 404",
+  );
+
+  // …а elyria-хост — рабочая зона: регистрация доходит до исполнения.
+  const elyReg = await probe3({
+    method: "POST", path: "/auth/register", host: "ely.example",
+    body: { login: "ElyHost", pass: "password1" },
+  });
+  check(
+    elyReg.status === 200 && elyReg.json?.ok === true && elyReg.json?.login === "ElyHost",
+    "host-gate: register на elyria проходит до исполнения (200, не 404)",
+  );
+  // Матрица токенов P1: elyria — cookie-only, token в теле не выдаётся.
+  check(elyReg.json?.token === undefined, "token-matrix: elyria register — без token в теле (cookie-only)");
+  const elyTok = (String(elyReg.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
+  check(!!elyTok, "token-matrix: elyria register прислал куку с сессией");
+
+  // ?t= на elyria по умолчанию игнорируется; кука та же сессию поднимает.
+  const elyByQ = await probe3({ method: "GET", path: `/auth/me?t=${elyTok}`, host: "ely.example" });
+  check(elyByQ.json?.ok === true && elyByQ.json?.role === "guest", "token-matrix: elyria игнорирует ?t= (легаси выключено)");
+  const elyByCookie = await probe3({
+    method: "GET", path: "/auth/me", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    elyByCookie.json?.ok === true && elyByCookie.json?.login === "ElyHost",
+    "token-matrix: cookie-сессия на elyria работает",
+  );
+  const localByQ = await probe3({ method: "GET", path: `/auth/me?t=${elyTok}`, host: LOCAL3 });
+  check(
+    localByQ.json?.ok === true && localByQ.json?.login === "ElyHost",
+    "token-matrix: local-класс по-прежнему принимает ?t= (тесты/dev)",
+  );
+
+  // /profiles на elyria: DTO из сессии без login/role; гость — 401.
+  const elyProf = await probe3({
+    method: "GET", path: "/profiles/me", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    elyProf.status === 200 && elyProf.json?.ok === true && elyProf.json?.displayName === "ElyHost"
+      && !("login" in (elyProf.json || {})) && !("role" in (elyProf.json || {})),
+    "profiles: /profiles/me отдаёт DTO без login/role (accounts.publicProfile)",
+  );
+  const elyProfGuest = await probe3({ method: "GET", path: "/profiles/me", host: "ely.example" });
+  check(
+    elyProfGuest.status === 401 && elyProfGuest.json?.reason === "auth_required",
+    "profiles: гость /profiles/me → 401 auth_required",
+  );
+  const elyCat = await probe3({ method: "GET", path: "/profiles", host: "ely.example" });
+  const elyCatItems = elyCat.json?.items || [];
+  check(
+    elyCat.status === 200 && elyCat.json?.ok === true && Array.isArray(elyCatItems)
+      && elyCatItems.length === elyCat.json?.total && elyCatItems.length >= 1
+      && elyCatItems.every((it) => !("login" in it) && !("role" in it) && !("pass" in it)),
+    "profiles: GET /profiles — рабочий каталог публичных карточек (без login/role)",
+  );
+  const elyOne = await probe3({ method: "GET", path: "/profiles/some-id", host: "ely.example" });
+  check(
+    elyOne.status === 404 && elyOne.json?.reason === "unknown",
+    "profiles: GET /profiles/:id — заглушка 404 unknown до P4",
+  );
+  const elyPatch = await probe3({
+    method: "PATCH", path: "/profiles/me", host: "ely.example", body: { displayName: "NewName" },
+  });
+  check(
+    elyPatch.status === 401 && elyPatch.json?.reason === "auth_required",
+    "profiles: PATCH /profiles/me без сессии → 401 auth_required (P4: правка живая)",
+  );
+  const elyProf404 = await probe3({ method: "PUT", path: "/profiles/me", host: "ely.example", body: {} });
+  check(
+    elyProf404.status === 404 && elyProf404.json?.ok === false && !!elyProf404.json?.reason,
+    "profiles: мусорный метод/суб-путь — JSON-404 от обработчика, не статика",
+  );
+
+  // (P1-в) CSRF: пишущие POST с чужим Origin → 403 csrf, белый Origin —
+  // доходит до проверки пароля (401 bad, не 403).
+  const csrfLogin = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    origin: "https://evil.example", body: { login: "ElyHost", pass: "password1" },
+  });
+  check(
+    csrfLogin.status === 403 && csrfLogin.json?.reason === "csrf_origin_mismatch",
+    "csrf: login с чужим Origin → 403 csrf_origin_mismatch (B1: per-destination)",
+  );
+  const csrfCfg = await probe3({
+    method: "POST", path: "/cfg", host: "ely.example",
+    origin: "https://evil.example", body: {},
+  });
+  check(
+    csrfCfg.status === 403 && csrfCfg.json?.reason === "csrf_origin_mismatch",
+    "csrf: POST /cfg с чужим Origin → 403 csrf_origin_mismatch (B1)",
+  );
+  const csrfOk = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    origin: "https://ely.example", body: { login: "ElyHost", pass: "wrong-wrong" },
+  });
+  check(
+    csrfOk.status === 401 && csrfOk.json?.reason === "bad",
+    "csrf: Origin из ALLOWED_ORIGINS доводит до проверки пароля (401 bad, не 403)",
+  );
+
+  // (P2) Новые admin-маршруты /cfg: на public-хосте их «не существует»,
+  // гость/юзер на elyria получают 403, админ — 200 с метаданными реестра.
+  const gateCfgAdmin = await probe3({ method: "GET", path: "/cfg/admin", host: "pub.example" });
+  const gateCfgExport = await probe3({ method: "GET", path: "/cfg/export", host: "pub.example" });
+  check(
+    gateCfgAdmin.status === 404 && gateCfgAdmin.json?.reason === "not_found" &&
+      gateCfgExport.status === 404 && gateCfgExport.json?.reason === "not_found",
+    "host-gate: GET /cfg/admin и /cfg/export на public → 404 (админ-зоны конфига скрыты)",
+  );
+  const cfgAdminGuest = await probe3({ method: "GET", path: "/cfg/admin", host: "ely.example" });
+  const cfgAdminUser = await probe3({
+    method: "GET", path: "/cfg/admin", host: "ely.example", cookie: `coop_session=${elyTok}`,
+  });
+  check(
+    cfgAdminGuest.status === 403 && cfgAdminGuest.json?.reason === "auth_required" &&
+      cfgAdminUser.status === 403 && cfgAdminUser?.json?.reason === "auth_required",
+    "cfg-admin: гость и не-админ на /cfg/admin → 403 auth_required",
+  );
+  const adminLogin3 = await probe3({
+    method: "POST", path: "/auth/login", host: "ely.example",
+    body: { login: "Admin3_q", pass: ADMIN3_PASS },
+  });
+  const adminTok3 = (String(adminLogin3.setCookie[0] || "").match(/coop_session=([0-9a-f]+)/) || [])[1] || "";
+  check(adminLogin3.json?.role === "admin" && !!adminTok3, "cfg-admin: make-admin-аккаунт входит, роль admin (cookie-only на elyria)");
+  const cfgAdminOk = await probe3({
+    method: "GET", path: "/cfg/admin", host: "ely.example", cookie: `coop_session=${adminTok3}`,
+  });
+  check(
+    cfgAdminOk.status === 200 && cfgAdminOk.json?.ok === true &&
+      Object.keys(cfgAdminOk.json?.registry || {}).length === 8 && Array.isArray(cfgAdminOk.json?.history),
+    "cfg-admin: админ на /cfg/admin → 200 + registry (8 параметров: 6 глобальных — в т.ч. мастер-гейт atmo.playerControl и points-кривая combat.armorCurve, мандаты 2026-11-08 — + per-room гейт atmo.allowPlayerAtmosphereControl) + history",
+  );
+
+  // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;
+  // hello/logout прежние. На elyria-хосте вход работает и выдаёт токен кадром.
+  const client3 = (headers) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(WS3, { headers: headers || {} });
+      const inbox = [];
+      ws.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
+      ws.on("error", reject);
+      ws.inbox = inbox;
+      ws.once("open", () => resolve(ws));
+    });
+  const waitForIdx = (ws, pred, from, ms = 4000) =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const hit = ws.inbox.slice(from).find(pred);
+        if (hit) return resolve(hit);
+        if (Date.now() - t0 > ms) {
+          return reject(new Error(`timeout; inbox=${JSON.stringify(ws.inbox.slice(-8))}`));
+        }
+        setTimeout(tick, 15);
+      };
+      tick();
+    });
+
+  const pubWs = await client3({ host: "pub.example" });
+  const pubMark = pubWs.inbox.length;
+  pubWs.send(JSON.stringify(["auth", { action: "register", login: "WsPub", pass: "password1" }]));
+  const pubRefusal = await waitForIdx(pubWs, (m) => m[0] === "whoami" && m[1]?.ok === false, pubMark);
+  check(
+    pubRefusal[1]?.reason === "error",
+    "ws-gate: register на public-хосте — спокойный отказ (whoami reason:error)",
+  );
+  let markHello = pubWs.inbox.length;
+  pubWs.send(JSON.stringify(["auth", { action: "hello" }]));
+  const pubHello = await waitForIdx(pubWs, (m) => m[0] === "whoami" && m[1]?.ok === true, markHello);
+  check(
+    pubHello[1]?.role === "guest",
+    "ws-gate: hello на public-хосте жив (гость получает whoami guest)",
+  );
+  pubWs.close();
+
+  const elyWs = await client3({ host: "ely.example", origin: "https://ely.example" });
+  const elyMark = elyWs.inbox.length;
+  elyWs.send(JSON.stringify(["auth", { action: "register", login: "WsEly", pass: "password1" }]));
+  const elyFrame = await waitForIdx(elyWs, (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId, elyMark);
+  check(!!elyFrame, "ws-gate: register кадром на elyria-хосте по-прежнему работает");
+  check(!!elyFrame[1]?.token, "token-matrix: WS-кадр на elyria выдаёт токен whoami (матрица — про HTTP-тела)");
+  elyWs.close();
+} catch (e) {
+  failures += 1;
+  console.error("FAIL exception (host-policy sandbox)", e);
+} finally {
+  server3.kill("SIGTERM");
 }
 
 if (failures) {

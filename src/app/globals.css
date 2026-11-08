@@ -1,5 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* UI-kit semantic tokens (--uk-*): aliases over the --sim-* theme variables,
+   declared once in :root — they follow <html data-theme> automatically via
+   computed-value resolution, so the theme switchers keep working untouched.
+   Order note: pure custom-property declarations, safe next to other imports. */
+@import "../components/ui/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -644,3 +649,16 @@
   0% { opacity: 0.92; transform: translate(-50%, -50%) rotate(var(--rot)) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--rot)) scale(0.7); }
 }
+
+/* ============ Shared star layer ============ */
+/* Fixed star field behind the content of the main-menu pages (both variants;
+   night-side page canvases and glass capsules live in CSS modules imported
+   only by elyria components, so they never reach the grotto bundle). */
+.star-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+

@@ -8,7 +8,9 @@
  * through the original callbacks and `editorRef` (panel-only ghost state).
  */
 import { SPRITES, type SpriteId } from '@/lib/sim/settings';
-import { TREE_MODELS, PLAYER_MODEL_ID } from '@/lib/sim/model-catalog';
+import { Button, Select } from '@/components/ui';
+import { TREE_MODELS } from '@/lib/sim/model-catalog';
+import { refreshSpriteCatalog, subscribeSpriteCatalog } from '@/lib/sim/sprite-catalog';
 import { useEffect, useState } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import {
@@ -709,44 +711,47 @@ function EditorModelLibrary({ playerSprite, onPlayerSprite, selectedTree, onTree
   onTree: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [, refreshCatalog] = useState(0);
+  useEffect(() => subscribeSpriteCatalog(() => refreshCatalog((version) => version + 1)), []);
+  useEffect(() => { if (open) void refreshSpriteCatalog(); }, [open]);
   const [page, setPage] = useState(0);
   const pageSize = 12;
   const pages = Math.ceil(TREE_MODELS.length / pageSize);
   return (
     <section className="rounded-lg border border-[var(--sim-line-strong)] p-2" aria-label="Библиотека 3D-моделей">
-      <button type="button" className="flex w-full justify-between font-semibold"
+      <Button variant="outline" size="sm" type="button" className="flex w-full justify-between font-semibold"
         aria-expanded={open} onClick={() => setOpen(!open)}>
         <span>3D-модели · кот и {TREE_MODELS.length} деревьев</span><span>{open ? '−' : '+'}</span>
-      </button>
+      </Button>
       {open ? <div className="mt-2 space-y-2">
         <label className="block">
           <span className="mb-1 block text-[var(--sim-text-muted)]">Модель игрока</span>
-          <select aria-label="Модель игрока" value={playerSprite}
+          <Select aria-label="Модель игрока" value={playerSprite}
             onChange={(event) => onPlayerSprite(event.target.value as SpriteId)}
             className="w-full rounded border border-[var(--sim-line-strong)] bg-[var(--sim-inset)] p-1.5">
             {SPRITES.map((sprite) => <option key={sprite.id} value={sprite.id}>
-              {sprite.id === PLAYER_MODEL_ID ? 'Оригами-кот · 3D' : sprite.name}
+              {sprite.name}
             </option>)}
-          </select>
+          </Select>
         </label>
         <div className="flex items-center justify-between">
           <span className="font-semibold">Деревья · {page + 1}/{pages}</span>
           <div className="flex gap-1">
-            <button type="button" aria-label="Предыдущие модели деревьев" disabled={page === 0}
-              onClick={() => setPage(page - 1)} className="btn-neutral rounded border px-2 disabled:opacity-30">←</button>
-            <button type="button" aria-label="Следующие модели деревьев" disabled={page === pages - 1}
-              onClick={() => setPage(page + 1)} className="btn-neutral rounded border px-2 disabled:opacity-30">→</button>
+            <Button variant="outline" size="sm" type="button" aria-label="Предыдущие модели деревьев" disabled={page === 0}
+              onClick={() => setPage(page - 1)} className="btn-neutral rounded border px-2 disabled:opacity-30">←</Button>
+            <Button variant="outline" size="sm" type="button" aria-label="Следующие модели деревьев" disabled={page === pages - 1}
+              onClick={() => setPage(page + 1)} className="btn-neutral rounded border px-2 disabled:opacity-30">→</Button>
           </div>
         </div>
         <div className="grid grid-cols-3 gap-1">
           {TREE_MODELS.slice(page * pageSize, (page + 1) * pageSize).map((model) =>
-            <button key={model.id} type="button" aria-label={`Поставить ${model.label.toLowerCase()}`}
+            <Button variant="outline" size="sm" key={model.id} type="button" aria-label={`Поставить ${model.label.toLowerCase()}`}
               aria-pressed={selectedTree === model.id} onClick={() => onTree(model.id)}
-              className={`rounded border p-1 ${selectedTree === model.id ? 'border-[var(--sim-accent)] bg-[var(--sim-accent-tint)]' : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset)]'}`}>
+              className={`h-auto flex-col whitespace-normal rounded border p-1 ${selectedTree === model.id ? 'border-[var(--sim-accent)] bg-[var(--sim-accent-tint)]' : 'border-[var(--sim-line-strong)] bg-[var(--sim-inset)]'}`}>
               {/* Static previews are also the 2D/editor fallback for the same GLB geometry. */}
               <img src={model.preview} alt="" loading="lazy" className="mx-auto h-14 w-full object-contain" />
               <span className="block text-[10px]">{model.label}</span>
-            </button>)}
+            </Button>)}
         </div>
         <p className="text-[10px] leading-snug text-[var(--sim-text-faint)]">
           Выберите дерево, поставьте его на поле и нажмите ✓. Размер, поворот, перенос и сохранение работают как у обычных объектов.

@@ -42,7 +42,7 @@ export interface SimNetDeps {
   setRoomCode: Dispatch<SetStateAction<string>>;
   setRoomsRows: Dispatch<SetStateAction<CoopRoomInfo[] | null>>;
   setRoomsStale: Dispatch<SetStateAction<boolean>>;
-  setWhoami?: Dispatch<SetStateAction<import('@/lib/net/protocol').CoopWhoami | null>>;
+  setWhoami?: (row: import('@/lib/net/protocol').CoopWhoami) => void;
   setSettings: Dispatch<SetStateAction<SimSettings>>;
   aimSyncRef: RefObject<{ deg: number | null; at: number; pending: number | null; timer: ReturnType<typeof setTimeout> | null }>;
   battleEntryRef: RefObject<{ c: number; r: number } | null>;
@@ -536,7 +536,7 @@ export function useSimNet(deps: SimNetDeps) {
       onNoplace: (payload) =>
         setNetStatus(
           payload?.reason === 'auth_required'
-            ? 'Элизия только для зарегистрированных. Войдите в аккаунт.'
+            ? 'Эта комната только для зарегистрированных. Войдите в аккаунт.'
             : payload?.reason || 'Комната полная (макс. 30). Смените ?room=',
         ),
       onDummyState: (state) => {

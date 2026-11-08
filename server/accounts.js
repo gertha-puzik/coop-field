@@ -8,7 +8,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { DATA_DIR, SPRITES } from "./config.js";
+import { DATA_DIR } from "./config.js";
+// Динамический каталог спрайтов (менеджер спрайтов): attachSprite принимает
+// id из манифеста sprites.js — и загруженные, и базовые. Цикл импортов
+// accounts.js ↔ sprites.js здесь осознанный: spriteIdAllowed вызывается
+// ТОЛЬКО внутри тел функций (top-level инициализации не пересекаются),
+// ESM live-биндинги держат порядок; spriteWearers в sprites.js — обратное
+// ребро того же ограничения.
+import { spriteIdAllowed } from "./sprites.js";
 
 const INVISIBLE_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
@@ -150,26 +157,28 @@ function findById(id) {
 
 /**
  * Глобальный предохранитель от флуда регистрациями: потолок общего числа
- * аккаунтов. Env MAX_ACCOUNTS (дефолт 2000); 0/мусор → дефолт. При достижении
- * createAccount отвечает ошибкой 'full' — вместе с per-IP register-лимитом
- * (server/auth.js) это закрывает и «медленный» флуд с роты адресов.
+ * аккаунтов. Env MAX_ACCOUNTS (дефолт 500 — решение владелицы 2026-11-08);
+ * 0/мусор → дефолт. При достижении createAccount отвечает ошибкой 'full' —
+ * вместе с per-IP register-лимитом (server/auth.js) это закрывает и
+ * «медленный» флуд с роты адресов.
  */
 function maxAccounts() {
   const n = Number(process.env.MAX_ACCOUNTS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 500;
 }
 
 /**
- * BOOTSTRAP_ADMIN — СПИСОК предустановленных админов: имена через запятую,
- * каждое приводим к нижнему регистру и обрезаем пробелы. Значение задаёт
- * владелица (systemd-юнит / env тестов), дефолт — пустой список (никто).
+ * BOOTSTRAP_ADMIN — МИГРАЦИОННЫЙ список имён (аудит Z.AI S1, 2026-11-08):
+ * имена через запятую, каждое приводим к нижнему регистру и обрезаем пробелы.
+ * Значение задаёт владелица (systemd-юнит / env тестов), дефолт — пустой.
  *
- * Механика создания админа (прежняя защита от подделки, обобщённая на список):
- * админ — ТОТ, КТО ПЕРВЫМ ЗААНЯЛ имя из списка. Каждый элемент списка
- * НЕЗАВИСИМО становится admin при своей первой регистрации: наличие другого
- * админа НЕ мешает остальным именам списка (все они декларированы владелицей
- * и должны получить роль при регистрации). Имя уже занято кем-то другим → это
- * чужой аккаунт, роли admin он не получит (проверка 'taken' срабатывает раньше).
+ * Механика БОЛЬШЕ НЕ назначает роль автоматически: прежний «кто первый занял
+ * имя из списка — тот админ» был гонкой (имя мог занять любой игрок раньше
+ * владелицы). Теперь env читается только как подсказка: регистрация имени из
+ * списка логируется warning'ом, а роль назначает ОДНОРАЗОВЫЙ CLI владелицы
+ * `node scripts/make-admin.mjs <login> [pass]` (создаёт аккаунт с ролью admin
+ * или повышает существующий, сохраняя его пароль-хеш). Существующие админы из
+ * старого механизма при старте НЕ трогаются (migrateStore сохраняет role).
  */
 function bootstrapLogins() {
   return String(process.env.BOOTSTRAP_ADMIN || "")
@@ -226,6 +235,34 @@ function publicAccount(acc) {
   };
 }
 
+/**
+ * Публичный DTO профиля (P1 HTTP /profiles/* → P4 каталог/правка): как игрок
+ * виден другим игрокам. Единый источник DTO: БЕЗ login, без role и без парольных
+ * полей. P4-слоты: bio (строка, пустая по умолчанию) и avatarCharacterId
+ * (id персонажа-аватара ИЗ СВОЕГО списка characters либо null; сторонний id
+ * сюда не попадает — экспонируем только если он есть в characters аккаунта).
+ */
+function publicProfile(acc) {
+  if (!acc) return null;
+  const chars = Array.isArray(acc.characters) ? acc.characters : [];
+  const wanted = acc.profile?.avatarCharacterId;
+  const avatar =
+    typeof wanted === "string" && chars.some((c) => c && c.id === wanted) ? wanted : null;
+  return {
+    displayName: acc.profile?.displayName || acc.login,
+    bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
+    avatarCharacterId: avatar,
+    characters: chars.map((c) => ({
+      id: c.id,
+      name: c.name,
+      sprite: c.sprite,
+      size: c.size,
+    })),
+    activeCharacterId: acc.activeCharacterId,
+    createdAt: Number(acc.createdAt) || 0,
+  };
+}
+
 function activeCharacter(acc) {
   if (!acc) return null;
   return acc.characters.find((c) => c.id === acc.activeCharacterId) || acc.characters[0] || null;
@@ -237,17 +274,52 @@ function validateLogin(raw) {
   return { login };
 }
 
+/**
+ * Логин при СОЗДАНИИ аккаунта (register v2, мандат владелицы 2026-11-08:
+ * «отдельно логин с какими-то ограничениями»): латиница/цифры и ._-, 2–24
+ * символа, первый и последний — буква/цифра (края из ./-/ _ запрещены),
+ * без пробелов. ТОЛЬКО на пути регистрации: loginAccount не трогаем — вход
+ * старых аккаунтов с пробелами/кириллицей («myster syr») обязан работать.
+ */
+function validateNewLogin(raw) {
+  const login = String(raw ?? "").trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,22}[a-zA-Z0-9]$/.test(login)) return { error: "badlogin" };
+  return { login };
+}
+
+/**
+ * Имя на игровом поле (register v2): любые видимые символы — кириллица и
+ * пробелы легальны («Дым Лунный»). Те же примитивы, что у логина (sanitizeLogin:
+ * вырез invisible-символов, одинарные пробелы, trim), 2–24 код-поинта.
+ * НЕ уникально — однофамильцы допустимы: уникален только логин. Отсутствует/
+ * пустая строка → 'no name' (звать логином, полная совместимость со старым
+ * клиентом); задан, но мусор (короткое/длинное/пробельно-пустое) → badname.
+ */
+function validateDisplayName(raw) {
+  if (raw === undefined || raw === null || String(raw) === "") return { noName: true };
+  const text = String(raw);
+  if (Array.from(text).length > LOGIN_MAX) return { error: "badname" };
+  const name = sanitizeLogin(text, "");
+  if (Array.from(name).length < 2) return { error: "badname" };
+  return { name };
+}
+
 function validatePassword(raw) {
   const pass = String(raw ?? "");
   if (Array.from(pass).length < PASS_MIN) return { error: "weak" };
   return { pass };
 }
 
-async function createAccount(rawLogin, rawPass) {
-  const L = validateLogin(rawLogin);
+async function createAccount(rawLogin, rawPass, rawName) {
+  // Register v2: логин — только строгий формат (латиница/цифры/._-),
+  // видимое имя — отдельно и опционально (нет → логин, как раньше).
+  const L = validateNewLogin(rawLogin);
   if (L.error) return { error: L.error };
   const P = validatePassword(rawPass);
   if (P.error) return { error: P.error };
+  const N = validateDisplayName(rawName);
+  if (N.error) return { error: N.error };
+  const displayName = N.name || L.login;
   if (findByLogin(L.login)) return { error: "taken" };
   // Флуд-предохранитель: глобальный потолок аккаунтов сервера. Считаем ДО
   // создания (учётной записи может добавлять только этот же код — гонок нет).
@@ -255,16 +327,22 @@ async function createAccount(rawLogin, rawPass) {
     return { error: "full" };
   }
   const id = newId("a");
-  // Bootstrap-список: логин совпал с одним из предустановленных имён → admin.
-  const wantAdmin = bootstrapLogins().includes(L.login.toLowerCase());
+  // S1 (аудит Z.AI): автоназначение роли admin по BOOTSTRAP_ADMIN УБРАНО —
+  // занявший bootstrap-имя игрок получает обычную роль, а владелица видит
+  // в логе подсказку и назначает админа одноразовым CLI scripts/make-admin.mjs.
+  if (bootstrapLogins().includes(L.login.toLowerCase())) {
+    console.warn(
+      `bootstrap имя «${L.login}» занято; назначьте роль через scripts/make-admin.mjs`,
+    );
+  }
   const acc = {
     id,
     login: L.login,
     pass: await hashPassword(P.pass),
-    role: wantAdmin ? "admin" : "registered",
+    role: "registered",
     createdAt: Date.now(),
-    profile: { displayName: L.login },
-    characters: [newCharacter(L.login)],
+    profile: { displayName },
+    characters: [newCharacter(displayName)],
     activeCharacterId: null,
   };
   acc.activeCharacterId = acc.characters[0].id;
@@ -291,13 +369,86 @@ async function loginAccount(rawLogin, rawPass) {
 function attachSprite(acc, sprite, size) {
   const ch = activeCharacter(acc);
   if (!ch) return;
-  // Тот же whitelist, что в pickSprite (server/room.js): персистим в аккаунт
-  // только легальный id спрайта — чужой join-payload не может протащить произвольную
-  // строку в сторе (и дальше в whoami/поле).
+  // Whitelist — ДИНАМИЧЕСКИЙ каталог (server/sprites.js, менеджер спрайтов):
+  // персистим в аккаунт только легальный id — базовый или загруженный админом;
+  // произвольная строка из join-payload в стор (и дальше в whoami/поле) не
+  // попадает. Проверка по памяти (манифест грузится при старте) — await не нужен.
   const want = typeof sprite === "string" ? sprite.trim() : "";
-  if (want && SPRITES.includes(want)) ch.sprite = want;
+  if (want && spriteIdAllowed(want)) ch.sprite = want;
   if (Number.isFinite(Number(size))) ch.size = Math.min(100, Math.max(60, Math.round(Number(size))));
   markDirty();
+}
+
+/**
+ * Внешность из профиля (PATCH /profiles/me): канонический сеттер активного
+ * персонажа ВНЕ room-join — спрайт, размер и имя. Спрайт — тот же whitelist
+ * динамического каталога, что и attachSprite (невалидный id сюда не попадает:
+ * пути profiles.js валидирует его раньше и отвечает 400). Размер — проценты
+ * роста 60–100, зажим и округление как в room-join и newCharacter. Имя
+ * персонажа синхронно с displayName профиля — «ник на поле» берётся из
+ * профиля, а не из легаси-логина регистрации (newCharacter(login)).
+ * Отсутствующий ключ не трогает поле (partial), как в остальном PATCH.
+ * Обратная совместимость сериализации — normalizeCharacter при загрузке: он
+ * дочинит недостающие поля дефолтами (name — clipChars(LOGIN_MAX), sprite→"",
+ * size→100) и не сломается от новых значений.
+ */
+function applyProfileAppearance(acc, patch = {}) {
+  const ch = activeCharacter(acc);
+  if (!ch) return false;
+  if (patch.sprite !== undefined) {
+    const want = String(patch.sprite).trim();
+    if (!spriteIdAllowed(want)) return false;
+    ch.sprite = want;
+  }
+  if (patch.scale !== undefined) {
+    if (!Number.isFinite(Number(patch.scale))) return false;
+    ch.size = Math.min(100, Math.max(60, Math.round(Number(patch.scale))));
+  }
+  if (typeof patch.name === "string" && patch.name.trim()) {
+    ch.name = clipChars(patch.name.trim(), LOGIN_MAX);
+  }
+  markDirty();
+  return true;
+}
+
+/**
+ * Кто носит спрайт (менеджер спрайтов, DELETE /admin/sprites/:id): полный проход
+ * по стору аккаунтов — characters И activeCharacterId (одетым считаем любой
+ * персонаж с c.sprite === id; активный одет всегда, неактивный — тоже занимает
+ * id — смена аватара не должна освобождать занятый скин молча). Результат:
+ * [{login: логин аккаунта, character: имя персонажа}] — админ-панель показывает
+ * «кол-во + ники», DELETE отказывает с этим же списком.
+ */
+function spriteWearers(spriteId) {
+  const id = String(spriteId || "");
+  const out = [];
+  if (!id) return out;
+  for (const acc of Object.values(store.accounts)) {
+    if (!acc || !Array.isArray(acc.characters)) continue;
+    for (const ch of acc.characters) {
+      if (ch && typeof ch.sprite === "string" && ch.sprite === id) {
+        out.push({ login: acc.login, character: ch.name });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * S1 (аудит Z.AI): единственный путь повысить роль до admin — этот mutator,
+ * который вызывает ТОЛЬКО scripts/make-admin.mjs (CLI владелицы, вне сервера).
+ * Существующий аккаунт: role → "admin" с сохранением пароль-хеша и прочих полей;
+ * уже админ → no-op c меткой already (idempotent); НИКОГДА не понижает роль и
+ * ничего не создаёт — создание делает сам CLI через createAccount + этот же
+ * вызов. Запись атомарная (markDirty → flushAccounts → writeFileAtomic).
+ */
+function promoteToAdmin(login) {
+  const acc = findByLogin(login);
+  if (!acc) return { error: "no_such_login" };
+  if (acc.role === "admin") return { ok: true, already: true, account: acc };
+  acc.role = "admin";
+  markDirty();
+  return { ok: true, account: acc };
 }
 
 export {
@@ -308,10 +459,14 @@ export {
   findByLogin,
   findById,
   publicAccount,
+  publicProfile,
   activeCharacter,
   createAccount,
+  promoteToAdmin,
   loginAccount,
   attachSprite,
+  applyProfileAppearance,
+  spriteWearers,
   verifyPassword,
   hashPassword,
   migrateStore,

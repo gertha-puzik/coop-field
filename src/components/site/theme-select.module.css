@@ -1,0 +1,28 @@
+/* Compact theme capsule ("тема" + select) and the fixed entry-screen slot.
+   Consumed by theme-select.tsx and the site-header capsule. */
+
+.themeCompact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 220, 255, 0.28);
+  background: rgba(10, 14, 32, 0.62);
+  backdrop-filter: blur(8px);
+  color: #b9b3d9;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.themeCompact select {
+  height: 1.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(226, 220, 255, 0.28);
+  background: var(--sim-input-bg);
+  color: var(--sim-text);
+  font-size: 12px;
+  padding: 0 0.35rem;
+  outline: none;
+  cursor: pointer;
+}
+

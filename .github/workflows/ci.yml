@@ -11,11 +11,14 @@ on:
       - "server.js"
       - "package.json"
       - "package-lock.json"
-      - "deploy/vps/**"
+      - "deploy/**"
       - "AGENTS.md"
       - "docs/**"
       - "tsconfig.json"
-      - ".github/workflows/ci.yml"
+      # A2/D4 (аудит Z.AI 2026-11-08): правки ЛЮБЫХ workflow и deploy-скриптов
+      # требуют полного чека — раньше едва не «молча» обходили ci (фильтр знал
+      # только ci.yml и deploy/vps/**).
+      - ".github/workflows/**"
 
 permissions:
   contents: read
@@ -37,6 +40,15 @@ jobs:
           cache: npm
       - name: Установка зависимостей
         run: npm ci
+      # Gate (2026-11 incident follow-up): `bash -n` over every workflow
+      # run-block (with ${{ }} substituted) plus the shell scripts of
+      # scripts/ and deploy/vps/. The preview-deploy status step once died at
+      # PARSE time from a single stray `)` — after a successful rollout, with
+      # a stale failure marker left on the PR. This gate stops that class of
+      # bug at PR time; the checker is regression-proven against the very
+      # broken main revision it was born from.
+      - name: Синтаксис bash в workflow-скриптах
+        run: node scripts/check-bash-syntax.mjs
       # C W1 build проверяет типы сам (next.config.ts больше не глушит ошибки),
       # но typecheck остаётся быстрой отдельной проверкой и главным гейтом CI.
       - name: Проверка типов
@@ -71,6 +83,39 @@ jobs:
         run: node scripts/test-move-queue.mjs
       - name: Аккаунты и закрытая Элизия
         run: npm run test:auth
+      # B1: ~44 живых пробы кросс-доменной изоляции — сам поднимает
+      # sandbox-сервер с обоими классами хостов (задача 4 / N3:
+      # конвенция без гейта — AGENTS.md обещает, CI обязан гонять).
+      - name: Кросс-доменная изоляция (B1)
+        run: npm run test:cross-origin
+      # §5 fail-closed: production/preview не могут стартовать с выключенным
+      # CSRF (COOP_INSTANCE_CLASS-контракт), unknown-класс — тоже отказ.
+      - name: CSRF fail-closed старт (§5)
+        run: npm run test:csrf-startup
+      # Админ-операция «сброс положения игрока на поле»: /admin/players*
+      # (гейты 401/403/CSRF, живые координаты, кадр EV.MOVE, стирание
+      # freemove-точки из книги, повторный join без прежней точки).
+      - name: Сброс положения игрока (admin)
+        run: npm run test:admin-reset
+      # Менеджер спрайтов (ветка feature/elyria-admin-sprites-manager): сид
+      # каталога из config.SPRITES, upload PNG c категорией (валидация
+      # магии/лимита/имён), коллизия суффиксом, PATCH имя/категория,
+      # DELETE с защитой одетых (wornBy через WS-attachSprite) и builtin,
+      # двустороннее зеркало config.SPRITES для pickSprite/setSprite.
+      - name: Менеджер спрайтов (admin)
+        run: npm run test:sprites
+      # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
+      # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
+      - name: Реестр конфига
+        run: npm run test:cfg
+      # F2 per-room конфиг: слои engine←global←room, /cfg/rooms* admin-роуты,
+      # atmoset-гейт, persistence room-configs.json (бэкапы/restore), WS-ран.
+      - name: Per-room конфиг комнат
+        run: npm run test:room-config
+      # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
+      # строго по cookie-сессии.
+      - name: HTTP-профили
+        run: npm run test:profiles
       - name: Preview slug
         run: npm run test:preview-slug
       - name: Preview apply/destroy guards
@@ -82,5 +127,18 @@ jobs:
         run: npm run test:preview-build-contract
       - name: Preview link (шапка PR)
         run: npm run test:preview-pr-link
+      # Marker-comment step of preview-deploy.yml, extracted from the inline
+      # shell into scripts/preview-comment.mjs: create-or-update the ONE
+      # marker (paginated search, no duplicates), deployment badges
+      # best-effort, honest body for every PREVIEW-RESULT status, header
+      # block via preview-pr-link.mjs apply semantics. Fetch-stub suite.
+      - name: Preview комментарий (маркер/бейджи/шапка)
+        run: node scripts/test-preview-comment.mjs
+      # Production web-root switch transaction (deploy-frontend.yml
+      # promotion): both-or-nothing switch of /opt/coop-field/www and
+      # www-elyria, .prev never deleted up front, injected rename failures
+      # roll both roots back, broken staging refused before any mutation.
+      - name: Прод-переключатель www (транзакция)
+        run: node scripts/test-prod-switch.mjs
       - name: OpenSSH PEM из однострочного секрета
         run: npm run test:write-openssh-key

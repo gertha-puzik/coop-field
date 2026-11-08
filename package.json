@@ -7,10 +7,20 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "build:grotto": "NEXT_PUBLIC_SITE=grotto next build",
+    "build:elyria": "NEXT_PUBLIC_SITE=elyria next build",
+    "build:variants": "node scripts/build-variants.mjs",
     "start": "node server.js",
     "test:ws": "node scripts/test-ws.mjs",
     "test:queue": "node scripts/test-move-queue.mjs",
     "test:auth": "node scripts/test-auth.mjs",
+    "test:cross-origin": "node scripts/test-cross-origin.mjs",
+    "test:csrf-startup": "node scripts/test-csrf-startup.mjs",
+    "test:admin-reset": "node scripts/test-admin-reset.mjs",
+    "test:sprites": "node scripts/test-sprites.mjs",
+    "test:profiles": "node scripts/test-profiles.mjs",
+    "test:cfg": "node scripts/test-cfg-registry.mjs",
+    "test:room-config": "node scripts/test-room-config.mjs",
     "test:preview-slug": "node scripts/test-preview-slug.mjs",
     "test:preview-apply": "node scripts/test-preview-apply.mjs",
     "test:preview-build-contract": "node scripts/test-preview-build-contract.mjs",
@@ -22,11 +32,16 @@
     "test:protocol-parity": "node scripts/test-protocol-parity.mjs",
     "check:protocol": "node scripts/check-protocol-sync.mjs",
     "check:landmarks": "node scripts/check-doc-landmarks.mjs",
+    "check:variants": "node scripts/check-variants.mjs",
     "arch:check": "node scripts/check-architecture.mjs",
     "typecheck": "tsc --noEmit",
     "map:restore": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06.json",
     "map:restore-2": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06-2.json",
-    "map:dump": "node scripts/dump-vps-map.mjs data/fresh-map.json"
+    "map:dump": "node scripts/dump-vps-map.mjs data/fresh-map.json",
+    "check:bash-syntax": "node scripts/check-bash-syntax.mjs",
+    "test:preview-comment": "node scripts/test-preview-comment.mjs",
+    "test:prod-switch": "node scripts/test-prod-switch.mjs",
+    "test:sp-privacy": "node scripts/test-sp-privacy.mjs"
   },
   "engines": {
     "node": ">=18"

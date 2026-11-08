@@ -141,6 +141,20 @@ function stripComments(text) {
 }
 
 const allNames = new Set([...regClient, ...regServer]);
+// Омонимы конфиг-реестра: юниверс-секция «armor» (values.universes.armor —
+// сериализуемый формат runtime-config.json/POST /cfg, F2 §4 armorTenths)
+// называется так же, как WS-событие armor, но НЕ является его дубликатом:
+// это КОНФИГ-ключ реестра юниверсов (universes.armor), а не кадр протокола.
+// Переименовывать секцию хранилища нельзя (формат персистентности), обходить
+// гейт обфускацией литерала — хуже. Исключение ТОЧЕЧНОЕ, парами файл:имя;
+// все прочие (и будущие) литералы событий по-прежнему обязаны ходить
+// импортом EV.* — это различение, не ослабление гейта.
+const HOMONYM_CONFIG_KEYS = new Set([
+  "server/cfg-registry.js:armor",   // pick("armor","tenths") — universesForPublic §4
+  "server/runtime-config.js:armor", // visible("armor","tenths") — combatCaps §4
+  "server/sprites.js:sprite",       // slugify() фоллбек пустого транслит-слага — ИД каталога, не кадр протокола
+  "server/profiles.js:sprite",      // ключ PATCH-поля профиля (PATCH_FLAT/валидатор/ошибка) — не кадр протокола (W1)
+]);
 const seen = new Map();
 let protocolImported = false;
 for (const rel of serverFiles) {
@@ -153,6 +167,7 @@ for (const rel of serverFiles) {
     while ((m = re.exec(codeLines[ln])) !== null) {
       if (allNames.has(m[2])) {
         const key = m[2];
+        if (HOMONYM_CONFIG_KEYS.has(`${rel}:${key}`)) continue;
         if (!seen.has(key)) seen.set(key, []);
         seen.get(key).push(`${rel}:${ln + 1}`);
       }

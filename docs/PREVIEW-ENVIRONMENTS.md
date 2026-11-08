@@ -5,12 +5,12 @@
 инстанс комнаты, один порт, два веб-корня):
 
 ```text
-https://pr-<номер PR>.abnocw.miew.ru   — «Пивные гроты», публичный билд (www-grotto)
-https://pr-<номер PR>.elisium.miew.ru  — Элизия, вход по регистрации (www-elyria)
+https://pr-<номер PR>.abnocw.phainonsmilk.ru   — «Пивные гроты», публичный билд (www-grotto)
+https://pr-<номер PR>.elysiae.phainonsmilk.ru  — Элизия, вход по регистрации (www-elyria)
 ```
 
-Например для PR #45: `https://pr-45.abnocw.miew.ru` и
-`https://pr-45.elisium.miew.ru`. Каталог, systemd-юнит имена сайтов —
+Например для PR #45: `https://pr-45.abnocw.phainonsmilk.ru` и
+`https://pr-45.elysiae.phainonsmilk.ru`. Каталог, systemd-юнит имена сайтов —
 `pr-<номер PR>`: не меняется от пуша к пушу, короткий (длинный slug ветки
 ломал nginx `server_names_hash_bucket_size: 64`). Ранний вариант имени из
 8 hex SHA отменён 2026-11-07 — URL менялся с каждым коммитом.
@@ -25,7 +25,7 @@ https://pr-<номер PR>.elisium.miew.ru  — Элизия, вход по ре
 Сертификат per-host: первые минуты после деплоя оба хоста могут отвечать по
 чистому http — до `~5 минут`, пока корневой cron на VPS не выпустит
 сертификат. В первом прогоне elisium-хост открывается по
-`http://pr-N.elisium.miew.ru` — и это ожидаемое состояние, а не поломка:
+`http://pr-N.elysiae.phainonsmilk.ru` — и это ожидаемое состояние, а не поломка:
 статусы в комментарии PR мы пишем честно, по одной строке на каждый хост.
 
 ## Решение владелицы (2026-11-06)
@@ -39,7 +39,7 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 | SSH | `deploy` + `VPS_SSH_KEY` | **`deploy-preview`** + `PREVIEW_SSH_KEY` |
 | Каталог | `/opt/coop-field` | `/opt/coop-field-preview/pr-<N>/` |
 | Юнит | `coop-field` | `coop-field-preview@pr-<N>` (один на PR) |
-| Сайты | `abnocw.miew.ru`, `elisium.miew.ru` | `pr-<N>.abnocw.miew.ru` (www-grotto), `pr-<N>.elisium.miew.ru` (www-elyria) |
+| Сайты | `abnocw.phainonsmilk.ru`, `phainonsmilk.ru` | `pr-<N>.abnocw.phainonsmilk.ru` (www-grotto), `pr-<N>.elysiae.phainonsmilk.ru` (www-elyria) |
 | Порт | 8787 | `41000 + PR%1000` (один на оба сайта) |
 | Данные | `data/` прода | пустой `…/<slug>/data` |
 | nginx | vhost sslip.io / апексы | `/etc/nginx/preview.d/preview-<slug>.conf` — ОДИН файл с ДВУМЯ server-блоками |
@@ -48,6 +48,23 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 Лимит: **не больше 8** живых preview (счёт по каталогам; один PR = один
 каталог, хоть у него и два сайта). Девятый PR получит отказ, пока не закроют
 старый.
+
+## PR author checklist (owner directive, 2026-11-08)
+
+Каждый агент, открывающий PR, обязан приложить к описанию:
+
+1. **Ссылки на ОБОА фиче-окружения**: `https://pr-<N>.abnocw.phainonsmilk.ru` И
+   `https://pr-<N>.elysiae.phainonsmilk.ru`. Бот перезапишет блок между маркерами
+   `<!-- coop-field-preview-link -->` … `<!-- /coop-field-preview-link -->`
+   (шаблон `.github/PULL_REQUEST_TEMPLATE.md` уже содержит эти маркеры).
+   Если превью ещё не live (needs-dns / needs-tls / сломан деплой) — прямо
+   написать статус вместо того, чтобы молча пропустить ссылки.
+2. **Краткое описание по пунктам**: что ДОБАВЛЕНО и что ИЗМЕНЕНО
+   (Added / Changed), плюс чем проверено: какие гейты прогнаны и какие
+   живые проверки сделаны на превью.
+
+Это же правило — AGENTS.md §Publishing, пункт 8; замолченное звено
+(«сами догадайтесь») считалось ошибкой инструкции.
 
 ## Артефакт сборки: two-state — dual или legacy-single
 
@@ -60,7 +77,7 @@ Preview живёт **на том же VPS, что прод** (`89.232.184.77`). 
 - **legacy-single** (скрипта нет — main-линейные и инфра-PR): одна сборка
   `npm run build` (статик-экспорт `out/`) кладётся в единый корень `www/`.
   Это честный одно-сайтовый превью-артефакт: деплой поднимает ОДИН хост
-  `pr-<N>.abnocw.miew.ru`, второй сайт не заявляется и не верифицируется
+  `pr-<N>.abnocw.phainonsmilk.ru`, второй сайт не заявляется и не верифицируется
   (пометка «dual-host появится после мерджа продуктового PR»), это не
   `partial-failure`.
 
@@ -154,8 +171,8 @@ preview-<slug>.conf` с ДВУМЯ server-блоками:
 
 | server_name | root | смысл |
 | --- | --- | --- |
-| `pr-N.abnocw.miew.ru` | `…/pr-N/www-grotto` | публичные гроты |
-| `pr-N.elisium.miew.ru` | `…/pr-N/www-elyria` | Элизия |
+| `pr-N.abnocw.phainonsmilk.ru` | `…/pr-N/www-grotto` | публичные гроты |
+| `pr-N.elysiae.phainonsmilk.ru` | `…/pr-N/www-elyria` | Элизия |
 
 У каждого блока одинаковый полный набор локаций: `try_files`,
 immutable-статика `/_next/static/`, проксирование `/health /auth /cfg
@@ -165,6 +182,21 @@ ACME-challenge-локация на СВОЁМ root (важно: webroot для c
 совпадать с root конкретного server_name, иначе challenge не отдается).
 `nginx -t` перед reload, с бэкапом и откатом. Сервер (не nginx) различает
 хосты по env `PUBLIC_HOSTS` / `ELYRIA_HOSTS` и по заголовку Host.
+
+Trusted proxy и клиентский IP (§6): бэкенд доверяет `X-Forwarded-For`
+ТОЛЬКО когда TCP-сокет пришёл с loopback (реверс-прокси на той же машине,
+`server/auth.js`), и берёт ПОСЛЕДНЮЮ запись — nginx обязан
+**перезаписывать** заголовок, а не сохранять клиентский, поэтому каждый
+проксируемый vhost (прод и превью) обязан отправлять:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+Без этого (или при слепом preserve) auth rate-лимиты видят loopback и
+выключены — фрагменты `preview-apply.sh` (/auth, /cfg, /profiles, /admin,
+/ws) и прод-блоки nginx уже это делают; новые локации обязаны продолжать.
+
 
 Origin сокета: `preview-apply.sh` держит в env юнита
 `ALLOWED_ORIGINS=http://<гроты>,https://<гроты>,http://<элизия>,https://<элизия>`
@@ -198,8 +230,8 @@ Merge и закрытие — одно событие `pull_request: closed` (в
 их и публикует точный статус. `live` ставится только после независимой
 верификации ОБЕИХ хостов.
 
-Проверки на host (дважды: `pr-N.abnocw.miew.ru` → корень `www-grotto`,
-`pr-N.elisium.miew.ru` → корень `www-elyria`):
+Проверки на host (дважды: `pr-N.abnocw.phainonsmilk.ru` → корень `www-grotto`,
+`pr-N.elysiae.phainonsmilk.ru` → корень `www-elyria`):
 
 1. DNS: имя резолвится (fallback-цепочка dig→nslookup→getent);
 2. HTTP→HTTPS редирект (80 жив, 301 на https-имя);
@@ -287,8 +319,8 @@ dual-root-артефакте. После мерджа ЭТОГО инфра-PR �
 
 Ключ `PREVIEW_SSH_KEY` работает (Cursor и GitHub Actions). Bootstrap на VPS
 выполнен. Каталог `/opt/coop-field-preview/pr-<N>/`, юнит
-`coop-field-preview@pr-<N>`. DNS: wildcard `*.abnocw.miew.ru` и
-`*.elisium.miew.ru` оба смотрят на `89.232.184.77` — видевших записей
+`coop-field-preview@pr-<N>`. DNS: wildcard `*.abnocw.phainonsmilk.ru` и
+`*.elysiae.phainonsmilk.ru` оба смотрят на `89.232.184.77` — видевших записей
 владельца не требуется. Прод и `root` этим ключом не открываются.
 Однострочный PEM собирает `scripts/write-openssh-key.sh`.
 
@@ -310,7 +342,7 @@ include nginx, шаблон юнита. Новый SSH-ключ **не созд�
 
 Bootstrap **уже выполнен** (2026-11-07). Следующий push после мерджа
 инфраструктуры dual-host в `main` выложит ОБА сайта
-(`https://pr-<номер>.abnocw.miew.ru` + `https://pr-<номер>.elisium.miew.ru`,
+(`https://pr-<номер>.abnocw.phainonsmilk.ru` + `https://pr-<номер>.elysiae.phainonsmilk.ru`,
 порт `41000+PR%1000`). Форки не деплоим. Сборка из SHA коммита.
 
 ## TLS: per-host HTTP-01 по обоим суффиксам (без DNS-API)

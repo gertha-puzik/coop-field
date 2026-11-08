@@ -1,13 +1,16 @@
 // @ts-nocheck
 // Model assets, client/server persistence, and sprite depth regression contracts.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { MODEL_CATALOG, TREE_MODELS } from '../src/lib/sim/model-catalog.ts';
 import { SPRITES as CLIENT_SPRITES } from '../src/lib/sim/settings.ts';
 import { objectSprite, sanitizeTestMap as sanitizeClient } from '../src/lib/sim/test-map.ts';
-import { SPRITES as SERVER_SPRITES, TREE_SPRITE_IDS } from '../server/config.js';
-import { defaultTestMap, sanitizeTestMap as sanitizeServer } from '../server/testmap.js';
 import { elisionActorFoot, elisionSpriteVertices, elisionDepthBias, elisionObstacleAlpha } from '../src/lib/sim/elision-scene.ts';
+
+process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/elision-model-contract-`);
+const { SPRITES: SERVER_SPRITES, TREE_SPRITE_IDS } = await import('../server/config.js');
+const { defaultTestMap, sanitizeTestMap: sanitizeServer } = await import('../server/testmap.js');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -24,6 +27,13 @@ assert(clientIds.includes('origami-cat'), '3D player can join and change skin');
 assert(TREE_MODELS.length === 200 && MODEL_CATALOG.length === 201, 'all uploaded objects present');
 assert(new Set(MODEL_CATALOG.map(model => model.id)).size === 201, 'stable model IDs are unique');
 
+assert(readFileSync(new URL('../public/sprites/origami-cat.png', import.meta.url)).equals(
+  readFileSync(new URL('../public/models/previews/origami-cat.png', import.meta.url))), 'standard builtin URL uses the same preview');
+const { handleSpritesHttp } = await import('../server/sprites.js');
+let httpCatalog;
+await handleSpritesHttp({url:'/sprites/catalog',method:'GET',headers:{host:'localhost'}},
+  {writeHead(){},end(body){httpCatalog=JSON.parse(body)}});
+assert(httpCatalog.items.find(item=>item.id==='origami-cat')?.src === '/sprites/origami-cat.png','live catalogue keeps the 3D player preview');
 for (const model of MODEL_CATALOG) {
   const bytes = readFileSync(new URL(`../public${model.url}`, import.meta.url));
   assert(bytes.readUInt32LE(0) === 0x46546c67 && bytes.readUInt32LE(4) === 2, `GLB2 ${model.id}`);

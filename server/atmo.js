@@ -12,6 +12,13 @@ import {
 } from "./protocol.js";
 import { broadcast } from "./room.js";
 import { atmoLengths } from "./runtime-config.js";
+// F2 §3.4 + мандат владелицы 2026-11-08: гейт atmoset/atmo — ДВА слоя. Глобальный
+// master-ключ atmo.playerControl (runtime-слой) глушит игроков во ВСЕХ комнатах;
+// per-room override atmo.allowPlayerAtmosphereControl настраивает отдельную комнату
+// (эффективность = глобальный && (override ?? true)). НЕ путать с живым краевым
+// механизмом: сам якорь и его трансляции не меняются — гейт только молча
+// отбрасывает кадры УПРАВЛЕНИЯ от игроков.
+import { isPlayerAtmoControlAllowed } from "./room-config.js";
 
 const ATMO_DAYPARTS = new Set(ATMO_PHASE_LIST);
 const ATMO_WEATHERS = new Set(ATMO_WEATHER_LIST);
@@ -71,6 +78,9 @@ function atmoBroadcast(room, now = Date.now()) {
 function atmo(ws, payload = {}) {
   const room = ws.room;
   if (!room || !room.sockets.get(ws)) return;
+  // Гейт двух слоёв: глобальный master-ключ atmo.playerControl + per-room
+  // override. Отказ — прежний механизм невалидных кадров: молчаливый drop.
+  if (!isPlayerAtmoControlAllowed(room.code)) return;
   const dp = String(payload.dp || "");
   const w = String(payload.w || "");
   if (!ATMO_DAYPARTS.has(dp) || !ATMO_WEATHERS.has(w)) return;
@@ -91,6 +101,9 @@ function atmo(ws, payload = {}) {
 function atmoset(ws, payload = {}) {
   const room = ws.room;
   if (!room || !room.sockets.get(ws)) return;
+  // Тот же гейт для слайдеров «Сутки»/«Погода» (atmoset): глобальный master-
+  // ключ + per-room override, отказ — молчаливый drop.
+  if (!isPlayerAtmoControlAllowed(room.code)) return;
   const plMin = Number(payload.pl);
   const wlMin = Number(payload.wl);
   // Отсутствующее/мусорное значение (NaN, 0, null) просто не применяется.

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { WanderMenu } from "@/components/menu/wander-gate";
+import { AuthGate } from "@/components/menu/auth-gate";
 
 export const metadata: Metadata = {
   title: "Wanderpaws",
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <WanderMenu />;
+  return (
+    <AuthGate live>
+      <WanderMenu />
+    </AuthGate>
+  );
 }
