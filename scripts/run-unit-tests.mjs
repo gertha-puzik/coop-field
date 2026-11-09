@@ -21,6 +21,7 @@ const TESTS = [
   "scripts/test-remote-aim.mts",
   "scripts/test-move-book.ts",
   "scripts/test-elev-rules.mts",
+  "scripts/test-walk-gif.mts",
   "scripts/test-editor-save.mjs",
   "scripts/test-handbook.mts",
   "scripts/test-elision-scene.mts",

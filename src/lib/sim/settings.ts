@@ -114,7 +114,6 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'chistolapik-kit', name: 'Чистолапик', src: '/sprites/chistolapik-kit.png' },
   { id: 'test1', name: 'test1', src: '/sprites/test1.png?v=original-300x200' },
   { id: 'test1-png', name: 'test1 PNG 600', src: '/sprites/test1-png.png' },
-  { id: 'test1-webp', name: 'test1 WebP 600', src: '/sprites/test1-webp.webp' },
 ];
 
 /**
@@ -149,7 +148,7 @@ export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'drel', name: 'Дрель', spriteIds: ['drel'] },
   { id: 'izya', name: 'Изя', spriteIds: ['izya'] },
   { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
-  { id: 'test1', name: 'test1', spriteIds: ['test1', 'test1-png', 'test1-webp'] },
+  { id: 'test1', name: 'test1', spriteIds: ['test1', 'test1-png'] },
 ];
 
 /** Набор скинов №2 «Малышочки» — отдельный раздел выбора: маленькие зверьки
@@ -250,6 +249,14 @@ export function cycleStartFor(dayPart: DayPart, phaseMs: number, now: number): n
 /** Все спрайты, которые нужно предзагрузить для поля: персонажи (в том числе как
  *  скины манекена) + мишень РАБ. */
 export const FIELD_SPRITES: SpriteMeta[] = [...SPRITES, RAB_SPRITE];
+
+/** Пробные GIF-анимации ходьбы (первая — test1): спрайт id → файл с циклом шагов
+ *  (байт-в-байт гиф владельца, builtin-статика). Кадры декодирует gif-walk.ts
+ *  (WebCodecs ImageDecoder; где класса нет — скин остаётся статичным PNG).
+ *  Ключ — SpriteId; URL с ?v= для будущего обновления файла без кэша. */
+export const WALK_GIF_SRC: Partial<Record<SpriteId, string>> = {
+  test1: '/sprites/test1-walk.gif?v=walk-1',
+};
 
 /** Настройки отдельного персонажа-мишени (манекена) на поле. */
 export interface DummyConfig {

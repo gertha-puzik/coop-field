@@ -60,7 +60,7 @@ function eq(label, actual, expected) {
 eq("config.PORT (без env)", cfg.PORT, 3780);
 eq("config.TEST_ROOM", cfg.TEST_ROOM, "test");
 eq("config.WIDTH/HEIGHT", [cfg.WIDTH, cfg.HEIGHT], [10, 6]);
-eq("config.SPRITES — whitelist размером 34", cfg.SPRITES.length, 34);
+eq("config.SPRITES — whitelist размером 33", cfg.SPRITES.length, 33);
 eq("config.FRAME_LIMIT 64 КиБ", cfg.FRAME_LIMIT, 64 * 1024);
 eq("config.isAllowedOrigin: пустой Origin без REQUIRE_ORIGIN", cfg.isAllowedOrigin(""), true);
 eq("config.isAllowedOrigin: чужой https", cfg.isAllowedOrigin("https://random.example"), false);

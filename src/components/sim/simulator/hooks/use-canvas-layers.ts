@@ -8,6 +8,9 @@
  *    original shape and has NO deps array (re-installed on every render);
  *  - `useSpriteCache`: preloads all FIELD_SPRITES into images plus white
  *    silhouette canvases, remembering broken ones; runs once (`[]`);
+ *  - `useWalkGifCache`: decodes walk-cycle GIFs (trial: test1) into frame
+ *    canvases via WebCodecs ImageDecoder; unsupported/broken → no entry, the
+ *    sprite stays static; runs once (`[]`);
  *  - `useAtmosphereLayer`: mounts the dynamic Pixi atmosphere over the field
  *    canvas when `stage === 'field'` and tears it down on exit (`[stage]`).
  *    The layer canvas is created imperatively and lives exactly one mount:
@@ -18,7 +21,8 @@
  */
 import { useEffect, type RefObject } from 'react';
 import type { CoopAtmo, createCoopClient } from '@/lib/net/coop';
-import { FIELD_SPRITES, wrap180, wrap360, type SimSettings, type SpriteId } from '@/lib/sim/settings';
+import { FIELD_SPRITES, WALK_GIF_SRC, wrap180, wrap360, type SimSettings, type SpriteId } from '@/lib/sim/settings';
+import { decodeGifFrames, type WalkGif } from '@/lib/sim/gif-walk';
 import type { AtmosphereLike } from '../sim-model';
 // Статический импорт: динамические async-чанки не выписываются в
 // static-export сборке turbopack (owner report 2026-11-08: поток 404 и
@@ -86,6 +90,37 @@ export interface SpriteCacheDeps {
   spritesRef: RefObject<Partial<Record<SpriteId, HTMLImageElement>>>;
   whiteSpritesRef: RefObject<Partial<Record<SpriteId, HTMLCanvasElement>>>;
   brokenSpritesRef: RefObject<Set<SpriteId>>;
+}
+
+export interface WalkGifCacheDeps {
+  walkGifsRef: RefObject<Partial<Record<SpriteId, WalkGif>>>;
+}
+
+/** Предзагрузка GIF-анимаций ходьбы (пробная — test1): каждый файл один раз
+ *  fetch → декод кадров (gif-walk.ts). Сбой сети/декода или отсутствие
+ *  ImageDecoder в браузере — запись в кэш не появляется, скин рисуется
+ *  статичным PNG как раньше (анимация — строго улучшение). Runs once ([]). */
+export function useWalkGifCache(deps: WalkGifCacheDeps) {
+  const { walkGifsRef } = deps;
+  useEffect(() => {
+    let cancelled = false;
+    for (const [id, src] of Object.entries(WALK_GIF_SRC)) {
+      if (!src) continue;
+      void (async () => {
+        try {
+          const res = await fetch(src);
+          if (!res.ok) return;
+          const walk = await decodeGifFrames(await res.arrayBuffer());
+          if (!cancelled && walk.frames.length) walkGifsRef.current[id] = walk;
+        } catch {
+          // нет ImageDecoder (Firefox/Safari) или битый gif — остаётся статика
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 }
 
 export function useSpriteCache(deps: SpriteCacheDeps) {
