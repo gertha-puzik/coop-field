@@ -125,7 +125,7 @@ test:profiles (HTTP-профили), test:server-modules, test:protocol-parity, 
 check:landmarks, check:variants (A1: гейт изоляции артефактов, 168), arch:check;
 `prune-export.mjs` (137, обрезка вариантных корней P6 + чистка немонтируемых чанков);
 `make-admin.mjs` (76, одноразовый CLI владелицы: роль admin — только через него, S1;
-запускать при остановленном сервере); прочие — ручные пробы и ops. `deploy/vps/` — образец systemd-юнита, apply.sh (health-check,
+запускать при остановленном сервере); прочие — ручные пробы и ops. `deploy/vps/` — образец systemd-юнита, apply.sh (health-check до 8 минут — холодный старт под swap-давлением замерян в ~6 минут 2026-11-09,
 рестарт только при изменении), nginx-www.conf, юниты/sudoers/nginx превью (dual-host),
 отдельный package.json комнаты (`ws` — синхронно с корневым lockfile, гейт check-ws-versions).
 
