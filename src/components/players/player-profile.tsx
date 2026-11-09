@@ -216,7 +216,16 @@ const spDefaults = (sp: ProfileSp | undefined): SpDraft => ({
 
 
 
-function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (fresh: PublicProfile) => void }) {
+function OwnProfileEditor({
+  profile,
+  onSaved,
+  mineHighlight = null,
+}: {
+  profile: ProfileMe;
+  onSaved: (fresh: PublicProfile) => void;
+  /** #84 ч.2: id свежего окраса из редактора — подсветить в «Свой окрас». */
+  mineHighlight?: string | null;
+}) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
   const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
@@ -392,6 +401,7 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
         draftSprite={draftSprite}
         wornSprite={originSprite}
         onPick={setDraftSprite}
+        mineHighlight={mineHighlight}
       />
       <label className={styles.edField}>
         <span className={styles.edLabel}>Рост ({draftScale}%)</span>
@@ -495,12 +505,16 @@ export default function PlayerProfile({
   myProfile,
   onSaved,
   onClose,
+  mineHighlight = null,
 }: {
   card: ProfileCard;
   mine: boolean;
   myProfile: ProfileMe | null;
   onSaved: (fresh: PublicProfile) => void;
   onClose: () => void;
+  /** #84 ч.2: id свежего окраса из редактора (возврат ?back=profile) —
+   *  своя карточка подсвечивает его в блоке «Свой окрас». */
+  mineHighlight?: string | null;
 }) {
   // Компонент живёт только на клиенте: в пререндере каталога focused=null,
   // карточка приходит после fetch — поэтому «сейчас» можно взять один раз
@@ -652,7 +666,7 @@ export default function PlayerProfile({
         </main>
         {mine && myProfile ? (
           <div style={{ marginTop: 20 }}>
-            <OwnProfileEditor profile={myProfile} onSaved={onSaved} />
+            <OwnProfileEditor profile={myProfile} onSaved={onSaved} mineHighlight={mineHighlight} />
           </div>
         ) : null}
         <p className={styles.footNote}>

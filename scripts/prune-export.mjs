@@ -21,6 +21,14 @@ const EXCLUDE = {
   elyria: ["combat", "hunger"], // Элизия: ни гротов, ни заглушки Hunger Games
 };
 
+// Отдельные ФАЙЛЫ варианта (не целые каталоги): #84 wave 2 — мост профиля
+// paint-demo/game-bridge.js живёт только на Элизии (окрасы — сессионная
+// зона этой стороны A1: в www-grotto ни файла, ни его маркеров).
+const EXCLUDE_FILES = {
+  grotto: ["paint-demo/game-bridge.js"],
+  elyria: [],
+};
+
 const [variant, srcArg = "out", destArg] = process.argv.slice(2);
 if (!EXCLUDE[variant]) {
   console.error(`prune-export: вариант "${variant || "<пусто>"}" не распознан — grotto|elyria`);
@@ -40,6 +48,21 @@ if (src === dest || dest.startsWith(src + path.sep)) {
 }
 
 const cut = EXCLUDE[variant].join(", ");
+
+/** Точечная вырезка файлов из приёмника (относительные пути с file.sep).
+ *  Возвращает список удалённых — для честного лога обрезки. */
+async function removeFiles(dest, rels) {
+  const out = [];
+  for (const rel of rels || []) {
+    const target = path.join(dest, ...rel.split("/"));
+    if (existsSync(target)) {
+      await rm(target, { force: true });
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
 console.log(`prune-export: вариант=${variant}: ${srcArg} -> ${destArg || `www-${variant}`}, режем: ${cut}`);
 
 await rm(dest, { recursive: true, force: true });
@@ -53,6 +76,7 @@ for (const dir of EXCLUDE[variant]) {
     removed.push(dir);
   }
 }
+removed.push(...(await removeFiles(dest, EXCLUDE_FILES[variant])));
 
 // Чистка немонтируемых чанков (follow-up §10.4): next export кладёт чанки
 // ВСЕХ маршрутов (включая вырезанные только что) в общий _next/static/chunks.

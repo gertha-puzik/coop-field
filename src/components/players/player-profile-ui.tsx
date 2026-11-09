@@ -232,6 +232,7 @@ export function MineSpritesSection({
   draftSprite,
   wornSprite,
   onPick,
+  mineHighlight = null,
 }: {
   /** Ник карточки — для префилла имени окраса («Окрас от <ник> <дата>»). */
   accountName: string;
@@ -241,13 +242,22 @@ export function MineSpritesSection({
   wornSprite: string;
   /** Черновой выбор скина активного персонажа (тот же state редактора). */
   onPick: (id: string) => void;
+  /** #84 ч.2: id свежего окраса из редактора (?back=profile возврат) —
+   *  плитка подсвечивается, тост успеха; одноразовый. */
+  mineHighlight?: string | null;
 }) {
   const [items, setItems] = useState<MineSprite[]>([]);
   const [limit, setLimit] = useState(3);
   const [loaded, setLoaded] = useState(false);
-  const [upName, setUpName] = useState(
-    `Окрас от ${accountName} ${new Date().toLocaleDateString('ru-RU')}`,
-  );
+  const [upName, setUpName] = useState(() => {
+    /* Тот же префилл, что у моста редактора (game-bridge.js): год — двумя
+     *  цифрами, чтобы «Окрас от <имя> <дата>» влезал в лимит имени 2–24
+     *  ДО ручной правки (длинный ник не ломает отправку). */
+    const d = new Date();
+    const two = (x: number) => (x < 10 ? `0${x}` : `${x}`);
+    const base = `Окрас от ${accountName} ${two(d.getDate())}.${two(d.getMonth() + 1)}.${String(d.getFullYear()).slice(-2)}`;
+    return base.length > 24 ? base.slice(0, 24) : base;
+  });
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -256,10 +266,15 @@ export function MineSpritesSection({
   const [armedId, setArmedId] = useState<string | null>(null);
   const armTimer = useRef<number | null>(null);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string; details?: string } | null>(null);
+  /** #84 ч.2: подсветка плитки свежего окраса из редактора (гаснет сама). */
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const flashDoneRef = useRef(false);
 
   useEffect(
     () => () => {
       if (armTimer.current) window.clearTimeout(armTimer.current);
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
     },
     [],
   );
@@ -268,6 +283,21 @@ export function MineSpritesSection({
     setStatus(next);
     if (next) window.setTimeout(() => setStatus((cur) => (cur === next ? null : cur)), 6000);
   }, []);
+
+  /** #84 ч.2: возврат из редактора (?back=profile → ?mine=<id>): список
+   *  долетел — плитка свежего окраса подсвечивается, успех виден явно
+   *  (контракт: «возврат — подсветить новый окрас», тост при успехе).
+   *  Один раз на параметр (гость/чужая карточка просто не совпадёт). */
+  useEffect(() => {
+    if (!mineHighlight || flashDoneRef.current || !loaded) return;
+    if (!items.some((it) => it.id === mineHighlight)) return;
+    flashDoneRef.current = true;
+    setFlashId(mineHighlight);
+    flashTimer.current = window.setTimeout(() => setFlashId(null), 6000);
+    flashStatus({ kind: 'ok', text: 'Окрас из редактора сохранён — он в «Мои окрасы».' });
+    // легкий подскролл к блоку «Свой окрас» без дёргания страницы
+    document.getElementById('settings')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [mineHighlight, loaded, items, flashStatus]);
 
   const reload = useCallback(async () => {
     const res = await httpMineSprites();
@@ -364,6 +394,14 @@ export function MineSpritesSection({
         <span className="ml-1 text-[var(--sim-text-faint)]">
           {items.length} из {limit}
         </span>
+        {/* #84 ч.2: редактор окрасов сайта — рисуем окрас, не выходя из игры */}
+        <a
+          className="ml-2 rounded border border-[var(--sim-line)] px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)] hover:text-[var(--sim-text)]"
+          href="/paint-demo/?back=profile"
+          title="Открыть редактор окрасов: нарисованный кот сохранится в «Мои окрасы»"
+        >
+          Нарисовать окрас
+        </a>
       </span>
       <div className="mt-1.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
         {status ? (
@@ -414,13 +452,16 @@ export function MineSpritesSection({
             {items.map((it) => {
               const worn = wornSprite === it.id;
               const picked = draftSprite === it.id && !worn;
+              const flashed = flashId === it.id;
               return (
                 <div
                   key={it.id}
                   className={`flex w-24 flex-col items-center rounded-lg border p-1 transition-colors ${
                     worn || picked
                       ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
-                      : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                      : flashed
+                        ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_2px_var(--sim-accent)]'
+                        : 'border-transparent hover:border-[var(--sim-line-hover)]'
                   }`}
                 >
                   <img src={it.src} alt={it.name} className="h-10 w-auto object-contain" draggable={false} />

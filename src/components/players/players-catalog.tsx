@@ -44,6 +44,7 @@ import {
   STATUS_TEXT,
   activityOf,
   avatarOf,
+  consumeCatalogDeepLink,
   homeRoomTitle,
   moonsFromMs,
   moonsText,
@@ -334,6 +335,8 @@ export default function PlayersCatalog() {
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
+  /** #84 ч.2: ?mine=<id> из адреса (возврат из редактора) — подсветка. */
+  const [mineFlash, setMineFlash] = useState<string | null>(null);
   /** Момент последней успешной загрузки: от него считаются статусы и
    *  «обновлено …» — «сейчас» фиксируется, а не тикает на каждом рендере. */
   const [fetchedAt, setFetchedAt] = useState(0);
@@ -383,12 +386,9 @@ export default function PlayersCatalog() {
     if (!IS_ELYRIA) return;
     let dead = false;
     (async () => {
-      let wantId: string | null = null;
-      try {
-        wantId = new URLSearchParams(window.location.search).get('id') || null;
-      } catch {
-        wantId = null;
-      }
+      const dl = consumeCatalogDeepLink();
+      const wantId = dl.id;
+      setMineFlash(dl.mine); // null без параметра — подсветки нет
       const me = await httpMe();
       if (dead) return;
       setSession(me);
@@ -539,6 +539,7 @@ export default function PlayersCatalog() {
         myProfile={myProfile}
         onSaved={handleSaved}
         onClose={closeCard}
+        mineHighlight={mineFlash}
       />
     );
   }
