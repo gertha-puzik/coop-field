@@ -161,16 +161,16 @@ function makeBlobTexture(): HTMLCanvasElement {
 /** Капля дождя: вертикальный штрих, ярче в середине. */
 function makeDropTexture(): HTMLCanvasElement {
   const c = document.createElement('canvas');
-  c.width = 4;
-  c.height = 22;
+  c.width = 2;
+  c.height = 18;
   const g = c.getContext('2d');
   if (g) {
-    const grad = g.createLinearGradient(0, 0, 0, 22);
+    const grad = g.createLinearGradient(0, 0, 0, 18);
     grad.addColorStop(0, 'rgba(255,255,255,0)');
     grad.addColorStop(0.5, 'rgba(224,238,255,0.9)');
     grad.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grad;
-    g.fillRect(0, 0, 4, 22);
+    g.fillRect(0.5, 0, 1, 18);
   }
   return c;
 }
@@ -284,7 +284,7 @@ export class Atmosphere {
       s.anchor.set(0.5);
       s.rotation = dropRot;
       s.alpha = 0.24 + Math.random() * 0.2;
-      s.scale.set(0.8 + Math.random() * 0.55);
+      s.scale.set(0.55 + Math.random() * 0.35, 0.75 + Math.random() * 0.5);
       this.rainC.addChild(s);
       this.drops.push({ spr: s, x: Math.random(), y: Math.random(), speedJ: 0.85 + Math.random() * 0.4 });
     }
@@ -304,13 +304,17 @@ export class Atmosphere {
    */
   setVisible(on: boolean): void {
     this.visible = on;
-    this.view.style.display = on ? '' : 'none';
+    this.view.style.display = on && this.fxOn ? '' : 'none';
   }
 
   /** Погодные частицы (облака, дождь) — локальный тумблер «Погода». */
   setWeatherFx(on: boolean): void {
     this.fxOn = on;
-    if (!on && this.rainC) this.rainC.visible = false;
+    this.view.style.display=this.visible&&on?'':'none';
+    if(this.cloudC)this.cloudC.visible=on;
+    if(this.rainC)this.rainC.visible=on&&this.cur.rain>0.02;
+    // Clear the retained GPU frame as well as hiding it; do not freeze old drops.
+    if(!on)this.app?.render();
   }
 
   /** Цветовая вуаль суток — локальный тумблер «Сутки». Гаснет плавно. */

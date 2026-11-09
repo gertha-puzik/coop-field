@@ -287,3 +287,25 @@ console.log('75 plant catalog assets, client/server transforms, overlap, non-col
 
 actualField.setTestMap({...plantMap.map,objects:[plantMap.map.objects[0],{id:'entry-overlap',kind:'entry',c:2,r:2,dir:'right'}]});
 assert.equal(actualField.testEntryAt(2,2)?.id,'entry-overlap','a decorative plant never hides an entry in the cell index');
+
+// Weather off must hide/clear the retained Pixi frame, even when the main loop
+// keeps calling setVisible(true). Re-enabling respects editor/master visibility.
+const atmosphereModule={};
+const atmosphereJs=ts.transpileModule(fs.readFileSync(new URL('../src/lib/sim/atmosphere.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+new Function('require','exports',atmosphereJs)(()=>({}),atmosphereModule);
+const weatherView={style:{}},weather=new atmosphereModule.Atmosphere(weatherView,{});
+let weatherClears=0;weather.app={render:()=>weatherClears++};weather.cloudC={visible:true};weather.rainC={visible:true};
+weather.setWeatherFx(false);weather.setVisible(true);
+assert.equal(weatherView.style.display,'none');assert.equal(weather.cloudC.visible,false);assert.equal(weather.rainC.visible,false);assert.equal(weatherClears,1);
+weather.setVisible(false);weather.setWeatherFx(true);assert.equal(weatherView.style.display,'none');
+weather.setVisible(true);assert.equal(weatherView.style.display,'');
+console.log('weather toggle clears retained frame and respects master/editor visibility: OK');
+
+const groundFx=loadTs(new URL('../src/lib/sim/particles.ts',import.meta.url));
+const dust=[];groundFx.spawnLandingDust(dust,100,150,78);assert.equal(dust.length,12);assert(dust.every(p=>p.kind==='dust'&&p.lift===78));
+for(let i=0;i<20;i++)groundFx.spawnLandingDust(dust,100,150,78);assert(dust.length<=90,'landing bursts are bounded');
+for(let i=0;i<20;i++)groundFx.advanceGroundParticles(dust,50);assert.equal(dust.length,0,'landing dust expires');
+const chips=[];groundFx.spawnSprintPart(chips,100,150,1,0,52);assert.equal(chips[0].lift,52);groundFx.advanceGroundParticles(chips,50);assert(chips[0].x<110,'sprint chips travel away from the paws');
+const rainState=groundFx.createGroundEffects();rainState.rain.push({x:100,y:150,lift:0,life:0,ttl:300,seed:0});
+groundFx.drawGroundEffects(null,{editor:false},[],rainState,16,false);assert.equal(rainState.rain.length,0,'weather off clears ground splashes immediately');
+console.log('landing dust cap/lifetime, sprint lift/physics and immediate splash clear: OK');

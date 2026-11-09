@@ -463,12 +463,12 @@ export function useSimNet(deps: SimNetDeps) {
           fr.tx = m.x;
           fr.ty = m.y;
           fr.sp = m.sp;
-          // jp — чужой кот в прыжке: одна дуга на прыжок (пакеты внутри прыжка
-          // продлевают текущую дугу только когда она уже закончилась)
+          // jp — одна дуга и одно приземление; повторные пакеты не запускают их заново.
           if (m.jp) {
             const nowJp = performance.now();
-            if (!fr.jpUntil || nowJp >= fr.jpUntil) fr.jpUntil = nowJp + 430;
-          }
+            if (!fr.jpUntil) fr.jpUntil = nowJp + 430;
+          } else if(fr.jpUntil === -1) fr.jpUntil=undefined;
+          else if(fr.jpUntil) fr.jpUntil=Math.min(fr.jpUntil,performance.now());
         } else {
           remoteFreeRef.current.set(key, { x: m.x, y: m.y, tx: m.x, ty: m.y, sp: m.sp, jpUntil: m.jp ? performance.now() + 430 : undefined });
         }
