@@ -19,6 +19,7 @@ export type ElisionDay = 'morning' | 'day' | 'evening' | 'night';
 export type ElisionActor = {
   id: string;
   isProp?: boolean;
+  opacity?: number;
   pose?: { scaleX: number; scaleY: number; rot: number; sway: number; lift: number };
   x: number;
   y: number;
@@ -181,10 +182,11 @@ type TerrainPart = { positions: number[]; indices: number[]; uvs: number[]; uvs2
 export function elisionTerrainGeometry(
   cols: number, rows: number, cellW: number, cellH: number,
   elev: Record<string, number>, liftStep: number,
-): { tops: TerrainPart; walls: TerrainPart } {
+): { tops: TerrainPart; walls: TerrainPart; fringe: TerrainPart } {
   const part = (): TerrainPart => ({ positions: [], indices: [], uvs: [], uvs2: [] });
   const tops = part();
   const walls = part();
+  const fringe = part();
   const level = (c: number, r: number) =>
     c < 0 || r < 0 || c >= cols || r >= rows ? 0 : Math.max(0, elev[`${c},${r}`] ?? 0);
   const quad = (out: TerrainPart, points: number[][], uv: number[]) => {
@@ -215,10 +217,29 @@ export function elisionTerrainGeometry(
         const [ax,az] = edge.a, [bx,bz] = edge.b;
         quad(walls, [[ax,bottom,az], [bx,bottom,bz], [bx,y,bz], [ax,y,az]],
           [...edge.uv, edge.uv[2],edge.uv[3], edge.uv[0],edge.uv[1]]);
+        // UV2 repeats the stone texture at a fixed world scale, independent
+        // of the elevation delta. Neighboring levels no longer stretch it.
+        const length = Math.hypot(bx-ax,bz-az), height = y-bottom;
+        walls.uvs2.splice(-8,8,(ax+az)/64,bottom/64,(bx+bz)/64,bottom/64,(bx+bz)/64,y/64,(ax+az)/64,y/64);
+        // Hanging grass follows only exposed edges; same-level neighbors
+        // have no seam. Small teeth are visual only and keep collision exact.
+        const segments = Math.max(2, Math.ceil(length / 7));
+        const tooth = (n: number) => Math.min(height, 2 + ((c*17+r*31+n*13) % 6));
+        for (let i=0;i<segments;i++) {
+          const t0=i/segments,t1=(i+1)/segments;
+          const x0=ax+(bx-ax)*t0+edge.dc*.4,z0=az+(bz-az)*t0+edge.dr*.4;
+          const x1=ax+(bx-ax)*t1+edge.dc*.4,z1=az+(bz-az)*t1+edge.dr*.4;
+          const uA=edge.uv[0]+(edge.uv[2]-edge.uv[0])*t0;
+          const vA=edge.uv[1]+(edge.uv[3]-edge.uv[1])*t0;
+          const uB=edge.uv[0]+(edge.uv[2]-edge.uv[0])*t1;
+          const vB=edge.uv[1]+(edge.uv[3]-edge.uv[1])*t1;
+          quad(fringe,[[x0,y+.15,z0],[x1,y+.15,z1],[x1,y-tooth(i+1),z1],[x0,y-tooth(i),z0]],
+            [uA,vA,uB,vB,uB,vB,uA,vA]);
+        }
       }
     }
   }
-  return { tops, walls };
+  return { tops, walls, fringe };
 }
 
 

@@ -1,3 +1,4 @@
+import { stampElevation, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim editor draft operations carved out of simulator.tsx (W5b stage 2,
  * behavior-preserving): draft sync/preview/undo, open/close, tool pick,
@@ -155,6 +156,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       objects: (m.objects ?? []).map((o) => ({ ...o })),
       spawns: (m.spawns ?? []).map((s) => ({ ...s })),
       elev: { ...(m.elev ?? {}) },
+      elevBrush: { width: 1, depth: 1, level: 1 },
       pcv: copyPaintCanvas(),
       pmat: 'grass-1',
       psize: 24,
@@ -564,23 +566,13 @@ export function buildEditorOps(params: EditorOpsParams) {
    * Росчерк пишет отмену один раз и не обрабатывает клетку дважды — протяжка
    * с зажатой кнопкой насыпает уступ целиком (см. pointerdown/pointermove).
    */
-  const applyElevBrush = (mode: 'raise' | 'lower' | 'flat', c: number, r: number): boolean => {
+  const applyElevBrush = (mode: ElevationTool, c: number, r: number): boolean => {
     const d = editorRef.current;
     if (!d) return false;
     if (c < 0 || r < 0 || c >= d.cols || r >= d.rows) return false;
     const stroke = elevStrokeRef.current;
     if (!stroke) return false;
-    const key = `${c},${r}`;
-    if (stroke.touched.has(key)) return false;
-    stroke.touched.add(key);
-    const cur = d.elev[key] ?? 0;
-    let next: number;
-    if (mode === 'raise') next = Math.min(TERRAIN_MAX_LEVEL, cur + 1);
-    else if (mode === 'lower') next = Math.max(0, cur - 1);
-    else next = Math.min(TERRAIN_MAX_LEVEL, Math.max(0, stroke.flat));
-    if (next === cur) return false;
-    if (next <= 0) delete d.elev[key];
-    else d.elev[key] = next;
+    if (!stampElevation(d.elev, mode, c, r, d.elevBrush, d.cols, d.rows, stroke.touched, stroke.flat)) return false;
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -589,7 +581,7 @@ export function buildEditorOps(params: EditorOpsParams) {
 
   /** Начало росчерка кисти рельефа: копилка тронутых клеток + уровень «Ровно»
    *  (уровень первой клетки под кистью — весь росчерк срезается в неё). */
-  const beginElevStroke = (mode: 'raise' | 'lower' | 'flat', c: number, r: number) => {
+  const beginElevStroke = (mode: ElevationTool, c: number, r: number) => {
     const d = editorRef.current;
     const first = d ? d.elev[`${c},${r}`] ?? 0 : 0;
     elevStrokeRef.current = { touched: new Set(), flat: mode === 'flat' ? first : 0 };

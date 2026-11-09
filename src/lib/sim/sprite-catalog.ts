@@ -36,6 +36,7 @@ import { httpSpriteCatalog, type SpriteCatalogItem } from "@/lib/net/http-sprite
 
 /** Длина рукотворных групп (хвост после неё — категории каталога). */
 const BASE_GROUPS_COUNT = SPRITE_GROUPS.length;
+const BUILTIN_SOURCES = new Map(SPRITES.map(sp => [sp.id, sp.src]));
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -90,7 +91,7 @@ export function applySpriteCatalog(items: SpriteCatalogItem[]): void {
   const rows: SpriteMeta[] = items.map((it) => ({
     id: it.id,
     name: it.name || it.id,
-    src: it.src || `/sprites/${it.id}.png`,
+    src: BUILTIN_SOURCES.get(it.id) || it.src || `/sprites/${it.id}.png`,
     category: it.category,
   }));
   // каталог целиком: уходит и переименованный builtin (имена/категории

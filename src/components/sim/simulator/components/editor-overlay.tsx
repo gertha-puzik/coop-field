@@ -1,3 +1,5 @@
+import { TERRAIN_MAX_LEVEL } from '@/lib/sim/test-map';
+import { clampBrush, isElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Location editor overlay panel, carved out of simulator.tsx verbatim (W5b
  * stage 2, behavior-preserving). Contract: renders NOTHING unless both
@@ -181,6 +183,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
                             { id: 'raise', label: '⬆ Насыпать' },
                             { id: 'lower', label: '⬇ Срыть' },
                             { id: 'flat', label: '▬ Ровно' },
+                            { id: 'height', label: '▣ Блок' },
                           ] as { id: EditorTool; label: string }[]
                         ).map((t) => (
                           <button
@@ -197,6 +200,34 @@ export function EditorOverlay(props: EditorOverlayProps) {
                           </button>
                         ))}
                       </div>
+                      {isElevationTool(editorView.tool) ? (
+                        <div className="mt-2 rounded-md border border-[var(--sim-line)] p-2">
+                          <div className="mb-1 font-semibold">Размер блока в клетках</div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {([
+                              ['width', 'Ширина', 1, editorView.cols],
+                              ['depth', 'Длина', 1, editorView.rows],
+                              ['level', 'Высота', 0, TERRAIN_MAX_LEVEL],
+                            ] as const).map(([key, title, min, max]) => (
+                              <label key={key} className="flex flex-col gap-1">
+                                {title}
+                                <input type="number" aria-label={`${title} блока`} min={min} max={max} step={1}
+                                  value={clampBrush(editorView.elevBrush, editorView.cols, editorView.rows)[key]}
+                                  className="min-w-0 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1 py-1"
+                                  onBlur={syncEditorView}
+                                  onChange={(event) => {
+                                    if (event.target.value === '') return;
+                                    const d = editorRef.current;
+                                    if (!d) return;
+                                    d.elevBrush = clampBrush({ ...clampBrush(d.elevBrush, d.cols, d.rows), [key]: Number(event.target.value) }, d.cols, d.rows);
+                                    syncEditorView();
+                                  }} />
+                              </label>
+                            ))}
+                          </div>
+                          <p className="mt-1.5 text-[10px] text-[var(--sim-text-faint)]">«Блок» ставит выбранную высоту сразу. Высота 0 срезает до земли. Подсветка показывает весь штамп.</p>
+                        </div>
+                      ) : null}
                       <div className="mt-1.5 flex gap-1.5">
                         {(
                           [

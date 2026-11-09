@@ -1,4 +1,5 @@
 'use client';
+import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
 /**
  * Simulator — единственный компонент движка: канвас-сцена, сетевой контекст,
  * панели и JSX. Пояс чистых функций (строки 1–1361 прежней нумерации) выехал
@@ -2335,7 +2336,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const csL = cursorScreenRef.current;
         if (csL) {
           const hit = screenToWorld(csL.x, csL.y, vw, vh, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
-          cursorWorldRef.current = groundPointAtWorld(hit.x, hit.y, cellW, cellH);
+          cursorWorldRef.current = groundPointAtWorld(hit.x, hit.y, cellW, cellH, camYawRef.current);
+          if (editorOn) e.hover = { c: Math.min(s.field.cols-1,Math.max(0,Math.floor(cursorWorldRef.current.x/cellW))),
+            r: Math.min(s.field.rows-1,Math.max(0,Math.floor(cursorWorldRef.current.y/cellH))) };
         }
       }
 
@@ -3024,58 +3027,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           ctx.lineWidth = 1.5;
           ctx.strokeRect(0.5, 0.5, wc - 1, wr - 1);
           ctx.setLineDash([]);
-          // препятствия черновика: спрайт + пунктирный контур тела. Землю,
-          // покрытие и заходы рисует сам грунт — здесь только камень и дерево.
-          // Ставятся свободно (точка опоры — дробные x/y), размер/поворот — из объекта.
-          for (const o of ed.objects) {
-            if (o.id === editorPlaceRef.current?.pickId) continue; // поднят в призрак
-            if (o.kind === 'entry') {
-              if (o.dir) {
-                drawEntryMark(
-                  ctx,
-                  s.field.cellW,
-                  s.field.cellH,
-                  (o.c + 0.5) * s.field.cellW,
-                  (o.r + 0.5) * s.field.cellH,
-                  o.dir,
-                );
-              }
-              continue;
-            }
-            if (o.kind === 'dirt' || o.kind === 'ground') continue;
-            const bE = objectBase(o);
-            // Рельеф: объект на плато/камне стоит на поднятой земле своей клетки
-            // (как в игровой отрисовке ниже) — иначе камень уезжает в стену своей же платформы.
-            const posE = raised(bE.x * s.field.cellW, bE.y * s.field.cellH, elevLiftAtPoint(bE.x, bE.y));
-            drawTestObject(
-              ctx,
-              o,
-              s.field.cellW,
-              s.field.cellH,
-              posE.x,
-              posE.y,
-              1,
-              hashStr(o.id) & 7,
-            );
-            // контур «обтекаемого» тела — эллипс с масштабом и поворотом объекта
-            const bodyE = obstacleBodyPx(o);
-            const scE = objectScale(o);
-            ctx.setLineDash([4, 3]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.ellipse(
-              posE.x,
-              posE.y,
-              bodyE.hw * scE + 6,
-              bodyE.h * scE + 6,
-              (objectRotDeg(o) * Math.PI) / 180,
-              0,
-              Math.PI * 2,
-            );
-            ctx.stroke();
-            ctx.setLineDash([]);
-          }
           // клетки спавна: пунктирный контур + флажок. Только в редакторе —
           // на поле клетка спавна ничем не отличается от соседних.
           for (const spw of ed.spawns) {
@@ -3401,8 +3352,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       // земле прячутся под ним. У стены ключ = низ стены: она прячет котов
       // позади обрыва и скрывается за котами перед ним. Разметка клетки
       // (бой/покрытия/заход) едет вместе с верхом плато.
-      if (testMode && elevAny()) {
+      if (testMode && elevAny() && !elisionViewRef.current) {
         const gpatT = grassPattern(ctx);
+        const terrainPasses: { c: number; r: number; draw: () => void }[] = [];
         // верх плато поднимает кусок пиксельной отрисовки клетки (если рисунок есть)
         const pcvT = paintReady() ? paintCanvas() : null;
         const cwT = s.field.cellW;
@@ -3443,7 +3395,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const topA = terrainTopAnchor(cT, rT, cwT, chT, liftT, faceYaw);
           // ВЕРХ: ключ — дальняя грань поднятой клетки; всё, что стоит на этой
           // земле (лапы строго ближе к камере), рисуется поверх.
-          bills.push({
+          const topBill = {
             x: topA.x,
             y: topA.y,
             fn: () => {
@@ -3492,12 +3444,17 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               }
               ctx.restore();
             },
-          });
+          };
+          if (editorOn) terrainPasses.push({c:cT,r:rT,draw:()=> {
+            drawTerrainWall(ctx,cwT,chT,cT,rT,faceYaw);
+            topBill.fn();
+          }});
+          else bills.push(topBill);
           // СТЕНА: грань, которая смотрит в камеру, если сосед за ней ниже.
           // Ключ — внешний край (на пиксель ближе к игроку), чтобы кот вплотную
           // к фасаду рисовался поверх.
           const wallA = terrainWallAnchor(cT, rT, cwT, chT, faceYaw);
-          if (wallA) {
+          if (wallA && !editorOn) {
             bills.push({
               x: wallA.x,
               y: wallA.y,
@@ -3510,6 +3467,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             });
           }
         }
+        terrainPasses.sort((a,b)=>viewDepth((a.c+.5)*cwT,(a.r+.5)*chT,0,0,faceYaw)-viewDepth((b.c+.5)*cwT,(b.r+.5)*chT,0,0,faceYaw));
+        for (const pass of terrainPasses) pass.draw();
       }
 
       const drawChar = (
@@ -4294,7 +4253,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         }
         tickAtmo();
         const elision = elisionViewRef.current;
-        if (elision) {
+        if (elision || editorState().on) {
           try {
             const sNow = settingsRef.current;
             const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
@@ -4304,6 +4263,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 space: spaceHoldRef.current,
                 remoteSpace: remoteSpaceRef.current,
                 editor: editorState().on,
+                editorPlacement: editorPlaceRef.current,
                 day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
                 dayProgress: dayTintOnRef.current && atmoAnchorRef.current.pl > 0 ? dayProgressAt(atmoAnchorRef.current.cs, atmoAnchorRef.current.pl, Date.now()) : 1.5,
                 jumpTarget: jumpMarker,
@@ -4335,13 +4295,17 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 objects: currentTestMap().objects ?? [],
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });
-            elision.frame(frame);
+            elision?.frame(frame);
             drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
+            const draft = editorRef.current;
+            if (frame.editor && draft) drawTerrainEditorOverlay(hudRef.current, frame, {
+              draft, hover: engineRef.current.hover, placement: editorPlaceRef.current, selectionCanvas: editorSelRef.current?.cv,
+            });
           } catch (error) {
             console.warn('[elision] WebGL-вид упал — остаётся прежний холст', error);
             try {
-              elision.destroy();
+              elision?.destroy();
             } catch {
               /* вид уже разобран */
             }

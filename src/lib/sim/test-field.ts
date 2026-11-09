@@ -1,3 +1,4 @@
+import { pickTerrainTop } from './terrain-editor';
 /**
  * Поле комнаты «тест» — другой формат играбельной площади вместо жёсткой сетки 10×6.
  *
@@ -41,7 +42,7 @@ import {
   type TestMapObject,
   type TestMapZone,
 } from './test-map';
-import { PACK_TUFT_COUNT, coverPattern, packImg, type PackName } from './textures';
+import { PACK_TUFT_COUNT, coverPattern, stonePattern, packImg, type PackName } from './textures';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -992,21 +993,10 @@ export function groundPointAtWorld(
   y: number,
   cellW: number,
   cellH: number,
+  yaw = 0,
 ): { x: number; y: number } {
-  const c = Math.floor(x / cellW);
-  if (c < 0 || c >= currentMap.cols) return { x, y };
-  const r0 = Math.floor(y / cellH);
-  let bestLift = -1;
-  for (let k = 0; k <= TERRAIN_MAX_LEVEL; k++) {
-    const r = r0 + k;
-    if (r < 0 || r >= currentMap.rows) break;
-    const lift = terrainLevelAt(c, r) * TERRAIN_LIFT_PX;
-    const top = r * cellH - lift;
-    if (y < top || y >= top + cellH) continue;
-    if (lift > bestLift) bestLift = lift;
-  }
-  if (bestLift >= 0) return { x, y: y + bestLift };
-  return { x, y };
+  const hit = pickTerrainTop(x, y, cellW, cellH, currentMap.cols, currentMap.rows, terrainLevelAt, TERRAIN_LIFT_PX, yaw);
+  return { x: hit.x, y: hit.y };
 }
 
 /** Уровень клетки-соседа для стены обрыва: вне мира или за нарисованной кромкой
@@ -1127,55 +1117,17 @@ export function drawTerrainWall(
   const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw), yaw);
   if (!g) return;
   const { x, y, w, h, face, e } = g;
-  // градиент от кромки травы к внешнему краю (к игроку)
-  const x0 = face === 'w' ? x + w : x;
-  const y0 = face === 'n' ? y + h : y;
-  const x1 = face === 'e' ? x + w : face === 'w' ? x : x;
-  const y1 = face === 's' ? y + h : face === 'n' ? y : y;
-  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
-  grad.addColorStop(0, '#6d5438');
-  grad.addColorStop(0.3, '#58412b');
-  grad.addColorStop(1, '#382a1a');
-  ctx.fillStyle = grad;
+  ctx.fillStyle = stonePattern(ctx) ?? '#878a80';
   ctx.fillRect(x, y, w, h);
-  // нависшая трава: тёмная линия у кромки верха + светлый срез дёрна
-  ctx.fillStyle = 'rgba(18, 13, 5, 0.5)';
-  if (face === 's') ctx.fillRect(x, y, w, 2);
-  else if (face === 'n') ctx.fillRect(x, y + h - 2, w, 2);
-  else if (face === 'e') ctx.fillRect(x, y, 2, h);
-  else ctx.fillRect(x + w - 2, y, 2, h);
-  ctx.fillStyle = 'rgba(214, 196, 140, 0.14)';
-  const turf = Math.max(0, Math.min(3, (face === 's' || face === 'n' ? h : w) - 2));
-  if (turf > 0) {
-    if (face === 's') ctx.fillRect(x, y + 2, w, turf);
-    else if (face === 'n') ctx.fillRect(x, y + h - 2 - turf, w, turf);
-    else if (face === 'e') ctx.fillRect(x + 2, y, turf, h);
-    else ctx.fillRect(x + w - 2 - turf, y, turf, h);
-  }
-  // детерминированные камешки на срезе (по клетке — у всех игроков одинаковые)
-  const along = face === 's' || face === 'n' ? w : h;
-  const across = face === 's' || face === 'n' ? h : w;
-  const v = (c * 7 + r * 13 + e * 5) % 4;
-  ctx.fillStyle = 'rgba(24, 18, 10, 0.35)';
-  for (let i = 0; i <= v; i++) {
-    const alongT = 0.14 + 0.24 * i + ((c * 31 + i * 17) % 10) / 60;
-    const acrossT = 0.35 + ((r * 23 + i * 29) % 10) / 22;
-    const px =
-      face === 's' || face === 'n'
-        ? x + along * alongT
-        : face === 'e'
-          ? x + across * acrossT
-          : x + across * (1 - acrossT);
-    const py =
-      face === 's'
-        ? y + across * acrossT
-        : face === 'n'
-          ? y + across * (1 - acrossT)
-          : y + along * alongT;
-    const rr2 = 1.6 + ((c + r + i) % 3);
-    ctx.beginPath();
-    ctx.arc(px, py, rr2, 0, Math.PI * 2);
-    ctx.fill();
+  const horizontal = face === 's' || face === 'n';
+  const length = horizontal ? w : h;
+  ctx.fillStyle = '#637a43';
+  for (let t = 0; t < length; t += 7) {
+    const tooth = Math.min(horizontal ? h : w, 2 + ((c*17+r*31+t*3)%6));
+    if (face === 's') ctx.fillRect(x+t,y,Math.min(7,length-t),tooth);
+    else if (face === 'n') ctx.fillRect(x+t,y+h-tooth,Math.min(7,length-t),tooth);
+    else if (face === 'e') ctx.fillRect(x,y+t,tooth,Math.min(7,length-t));
+    else ctx.fillRect(x+w-tooth,y+t,tooth,Math.min(7,length-t));
   }
 }
 
@@ -1231,52 +1183,7 @@ export function drawTerrainTop(
     ctx.fillStyle = '#2c4a1d';
     ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
   }
-  if (e >= 2) {
-    ctx.fillStyle = `rgba(255, 238, 176, ${(0.055 * (e - 1)).toFixed(3)})`;
-    ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
-  }
-  // Складки по бокам лицевой грани и тёмная кромка с дальней стороны.
-  // При yaw 0 это прежние восточная/западная полоски и северная губа.
-  const face = terrainFaceOf(yaw);
-  const gy = y;
-  const t = 7;
-  for (const side of sideFaces(face)) {
-    const step = FACE_STEP[side];
-    const nb = elevNeighborForWall(c + step.dc, r + step.dr);
-    if (nb >= e) continue;
-    const drop = Math.min((e - nb) * TERRAIN_LIFT_PX, cellH);
-    ctx.fillStyle = '#58412b';
-    let sx = x;
-    let sy = gy;
-    let sw = t;
-    let sh = cellH + drop;
-    if (side === 'e' || side === 'w') {
-      sx = side === 'w' ? x : x + cellW - t;
-      sy = face === 's' ? gy : gy - drop;
-      sw = t;
-      sh = cellH + drop;
-    } else {
-      sy = side === 'n' ? gy : gy + cellH - t;
-      sx = face === 'e' ? x : x - drop;
-      sw = cellW + drop;
-      sh = t;
-    }
-    ctx.fillRect(sx, sy, sw, sh);
-    ctx.fillStyle = 'rgba(18, 13, 5, 0.45)';
-    if (face === 's') ctx.fillRect(sx, sy, sw, 2);
-    else if (face === 'n') ctx.fillRect(sx, sy + sh - 2, sw, 2);
-    else if (face === 'e') ctx.fillRect(sx, sy, 2, sh);
-    else ctx.fillRect(sx + sw - 2, sy, 2, sh);
-  }
-  const far = oppositeFace(face);
-  const farStep = FACE_STEP[far];
-  if (elevNeighborForWall(c + farStep.dc, r + farStep.dr) < e) {
-    ctx.fillStyle = '#3a2a1c';
-    if (far === 'n') ctx.fillRect(x, gy, cellW, 6);
-    else if (far === 's') ctx.fillRect(x, gy + cellH - 6, cellW, 6);
-    else if (far === 'w') ctx.fillRect(x, gy, 6, cellH);
-    else ctx.fillRect(x + cellW - 6, gy, 6, cellH);
-  }
+
 }
 
 /* ---------- детерминированный шум ---------- */

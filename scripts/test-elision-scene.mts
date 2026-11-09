@@ -188,3 +188,8 @@ assert(elisionLeapClearance(0,0,2,0,0,0,60,26,()=>0)===60,'прыжок по р�
 
 const rock = { id: 'rock', isProp: true, x: 0, y: 0, w: 100, h: 100, lift: 0, url: '/tex/rock-1.png', mirror: false, rot: 0 };
 assert(elisionObstacleAlpha(rock, {...rock, id: 'self', isProp: false}, 0) === 1, 'камень остаётся непрозрачным при пересечении с котом');
+
+assert(terrain.fringe.positions.length > 0, 'открытые уступы имеют неровную травяную кромку');
+assert(empty.fringe.positions.length === 0, 'плоская карта не получает ложную кромку');
+assert(terrain.walls.uvs2.some(v => v > 1), 'текстура скалы повторяется по мировым координатам, не растягивается на высоту блока');
+assert(terrain.fringe.positions.every(Number.isFinite), 'вершины травяной кромки конечны');

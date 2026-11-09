@@ -88,29 +88,21 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   let groundTex: RawTexture | null = null;
   let terrainTop: Mesh | null = null;
   let terrainWalls: Mesh | null = null;
+  let terrainFringe: Mesh | null = null;
   const wallMat = new StandardMaterial('elision-cliff', scene);
   wallMat.disableLighting = true;
   wallMat.specularColor = Color3.Black();
   wallMat.backFaceCulling = false;
   wallMat.transparencyMode = Material.MATERIAL_ALPHATEST;
-  // Разрез грунта: тёмное основание, светлый дёрн у верхней кромки.
-  const wallPixels = new Uint8Array(4 * 32 * 4);
-  for (let row = 0; row < 32; row++) {
-    for (let col = 0; col < 4; col++) {
-      const t = row / 31;
-      const color = row > 29 ? [45, 33, 18] : [56 + 53*t, 42 + 42*t, 26 + 30*t];
-      const i = (row * 4 + col) * 4;
-      wallPixels.set([...color.map(Math.round), 255], i);
-    }
-  }
-  const wallTex = RawTexture.CreateRGBATexture(wallPixels, 4, 32, scene, false, false,
-    Constants.TEXTURE_NEAREST_SAMPLINGMODE);
+  // CC0 Cainos stone tiles already shipped with the game: a repeating rock
+  // surface instead of the old vertically stretched dirt gradient/dark band.
+  const wallTex = new Texture('/tex/stone-floor.png', scene, false, false, Constants.TEXTURE_NEAREST_SAMPLINGMODE);
   wallTex.coordinatesIndex = 1;
+  wallTex.wrapU = wallTex.wrapV = Texture.WRAP_ADDRESSMODE;
   wallMat.diffuseTexture = wallTex;
   wallMat.emissiveColor = Color3.White();
   let paintKey = '';
   let groundMode: ElisionView['ground'] = 'boot';
-  let wasEditor = false;
   let lastCssW = 0;
   let lastCssH = 0;
   const textures = new Map<string, Texture>();
@@ -148,6 +140,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const syncTerrain = (frame: ElisionFrame) => {
     terrainTop?.dispose(false, false);
     terrainWalls?.dispose(false, false);
+    terrainFringe?.dispose(false, false);
     terrainTop = null;
     terrainWalls = null;
     const geo = elisionTerrainGeometry(frame.cols, frame.rows, frame.cellW, frame.cellH, frame.elev, frame.terrainLiftStep);
@@ -169,6 +162,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     };
     terrainTop = make('elision-plateau-tops', geo.tops, groundMat);
     terrainWalls = make('elision-cliff-walls', geo.walls, wallMat);
+    terrainFringe = make('elision-grass-fringe', geo.fringe, groundMat);
     wallMat.opacityTexture = groundTex;
   };
 
@@ -304,7 +298,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       }
       node.sig = sig;
       node.mat.emissiveColor.set(...tint);
-      const targetAlpha = elisionObstacleAlpha(actor, self, frame.yaw);
+      const targetAlpha = actor.opacity ?? elisionObstacleAlpha(actor, self, frame.yaw);
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
         : node.mat.alpha + (targetAlpha - node.mat.alpha) * 0.18;
       node.mat.alpha = alpha;
@@ -346,16 +340,11 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     },
     frame(frame) {
       if (dead) return;
-      if (frame.editor || frame.viewW < 2 || frame.viewH < 2) {
+      if (frame.viewW < 2 || frame.viewH < 2) {
         canvas.style.visibility = 'hidden';
-        wasEditor = frame.editor;
         return;
       }
       canvas.style.visibility = 'visible';
-      if (wasEditor) {
-        paintKey = '';
-        wasEditor = false;
-      }
       const now = performance.now(), target = elisionDayTint(frame.dayProgress);
       const k = 1-Math.exp(-Math.min(100,Math.max(0,now-tintAt))/1200);
       tint = tint.map((v,i)=>v+(target[i]-v)*k) as [number,number,number];
@@ -381,6 +370,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       ground?.dispose(false, false);
       terrainTop?.dispose(false, false);
       terrainWalls?.dispose(false, false);
+      terrainFringe?.dispose(false, false);
       wallTex.dispose();
       wallMat.dispose(false, false);
       scene.dispose();
