@@ -1,5 +1,5 @@
 import { paintBrushSize } from './paint';
-import { terrainAt, terrainBrushBounds, pickTerrainTop, terrainScreenPoint, decodeTerrainRect, freeTerrainPlacement, isElevationTool, clampBrush } from './terrain-shape';
+import { terrainAt, terrainBrushBounds, terrainScreenPoint, freeTerrainPlacement, isElevationTool, clampBrush } from './terrain-shape';
 export { pickTerrainTop, terrainScreenPoint, terrainTopVisible, clampBrush, elevationBrushRect, stampElevation, isElevationTool } from './terrain-shape';
 export type { ElevationTool, ElevationBrush, CellRect } from './terrain-shape';
 import type { CellRect } from './terrain-shape';
@@ -79,7 +79,7 @@ export type TerrainEditorOverlay = {
 /**
  * Annotation pass after WebGL and after the day/weather HUD has cleared.
  * Terrain itself is never repainted here: depth testing remains authoritative.
- * Height labels are hidden when a nearer top covers the labeled cell.
+ * Only the already-picked hover point gets a height label; no all-block ray pass.
  */
 export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: ElisionFrame, input: TerrainEditorOverlay) {
   if (!cv || !frame.editor) return;
@@ -103,19 +103,6 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
   g.font = 'bold 11px system-ui, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  for (const [key, level] of Object.entries(frame.elev)) {
-    if (!level || !isElevationTool(d.tool)&&!d.showGrid) continue;
-    const b=decodeTerrainRect(key,level);if(!b)continue;
-    const cx=b.x+b.w/2,ry=b.y+b.d/2;
-    if(terrainAt(frame.elev,cx,ry)!==level)continue;
-    const lift=level*frame.terrainLiftStep;
-    const hit=pickTerrainTop(cx*frame.cellW-Math.sin(frame.yaw)*lift,ry*frame.cellH-Math.cos(frame.yaw)*lift,
-      frame.cellW,frame.cellH,frame.cols,frame.rows,(c,r)=>terrainAt(frame.elev,c+.5,r+.5),frame.terrainLiftStep,frame.yaw,frame.elev);
-    if(Math.abs(hit.level-level)>.001)continue;
-    const p=terrainScreenPoint(frame,cx*frame.cellW,ry*frame.cellH,lift);
-    if(p.x < -30 || p.y < -20 || p.x > frame.viewW+30 || p.y > frame.viewH+20)continue;
-    label(g,p.x,p.y,`▲ ${level}`);
-  }
   for(const zone of d.zones){
     if(!d.sel.includes(zone.id))continue;
     g.lineWidth=1.5;g.strokeStyle='#edc485';
@@ -156,6 +143,13 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     outlineRect(g, frame, rect, '#ffeca0');
     g.setLineDash([]);
   }
+  const cursor=hover?d.terrainCursor:undefined;
+  const hoveredLevel=cursor&&cursor.x>=0&&cursor.y>=0&&cursor.x<d.cols&&cursor.y<d.rows
+    ? terrainAt(frame.elev,cursor.x,cursor.y):0;
+  if(cursor&&hoveredLevel>0&&!isElevationTool(d.tool)){
+    const point=terrainScreenPoint(frame,cursor.x*frame.cellW,cursor.y*frame.cellH,hoveredLevel*frame.terrainLiftStep);
+    label(g,point.x,point.y-38,`Высота: ${hoveredLevel}`);
+  }
   if (hover && isElevationTool(d.tool)) {
     const b = clampBrush(d.elevBrush,d.cols,d.rows);
     const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(frame.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : {...terrainBrushBounds(hover.c,hover.r,b.width,b.depth,d.cols,d.rows),snapped:false};
@@ -167,7 +161,7 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
       cellPath(g,frame,rect.x,rect.y,b.level,rect.w,rect.d);g.fill();g.stroke();g.restore();
     }
     const p=terrainScreenPoint(frame,(rect.x+rect.w/2)*frame.cellW,(rect.y+rect.d/2)*frame.cellH,level*frame.terrainLiftStep);
-    label(g,p.x,p.y-23,`${rect.snapped?'Магнит · ':''}${b.width}×${b.depth}${d.tool==='height'?` · высота ${b.level}`:''}`,'#baffd0');
+    label(g,p.x,p.y-23,`Высота: ${hoveredLevel} · ${rect.snapped?'Магнит · ':''}${b.width}×${b.depth}${d.tool==='height'?` → ${b.level}`:''}`,'#baffd0');
   } else if (hover && (d.tool === 'paint'||d.tool==='fill') && d.terrainCursor) {
     const cursor=d.terrainCursor,level=terrainAt(frame.elev,cursor.x,cursor.y);
     const p=terrainScreenPoint(frame,cursor.x*frame.cellW,cursor.y*frame.cellH,level*frame.terrainLiftStep);

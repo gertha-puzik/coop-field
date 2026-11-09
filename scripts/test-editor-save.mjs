@@ -242,3 +242,22 @@ try{
  liveField.setPaintOverride(canvas,true);images[2].naturalWidth=1200;images[2].naturalHeight=1350;images[2].onload();assert.equal(await third,false);assert.equal(liveField.paintCanvas(),canvas,'live editor override wins over pending PNG');
 }finally{globalThis.Image=oldImage;globalThis.document=oldDocument;}
 console.log('paint decode races, deduplication, expanded ground and editor override: OK');
+
+// Dense terrain must not create a label/ray test for every block each frame.
+const overlay=loadTs(new URL('../src/lib/sim/terrain-editor.ts',import.meta.url));
+let terrainScans=0;
+const dense=new Proxy(Object.fromEntries(Array.from({length:2400},(_,i)=>[`${i%60},${Math.floor(i/60)}`,2])),{ownKeys(target){terrainScans++;return Reflect.ownKeys(target);}});
+collisionShape.terrainAt(dense,10.5,8.5);terrainScans=0;
+const texts=[];
+const guideContext=new Proxy({measureText:()=>({width:80}),fillText:text=>texts.push(text)},{get:(target,key)=>key in target?target[key]:()=>{},set:(target,key,value)=>{target[key]=value;return true;}});
+const guideCanvas={getContext:()=>guideContext};
+const guideDraft={cols:60,rows:40,tool:'cursor',showGrid:true,zones:[],objects:[],spawns:[],sel:[],terrainCursor:{x:10.5,y:8.5}};
+const guideFrame={editor:true,elev:dense,cols:60,rows:40,cellW:100,cellH:150,terrainLiftStep:26,camX:1050,camY:1275,yaw:0,zoom:1,viewW:1200,viewH:800};
+const previousGuideWindow=globalThis.window;
+try{
+ globalThis.window={devicePixelRatio:1};
+ overlay.drawTerrainEditorOverlay(guideCanvas,guideFrame,{draft:guideDraft,hover:null,placement:null});assert.equal(texts.length,0,'no hovered block means no height labels');
+ overlay.drawTerrainEditorOverlay(guideCanvas,guideFrame,{draft:guideDraft,hover:{c:10,r:8},placement:null});assert.deepEqual(texts,['Высота: 2'],'only the hovered block is labeled, even with the grid enabled');
+ assert.equal(terrainScans,0,'annotation pass does not enumerate all 2400 terrain blocks');
+}finally{globalThis.window=previousGuideWindow;}
+console.log('dense terrain overlay: one hovered height, none on leave, no per-frame terrain scan: OK');
