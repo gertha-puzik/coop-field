@@ -1,3 +1,4 @@
+import { terrainAt, terrainBrushBounds, stampTerrainRect, sanitizeTerrainElev } from '@/lib/sim/terrain-shape';
 import { stampElevation, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim editor draft operations carved out of simulator.tsx (W5b stage 2,
@@ -399,7 +400,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       const [c, r] = key.split(',').map(Number);
       if (c < nc && r < nr) keptElev[key] = lv;
     }
-    d.elev = keptElev;
+    d.elev = sanitizeTerrainElev(keptElev,nc,nr,TERRAIN_MAX_LEVEL) ?? {};
     // Выделение «Перенести» живёт в старых координатах — плавающий кусок
     // ставится на текущее место, само выделение снимается.
     if (d.selFloat) dropEditorSelection();
@@ -484,16 +485,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       });
       d.spawns = d.spawns.filter((s) => !(s.c >= c0 && s.c <= c1 && s.r >= r0 && s.r <= r1));
       // и срезает рельеф: стёртый участок возвращается к базовой земле
-      let elevChanged = false;
-      for (let r = r0; r <= r1; r++) {
-        for (let c = c0; c <= c1; c++) {
-          if (`${c},${r}` in d.elev) {
-            delete d.elev[`${c},${r}`];
-            elevChanged = true;
-          }
-        }
-      }
-      if (elevChanged) applyDraftPreview();
+      if(stampTerrainRect(d.elev,{x:c0,y:r0,w:c1-c0+1,d:r1-r0+1,level:0},'height',0,new Set(),0,TERRAIN_MAX_LEVEL)) applyDraftPreview();
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -572,7 +564,8 @@ export function buildEditorOps(params: EditorOpsParams) {
     if (c < 0 || r < 0 || c >= d.cols || r >= d.rows) return false;
     const stroke = elevStrokeRef.current;
     if (!stroke) return false;
-    if (!stampElevation(d.elev, mode, c, r, d.elevBrush, d.cols, d.rows, stroke.touched, stroke.flat)) return false;
+    const b = d.elevBrush ?? {width:1,depth:1,level:1};
+    if (!stampTerrainRect(d.elev, terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows), mode,b.level,stroke.touched,stroke.flat,TERRAIN_MAX_LEVEL)) return false;
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -583,7 +576,7 @@ export function buildEditorOps(params: EditorOpsParams) {
    *  (уровень первой клетки под кистью — весь росчерк срезается в неё). */
   const beginElevStroke = (mode: ElevationTool, c: number, r: number) => {
     const d = editorRef.current;
-    const first = d ? d.elev[`${c},${r}`] ?? 0 : 0;
+    const first = d ? terrainAt(d.elev,c+.5,r+.5) : 0;
     elevStrokeRef.current = { touched: new Set(), flat: mode === 'flat' ? first : 0 };
     applyElevBrush(mode, c, r);
   };

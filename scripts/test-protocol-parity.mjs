@@ -71,7 +71,7 @@ const GOLDEN = {
   CHAT_MAX_LEN: 200,
   CHAT_COOLDOWN_MS: 450,
   CHAT_HISTORY: 40,
-  TERRAIN_MAX_LEVEL: 10,
+  TERRAIN_MAX_LEVEL: 20,
   ELEV_STEP_MAX: 1,
   JUMP_CHARGE_HALF: 0.5,
   JUMP_CHARGE_FULL: 1,
@@ -89,7 +89,7 @@ const GOLDEN = {
   JUMP_COOLDOWN_MS: 450,
   JUMP_MAX_CELLS: 3,
   JUMP_DIRECTIONS: 8,
-  JUMP_MAX_DROP: 10,
+  JUMP_MAX_DROP: 20,
   TEST_MAP_LIMITS: { colsMin: 6, colsMax: 60, rowsMin: 3, rowsMax: 40, zonesMax: 48, objectsMax: 2000, spawnsMax: 64, nameMax: 24 },
   GROUND_COVER_IDS_COUNT: 13, // grass×2 + flower×4 + slab×4 + floor×3 (источник: test-map.ts GROUND_COVER_OPTS)
   ARMOR_CURVE: [

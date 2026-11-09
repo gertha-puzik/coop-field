@@ -18,7 +18,7 @@ function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(message);
 }
 
-assert(TERRAIN_MAX_LEVEL === 10, "десять уровней над землёй");
+assert(TERRAIN_MAX_LEVEL === 20, "двадцать уровней над землёй");
 assert(elevStepOk(0, 1) && elevStepOk(4, 3) && elevStepOk(2, 2), "шаг на 1 и по ровному");
 assert(!elevStepOk(0, 2) && !elevStepOk(5, 3), "перепад 2 шагом нельзя");
 

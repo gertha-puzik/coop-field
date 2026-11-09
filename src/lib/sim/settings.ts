@@ -113,6 +113,8 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'blestyashka-kit', name: 'Блестяшка', src: '/sprites/blestyashka-kit.png' },
   { id: 'chistolapik-kit', name: 'Чистолапик', src: '/sprites/chistolapik-kit.png' },
   { id: 'test1', name: 'test1', src: '/sprites/test1.png?v=original-300x200' },
+  { id: 'test1-png', name: 'test1 PNG 600', src: '/sprites/test1-png.png' },
+  { id: 'test1-webp', name: 'test1 WebP 600', src: '/sprites/test1-webp.webp' },
 ];
 
 /**
@@ -147,7 +149,7 @@ export const SPRITE_GROUPS: SpriteGroup[] = [
   { id: 'drel', name: 'Дрель', spriteIds: ['drel'] },
   { id: 'izya', name: 'Изя', spriteIds: ['izya'] },
   { id: 'buran', name: 'Буран', spriteIds: ['buran'] },
-  { id: 'test1', name: 'test1', spriteIds: ['test1'] },
+  { id: 'test1', name: 'test1', spriteIds: ['test1', 'test1-png', 'test1-webp'] },
 ];
 
 /** Набор скинов №2 «Малышочки» — отдельный раздел выбора: маленькие зверьки

@@ -193,3 +193,14 @@ assert(terrain.fringe.positions.length > 0, 'открытые уступы им�
 assert(empty.fringe.positions.length === 0, 'плоская карта не получает ложную кромку');
 assert(terrain.walls.uvs2.some(v => v > 1), 'текстура скалы повторяется по мировым координатам, не растягивается на высоту блока');
 assert(terrain.fringe.positions.every(Number.isFinite), 'вершины травяной кромки конечны');
+
+const preciseMesh=elisionTerrainGeometry(2,2,100,150,{'0.4,0.3,0.2,1.2':6.7},26);
+let topArea=0;
+for(let i=0;i<preciseMesh.tops.positions.length;i+=12){
+ const p=preciseMesh.tops.positions;
+ topArea+=Math.abs((p[i+3]-p[i])*(p[i+8]-p[i+2]));
+ assert(Math.abs(p[i+1]-6.7*26)<1e-7,'fractional mesh height remains exact');
+}
+assert(Math.abs(topArea-.2*1.2*100*150)<1e-6,'fractional mesh footprint remains exact');
+assert(preciseMesh.walls.positions.every(Number.isFinite),'fractional cliff vertices are finite');
+console.log('fractional terrain mesh dimensions and height ok');
