@@ -336,6 +336,18 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
+    # Личные окрасы игроков (#83: POST/GET/DELETE /sprites/mine* — сессия,
+    # unsafe-cookie Origin-щит и Host-гейт решает комната). Cookie обязателен:
+    # зона сессионная, как /profiles; без прокси изолированный билд отдал бы
+    # try_files→index.html и молча деградировал.
+    location /sprites/mine {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
     # Публичный каталог спрайтов ОБЕИМ сайтам (карусель выбора скина): без
     # прокси изолированный билд отдал бы try_files→index.html и карусель
     # молча деградировала на статичный список.
