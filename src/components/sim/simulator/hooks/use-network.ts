@@ -151,7 +151,12 @@ export function useSimNet(deps: SimNetDeps) {
     const receiveMap=(map:TestMap,notify=false)=>{
       const signature=JSON.stringify(map);
       clearEditorSave();
-      if(signature===lastMapSignature)return;
+      if(signature===lastMapSignature){
+        // Saving an imported/undone copy can legitimately match the last map.
+        // Reconcile the draft, but keep duplicate field broadcasts cheap.
+        if(notify&&editorOpenRef.current)applyTestMap(map);
+        return;
+      }
       lastMapSignature=signature;
       if(notify)setEditorMsg('Локация обновлена.');
       applyTestMap(map);showMapLoading();

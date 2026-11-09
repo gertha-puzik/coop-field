@@ -12,13 +12,15 @@ export function useElisionView(opts: {
   enabled: boolean;
   hostRef: RefObject<HTMLDivElement | null>;
   viewRef: RefObject<ElisionView | null>;
+  statusRef: RefObject<'pending'|'ready'|'fallback'>;
 }): void {
-  const { enabled, hostRef, viewRef } = opts;
+  const { enabled, hostRef, viewRef, statusRef } = opts;
   useEffect(() => {
     if (!enabled) return;
     const slot = hostRef.current;
     if (!slot) return;
     let dead = false;
+    statusRef.current='pending';
     const canvas = document.createElement('canvas');
     canvas.className = 'pointer-events-none block h-full w-full rounded-lg';
     canvas.dataset.elisionWebgl = 'pending';
@@ -26,15 +28,17 @@ export function useElisionView(opts: {
     import('@/lib/sim/elision-babylon')
       .then(({ createElisionView }) => (dead ? undefined : createElisionView(canvas)))
       .then((view) => {
-        if (!view) return;
+        if (!view) {if(!dead)statusRef.current='fallback';canvas.remove();return;}
         if (dead) {
           view.destroy();
           return;
         }
         viewRef.current = view;
+        statusRef.current='ready';
         canvas.dataset.elisionWebgl = view.webgl;
       })
       .catch(() => {
+        if(!dead)statusRef.current='fallback';
         canvas.remove();
       });
     return () => {
@@ -43,5 +47,5 @@ export function useElisionView(opts: {
       viewRef.current = null;
       canvas.remove();
     };
-  }, [enabled, hostRef, viewRef]);
+  }, [enabled, hostRef, viewRef, statusRef]);
 }

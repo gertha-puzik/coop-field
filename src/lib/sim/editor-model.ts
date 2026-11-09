@@ -101,6 +101,7 @@ export type EditorDraft = {
   ppaint: string | null;
   cols: number;
   rows: number;
+  seed?:string; margin?:number;
   tool: EditorTool;
   /** Тянущийся прямоугольник в клетках (не нормализован — углы в любом порядке). */
   drag: { c0: number; r0: number; c1: number; r1: number; erase: boolean } | null;
@@ -122,11 +123,11 @@ export type EditorDraft = {
 
 export type EditorSnapshot = {
   zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[];
-  elev: Record<string,number>; cols:number; rows:number;
+  elev: Record<string,number>; cols:number; rows:number; seed?:string; margin?:number;
   paint?:ImageData|null; label?:string; dirty?:boolean;
 };
 export function editorSnapshot(d:EditorDraft,withPaint=false):EditorSnapshot {
-  const snapshot:EditorSnapshot={dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
+  const snapshot:EditorSnapshot={seed:d.seed,margin:d.margin,dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
   if(withPaint){
     if(!d.pcv)snapshot.paint=null;
     else snapshot.paint=d.pcv.getContext('2d')?.getImageData(0,0,d.pcv.width,d.pcv.height);
@@ -139,6 +140,7 @@ export function trimEditorHistory(d:EditorDraft):void {
   while((d.redo?.length??0)>1&&bytes>96*1024*1024)bytes-=d.redo!.shift()?.paint?.data.byteLength??0;
 }
 export function restoreEditorSnapshot(d:EditorDraft,s:EditorSnapshot):void {
+  d.seed=s.seed;d.margin=s.margin;
   d.zones=s.zones.map(z=>({...z}));d.objects=s.objects.map(o=>({...o}));d.spawns=s.spawns.map(p=>({...p}));d.elev={...s.elev};d.cols=s.cols;d.rows=s.rows;
   d.selRect=null;d.selFloat=null;d.sel=[];d.paintLast=undefined;d.dirty=s.dirty??true;
   if(s.paint===null){d.pcv=null;d.ppaint=null;d.pdirty=false;}

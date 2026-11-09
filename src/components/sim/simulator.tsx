@@ -147,6 +147,7 @@ import {
   hashStr,
   nearestWalkableCell,
   ensurePaintDecoded,
+  paintActive,
   paintCanvas,
   paintCellCoverage,
   paintPointOn,
@@ -876,6 +877,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       // Свой только что сохранённый конфиг возвращается рассылкой «map»:
       // черновик совпал с сохранённой локацией — метка «не сохранено» гаснет.
       const same =
+        (d.seed??map.seed)===map.seed && (d.margin??map.margin)===map.margin &&
         d.cols === map.cols &&
         d.rows === map.rows &&
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
@@ -889,6 +891,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       if (same) {
         for(const entry of [...d.undo,...(d.redo??[])])entry.dirty=true;
         d.dirty = false;
+        d.seed=map.seed;d.margin=map.margin;
         d.zones = map.zones.map((z) => ({ ...z }));
         d.objects = (map.objects ?? []).map((o) => ({ ...o }));
         d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
@@ -909,6 +912,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       d.dirty = false;
       setEditorMsg('Локацию сохранил другой игрок — несохранённая правка черновика сброшена на новую карту.');
     }
+    d.seed=map.seed;d.margin=map.margin;
     d.zones = map.zones.map((z) => ({ ...z }));
     d.objects = (map.objects ?? []).map((o) => ({ ...o }));
     d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
@@ -965,6 +969,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     undoEditor,
     redoEditor,
     resetEditor,
+    clearEditorMap,exportEditorMap,importEditorMap,
     saveEditorMap,
     pickEditorSelection,
     dragEditorSelection,
@@ -1399,6 +1404,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   // import() Babylon не вызывается и 2D-холст остаётся единственной картинкой.
   const elisionHostRef = useRef<HTMLDivElement | null>(null);
   const elisionViewRef = useRef<ElisionView | null>(null);
+  const elisionStatusRef=useRef<'pending'|'ready'|'fallback'>('pending');
   const [elisionSlot, setElisionSlot] = useState(false);
   const onElisionHost = useCallback((node: HTMLDivElement | null) => {
     elisionHostRef.current = node;
@@ -1408,6 +1414,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     enabled: mode === 'elision' && stage === 'field' && elisionSlot,
     hostRef: elisionHostRef,
     viewRef: elisionViewRef,
+    statusRef: elisionStatusRef,
   });
 
   // ВРЕМЕННО (отладка бага рельефа): живое состояние сима в консоли.
@@ -2697,14 +2704,71 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       ctx2.restore();
     };
 
+    const updateJumpMarker = (now:number) => {
+      jumpMarker=null;
+      const s=settingsRef.current,e=engineRef.current;
+      if(fieldFormatRef.current!=='test'||editorState().on||s.controlled!=='main')return;
+      const spH = spaceHoldRef.current;
+      const lpM = e.leap;
+      let mx = -1;
+      let my = -1;
+      let mlift = 0;
+      let shortM = false; // сюда прыжок не выйдет — кольцо оранжевое
+      if (lpM) {
+        // полёт: точка посадки известна заранее
+        if (lpM.battle) {
+          mx = (lpM.x1 + s.field.cellW / 2) * 1;
+          my = lpM.y1 + s.field.cellH / 2;
+        } else {
+          const hbM = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+          mx = (lpM.x1 + hbM.dx) * s.field.cellW;
+          my = (lpM.y1 + hbM.dy * 2) * s.field.cellH;
+        }
+        mlift = lpM.l1;
+      } else if (spH.holding) {
+        // заряд: кольцо всегда на грунте под курсором; цвет — можно ли туда.
+        const chM = 0.15 + 0.85 * Math.min(1, (now - spH.since) / 4000);
+        const landM = leapLandingAt(chM, cursorWorldRef.current);
+        if (landM) {
+          mx = landM.sx * s.field.cellW;
+          my = landM.sy * s.field.cellH;
+          mlift = landM.l1;
+          shortM = !landM.ok;
+        } else {
+          // Посадиться некуда: кольцо у лап (мирный — свободная позиция,
+          // боевой — клетка) и красным: отсюда прыжок не выйдет.
+          if (s.arrow.battleMode) {
+            mx = (e.col + 0.5) * s.field.cellW;
+            my = (e.row + 0.5) * s.field.cellH;
+            mlift = elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX;
+          } else {
+            const hbM = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
+            mx = (e.fx + hbM.dx) * s.field.cellW;
+            my = (e.fy + hbM.dy * 2) * s.field.cellH;
+            mlift = e.liftV;
+          }
+          shortM = true;
+        }
+      }
+      if(mx>=0)jumpMarker={x:mx,y:my,lift:mlift,ok:!shortM};
+    };
+    let legacyCleared=false;
     const draw = (now: number) => {
-      jumpMarker = null;
+      updateJumpMarker(now);
       const s = settingsRef.current;
       const e = engineRef.current;
       const W = s.field.cols * s.field.cellW;
       const H = s.field.rows * s.field.cellH;
       const testMode = fieldFormatRef.current === 'test';
       const { on: editorOn, draft: ed } = editorState();
+      // The opaque WebGL scene owns the world. Keep only the input canvas,
+      // not a second full map painter beneath it. While assets decode, show
+      // the empty background instead of flashing the old zone-based island.
+      if(testMode&&(elisionViewRef.current||elisionStatusRef.current==='pending'||(paintActive()&&!paintReady()))){
+        if(!legacyCleared){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cv.width,cv.height);legacyCleared=true;}
+        return;
+      }
+      legacyCleared=false;
       /** Глубинная очередь «теста»: персонажи, препятствия, плато рельефа и декор
        *  на них рисуются по дальности (кто ниже по полю — тот ближе и рисуется
        *  поверх). Объявлена до ветки «теста»: декор на плато кладёт себя в неё
@@ -2828,50 +2892,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // Зелёное — прыжок туда выйдет, оранжевое — заряд или клетка не пускают.
         // В полёте кольцо остаётся в точке отпускания и лежит на поднятой земле.
         if (testMode && !editorOn && s.controlled === 'main') {
-          const spH = spaceHoldRef.current;
-          const lpM = e.leap;
-          let mx = -1;
-          let my = -1;
-          let mlift = 0;
-          let shortM = false; // сюда прыжок не выйдет — кольцо оранжевое
-          if (lpM) {
-            // полёт: точка посадки известна заранее
-            if (lpM.battle) {
-              mx = (lpM.x1 + s.field.cellW / 2) * 1;
-              my = lpM.y1 + s.field.cellH / 2;
-            } else {
-              const hbM = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-              mx = (lpM.x1 + hbM.dx) * s.field.cellW;
-              my = (lpM.y1 + hbM.dy * 2) * s.field.cellH;
-            }
-            mlift = lpM.l1;
-          } else if (spH.holding) {
-            // заряд: кольцо всегда на грунте под курсором; цвет — можно ли туда.
-            const chM = 0.15 + 0.85 * Math.min(1, (performance.now() - spH.since) / 4000);
-            const landM = leapLandingAt(chM, cursorWorldRef.current);
-            if (landM) {
-              mx = landM.sx * s.field.cellW;
-              my = landM.sy * s.field.cellH;
-              mlift = landM.l1;
-              shortM = !landM.ok;
-            } else {
-              // Посадиться некуда: кольцо у лап (мирный — свободная позиция,
-              // боевой — клетка) и красным: отсюда прыжок не выйдет.
-              if (s.arrow.battleMode) {
-                mx = (e.col + 0.5) * s.field.cellW;
-                my = (e.row + 0.5) * s.field.cellH;
-                mlift = elevLevelAt(e.col, e.row) * TERRAIN_LIFT_PX;
-              } else {
-                const hbM = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
-                mx = (e.fx + hbM.dx) * s.field.cellW;
-                my = (e.fy + hbM.dy * 2) * s.field.cellH;
-                mlift = e.liftV;
-              }
-              shortM = true;
-            }
-          }
-          if (mx >= 0) {
-            jumpMarker = { x: mx, y: my, lift: mlift, ok: !shortM };
+          if (jumpMarker) {
+            const {x:mx,y:my,lift:mlift,ok}=jumpMarker;
+            const shortM=!ok;
             const pulse = 0.75 + 0.25 * Math.sin(now * 0.012);
             const rrM = 9 * pulse;
             ctx.save();
@@ -4124,7 +4147,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         }
         tickAtmo();
         const elision = elisionViewRef.current;
-        if (elision || editorState().on) {
+        if ((elision || editorState().on) && (!paintActive() || paintReady())) {
           try {
             const sNow = settingsRef.current;
             const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
@@ -4182,6 +4205,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               /* вид уже разобран */
             }
             elisionViewRef.current = null;
+            elisionStatusRef.current='fallback';
           }
         }
       } else {
@@ -4745,6 +4769,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 undoEditor={undoEditor}
                 redoEditor={redoEditor}
                 resetEditor={resetEditor}
+                clearEditorMap={clearEditorMap} exportEditorMap={exportEditorMap} importEditorMap={importEditorMap}
                 mergeEditorZones={mergeEditorZones}
                 toggleEditorSel={toggleEditorSel}
                 renameEditorZone={renameEditorZone}

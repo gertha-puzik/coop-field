@@ -159,7 +159,7 @@ retiredTreeMap.objects = [{id:"retired-tree",kind:"tree",spr:"tree3d-200",c:2,r:
 const retiredTree = testmap.sanitizeTestMap(retiredTreeMap).map?.objects?.[0];
 eq("снятая модель дерева: видимый fallback и сохранённая позиция", [retiredTree?.spr,retiredTree?.x,retiredTree?.y,retiredTree?.s,retiredTree?.rot], ["tree-1",2.5,3,1.2,37]);
 
-eq("sanitizeTestMap: нет зон", testmap.sanitizeTestMap({ v: 2, cols: 10, rows: 5, zones: [] }).error, "список зон пуст");
+eq("sanitizeTestMap: очищенная мирная карта", testmap.sanitizeTestMap({ v: 2, cols: 10, rows: 5, zones: [] }).error, undefined);
 eq(
   "sanitizeTestMap: высота вне лимита",
   testmap.sanitizeTestMap({ v: 2, cols: 10, rows: 200, zones: [{ kind: "green", c0: 0, r0: 0, c1: 9, r1: 4 }] }).error,

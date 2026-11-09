@@ -3,7 +3,7 @@
  * last known position of every «test»-room cat, restored on join after a
  * server restart. Throttled atomic flush (2 s ticker + on leave/shutdown),
  * 30-day TTL. Also owns the restore rules: a peace point must be inside the
- * location polygon and outside obstacle bodies; a battle cell must be
+ * current ground mask and outside obstacle bodies; a battle cell must be
  * walkable and free.
  */
 import fs from "node:fs";
@@ -11,8 +11,8 @@ import path from "node:path";
 import {
   DATA_DIR,
 } from "./config.js";
-import { TEST_OBST_BODIES, TEST_ISLAND } from "./testmap.js";
-import { nearestTestCell, pointInPolygon, testWalkable } from "./world.js";
+import { TEST_OBST_BODIES } from "./testmap.js";
+import { nearestTestCell, testPointInIsland, testWalkable } from "./world.js";
 import { occupied } from "./room.js";
 import { writeFileAtomic } from "./testmap.js";
 
@@ -122,7 +122,7 @@ function restoreCatPosition(room, cat) {
     const fx = Math.round(rec.fx * 100) / 100;
     const fy = Math.round(rec.fy * 100) / 100;
     const inside =
-      pointInPolygon(TEST_ISLAND, fx, fy) || pointInPolygon(TEST_ISLAND, fx + 0.45, fy + 0.45);
+      testPointInIsland(fx, fy) || testPointInIsland(fx + 0.45, fy + 0.45);
     if (inside && peacePointFreeOfObjects(fx, fy)) {
       cat.fm = 1;
       cat.fx = fx;

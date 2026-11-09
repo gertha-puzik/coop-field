@@ -106,6 +106,11 @@ function paintPxOn(x, y) {
   return TEST_PAINT.mask[yi * TEST_PAINT.w + xi] === 1;
 }
 
+/** Exact current ground; traced outline is a rendering approximation only. */
+export function testPointInIsland(x,y) {
+  return TEST_PAINT ? paintPxOn(x*PAINT_CELL_W,y*PAINT_CELL_H) : pointInPolygon(TEST_ISLAND,x,y);
+}
+
 /** Доля закрашенных пикселей клетки (0-based): боевая клетка/заход ставятся
  *  только на место, покрашенное целиком (зеркало paintCellCoverage клиента). */
 function paintCellCoverage(c, r) {
@@ -402,6 +407,7 @@ function testCellInIsland(c,r,island=TEST_ISLAND){
   const inside=computeCellInIsland(c,r,island);cache.set(key,inside);return inside;
 }
 function computeCellInIsland(c, r, island = TEST_ISLAND) {
+  if(TEST_PAINT)return paintCellCoverage(c,r)>=.995;
   for (let dy = 0; dy <= 2; dy++) {
     for (let dx = 0; dx <= 2; dx++) {
       if (!pointInPolygon(island, c + dx * 0.5, r + dy * 0.5)) return false;
@@ -653,19 +659,9 @@ function inSouthWall(x, y) {
 /** Пересечение круглого тела у лап с клетками, отделёнными непроходимым перепадом.
  * rx/ry — радиус в долях клетки; результат 0..1 — глубина проникновения.
  * Переданный level фиксирует текущую опору, чтобы граница не меняла сторону проверки. */
+const EMPTY_TERRAIN={};
 function terrainBodyOverlap(x,y,rx,ry,level,levelAt) {
-  if(testMap.elev && Object.keys(testMap.elev).some(k=>k.split(",").length===4)) return terrainBodyContact(testMap.elev,testMap.cols,testMap.rows,x,y,rx,ry,level);
-  if (!(rx > 0 && ry > 0)) return 0;
-  let overlap = 0;
-  for (let r = Math.floor(y-ry); r <= Math.floor(y+ry); r++) {
-    for (let c = Math.floor(x-rx); c <= Math.floor(x+rx); c++) {
-      if (Math.abs(levelAt(c,r)-level) <= ELEV_STEP_MAX) continue;
-      const dx = (x-Math.max(c,Math.min(c+1,x)))/rx;
-      const dy = (y-Math.max(r,Math.min(r+1,y)))/ry;
-      overlap = Math.max(overlap,1-Math.hypot(dx,dy));
-    }
-  }
-  return overlap;
+  return terrainBodyContact(testMap.elev??EMPTY_TERRAIN,testMap.cols,testMap.rows,x,y,rx,ry,level);
 }
 
 function cliffBetween(x0, y0, x1, y1) {

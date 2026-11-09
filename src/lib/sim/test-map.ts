@@ -470,7 +470,7 @@ export function testMapConnectivityError(zones: TestMapZone[]): string | null {
       for (let c = z.c0; c <= z.c1; c++) cells.add(`${c},${r}`);
     }
   }
-  if (cells.size === 0) return 'Локация пуста — нужна хотя бы одна зона.';
+  if (cells.size === 0) return null;
   const start = cells.keys().next().value as string;
   const seen = new Set<string>([start]);
   const queue = [start];
@@ -515,7 +515,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
   if (rows < TEST_MAP_LIMITS.rowsMin || rows > TEST_MAP_LIMITS.rowsMax) {
     return { error: `высота мира должна быть ${TEST_MAP_LIMITS.rowsMin}–${TEST_MAP_LIMITS.rowsMax}` };
   }
-  if (!Array.isArray(src.zones) || src.zones.length === 0) return { error: 'список зон пуст' };
+  if (!Array.isArray(src.zones)) return { error: 'список зон пуст' };
   if (src.zones.length > TEST_MAP_LIMITS.zonesMax) {
     return { error: `зон не больше ${TEST_MAP_LIMITS.zonesMax}` };
   }
@@ -646,9 +646,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     const name = String(z.name ?? '').trim().slice(0, TEST_MAP_LIMITS.nameMax) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
     zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
   }
-  if (!zones.some((z) => z.kind === 'cells') && !(paint != null && objects.some((o) => o.kind === 'battle'))) {
-    return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
-  }
+
   // Клетки захода: только на траве, и по направлению шага обязана быть боевая
   // клетка — иначе заход не ведёт в бой (проверка тут, потому что зоны уже дочитаны).
   const battleAt = (c: number, r: number): boolean =>

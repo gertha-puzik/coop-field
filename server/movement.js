@@ -16,8 +16,8 @@ import { WIDTH, HEIGHT } from "./config.js";
 import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
-import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainPointLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
+import { TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
+import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainPointLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, testPointInIsland } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -157,7 +157,7 @@ function freeMove(ws, payload = {}) {
   // по лапам. Угол спрайта (то, что приходит в пакете) у кромки и у малышей
   // торчит за полигон, хотя лапы стоят на траве — достаточно, чтобы внутри
   // была хотя бы одна из трёх точек (угол, середина, лапы).
-  const onIsland = (px, py) => pointInPolygon(TEST_ISLAND, px, py);
+  const onIsland = testPointInIsland;
   if (!onIsland(nx, ny) && !onIsland(nx + 0.45, ny + 0.45) && !onIsland(nx + 0.45, ny + 0.95)) return;
   // Обрыв в свободной ходьбе: перепад больше одного уровня пешком не
   // проходится (зеркало клиентского elevWalkBlocked). Пакет прыжка (jp=1 во
