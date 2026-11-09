@@ -26,7 +26,7 @@ export interface PointerToolsDeps {
   camRef: RefObject<{ x: number; y: number; init: boolean }>;
   camFxRef: RefObject<{ z: number }>;
   camYawRef: RefObject<number>;
-  cursorScreenRef: RefObject<{ x: number; y: number } | null>;
+  cursorScreenRef: RefObject<{ x: number; y: number; clientX?:number;clientY?:number } | null>;
   cursorWorldRef: RefObject<{ x: number; y: number } | null>;
   dirtPaintingRef: RefObject<boolean>;
   dragRef: RefObject<{
@@ -185,6 +185,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     const testMode = fieldFormatRef.current === 'test';
     const pan=editorOpenRef.current?editorRef.current?.panDrag:null;
     if(pan&&editorRef.current){
+      const rect=canvasRef.current?.getBoundingClientRect();
+      if(rect)cursorScreenRef.current={x:ev.clientX-rect.left,y:ev.clientY-rect.top,clientX:ev.clientX,clientY:ev.clientY};
       const dx=(ev.clientX-pan.sx)/camFxRef.current.z,dy=(ev.clientY-pan.sy)/camFxRef.current.z,yaw=camYawRef.current;
       editorRef.current.pan={x:pan.x-dx*Math.cos(yaw)-dy*Math.sin(yaw),y:pan.y+dx*Math.sin(yaw)-dy*Math.cos(yaw)};
       return;
@@ -199,7 +201,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         // пересчитывает по ней мировую точку прицела ПОСЛЕ движения камеры —
         // иначе в прыжке/приседе камера уезжает под неподвижным курсором,
         // а прицел, посчитанный только по событию, отлипает от видимой точки.
-        cursorScreenRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+        cursorScreenRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top, clientX:ev.clientX,clientY:ev.clientY };
         const wpt = screenToWorld(
           ev.clientX - rect.left,
           ev.clientY - rect.top,

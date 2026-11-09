@@ -53,7 +53,7 @@ function bodyGuide(g: CanvasRenderingContext2D, frame: ElisionFrame, object: Tes
   if (object.kind !== 'stone' && object.kind !== 'tree') return;
   const base = objectBase(object), body = obstacleBodyPx(object), scale = objectScale(object);
   const angle = objectRotDeg(object) * Math.PI / 180;
-  const lift = (frame.elev[`${Math.floor(base.x)},${Math.floor(base.y)}`] ?? 0) * frame.terrainLiftStep;
+  const lift = terrainAt(frame.elev,base.x,base.y) * frame.terrainLiftStep;
   g.strokeStyle = selected ? '#b9ffd5' : 'rgba(235,255,238,.58)';
   g.lineWidth = selected ? 1.7 : 1;
   g.setLineDash([4, 3]);
@@ -129,7 +129,7 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
       x: placement.x, y: placement.y, s: placement.s, rot: placement.rot, spr: placement.spr, mir: placement.mir }, true);
   }
   for (const spawn of d.spawns) {
-    const level = frame.elev[`${spawn.c},${spawn.r}`] ?? 0;
+    const level = terrainAt(frame.elev,spawn.c+.5,spawn.r+.5);
     const p = terrainScreenPoint(frame, (spawn.c + .5) * frame.cellW, (spawn.r + .5) * frame.cellH, level * frame.terrainLiftStep);
     g.fillStyle = '#f6eabb';
     g.fillText('⚑', p.x, p.y);

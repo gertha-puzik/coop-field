@@ -238,7 +238,7 @@ import {
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
-import { drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
+import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
@@ -512,7 +512,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    *  в «тесте» уезжает под курсором каждый кадр (сглаживание за котом), поэтому
    *  мировая точка прицела пересчитывается из неё по свежей камере в цикле —
    *  иначе прицел отлипает от неподвижного курсора в прыжке/приседе. */
-  const cursorScreenRef = useRef<{ x: number; y: number } | null>(null);
+  const cursorScreenRef = useRef<{ x: number; y: number; clientX?:number;clientY?:number } | null>(null);
   const meIdRef = useRef<number | null>(null);
   /**
    * Своя клетка на сервере и шаги, которые уже нарисовали, но ещё не подтвердили.
@@ -1436,6 +1436,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     if (!ctx) return;
     let raf = 0;
     let prev = performance.now();
+    let editorViewport = '';
     let jumpMarker: ElisionFrame['jumpTarget'] = null;
 
     // Колесо мыши над полем «теста» — зум вида: вверх — приблизить, вниз — отдалить.
@@ -1459,7 +1460,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const sx = ev.clientX - rect.left;
         const sy = ev.clientY - rect.top;
         const hit = screenToWorld(sx, sy, cv.clientWidth, cv.clientHeight, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
+        cursorScreenRef.current={x:sx,y:sy,clientX:ev.clientX,clientY:ev.clientY};
         editorPanRef.current = { px: hit.x, py: hit.y, sx, sy };
+        if(editorRef.current)editorRef.current.pan={x:0,y:0};
       }
       const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
       const next = Math.min(CAM_USER_ZOOM_MAX, Math.max(CAM_USER_ZOOM_MIN, camUserZoomRef.current * dir));
@@ -2282,44 +2285,34 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         if (editorOn) {
           if(editorRef.current?.pan?.reset){camUserZoomRef.current=1;editorPanRef.current=null;editorRef.current.pan.reset=false;}
           // Редактор: базовый зум — весь мир целиком (авто-подгонка, вид сверху).
-          // Поверх работает зум колесом (camUserZoomRef — общий с полем): >1 —
-          // приближение с якорем под курсором (editorPanRef, зум к курсору),
-          // ≤1 — обзор всей карты, как раньше.
-          const bbE = testFieldGeometry(cellW, cellH).bboxPx;
+          // Колесо масштабирует вид с якорем под курсором на любом увеличении.
+          // Editing paint changes its visible bounding box; the camera must
+          // fit the fixed logical world instead of following the brush.
+          const bbE = {x0:0,y0:0,x1:s.field.cols*cellW,y1:s.field.rows*cellH};
           const pad = 90;
           const rotated = elisionRotatedSize(bbE.x1-bbE.x0, bbE.y1-bbE.y0, camYawRef.current);
           const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw/(rotated.w+pad), vh/(rotated.h+pad))));
           const zT = Math.max(0.1, Math.min(1.15 * CAM_USER_ZOOM_MAX, fitZ * camUserZoomRef.current));
-          camFxRef.current.z += (zT - camFxRef.current.z) * kz;
+          const viewKey=`${vw},${vh},${s.field.cols},${s.field.rows}`;
+          if(!camRef.current.init||editorViewport!==viewKey)camFxRef.current.z=zT;
+          else camFxRef.current.z += (zT - camFxRef.current.z) * kz;
+          editorViewport=viewKey;
           let cxT = (bbE.x0 + bbE.x1) / 2;
           let cyT = (bbE.y0 + bbE.y1) / 2;
           // Якорь зума к курсору: центр = мировая точка − повёрнутое смещение курсора.
-          const panE = camUserZoomRef.current > 1.001 ? editorPanRef.current : null;
+          const panE = editorPanRef.current;
           if (panE) {
-            const dx = (panE.sx - vw / 2) / zT;
-            const dy = (panE.sy - vh / 2) / zT;
+            const dx = (panE.sx - vw / 2) / camFxRef.current.z;
+            const dy = (panE.sy - vh / 2) / camFxRef.current.z;
             const cs = Math.cos(camYawRef.current);
             const sn = Math.sin(camYawRef.current);
             cxT = panE.px - (dx * cs + dy * sn);
             cyT = panE.py - (-dx * sn + dy * cs);
           }
-          // Окно видимости с учётом поворота: по осям мира берём проекцию экрана.
-          const csA = Math.abs(Math.cos(camYawRef.current));
-          const snA = Math.abs(Math.sin(camYawRef.current));
-          const vwG = (csA * vw + snA * vh) / zT;
-          const vhG = (snA * vw + csA * vh) / zT;
-          cxT = bbE.x1 - bbE.x0 >= vwG ? Math.min(Math.max(cxT, bbE.x0 + vwG / 2), bbE.x1 - vwG / 2) : (bbE.x0 + bbE.x1) / 2;
-          cyT = bbE.y1 - bbE.y0 >= vhG ? Math.min(Math.max(cyT, bbE.y0 + vhG / 2), bbE.y1 - vhG / 2) : (bbE.y0 + bbE.y1) / 2;
+          // The editor is freely pannable. Clamping this anchor to the painted
+          // island breaks zoom-to-cursor after panning or at low magnification.
           cxT+=editorRef.current?.pan?.x??0;cyT+=editorRef.current?.pan?.y??0;
-          if (!camRef.current.init) {
-            camRef.current.x = cxT;
-            camRef.current.y = cyT;
-            camRef.current.init = true;
-          } else {
-            const kcE = 1 - Math.exp(-dt / CAMERA_TAU_MS);
-            camRef.current.x += (cxT - camRef.current.x) * kcE;
-            camRef.current.y += (cyT - camRef.current.y) * kcE;
-          }
+          camRef.current.x=cxT;camRef.current.y=cyT;camRef.current.init=true;
         } else {
           const zBase = camUserZoomRef.current;
           camFxRef.current.z += (zBase - camFxRef.current.z) * kz;
@@ -2351,11 +2344,16 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // движения мыши. Пересчитываем мировую точку курсора по свежей камере
         const csL = cursorScreenRef.current;
         if (csL) {
-          const hit = screenToWorld(csL.x, csL.y, vw, vh, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
+          const rect=cv.getBoundingClientRect();
+          const sx=csL.clientX==null?csL.x:csL.clientX-rect.left,sy=csL.clientY==null?csL.y:csL.clientY-rect.top;
+          csL.x=sx;csL.y=sy;
+          const hit = screenToWorld(sx, sy, vw, vh, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
           cursorWorldRef.current = groundPointAtWorld(hit.x, hit.y, cellW, cellH, camYawRef.current);
           if(editorOn&&editorRef.current){
             editorRef.current.terrainCursor={x:cursorWorldRef.current.x/cellW,y:cursorWorldRef.current.y/cellH};
             editorRef.current.terrainSnapDistance=10/(cellW*camFxRef.current.z);
+            const place=editorPlaceRef.current;
+            if(place&&!place.anchored)Object.assign(place,clampPlacePos(editorRef.current.terrainCursor.x,editorRef.current.terrainCursor.y));
           }
           if (editorOn) e.hover = { c: Math.min(s.field.cols-1,Math.max(0,Math.floor(cursorWorldRef.current.x/cellW))),
             r: Math.min(s.field.rows-1,Math.max(0,Math.floor(cursorWorldRef.current.y/cellH))) };
@@ -4092,7 +4090,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const vh = cv.clientHeight || 0;
         if (vw > 0 && vh > 0) {
           const w2 = hudWxRef.current;
-          if(editorOpenRef.current){hud.getContext('2d')?.clearRect(0,0,hud.width,hud.height);}
+          if(editorOpenRef.current){clearFieldHud(hud,vw,vh);}
           else drawFieldHud(hud, vw, vh, p4, w2.w, w2.prev, w2.at);
         }
       }
@@ -4110,7 +4108,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       const cam = camRef.current;
       const cp = camPrevRef.current;
       if (fieldFormatRef.current === 'test') {
-        atmoRef.current?.setVisible(atmoLayerOnRef.current);
+        atmoRef.current?.setVisible(atmoLayerOnRef.current && !editorOpenRef.current);
         // Страховка rAF: throw внутри Pixi-слоя не должен рвать цикл — без
         // перепланирования замерзала бы вся игра, а не только атмосфера.
         try {
@@ -4138,8 +4136,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 editor: editorState().on,
                 editorGrid: !!editorRef.current?.showGrid,
                 editorPlacement: editorPlaceRef.current,
-                day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
-                dayProgress: dayTintOnRef.current && atmoAnchorRef.current.pl > 0 ? dayProgressAt(atmoAnchorRef.current.cs, atmoAnchorRef.current.pl, Date.now()) : 1.5,
+                day: editorOpenRef.current ? 'day' : dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
+                dayProgress: !editorOpenRef.current && dayTintOnRef.current && atmoAnchorRef.current.pl > 0 ? dayProgressAt(atmoAnchorRef.current.cs, atmoAnchorRef.current.pl, Date.now()) : 1.5,
                 jumpTarget: jumpMarker,
                 camX: cam.x,
                 camY: cam.y,

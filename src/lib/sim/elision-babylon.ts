@@ -347,7 +347,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       canvas.style.visibility = 'visible';
       const now = performance.now(), target = elisionDayTint(frame.dayProgress);
       const k = 1-Math.exp(-Math.min(100,Math.max(0,now-tintAt))/1200);
-      tint = tint.map((v,i)=>v+(target[i]-v)*k) as [number,number,number];
+      tint = frame.editor ? target : tint.map((v,i)=>v+(target[i]-v)*k) as [number,number,number];
       tintAt = now;
       fitCanvas();
       placeCamera(frame);

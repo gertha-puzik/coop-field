@@ -140,3 +140,6 @@
 .toolbar .segment>button{width:35px;min-width:35px;flex:0 0 35px;}
 
 .frame:has(.workspace) .scene canvas{touch-action:none;}
+
+.editorWeather{font-size:10px;color:var(--ed-gold);white-space:nowrap;}
+@media(max-width:800px){.editorWeather{display:none;}}
