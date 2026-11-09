@@ -70,7 +70,7 @@ if (createHash('sha256').update(originalTest1).digest('hex') !== '19b074917c3fcb
 
 for(const [file,hash] of [
   ['test1-png.png','d80317349686449d4e8be899aea5225e311331d08c91a247844c865ff67a2672'],
-  ['test1-webp.webp','7b3426a5a8c98364852534dcb73537a2c53e50274ae98fa5cfca1b7e0d4fd049'],
+  ['test1-walk.gif','e0945a10b755f13b7b02c94148f6b18e0d0a7e14328dd407fa15a58d23ba45b3'],
 ]) {
   if(createHash('sha256').update(readFileSync(path.join(ROOT,'public/sprites',file))).digest('hex')!==hash)throw new Error(`${file}: original asset bytes changed`);
 }
@@ -259,7 +259,7 @@ try {
   const items0 = cat0.json?.items || [];
   check(items0.some(row => row.id === "test1" && row.name === "test1" && row.src === "/sprites/test1.png?v=original-300x200"),
     "новая builtin test1 добавляется в каталог из старого манифеста");
-  check(items0.some(row=>row.id==='test1-png'&&row.src==='/sprites/test1-png.png') && items0.some(row=>row.id==='test1-webp'&&row.src==='/sprites/test1-webp.webp'), 'both original 600px comparison variants are selectable');
+  check(items0.some(row=>row.id==='test1-png'&&row.src==='/sprites/test1-png.png'), 'PNG 600px comparison variant is selectable');
   check(!items0.some((row) => row.id === "origami-cat"), "снятый builtin не воскресает из манифеста");
   const relogin = await httpJson("/auth/login", {method:"POST",body:{login:USER,pass:"password1"}});
   const me = await httpJson("/auth/me", {token:relogin.json?.token});

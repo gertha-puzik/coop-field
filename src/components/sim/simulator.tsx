@@ -249,7 +249,8 @@ import { buildPointerTools } from './simulator/pointer-tools';
 import { useStrike } from './simulator/hooks/use-strike';
 import { useSimKeyboard } from './simulator/hooks/use-keyboard';
 import { useSimNet } from './simulator/hooks/use-network';
-import { useAimPublisher, useAtmosphereLayer, useSpriteCache } from './simulator/hooks/use-canvas-layers';
+import { useAimPublisher, useAtmosphereLayer, useSpriteCache, useWalkGifCache } from './simulator/hooks/use-canvas-layers';
+import { walkFrameAt, walkPhaseOf, type WalkGif } from '@/lib/sim/gif-walk';
 import { useElisionView } from './simulator/hooks/use-elision-view';
 import { collectElisionFrame } from './simulator/elision-present';
 import { elisionLeapClearance, elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
@@ -479,6 +480,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const spritesRef = useRef<Partial<Record<SpriteId, HTMLImageElement>>>({});
   /** Белые силуэты спрайтов: тонкая обводка своего кота. */
   const whiteSpritesRef = useRef<Partial<Record<SpriteId, HTMLCanvasElement>>>({});
+  /** Раскодированные GIF-анимации ходьбы (пробная — test1): id → кадры.
+   *  Пусто, пока gif не загрузился/не декодировался — рисуется статичный PNG. */
+  const walkGifsRef = useRef<Partial<Record<SpriteId, WalkGif>>>({});
   const netRef = useRef<ReturnType<typeof createCoopClient> | null>(null);
   /** Атмосфера комнаты: время суток + погода. Общая для всех (состояние на сервере). */
   const [atmoState, setAtmoState] = useState<CoopAtmo>({ dp: 'day', w: 'sun' });
@@ -1244,6 +1248,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /* ---------- спрайты ---------- */
 
   useSpriteCache({ spritesRef, whiteSpritesRef, brokenSpritesRef });
+  useWalkGifCache({ walkGifsRef });
 
   /* ---------- геометрия ---------- */
 
@@ -3363,7 +3368,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       }
 
       const drawChar = (
-        sprC: HTMLImageElement,
+        /** Статичный PNG или кадр GIF-анимации ходьбы (gif-walk.ts): у кадров
+         *  тот же размер/аспект, что у статичного спрайта, — вся геометрия ниже
+         *  (twd/th, подсветка, желе) работает без изменений. */
+        sprC: HTMLImageElement | HTMLCanvasElement,
         pos: { x: number; y: number },
         scalePct: number,
         jellyKey: string | null,
@@ -3553,8 +3561,19 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             // мишени и боевые коты рисуются как нарисованы
             const isRemoteFree = testMode && d.id.startsWith('p') && remoteFmRef.current.get(d.id) === 1;
             const dFlip = isRemoteFree ? (remoteFreeRef.current.get(d.id)?.face ?? 1) : 1;
+            // GIF-анимация ходьбы (пробная — test1): чужой кот идёт — кадр цикла,
+            // стоит — статичный спрайт. Мирный — пока доведённая позиция догоняет
+            // цель (порог тот же порядок, что у комочков спринта), боевой — пока
+            // у него жива очередь клеток (advanceRemoteDraw).
+            const walkD = walkGifsRef.current[d.sprite];
+            const frD = isRemoteFree ? remoteFreeRef.current.get(d.id) : undefined;
+            const remoteQueue = remoteDrawRef.current.get(d.id);
+            const dMoving = isRemoteFree
+              ? !!frD && Math.hypot(frD.tx - frD.x, frD.ty - frD.y) > 0.02
+              : (remoteQueue?.queue.length ?? 0) > 0;
+            const sprDrawD = walkD && dMoving ? walkFrameAt(walkD, now, walkPhaseOf(d.id)) : sprT;
             drawChar(
-              sprT,
+              sprDrawD,
               tp,
               d.scale,
               d.id,
@@ -3604,8 +3623,19 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       const cyp = cellY + s.field.cellH / 2;
       const drawSelf = () => {
         if (spr && mainPos) {
+          // GIF-анимация ходьбы (пробная — test1): свой кот идёт — кадр цикла,
+          // стоит — статичный спрайт. Мирный режим — флаг «сейчас идём» из
+          // свободной ходьбы, боевой — пока летит дуга прыжка между клетками
+          // (e.leap; мирный подскок на месте ходьбой не считается). Анимация
+          // только у основного кота: «за кого играют» рисуется статично.
+          const walkS = walkGifsRef.current[s.character.sprite];
+          const selfMoving = selfId === 'main'
+            && (selfFree ? freeSyncRef.current.moving : !!e.leap);
+          const sprDraw = walkS && selfMoving
+            ? walkFrameAt(walkS, now, walkPhaseOf(selfId))
+            : spr;
           drawChar(
-            spr,
+            sprDraw,
             { x: cellX, y: cellY },
             s.character.spriteScale,
             'main',
