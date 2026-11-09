@@ -3845,36 +3845,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           viewDepth(b.x, b.y, camRef.current.x, camRef.current.y, camYawRef.current),
         );
         for (const b of bills) b.fn();
-        // метки уровней рельефа в редакторе: рисуются ПОСЛЕ глубинной очереди —
-        // плато своей же клеткой накрыло бы их, а уровень должен читаться всегда
-        if (editorOn && ed && Object.keys(ed.elev).length > 0) {
-          ctx.font = 'bold 11px Inter, system-ui, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          for (const [keyB, lvB] of Object.entries(ed.elev)) {
-            if (!lvB) continue;
-            const [cB, rB] = keyB.split(',').map(Number);
-            if (!Number.isFinite(cB) || !Number.isFinite(rB)) continue;
-            if (cB < 0 || rB < 0 || cB >= ed.cols || rB >= ed.rows) continue;
-            const labB = raised((cB + 0.5) * s.field.cellW, (rB + 0.5) * s.field.cellH, lvB * TERRAIN_LIFT_PX);
-            const xB = labB.x;
-            const yB = labB.y;
-            ctx.save();
-            ctx.translate(xB, yB);
-            ctx.rotate(-camYawRef.current);
-            ctx.translate(-xB, -yB);
-            ctx.fillStyle = 'rgba(10, 14, 8, 0.72)';
-            ctx.beginPath();
-            ctx.roundRect(xB - 23, yB - 10, 46, 20, 10);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            ctx.fillStyle = '#eafbe7';
-            ctx.fillText(`▲ ${lvB}`, xB, yB + 0.5);
-            ctx.restore();
-          }
-        }
+
       }
 
       // галочки клеток захода — поверх любых спрайтов на земле: коты и препятствия
