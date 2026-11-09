@@ -880,13 +880,14 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         d.rows === map.rows &&
         JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
           JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
-        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? null, o.rot ?? null, o.spr ?? null, o.cv ?? null, o.mir ?? null])) &&
+        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? 1, o.rot ?? 0, o.spr ?? null, o.cv ?? null, o.mir ?? 0])) ===
+          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? 1, o.rot ?? 0, o.spr ?? null, o.cv ?? null, o.mir ?? 0])) &&
         JSON.stringify(d.spawns.map((s) => [s.c, s.r])) ===
           JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r])) &&
         JSON.stringify(d.elev) === JSON.stringify(map.elev ?? {}) &&
         (d.pcv ? d.ppaint ?? '' : '') === (map.paint ?? '');
       if (same) {
+        for(const entry of [...d.undo,...(d.redo??[])])entry.dirty=true;
         d.dirty = false;
         d.zones = map.zones.map((z) => ({ ...z }));
         d.objects = (map.objects ?? []).map((o) => ({ ...o }));
@@ -897,6 +898,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       }
     }
     if (!d) return;
+    d.undo=[];d.redo=[];
     if (d.dirty) {
       // Внешняя карта при открытом черновике с правками: несводимую правку не
       // слить с чужим конфигом — черновик сбрасывается на новую карту целиком
@@ -919,7 +921,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     // сломан), а сохранение молча переносит старый холст 1:1 (encodeDraftPaint).
     d.pundo = [];
     d.pdirty = false;
-    d.ppaint = null;
+    d.ppaint = map.paint??null;
     d.pcv = copyPaintCanvas();
     if (!d.pcv && mapHasPaint(map)) {
       // Рисунок новой карты ещё декодируется: снимок снимется по готовности
@@ -937,6 +939,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
 
   const {
     syncEditorView,
+    refreshEditorPreview,
     pushEditorUndo,
     openEditor,
     closeEditor,
@@ -960,6 +963,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     placeEditorEntry,
     renameEditorZone,
     undoEditor,
+    redoEditor,
     resetEditor,
     saveEditorMap,
     pickEditorSelection,
@@ -999,7 +1003,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       const d = editorRef.current;
       if (d && d.tool === 'paint') {
         const k = dir > 0 ? 1.12 : 1 / 1.12;
-        d.psize = Math.min(200, Math.max(1, Math.round(d.psize * k)));
+        d.psize = Math.min(600, Math.max(4, Math.round(d.psize * k)));
         syncEditorView();
         return;
       }
@@ -2276,6 +2280,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const cellH = s.field.cellH;
         const kz = 1 - Math.exp(-dt / CAMZOOM_TAU_MS);
         if (editorOn) {
+          if(editorRef.current?.pan?.reset){camUserZoomRef.current=1;editorPanRef.current=null;editorRef.current.pan.reset=false;}
           // Редактор: базовый зум — весь мир целиком (авто-подгонка, вид сверху).
           // Поверх работает зум колесом (camUserZoomRef — общий с полем): >1 —
           // приближение с якорем под курсором (editorPanRef, зум к курсору),
@@ -2305,6 +2310,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const vhG = (snA * vw + csA * vh) / zT;
           cxT = bbE.x1 - bbE.x0 >= vwG ? Math.min(Math.max(cxT, bbE.x0 + vwG / 2), bbE.x1 - vwG / 2) : (bbE.x0 + bbE.x1) / 2;
           cyT = bbE.y1 - bbE.y0 >= vhG ? Math.min(Math.max(cyT, bbE.y0 + vhG / 2), bbE.y1 - vhG / 2) : (bbE.y0 + bbE.y1) / 2;
+          cxT+=editorRef.current?.pan?.x??0;cyT+=editorRef.current?.pan?.y??0;
           if (!camRef.current.init) {
             camRef.current.x = cxT;
             camRef.current.y = cyT;
@@ -3013,160 +3019,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // мирный режим: точек привязки больше нет — ходьба свободная, по пикселям.
         // Оверлей редактора: границы мира, бледная сетка всего мира, подсветка
         // зелёных зон и тянущийся прямоугольник. Клетки: c=0..cols, r=0..rows.
-        if (editorOn && ed) {
-          const wc = ed.cols * s.field.cellW;
-          const wr = ed.rows * s.field.cellH;
-          // сетка всего мира — чтобы было видно, какие клетки свободны под новые зоны
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          for (let c = 0; c <= ed.cols; c++) {
-            ctx.moveTo(c * s.field.cellW + 0.5, 0);
-            ctx.lineTo(c * s.field.cellW + 0.5, wr);
-          }
-          for (let r = 0; r <= ed.rows; r++) {
-            ctx.moveTo(0, r * s.field.cellH + 0.5);
-            ctx.lineTo(wc, r * s.field.cellH + 0.5);
-          }
-          ctx.stroke();
-          // зелёные зоны — лёгкая зелёная заливка (доски у них нет, край уже нарисован)
-          ctx.fillStyle = 'rgba(112, 178, 92, 0.16)';
-          for (const z of ed.zones) {
-            if (z.kind !== 'green') continue;
-            ctx.fillRect(z.c0 * s.field.cellW, z.r0 * s.field.cellH, (z.c1 - z.c0 + 1) * s.field.cellW, (z.r1 - z.r0 + 1) * s.field.cellH);
-          }
-          // граница мира
-          ctx.setLineDash([7, 5]);
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(0.5, 0.5, wc - 1, wr - 1);
-          ctx.setLineDash([]);
-          // клетки спавна: пунктирный контур + флажок. Только в редакторе —
-          // на поле клетка спавна ничем не отличается от соседних.
-          for (const spw of ed.spawns) {
-            const x0 = spw.c * s.field.cellW;
-            const y0 = spw.r * s.field.cellH;
-            ctx.setLineDash([5, 4]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-            ctx.lineWidth = 1.2;
-            ctx.strokeRect(x0 + 5.5, y0 + 5.5, s.field.cellW - 11, s.field.cellH - 11);
-            ctx.setLineDash([]);
-            // флажок точки появления: шест + треугольный вымпел
-            const fx0 = x0 + s.field.cellW / 2;
-            const fy0 = y0 + s.field.cellH / 2;
-            ctx.beginPath();
-            ctx.moveTo(fx0 - 6, fy0 + 9);
-            ctx.lineTo(fx0 - 6, fy0 - 9);
-            ctx.lineTo(fx0 + 9, fy0 - 4);
-            ctx.lineTo(fx0 - 6, fy0 + 1);
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-          // Кисть локации: контур мазка под курсором — круглый (диаметр кисти)
-          // или готовая область «клетка»/«полклетка» с привязкой к сетке.
-          if (ed.tool === 'paint' && e.hover) {
-            const hx = (e.hover.c + 0.5) * s.field.cellW;
-            const hy = (e.hover.r + 0.5) * s.field.cellH;
-            ctx.save();
-            ctx.setLineDash([4, 3]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-            ctx.lineWidth = 1.4;
-            if (ed.pshape === 'round') {
-              ctx.beginPath();
-              ctx.arc(hx, hy, Math.max(1, ed.psize / 2), 0, Math.PI * 2);
-              ctx.stroke();
-            } else {
-              const bw2 = ed.pshape === 'cell' ? s.field.cellW : s.field.cellW / 2;
-              const bh2 = ed.pshape === 'cell' ? s.field.cellH : s.field.cellH / 2;
-              ctx.strokeRect(Math.floor(hx / bw2) * bw2 + 0.5, Math.floor(hy / bh2) * bh2 + 0.5, bw2 - 1, bh2 - 1);
-            }
-            ctx.restore();
-          }
-          // Боевая клетка: подсветка клетки под курсором — зелёная (поставить или
-          // снять), красная (место не покрашено целиком или занято объектом).
-          if (ed.tool === 'battle' && e.hover) {
-            const existsB = ed.objects.some((o) => o.kind === 'battle' && o.c === e.hover!.c && o.r === e.hover!.r);
-            const okB =
-              existsB ||
-              (!!ed.pcv &&
-                paintCellCoverage(e.hover.c, e.hover.r) >= 0.995 &&
-                !testObjectAt(e.hover.c, e.hover.r));
-            ctx.fillStyle = okB ? 'rgba(120, 220, 140, 0.3)' : 'rgba(224, 92, 92, 0.3)';
-            ctx.fillRect(e.hover.c * s.field.cellW, e.hover.r * s.field.cellH, s.field.cellW, s.field.cellH);
-            ctx.strokeStyle = okB ? 'rgba(160, 255, 180, 0.9)' : 'rgba(255, 150, 150, 0.9)';
-            ctx.lineWidth = 1.6;
-            ctx.strokeRect(
-              e.hover.c * s.field.cellW + 0.75,
-              e.hover.r * s.field.cellH + 0.75,
-              s.field.cellW - 1.5,
-              s.field.cellH - 1.5,
-            );
-          }
-          // тянущийся прямоугольник
-          const dr = ed.drag;
-          if (dr) {
-            const dc0 = Math.min(dr.c0, dr.c1);
-            const dc1 = Math.max(dr.c0, dr.c1);
-            const dr0 = Math.min(dr.r0, dr.r1);
-            const dr1 = Math.max(dr.r0, dr.r1);
-            const dx0 = dc0 * s.field.cellW;
-            const dy0 = dr0 * s.field.cellH;
-            const dw = (dc1 - dc0 + 1) * s.field.cellW;
-            const dh = (dr1 - dr0 + 1) * s.field.cellH;
-            const erase = dr.erase || ed.tool === 'erase';
-            ctx.fillStyle = erase
-              ? 'rgba(224, 92, 92, 0.34)'
-              : ed.tool === 'green'
-                ? 'rgba(112, 178, 92, 0.34)'
-                : 'rgba(120, 170, 250, 0.30)';
-            ctx.fillRect(dx0, dy0, dw, dh);
-            ctx.strokeStyle = erase ? 'rgba(255, 150, 150, 0.9)' : 'rgba(255, 255, 255, 0.75)';
-            ctx.lineWidth = 1.6;
-            ctx.strokeRect(dx0 + 0.5, dy0 + 0.5, dw - 1, dh - 1);
-          }
-          // выделение «Перенести»: пунктирный контур области; в «плавающем»
-          // состоянии — призрак вырезанной отрисовки и зон на новом месте
-          const selR = ed.selRect;
-          if (selR && ed.tool === 'select') {
-            const sxC = ed.selFloat?.dc ?? 0;
-            const syR = ed.selFloat?.dr ?? 0;
-            const sx0 = (selR.c0 + sxC) * s.field.cellW;
-            const sy0 = (selR.r0 + syR) * s.field.cellH;
-            const sw2 = (selR.c1 - selR.c0 + 1) * s.field.cellW;
-            const sh2 = (selR.r1 - selR.r0 + 1) * s.field.cellH;
-            const bufSel = editorSelRef.current;
-            if (ed.selFloat && bufSel?.cv) {
-              ctx.save();
-              ctx.globalAlpha = 0.62;
-              ctx.imageSmoothingEnabled = false;
-              ctx.drawImage(bufSel.cv, sx0, sy0, sw2, sh2);
-              ctx.restore();
-              ctx.save();
-              ctx.setLineDash([5, 4]);
-              ctx.strokeStyle = 'rgba(255, 236, 150, 0.7)';
-              ctx.lineWidth = 1.2;
-              for (const z of bufSel.zones) {
-                ctx.strokeRect(
-                  (z.c0 - selR.c0) * s.field.cellW + sx0 + 0.5,
-                  (z.r0 - selR.r0) * s.field.cellH + sy0 + 0.5,
-                  (z.c1 - z.c0 + 1) * s.field.cellW - 1,
-                  (z.r1 - z.r0 + 1) * s.field.cellH - 1,
-                );
-              }
-              ctx.restore();
-            }
-            ctx.save();
-            ctx.setLineDash([7, 5]);
-            ctx.strokeStyle = ed.selFloat ? 'rgba(255, 236, 150, 0.95)' : 'rgba(255, 255, 255, 0.8)';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(sx0 + 1, sy0 + 1, sw2 - 2, sh2 - 2);
-            ctx.restore();
-          }
-        }
+        // Editor annotations are drawn once on the HUD layer.
+
         ctx.restore();
         // Трава и цветы — билборды: земля крутится вместе с картой, травинка
         // остаётся вертикальной. Ключ очереди — верх клетки +4.
@@ -4238,7 +4092,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const vh = cv.clientHeight || 0;
         if (vw > 0 && vh > 0) {
           const w2 = hudWxRef.current;
-          drawFieldHud(hud, vw, vh, p4, w2.w, w2.prev, w2.at);
+          if(editorOpenRef.current){hud.getContext('2d')?.clearRect(0,0,hud.width,hud.height);}
+          else drawFieldHud(hud, vw, vh, p4, w2.w, w2.prev, w2.at);
         }
       }
     };
@@ -4281,6 +4136,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 space: spaceHoldRef.current,
                 remoteSpace: remoteSpaceRef.current,
                 editor: editorState().on,
+                editorGrid: !!editorRef.current?.showGrid,
                 editorPlacement: editorPlaceRef.current,
                 day: dayTintOnRef.current ? atmoStateRef.current.dp : 'day',
                 dayProgress: dayTintOnRef.current && atmoAnchorRef.current.pl > 0 ? dayProgressAt(atmoAnchorRef.current.cs, atmoAnchorRef.current.pl, Date.now()) : 1.5,
@@ -4434,6 +4290,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     clampPlacePos,
     commitEditorDrag,
     endElevStroke,
+    syncEditorView,
+    refreshEditorPreview,
     paintEditorCellObject,
     placeBattleCell,
     placeEditorEntry,
@@ -4811,7 +4669,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   return (
     <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
       <ThemeBackdrop theme={theme} />
-      <SimulatorHeader
+      <div className={editorOpen?'hidden':'contents'}><SimulatorHeader
         settings={settings}
         roomCode={roomCode}
         peerCount={peerCount}
@@ -4835,7 +4693,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         setRoomsStale={setRoomsStale}
         setSwitchOpen={setSwitchOpen}
         canSwitch={roomsForMode(mode).length > 1}
-      />
+      /></div>
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
           Ширины колонок тянутся разделителями и запоминаются. */}
@@ -4843,13 +4701,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         className="relative z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
         style={{ '--chat-w': `${layout.chatW}px`, '--log-w': `${layout.logW}px` } as CSSProperties}
       >
-        <div className="flex h-56 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)]">
+        <div className={editorOpen?'hidden':"flex h-56 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)]"}>
           <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
         </div>
-        <ColResize
+        {!editorOpen ? <ColResize
           onDrag={(dx) => setLayout((p) => ({ ...p, chatW: clampLayout({ ...p, chatW: p.chatW + dx }).chatW }))}
           onEnd={() => saveLayout(layoutRef.current)}
-        />
+        /> : null}
 
         <FieldStage
           fieldFrameRef={fieldFrameRef}
@@ -4887,6 +4745,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 cancelEditorPlace={cancelEditorPlace}
                 resizeEditorWorld={resizeEditorWorld}
                 undoEditor={undoEditor}
+                redoEditor={redoEditor}
                 resetEditor={resetEditor}
                 mergeEditorZones={mergeEditorZones}
                 toggleEditorSel={toggleEditorSel}
@@ -4902,7 +4761,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           }
         />
 
-        {settings.arrow.battleMode && settings.combat.showLog ? (
+        {!editorOpen && settings.arrow.battleMode && settings.combat.showLog ? (
           <>
             <ColResize
               onDrag={(dx) => setLayout((p) => ({ ...p, logW: clampLayout({ ...p, logW: p.logW - dx }).logW }))}

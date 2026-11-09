@@ -37,13 +37,16 @@ export type EditorTool =
   | 'lower'
   | 'flat'
   | 'height'
+  | 'cursor'
+  | 'pan'
+  | 'fill'
   | 'paint'
   | 'battle'
   | 'select';
 
-/** Форма кисти локации: круглый мазок или готовые области — клетка (150×100 px)
- *  и полклетки (75×50), с привязкой к сетке. */
-export type PaintBrushShape = 'round' | 'cell' | 'half';
+/** Форма кисти локации: свободный круг или прямоугольная область.
+ *  cell/half читаются для совместимости; новые размеры задают pwidth/pheight. */
+export type PaintBrushShape = 'round' | 'cell' | 'half' | 'rect';
 
 /** Ставящийся объект редактора: «призрак» следует за курсором (свободная позиция,
  *  без привязки к клетке), клик фиксирует точку; размер — колесом и кнопками ±,
@@ -85,6 +88,13 @@ export type EditorDraft = {
   pcv: HTMLCanvasElement | null;
   pmat: string;
   psize: number;
+  pwidth?: number;
+  pheight?: number;
+  paintLast?: {x:number;y:number;mat:string};
+  spacePan?: boolean;
+  pan?: {x:number;y:number;reset?:boolean};
+  panDrag?: {sx:number;sy:number;x:number;y:number};
+  showGrid?: boolean;
   pshape: PaintBrushShape;
   pundo: ImageData[];
   pdirty: boolean;
@@ -98,7 +108,8 @@ export type EditorDraft = {
   selRect: { c0: number; r0: number; c1: number; r1: number } | null;
   /** Смещение «плавающей» выделенной области после переноса (в клетках, от исходного места). */
   selFloat: { dc: number; dr: number } | null;
-  undo: { zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[]; elev: Record<string, number>; cols: number; rows: number; paint?: ImageData }[];
+  undo: EditorSnapshot[];
+  redo?: EditorSnapshot[];
   /** Отмеченные зоны для объединения (инструмент «Объединить»). */
   sel: string[];
   dirty: boolean;
@@ -107,3 +118,33 @@ export type EditorDraft = {
    *  сообщение в панели. Переживает перерисовки (живёт в ref-черновике). */
   lastSaveSentAt?: number;
 };
+
+
+export type EditorSnapshot = {
+  zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[];
+  elev: Record<string,number>; cols:number; rows:number;
+  paint?:ImageData|null; label?:string; dirty?:boolean;
+};
+export function editorSnapshot(d:EditorDraft,withPaint=false):EditorSnapshot {
+  const snapshot:EditorSnapshot={dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
+  if(withPaint){
+    if(!d.pcv)snapshot.paint=null;
+    else snapshot.paint=d.pcv.getContext('2d')?.getImageData(0,0,d.pcv.width,d.pcv.height);
+  }
+  return snapshot;
+}
+export function trimEditorHistory(d:EditorDraft):void {
+  let bytes=[...d.undo,...(d.redo??[])].reduce((sum,s)=>sum+(s.paint?.data.byteLength??0),0);
+  while(d.undo.length>1&&(d.undo.length>40||bytes>96*1024*1024))bytes-=d.undo.shift()?.paint?.data.byteLength??0;
+  while((d.redo?.length??0)>1&&bytes>96*1024*1024)bytes-=d.redo!.shift()?.paint?.data.byteLength??0;
+}
+export function restoreEditorSnapshot(d:EditorDraft,s:EditorSnapshot):void {
+  d.zones=s.zones.map(z=>({...z}));d.objects=s.objects.map(o=>({...o}));d.spawns=s.spawns.map(p=>({...p}));d.elev={...s.elev};d.cols=s.cols;d.rows=s.rows;
+  d.selRect=null;d.selFloat=null;d.sel=[];d.paintLast=undefined;d.dirty=s.dirty??true;
+  if(s.paint===null){d.pcv=null;d.ppaint=null;d.pdirty=false;}
+  else if(s.paint){
+    if(!d.pcv)d.pcv=document.createElement('canvas');
+    d.pcv.width=s.paint.width;d.pcv.height=s.paint.height;
+    d.pcv.getContext('2d')?.putImageData(s.paint,0,0);d.pdirty=true;d.ppaint=null;
+  }
+}

@@ -1,3 +1,4 @@
+import { paintRevision as paintLayerRevision } from '@/lib/sim/test-field';
 import { terrainTiles } from '@/lib/sim/terrain-shape';
 import type { EditorPlace } from '@/lib/sim/editor-model';
 /**
@@ -40,6 +41,7 @@ export type ElisionPresentInput = {
   space: ElisionSpace;
   remoteSpace: Map<string, ElisionSpace>;
   editor: boolean;
+  editorGrid?:boolean;
   editorPlacement?: EditorPlace | null;
   day: ElisionDay;
   dayProgress: number;
@@ -92,20 +94,22 @@ let surfacePaint: HTMLCanvasElement | null = null;
 let surfacePack = -1;
 let paintRev = 0;
 let surfaceEditor = false;
+let surfaceGrid=false;
+let surfaceLayer=-1;
 
 /** Полный атлас поверхности: кисть/трава, покрытия, заходы и сетка на всех уровнях. */
-function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean) {
+function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false) {
   const map = currentTestMap();
   const real = paintCanvas();
-  const revision = packRevision();
+  const revision = packRevision(),layerRevision=paintLayerRevision();
   const w = Math.max(1, Math.round(cols * cellW));
   const h = Math.max(1, Math.round(rows * cellH));
   if (!surface) surface = document.createElement('canvas');
   if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
-      surface.width === w && surface.height === h && surfaceEditor === editor) {
+      surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid===grid && surfaceLayer===layerRevision) {
     return { paint: surface, paintRev };
   }
-  surfaceEditor = editor;
+  surfaceEditor = editor;surfaceGrid=grid;surfaceLayer=layerRevision;
   surfaceMap = map;
   surfacePaint = real;
   surfacePack = revision;
@@ -121,7 +125,7 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     g.fill(geo.path);
   }
   g.save();
-  g.clip(geo.path);
+  if(!editor||!real)g.clip(geo.path);
   if (!real) {
     for (const o of map.objects ?? []) {
       if (o.kind === 'ground') drawGroundCover(g, o, cellW, cellH);
@@ -160,7 +164,7 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     g.fillRect(c * cellW, r * cellH, cellW, cellH);
     g.strokeRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
   }
-  if (editor) {
+  if (editor && grid) {
     g.strokeStyle = 'rgba(240,255,235,.2)';
     g.lineWidth = 1;
     g.beginPath();
@@ -317,7 +321,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
       if (ghost) pushActor(decals, { ...ghost, opacity: .6 });
     }
   }
-  const painted = framePaint(input.cols, input.rows, input.cellW, input.cellH, input.editor);
+  const painted = framePaint(input.cols, input.rows, input.cellW, input.cellH, input.editor,input.editorGrid);
   return {
     camX: input.camX,
     camY: input.camY,

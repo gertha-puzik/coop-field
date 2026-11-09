@@ -19,7 +19,7 @@ let finish;
 const field = { ensurePaintDecoded: async () => true };
 const mapLib = { TERRAIN_MAX_LEVEL: 20, TEST_MAP_LIMITS: {objectsMax: 1000}, testMapConnectivityError: () => null };
 const mocks = {
-  '@/lib/sim/editor-model': { SETMAP_MIN_GAP_MS: 10000 },
+  '@/lib/sim/editor-model': loadTs(new URL('../src/lib/sim/editor-model.ts',import.meta.url)),
   '@/lib/sim/paint': { encodeDraftPaint: () => '', encodeDraftPaintAsync: () => new Promise(r => {finish=r;}) },
   '@/lib/sim/test-field': field,
   '@/lib/sim/test-map': mapLib,
@@ -161,3 +161,12 @@ assert.equal(serverMap.TEST_CELLS,oldCells,'height-only saves reuse the battle m
 assert(okReplies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'));
 assert(!replies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'),'disk failure never acknowledges success');
 console.log('explicit save acknowledgement follows durable write: OK');
+
+const historyRef={current:{...structuredClone(original),tool:'height',undo:[],redo:[],dirty:false,pcv:null,sel:[]}};
+const historyOps=exports.buildEditorOps({...params,editorRef:historyRef,editorSelRef:{current:null},patchField:()=>{},setPaintOverride:()=>{}});
+historyOps.pushEditorUndo();historyRef.current.elev['3,3']=6.7;historyRef.current.dirty=true;
+historyOps.undoEditor();assert.deepEqual(historyRef.current.elev,original.elev);assert.equal(historyRef.current.dirty,false,'undo to the saved baseline is clean');
+historyOps.redoEditor();assert.equal(historyRef.current.elev['3,3'],6.7);assert.equal(historyRef.current.dirty,true);
+historyOps.undoEditor();historyOps.pushEditorUndo();historyRef.current.elev['4,4']=20;
+assert.equal(historyRef.current.redo.length,0,'a new edit after undo discards the redo branch');
+console.log('unified editor history, redo branching and unsaved baseline status: OK');

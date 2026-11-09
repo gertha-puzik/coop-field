@@ -1,3 +1,4 @@
+import { paintBrushSize } from './paint';
 import { terrainAt, terrainBrushBounds, pickTerrainTop, terrainScreenPoint, decodeTerrainRect, freeTerrainPlacement, isElevationTool, clampBrush } from './terrain-shape';
 export { pickTerrainTop, terrainScreenPoint, terrainTopVisible, clampBrush, elevationBrushRect, stampElevation, isElevationTool } from './terrain-shape';
 export type { ElevationTool, ElevationBrush, CellRect } from './terrain-shape';
@@ -103,7 +104,7 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   for (const [key, level] of Object.entries(frame.elev)) {
-    if (!level) continue;
+    if (!level || !isElevationTool(d.tool)&&!d.showGrid) continue;
     const b=decodeTerrainRect(key,level);if(!b)continue;
     const cx=b.x+b.w/2,ry=b.y+b.d/2;
     if(terrainAt(frame.elev,cx,ry)!==level)continue;
@@ -114,6 +115,11 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     const p=terrainScreenPoint(frame,cx*frame.cellW,ry*frame.cellH,lift);
     if(p.x < -30 || p.y < -20 || p.x > frame.viewW+30 || p.y > frame.viewH+20)continue;
     label(g,p.x,p.y,`▲ ${level}`);
+  }
+  for(const zone of d.zones){
+    if(!d.sel.includes(zone.id))continue;
+    g.lineWidth=1.5;g.strokeStyle='#edc485';
+    outlineRect(g,frame,{c0:zone.c0,r0:zone.r0,c1:zone.c1,r1:zone.r1},'#edc485');
   }
   for (const object of d.objects) {
     if (object.id !== placement?.pickId) bodyGuide(g, frame, object, false);
@@ -162,18 +168,16 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     }
     const p=terrainScreenPoint(frame,(rect.x+rect.w/2)*frame.cellW,(rect.y+rect.d/2)*frame.cellH,level*frame.terrainLiftStep);
     label(g,p.x,p.y-23,`${rect.snapped?'Магнит · ':''}${b.width}×${b.depth}${d.tool==='height'?` · высота ${b.level}`:''}`,'#baffd0');
-  } else if (hover && d.tool === 'paint') {
-    const level = frame.elev[`${hover.c},${hover.r}`] ?? 0;
-    const p = terrainScreenPoint(frame, (hover.c + .5) * frame.cellW, (hover.r + .5) * frame.cellH, level * frame.terrainLiftStep);
-    g.strokeStyle = '#fff1bd';
-    g.lineWidth = 1.5;
-    g.setLineDash([5, 3]);
-    if (d.pshape === 'round') {
-      g.beginPath(); g.arc(p.x, p.y, Math.max(1, d.psize / 2) * frame.zoom, 0, Math.PI * 2); g.stroke();
-    } else {
-      cellPath(g, frame, hover.c, hover.r, level); g.stroke();
-    }
-    g.setLineDash([]);
+  } else if (hover && (d.tool === 'paint'||d.tool==='fill') && d.terrainCursor) {
+    const cursor=d.terrainCursor,level=terrainAt(frame.elev,cursor.x,cursor.y);
+    const p=terrainScreenPoint(frame,cursor.x*frame.cellW,cursor.y*frame.cellH,level*frame.terrainLiftStep);
+    const size=paintBrushSize(d),w=size.w*frame.cellW/100,h=size.h*frame.cellH/150;
+    g.save();g.translate(p.x,p.y);g.rotate(frame.yaw);g.scale(frame.zoom,frame.zoom);
+    g.strokeStyle=d.pmat==='erase'?'#ffb6b6':'#ffe0aa';g.fillStyle=d.pmat==='erase'?'rgba(255,120,120,.2)':'rgba(255,225,170,.18)';g.lineWidth=1.5/frame.zoom;
+    g.beginPath();
+    if(d.pshape==='round')g.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);else g.rect(-w/2,-h/2,w,h);
+    g.fill();g.stroke();g.restore();
+    label(g,p.x,p.y-18, d.tool==='fill'?'Заливка':`${Math.round(size.w)}×${Math.round(size.h)} px`);
   } else if (hover && ['battle', 'entry', 'spawn'].includes(d.tool)) {
     g.strokeStyle = '#c9f4d6';
     g.lineWidth = 2;
