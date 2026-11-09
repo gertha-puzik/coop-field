@@ -49,6 +49,11 @@ jobs:
       # broken main revision it was born from.
       - name: Синтаксис bash в workflow-скриптах
         run: node scripts/check-bash-syntax.mjs
+      # Гейт шва моста профиля (#84 wave 2): public/paint-demo/index.html —
+      # байт-в-байт копия KNS Paint + ровно один шов подключения
+      # game-bridge.js; копия без шва обязана сходиться с эталоном kns.
+      - name: Шов paint-demo (копия KNS + мост)
+        run: npm run check:paint-seam
       # C W1 build проверяет типы сам (next.config.ts больше не глушит ошибки),
       # но typecheck остаётся быстрой отдельной проверкой и главным гейтом CI.
       - name: Проверка типов

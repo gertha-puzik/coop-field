@@ -194,3 +194,30 @@ export function homeRoomTitle(room: string | null | undefined): string | null {
   const hit = namedRoom(room);
   return hit ? hit.title : room;
 }
+
+/* ---------------------- deep-link параметры каталога ---------------------- */
+
+/**
+ * Разбор одноразовых параметров адреса страницы каталога (/players):
+ *   ?id=<accountId> — глубокая ссылка на карточку (живает в адресе);
+ *   ?mine=<spriteId> — #84 ч.2: возврат из редактора окрасов
+ *     (/paint-demo/?back=profile): подсветить свежий окрас в блоке
+ *     «Свой окрас» своей карточки. Параметр одноразовый — сразу
+ *     убирается из адреса, чтобы перезагрузка не мигала снова.
+ * Обращается только к window.location/history клиента (страница
+ * 'use client'), при отсутствии history (тесты) тихо возвращает нули.
+ */
+export function consumeCatalogDeepLink(): { id: string | null; mine: string | null } {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const mine = q.get('mine') || null;
+    if (mine) {
+      q.delete('mine');
+      // якорь (#settings ведёт на форму профиля) переживает чистку
+      window.history.replaceState(null, '', `?${q.toString()}${window.location.hash}`);
+    }
+    return { id: q.get('id') || null, mine };
+  } catch {
+    return { id: null, mine: null };
+  }
+}
