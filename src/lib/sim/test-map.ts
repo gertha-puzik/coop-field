@@ -1,3 +1,4 @@
+import plantSprites from './plant-sprites.json' with { type: 'json' };
 import { terrainAt, sanitizeTerrainElev } from './terrain-shape.ts';
 /**
  * Конфигурация локации комнаты «тест» — то, что правит редактор локации.
@@ -22,7 +23,8 @@ export type TestMapZoneKind = 'cells' | 'green';
  *  ходьбе не мешают. Заход — клетка входа в боевую зону: стоит на траве рядом
  *  с боевыми клетками, стрелка указывает, куда игрока перенесёт шаг в бою.
  *  Спрайты рисуются от точки опоры вверх (земля/покрытие/заход — по всей клетке). */
-export type TestMapObjectKind = 'stone' | 'tree' | 'dirt' | 'entry' | 'ground' | 'battle';
+/** plant — свободно размещаемый декор; не создаёт коллизию или опору. */
+export type TestMapObjectKind = 'stone' | 'tree' | 'plant' | 'dirt' | 'entry' | 'ground' | 'battle';
 
 /** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
  *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
@@ -67,6 +69,11 @@ export const TREE_SPRITE_OPTS = [
   { id: 'tree-3', label: 'Дерево 3' },
 ] as const;
 
+/** Decorative plants, sliced losslessly from the five uploaded sheets. */
+export const PLANT_SPRITE_OPTS=plantSprites;
+const PLANT_SPRITE_IDS=new Set(plantSprites.map(p=>p.id));
+export function isSpriteObjectKind(kind:TestMapObjectKind):boolean{return isObstacleKind(kind)||kind==='plant';}
+
 /** Камни пака (TX Props.png): валун, ряд булышков по возрастанию и плоские камни-ступени. */
 export const ROCK_SPRITE_OPTS = [
   { id: 'rock-1', label: 'Валун' },
@@ -107,7 +114,8 @@ const ROCK_SPRITE_IDS = new Set<string>(ROCK_SPRITE_OPTS.map((t) => t.id));
 const GROUND_COVER_IDS = new Set<string>(GROUND_COVER_OPTS.map((t) => t.id));
 
 /** Спрайт объекта: заданный в конфиге или дефолт по виду (старые конфиги без spr). */
-export function objectSprite(o: Pick<TestMapObject, 'kind' | 'spr'>): TreeSpr | RockSpr {
+export function objectSprite(o: Pick<TestMapObject, 'kind' | 'spr'>): TreeSpr | RockSpr | string {
+  if(o.kind==='plant')return PLANT_SPRITE_IDS.has(o.spr??'')?o.spr!:'plant-001';
   if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as TreeSpr) : 'tree-1';
   return ROCK_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as RockSpr) : 'rock-1';
 }
@@ -160,6 +168,7 @@ export const OBJECT_DIMS: Record<string, [number, number]> = {
   'rock-8': [18, 16],
   'rock-9': [19, 16],
   'rock-10': [31, 19],
+  ...Object.fromEntries(plantSprites.map(p=>[p.id,[p.width,p.height] as [number,number]])),
 };
 
 /**
@@ -530,7 +539,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     for (let i = 0; i < src.objects.length; i++) {
       const o = src.objects[i] as Partial<TestMapObject>;
       const kind =
-        o.kind === 'stone'
+        o.kind === 'plant' ? 'plant' : o.kind === 'stone'
           ? 'stone'
           : o.kind === 'tree'
             ? 'tree'
@@ -548,7 +557,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       // считаем из клетки и положения в ней (миграция при первом же сохранении).
       let x = 0;
       let y = 0;
-      if (kind === 'stone' || kind === 'tree') {
+      if (isSpriteObjectKind(kind)) {
         const fx = Number(o.x);
         const fy = Number(o.y);
         if (Number.isFinite(fx) && Number.isFinite(fy)) {
@@ -584,7 +593,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       let spr: string | undefined;
       let cv: string | undefined;
       let mir: 0 | 1 | undefined;
-      if (kind === 'stone' || kind === 'tree') {
+      if (isSpriteObjectKind(kind)) {
         const sn = Number(o.s);
         s = Number.isFinite(sn)
           ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100))
@@ -592,7 +601,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         const rn = Math.round(Number(o.rot));
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
         const raw = typeof o.spr === 'string' ? o.spr : '';
-        spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(raw) ? raw : 'tree-1') : ROCK_SPRITE_IDS.has(raw) ? raw : 'rock-1';
+        spr = kind === 'plant' ? (PLANT_SPRITE_IDS.has(raw)?raw:'plant-001') : kind === 'tree' ? (TREE_SPRITE_IDS.has(raw) ? raw : 'tree-1') : ROCK_SPRITE_IDS.has(raw) ? raw : 'rock-1';
         mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
@@ -600,7 +609,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       }
       // Земля/покрытие/заход/боевая клетка — по клетке на объект; камень и дерево
       // стоят свободно и на клетку не «схлопываются».
-      if (kind !== 'stone' && kind !== 'tree') {
+      if (!isSpriteObjectKind(kind)) {
         const key = `${c},${r}`;
         if (taken.has(key)) continue;
         taken.add(key);
@@ -610,7 +619,7 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         kind,
         c,
         r,
-        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr, mir } : {}),
+        ...(isSpriteObjectKind(kind) ? { x, y, s, rot, spr, mir } : {}),
         ...(kind === 'ground' ? { cv } : {}),
         pos,
         dir,

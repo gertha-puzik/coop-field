@@ -29,6 +29,7 @@ export type EditorTool =
   | 'erase'
   | 'stone'
   | 'tree'
+  | 'plant'
   | 'dirt'
   | 'ground'
   | 'entry'
@@ -53,7 +54,7 @@ export type PaintBrushShape = 'round' | 'cell' | 'half' | 'rect';
  *  поворот — кнопками; ✓ ставит объект, ✕ отменяет. pickId — объект, поднятый
  *  с поля для правки (оригинал на время правки скрыт, ✓ переносит его). */
 export type EditorPlace = {
-  kind: 'tree' | 'stone';
+  kind: 'tree' | 'stone' | 'plant';
   spr: string;
   s: number;
   rot: number;
@@ -127,7 +128,7 @@ export type EditorSnapshot = {
   paint?:ImageData|null; label?:string; dirty?:boolean;
 };
 export function editorSnapshot(d:EditorDraft,withPaint=false):EditorSnapshot {
-  const snapshot:EditorSnapshot={seed:d.seed,margin:d.margin,dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
+  const snapshot:EditorSnapshot={seed:d.seed,margin:d.margin,dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='plant'?'Растение':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
   if(withPaint){
     if(!d.pcv)snapshot.paint=null;
     else snapshot.paint=d.pcv.getContext('2d')?.getImageData(0,0,d.pcv.width,d.pcv.height);

@@ -20,6 +20,7 @@ import { GROUND_COVER_OPTS, type GroundCover } from './test-map';
 
 /** Имена доступных спрайтов пака. */
 export type PackName =
+  | `plant-${number}`
   | 'tree-1'
   | 'tree-2'
   | 'tree-3'
@@ -85,8 +86,12 @@ function ensureStarted(): void {
 }
 
 /** Спрайт пака или null, пока не догрузился (рисовалка тогда идёт вектором). */
+const requestedPlants=new Set<string>();
 export function packImg(name: PackName): HTMLImageElement | null {
   ensureStarted();
+  if(name.startsWith('plant-')&&!requestedPlants.has(name)&&typeof Image!=='undefined'){
+    requestedPlants.add(name);const image=new Image();image.onload=()=>imgs.set(name,image);image.src=`/tex/${name}.png`;
+  }
   return imgs.get(name) ?? null;
 }
 

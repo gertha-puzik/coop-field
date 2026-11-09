@@ -778,7 +778,7 @@ function objectIndex(): {
             }
           }
         }
-      } else {
+      } else if(o.kind!=='plant') {
         const key = `${o.c},${o.r}`;
         const arr = flat.get(key);
         if (arr) arr.push(o);
@@ -798,7 +798,7 @@ export function testObstacleAt(c: number, r: number): TestMapObject | null {
 
 /** Любой объект, чья клетка совпадает с заданной (для редактора). */
 export function testObjectAt(c: number, r: number): TestMapObject | null {
-  return objectIndex().flat.get(`${c},${r}`)?.[0] ?? testObstacleAt(c, r);
+  return objectIndex().flat.get(`${c},${r}`)?.[0] ?? testObstacleAt(c, r) ?? (currentMap.objects??[]).find(o=>o.kind==='plant'&&o.c===c&&o.r===r) ?? null;
 }
 
 /** Все объекты локации — для отрисовки и редактора. */
@@ -1721,7 +1721,7 @@ export function drawTestObject(
   m = 1,
   v = 0,
 ): void {
-  const flip = (v % 2 === 0 ? 1 : -1) * (objectMir(o) === 1 ? -1 : 1);
+  const flip = (o.kind==='plant'?1:(v % 2 === 0 ? 1 : -1)) * (objectMir(o) === 1 ? -1 : 1);
   const legacy = typeof o.s !== 'number';
   const k = legacy ? 0.94 + (v % 5) * 0.03 : 1;
   const scale = objectScale(o);
@@ -1739,7 +1739,7 @@ export function drawTestObject(
   ctx.scale(k * flip, k);
   // спрайт пака; пока не догрузился — прежняя векторная фигура (для tree-1/rock-1)
   const ok = drawPackSprite(ctx, sprName as PackName, w / k);
-  if (ok) {
+  if (ok || o.kind==='plant') {
     ctx.restore();
     return;
   }

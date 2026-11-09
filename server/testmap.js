@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   DATA_DIR, TEST_ROOM,
-  OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
+  OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
 } from "./config.js";
 import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./protocol.js";
 import {
@@ -272,7 +272,7 @@ function sanitizeTestMap(raw) {
       const o = raw.objects[i];
       const kind =
         o &&
-        (o.kind === 'stone'
+        (o.kind === 'plant' ? 'plant' : o.kind === 'stone'
           ? 'stone'
           : o.kind === 'tree'
             ? 'tree'
@@ -290,7 +290,7 @@ function sanitizeTestMap(raw) {
       // считаем из клетки и положения в ней (зеркало sanitizeTestMap клиента).
       let x = 0;
       let y = 0;
-      if (kind === 'stone' || kind === 'tree') {
+      if (kind === 'stone' || kind === 'tree' || kind === 'plant') {
         const fx = Number(o.x);
         const fy = Number(o.y);
         if (Number.isFinite(fx) && Number.isFinite(fy)) {
@@ -326,19 +326,19 @@ function sanitizeTestMap(raw) {
       let spr;
       let cv;
       let mir;
-      if (kind === 'stone' || kind === 'tree') {
+      if (kind === 'stone' || kind === 'tree' || kind === 'plant') {
         const sn = Number(o.s);
         s = Number.isFinite(sn) ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100)) : undefined;
         const rn = Math.round(Number(o.rot));
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
-        spr = kind === 'tree' ? (TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1') : ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+        spr = kind === 'plant' ? (PLANT_SPRITE_IDS.has(o.spr)?o.spr:'plant-001') : kind === 'tree' ? (TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1') : ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
         mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
         cv = GROUND_COVER_IDS.includes(String(o.cv)) ? String(o.cv) : 'flower-1';
       }
       // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно.
-      if (kind !== 'stone' && kind !== 'tree') {
+      if (kind !== 'stone' && kind !== 'tree' && kind !== 'plant') {
         const key = `${c},${r}`;
         if (taken.has(key)) continue;
         taken.add(key);
@@ -348,7 +348,7 @@ function sanitizeTestMap(raw) {
         kind,
         c,
         r,
-        ...(kind === 'stone' || kind === 'tree' ? { x, y, s, rot, spr, mir } : {}),
+        ...(kind === 'stone' || kind === 'tree' || kind === 'plant' ? { x, y, s, rot, spr, mir } : {}),
         ...(kind === 'ground' ? { cv } : {}),
         pos,
         dir,
