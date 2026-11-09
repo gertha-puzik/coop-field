@@ -38,18 +38,31 @@
  *                                    category 1-32; лимит 3 МБ; магия PNG
  *                                    первых 8 байт; id = translit-slug имени,
  *                                    коллизия — суффикс -2/-3; id несменяем);
- *   PATCH  /admin/sprites/:id      — переименование/смена категории;
+ *   PATCH  /admin/sprites/:id      — переименование/смена категории/скрытие
+ *                                    (hidden — #83: строка уходит из каталога
+ *                                    и whitelist'а, файл остаётся на месте);
  *   DELETE /admin/sprites/:id      — только НЕ-builtin и только не одетый
  *                                    (отказ с wornBy: логин+имя персонажа);
  *                                    builtin — всегда отказ (это деплойная
  *                                    статика).
+ *   Зона личных окрасов игроков (#83) — POST/GET/DELETE /sprites/mine* —
+ *   живёт в my-sprites.js (спрут этого файла не раздуваем): там только
+ *   HTTP-ручки и валидации игрока, а манифест — КАНОН ЗДЕСЬ. My-sprites.js
+ *   импортирует переиспользуемые примитивы (readBody, parseMultipart,
+ *   PNG_MAGIC, validName, srcOf) и мутирует манифест ТОЛЬКО через
+ *   mutateSprites(ops) — одна очередь сериализации на все мутации (админские
+ *   + личные), коммиты атомарны и идут контрактным порядком (png → память →
+ *   manifest.json → syncWhitelist). Строки #83: ownerAccountId (null =
+ *   админский/builtin-сид), sha256 (дедуп даблклика), w/h/bytes (габариты
+ *   PNG при заливке — все поля опциональны, старые манифесты читать можно),
+ *   hidden (тоггл админа).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, SPRITES } from "./config.js";
 import { sessionFromRequest } from "./auth.js";
 import { json, readJson, setCors } from "./runtime-config.js";
-import { spriteWearers } from "./accounts.js";
+import { spriteWearers, findById as findAccountById } from "./accounts.js";
 
 const DIR = path.join(DATA_DIR, "sprites");
 const MANIFEST_FILE = path.join(DIR, "manifest.json");
@@ -108,25 +121,58 @@ function writeFileAtomic(file, data) {
 }
 
 function manifestRowOk(row) {
-  return (
-    row && typeof row === "object" &&
-    typeof row.id === "string" && /^[a-z0-9-]{1,64}$/.test(row.id) &&
-    typeof row.name === "string" && Array.from(row.name).length >= NAME_MIN &&
-    typeof row.category === "string" && row.category.trim() &&
-    Array.from(row.category).length <= CATEGORY_MAX &&
-    typeof row.builtin === "boolean"
-  );
+  if (
+    !(row && typeof row === "object") ||
+    !(typeof row.id === "string" && /^[a-z0-9-]{1,64}$/.test(row.id)) ||
+    !(typeof row.name === "string" && Array.from(row.name).length >= NAME_MIN) ||
+    !(typeof row.category === "string" && row.category.trim() &&
+      Array.from(row.category).length <= CATEGORY_MAX) ||
+    typeof row.builtin !== "boolean"
+  ) return false;
+  // #83: необязательные поля строк манифеста — их отсутствие легитимно
+  // (старые манифесты/админские строки без них валидны), но типы строги:
+  // мусор в новых полях роняет строку при загрузке, а не живёт в каталоге.
+  if (row.ownerAccountId !== undefined && row.ownerAccountId !== null &&
+    typeof row.ownerAccountId !== "string") return false;
+  if (row.sha256 !== undefined && row.sha256 !== null &&
+    !(typeof row.sha256 === "string" && /^[0-9a-f]{64}$/.test(row.sha256))) return false;
+  if (row.hidden !== undefined && typeof row.hidden !== "boolean") return false;
+  for (const key of ["w", "h", "bytes"]) {
+    if (row[key] !== undefined && !Number.isInteger(row[key])) return false;
+  }
+  return true;
 }
 
 /** Чтение манифеста: отсутствующий файл → сид базовых (и запись на диск —
- *  контракт «при старте сид записывается»), битые строки выбрасываем. */
+ *  контракт «при старте сид записывается»), битые строки выбрасываем.
+ *  #83: нечитаемый/не-массивный манифест не затираем молча — откладываем
+ *  уликой в manifest.corrupt-<ts>.json с громким логом, каталог живёт из сида. */
+function stashCorruptManifest(reason) {
+  const ts = Date.now().toString(36);
+  const corruptPath = path.join(DIR, `manifest.corrupt-${ts}.json`);
+  try {
+    fs.renameSync(MANIFEST_FILE, corruptPath);
+    console.warn(`sprites manifest CORRUPT: отложен как ${corruptPath} (${reason}); каталог пересеивается базой.`);
+  } catch (e2) {
+    console.warn(`sprites manifest CORRUPT: отложить не удалось (${e2?.message || e2}); каталог пересеивается базой.`);
+  }
+}
+
 function loadManifest() {
   fs.mkdirSync(DIR, { recursive: true });
   let raw = null;
   try {
     raw = JSON.parse(fs.readFileSync(MANIFEST_FILE, "utf8"));
   } catch (e) {
-    if (e && e.code !== "ENOENT") console.warn("sprites manifest read failed:", e?.message || e);
+    if (e && e.code === "ENOENT") raw = null;
+    else {
+      stashCorruptManifest(e?.message || String(e));
+      raw = null;
+    }
+  }
+  if (raw !== null && !Array.isArray(raw)) {
+    stashCorruptManifest("корень манифеста — не массив");
+    raw = null;
   }
   if (Array.isArray(raw)) {
     const rows = raw.filter((row) => manifestRowOk(row) && (!row.builtin || SPRITES.includes(row.id)));
@@ -139,6 +185,9 @@ function loadManifest() {
       for (const b of seedRows()) if (!have.has(b.id)) rows.push(b);
       return rows;
     }
+    // #83: парсящийся, но без единой builtin-строки — «урезанный» манифест:
+    // не затираем молча, улика + пересев базой.
+    stashCorruptManifest("массив без единой builtin-строки");
   }
   const rows = seedRows();
   try {
@@ -161,17 +210,101 @@ function seedRows() {
 
 let manifest = loadManifest();
 
-function flushManifest() {
-  try {
-    writeFileAtomic(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
-  } catch (e) {
-    console.warn("sprites manifest save failed:", e?.message || e);
-  }
+/* ---------- #83: очередь сериализации манифеста ----------
+ * Один async-мьютекс на ВСЕ мутации каталога (админские POST/PATCH/DELETE
+ * и личные /sprites/mine*): валидация тяжёлых тел (readBody) идёт ДО входа
+ * в очередь, а сама критическая секция синхронна — очередь лишь ставит
+ * конкурирующие мутации в FIFO, внутри секции interleaving-а нет.
+ * Контракт: подсчёт личного лимита и вставка — в ОДНОЙ критической секции. */
+let manifestQueue = Promise.resolve();
+
+/** Прогон fn строго после предыдущей мутации; очередь не рвётся на отказе fn. */
+export function serializeManifestWork(fn) {
+  const run = manifestQueue.then(fn);
+  manifestQueue = run.then(
+    () => {},
+    () => {},
+  );
+  return run;
+}
+
+/**
+ * Операции над манифестом для мутатора (my-sprites.js и админские ручки).
+ * Все коммиты держат контрактный порядок и ОТКАТЫВАЮТСЯ при ошибке диска:
+ * вставка — png (tmp+rename) → память → manifest.json (tmp+rename) →
+ * syncWhitelist; удаление — память → manifest.json → unlink(png) (осиротевший
+ * файл безвреден, строка без файла ломает каталог); поля (name/category/
+ * hidden) — память → manifest.json → syncWhitelist.
+ * ВАЖНО: manifest мутируется только IN PLACE (push/splice) — ссылку держат
+ * ops.rows и все читатели, переприсваивать переменную нельзя.
+ */
+export function mutateSprites(fn) {
+  return serializeManifestWork(() => {
+    const ops = {
+      rows: manifest,
+      rowById: findById,
+      freeSlugFor,
+      /** Вставка новой строки + PNG. {io:true} при ошибке диска (откат). */
+      commitAppend(row, png) {
+        try {
+          writeFileAtomic(fileOf(row.id), png);
+        } catch (e) {
+          return { io: true, error: e };
+        }
+        manifest.push(row);
+        try {
+          writeFileAtomic(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
+        } catch (e) {
+          manifest.splice(manifest.findIndex((r) => r.id === row.id), 1);
+          try { fs.unlinkSync(fileOf(row.id)); } catch { /* осиротевший tmp/png — мусор, не критично */ }
+          return { io: true, error: e };
+        }
+        syncWhitelist();
+        return { ok: true, row };
+      },
+      /** Удаление строки (+PNG). Откат строки при ошибке записи манифеста. */
+      commitRemove(row) {
+        const idx = manifest.findIndex((r) => r.id === row.id);
+        if (idx === -1) return { missing: true };
+        manifest.splice(idx, 1);
+        try {
+          writeFileAtomic(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
+        } catch (e) {
+          manifest.splice(idx, 0, row);
+          return { io: true, error: e };
+        }
+        try { fs.unlinkSync(fileOf(row.id)); } catch (e) {
+          if (e && e.code !== "ENOENT") console.warn("sprite file unlink failed:", e?.message || e);
+        }
+        syncWhitelist();
+        return { ok: true };
+      },
+      /** Точечные поля строки (name/category/hidden) с откатом. Строка могла
+       *  уйти из каталога, пока запрос шёл до очереди (гонка с DELETE) —
+       *  отвечаем missing, а не падаем на undefined. */
+      commitFields(row, fields) {
+        if (!row) return { missing: true };
+        const before = {};
+        for (const key of Object.keys(fields)) before[key] = row[key];
+        Object.assign(row, fields);
+        try {
+          writeFileAtomic(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
+        } catch (e) {
+          Object.assign(row, before);
+          return { io: true, error: e };
+        }
+        syncWhitelist();
+        return { ok: true };
+      },
+    };
+    return fn(ops);
+  });
 }
 
 /** src каталога: builtin — статика www/sprites (как до менеджера), загруженный —
- *  API-отдача файла из DATA_DIR. */
-function srcOf(row) {
+ *  API-отдача файла из DATA_DIR. Экспорт — my-sprites.js строит свой DTO тем
+ *  же правилом (#83), чтобы личные окрасы не расходились с админскими. */
+export function srcOf(row) {
   return row.builtin ? `/sprites/${row.id}.png${row.id === "test1" ? "?v=original-300x200" : ""}` : `/sprites/file/${row.id}.png`;
 }
 
@@ -185,12 +318,15 @@ function srcOf(row) {
 const BUILTIN_IDS = new Set(SPRITES);
 
 function syncWhitelist() {
-  const catalogIds = new Set(manifest.map((r) => r.id));
+  const catalogIds = new Set(manifest.filter((r) => !r.hidden).map((r) => r.id));
   for (let i = SPRITES.length - 1; i >= 0; i -= 1) {
     const id = SPRITES[i];
     if (!BUILTIN_IDS.has(id) && !catalogIds.has(id)) SPRITES.splice(i, 1);
   }
   for (const row of manifest) {
+    // #83: скрытый админом окрас в вайтлист не возвращается — pickSprite/
+    // setSprite его больше не производят; новая отмена скрытия вернёт.
+    if (row.hidden) continue;
     if (SPRITES.includes(row.id)) continue;
     SPRITES.push(row.id);
   }
@@ -198,9 +334,17 @@ function syncWhitelist() {
 
 syncWhitelist();
 
-/** Живой валидатор id (accounts.js attachSprite, задача п.5; память, без fs). */
+/** Живой валидатор id (accounts.js attachSprite, задачи п.5/#83; память, без fs).
+ *  Скрытые админом строки валидатору недоступны: надеть их нельзя (как и WS). */
 export function spriteIdAllowed(id) {
-  return manifest.some((r) => r.id === id);
+  return manifest.some((r) => r.id === id && !r.hidden);
+}
+
+/** Все строки каталога (живой массив) для читателей вне модуля (#83:
+ *  my-sprites.js фильтрует свои окрасы по ownerAccountId). Мутации — только
+ *  через mutateSprites; читатель мутировать не должен. */
+export function allSpriteRows() {
+  return manifest;
 }
 
 function findById(id) {
@@ -253,8 +397,10 @@ function clipChars(text, max) {
   return chars.length <= max ? text : chars.slice(0, max).join("");
 }
 
-/** name 2–24 кодпоинтов после трима; category 1–32, не пустая. */
-function validName(raw) {
+/** name 2–24 кодпоинтов после трима; category 1–32, не пустая.
+ *  Экспорт — my-sprites.js надстраивает над валидатором свою чистку NFC
+ *  (#83), не дублируя базовые правила. */
+export function validName(raw) {
   const text = clipChars(String(raw ?? "").replace(/\s+/g, " ").trim(), NAME_MAX);
   if (Array.from(text).length < NAME_MIN) return null;
   return text;
@@ -268,10 +414,15 @@ function validCategory(raw) {
 
 /* ---------- multipart/form-data (без зависимостей) ---------- */
 
-/** Подпись PNG — ровно 8 байт: 89 50 4E 47 0D 0A 1A 0A (\x89PNG\r\n\x1a\n). */
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** Подпись PNG — ровно 8 байт: 89 50 4E 47 0D 0A 1A 0A (\x89PNG\r\n\x1a\n).
+ *  Экспорт: my-sprites.js проверяет ту же магию у личных окрасов (#83). */
+export const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-function readBody(req, limit) {
+/** Чтение тела с потолком: лимит проверяется по факту прочитанных байтов
+ *  (не только по Content-Length — его вообще могло не быть), копейки
+ *  заголовка multipart в лимит НЕ входят. Экспорт — my-sprites.js читает
+ *  тело своим потолком 1 МБ (админский MAX_UPLOAD 3 МБ не трогаем, #83). */
+export function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > limit) {
@@ -304,8 +455,9 @@ function readBody(req, limit) {
 
 /** Разбор multipart:_bin-safe (Buffer.indexOf), формат FormData браузера:
  *  --boundary\r\ncontent-disposition…\r\n\r\nbody\r\n--boundary--\r\n.
- *  Возвращает {file?:{filename,data}, fields:{name,category}}. */
-function parseMultipart(buf, contentType) {
+ *  Возвращает {file?:{filename,data}, fields:{name,category}}.
+ *  Экспорт — my-sprites.js разбирает форму личной загрузки тем же парсером. */
+export function parseMultipart(buf, contentType) {
   const m = /boundary=(?:"([^"]+)"|([^\s;]+))/i.exec(String(contentType || ""));
   const boundary = m ? m[1] || m[2] : "";
   if (!boundary) return null;
@@ -381,7 +533,11 @@ export function handleSpritesHttp(req, res) {
     if (p === "/sprites/catalog" && req.method === "GET") {
       json(res, 200, {
         ok: true,
-        items: manifest.map((r) => ({ id: r.id, name: r.name, category: r.category, src: srcOf(r) })),
+        // #83: скрытые админом строки из публичного каталога уходят — их
+        // не видит ни карусель входа, ни профиль.
+        items: manifest
+          .filter((r) => !r.hidden)
+          .map((r) => ({ id: r.id, name: r.name, category: r.category, src: srcOf(r) })),
       });
       return true;
     }
@@ -424,6 +580,12 @@ export function handleSpritesHttp(req, res) {
         // «одет у N» под каждым спрайтом (удаление это не разрешает, но
         // админу видна занятость базовых скинов тоже).
         const wornBy = spriteWearers(r.id);
+        // #83: владелец личного окраса — по ownerAccountId; null = админский
+        // (или builtin-сид). Логин мог быть удалён вместе с аккаунтом —
+        // тогда честно показываем id.
+        const owner = r.ownerAccountId
+          ? (findAccountById(r.ownerAccountId)?.login || r.ownerAccountId)
+          : null;
         return {
           id: r.id,
           name: r.name,
@@ -433,6 +595,8 @@ export function handleSpritesHttp(req, res) {
           addedAt: Number(r.addedAt) || 0,
           wornBy,
           wornCount: wornBy.length,
+          owner,
+          hidden: r.hidden === true,
         };
       }),
     });
@@ -493,19 +657,26 @@ async function handleUpload(req, res) {
     json(res, 400, { ok: false, reason: "invalid_png", message: "Файл не похож на PNG (подпись не совпала)." });
     return true;
   }
-  const id = freeSlugFor(name);
-  const addedAt = Date.now();
-  manifest.push({ id, name, category, builtin: false, addedAt });
-  try {
-    fs.writeFileSync(fileOf(id), form.file.data);
-    flushManifest();
-    syncWhitelist();
-  } catch (e) {
-    manifest = manifest.filter((r) => r.id !== id);
+  // Коммит — ЕДИНСТВЕННАЯ критическая секция (подбор slug + вставка строки)
+  // #83: очередь serializeManifestWork общая с личными окрасами, поэтому
+  // подбор id и вставка идут в одном блоке: png → память → манифест →
+  // вайтлист; при ошибке диска ops откатывает строку сама.
+  const commit = await mutateSprites((ops) => {
+    const row = {
+      id: ops.freeSlugFor(name),
+      name,
+      category,
+      builtin: false,
+      addedAt: Date.now(),
+    };
+    return ops.commitAppend(row, form.file.data);
+  });
+  if (commit.io) {
     json(res, 500, { ok: false, reason: "storage", message: "Не удалось сохранить файл спрайта." });
-    console.warn("sprite upload failed:", e?.message || e);
+    console.warn("sprite upload failed:", commit.error?.message || commit.error);
     return true;
   }
+  const { id, addedAt } = commit.row;
   json(res, 200, { ok: true, item: { id, name, category, builtin: false, src: srcOf({ id, builtin: false }), addedAt } });
   return true;
 }
@@ -523,13 +694,14 @@ async function handlePatch(req, res, id) {
     json(res, 400, { ok: false, reason: "json", message: "Тело запроса не читается как JSON." });
     return true;
   }
-  const extra = Object.keys(body).filter((k) => k !== "name" && k !== "category");
+  const extra = Object.keys(body).filter((k) => k !== "name" && k !== "category" && k !== "hidden");
   if (extra.length) {
-    json(res, 400, { ok: false, reason: "unexpected_fields", unexpected: extra, expected: ["name", "category"] });
+    json(res, 400, { ok: false, reason: "unexpected_fields", unexpected: extra, expected: ["name", "category", "hidden"] });
     return true;
   }
   let nextName = null;
   let nextCategory = null;
+  let nextHidden = null;
   if (body.name !== undefined) {
     nextName = validName(body.name);
     if (!nextName) {
@@ -544,50 +716,78 @@ async function handlePatch(req, res, id) {
       return true;
     }
   }
-  if (nextName === null && nextCategory === null) {
-    json(res, 400, { ok: false, reason: "empty_patch", message: "Укажите name и/или category." });
+  // #83: скрытие — РЫЧАГ МОДЕРАЦИИ против «одетого» абузного окраса (обычный
+  // DELETE против одетого бессилен): строка уходит из каталога и вайтлиста,
+  // PNG остаётся на диске (улика). Тоггл — только админ (этот роут).
+  if (body.hidden !== undefined) {
+    if (typeof body.hidden !== "boolean") {
+      json(res, 400, { ok: false, reason: "invalid_hidden", message: "hidden — только true или false." });
+      return true;
+    }
+    nextHidden = body.hidden;
+  }
+  if (nextName === null && nextCategory === null && nextHidden === null) {
+    json(res, 400, { ok: false, reason: "empty_patch", message: "Укажите name, category и/или hidden." });
     return true;
   }
-  if (nextName !== null) row.name = nextName;
-  if (nextCategory !== null) row.category = nextCategory;
-  flushManifest();
-  json(res, 200, { ok: true, item: { id: row.id, name: row.name, category: row.category, builtin: row.builtin, src: srcOf(row) } });
+  // Поля — через общую очередь мутаций (#83): память → манифест → вайтлист
+  // (syncWhitelist внутри важен именно для hidden), с откатом при ошибке диска.
+  const commit = await mutateSprites((ops) => {
+    const fields = {};
+    if (nextName !== null) fields.name = nextName;
+    if (nextCategory !== null) fields.category = nextCategory;
+    if (nextHidden !== null) fields.hidden = nextHidden;
+    const target = ops.rowById(row.id);
+    if (!target) return { missing: true };
+    return ops.commitFields(target, fields);
+  });
+  if (commit.missing) {
+    json(res, 404, { ok: false, reason: "unknown_sprite", message: "Спрайта с таким id уже нет." });
+    return true;
+  }
+  if (commit.io) {
+    json(res, 500, { ok: false, reason: "storage", message: "Не удалось сохранить изменение." });
+    console.warn("sprite patch failed:", commit.error?.message || commit.error);
+    return true;
+  }
+  json(res, 200, { ok: true, item: { id: row.id, name: row.name, category: row.category, builtin: row.builtin, src: srcOf(row), hidden: row.hidden === true } });
   return true;
 }
 
-function handleDelete(res, id) {
-  const row = findById(id);
-  if (!row) {
-    json(res, 404, { ok: false, reason: "unknown_sprite", message: "Спрайта с таким id нет." });
+async function handleDelete(res, id) {
+  // Чтение и все проверки — внутри критической секции: между ними и удалением
+  // никто не может вставить/удалить строку (одна очередь на все мутации, #83).
+  const verdict = await mutateSprites((ops) => {
+    const row = ops.rowById(id);
+    if (!row) return { code: 404, reason: "unknown_sprite", message: "Спрайта с таким id нет." };
+    if (row.builtin) {
+      return {
+        code: 400,
+        reason: "builtin_immutable",
+        message: "Базовые спрайты раздаются статикой деплоя — удалить их нельзя.",
+      };
+    }
+    const wornBy = spriteWearers(row.id);
+    if (wornBy.length) {
+      const names = wornBy.map((w) => `${w.login} (${w.character})`).join(", ");
+      return {
+        code: 400,
+        wornBy,
+        reason: "in_use",
+        message: `Спрайт одет у персонажей: ${names}. Сначала поменяйте им скин.`,
+      };
+    }
+    const commit = ops.commitRemove(row);
+    if (commit.io) return { code: 500, reason: "storage", message: "Не удалось сохранить изменение." };
+    return { code: 200, id: row.id };
+  });
+  if (verdict.code === 200) {
+    json(res, 200, { ok: true, id: verdict.id });
     return true;
   }
-  if (row.builtin) {
-    json(res, 400, {
-      ok: false,
-      reason: "builtin_immutable",
-      message: "Базовые спрайты раздаются статикой деплоя — удалить их нельзя.",
-    });
-    return true;
-  }
-  const wornBy = spriteWearers(row.id);
-  if (wornBy.length) {
-    const names = wornBy.map((w) => `${w.login} (${w.character})`).join(", ");
-    json(res, 400, {
-      ok: false,
-      reason: "in_use",
-      message: `Спрайт одет у персонажей: ${names}. Сначала поменяйте им скин.`,
-      wornBy,
-    });
-    return true;
-  }
-  manifest = manifest.filter((r) => r.id !== row.id);
-  try {
-    fs.unlinkSync(fileOf(row.id));
-  } catch (e) {
-    if (e && e.code !== "ENOENT") console.warn("sprite file unlink failed:", e?.message || e);
-  }
-  flushManifest();
-  syncWhitelist();
-  json(res, 200, { ok: true, id: row.id });
+  if (verdict.code === 500) console.warn("sprite delete failed (io)");
+  json(res, verdict.code, verdict.wornBy
+    ? { ok: false, reason: verdict.reason, message: verdict.message, wornBy: verdict.wornBy }
+    : { ok: false, reason: verdict.reason, message: verdict.message });
   return true;
 }

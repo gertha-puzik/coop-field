@@ -38,6 +38,11 @@ import { handleAdminOpsHttp } from "./admin-ops.js";
 // (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
 // админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
 import { handleSpritesHttp } from "./sprites.js";
+// Личные окрасы игроков (#83): сессионные POST/GET/DELETE /sprites/mine* —
+// единый стек с профилями (host-гейт ниже прячет зону на публичном классе,
+// apiZone ниже держит CORS-надзор и unsafe-cookie Origin-щит; сессия и
+// перепроверка CSRF — в самом домене, как у profiles.js).
+import { handleMineSpritesHttp } from "./my-sprites.js";
 import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
@@ -201,6 +206,9 @@ export function startServer() {
         p.startsWith("/profiles/") ||
         p === "/admin" ||
         p.startsWith("/admin/") ||
+        // #83: личные окрасы — сессионная зона Элизии, на гроттах её нет.
+        p === "/sprites/mine" ||
+        p.startsWith("/sprites/mine/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
@@ -233,7 +241,11 @@ export function startServer() {
       // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
       // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
       // и в зоне не нуждается: безопасный метод, сессию не несёт).
-      p === "/admin/sprites" || p.startsWith("/admin/sprites/");
+      p === "/admin/sprites" || p.startsWith("/admin/sprites/") ||
+      // Личные окрасы (#83): POST/DELETE несут cookie-сессию — тот же
+      // unsafe-cookie Origin-щит и CORS-надзор (GET /sprites/mine безопасен,
+      // но пусть зона вся живёт под одной политикой, как /profiles).
+      p === "/sprites/mine" || p.startsWith("/sprites/mine/");
     if (apiZone) {
       if (originHeader) res.setHeader("Vary", "Origin");
       if (originAllowed) {
@@ -290,13 +302,18 @@ export function startServer() {
           if (cfgHit) return;
           return Promise.resolve(handleProfilesHttp(req, res)).then((profHit) => {
             if (profHit) return;
-            // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
-            // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
-            // в handler не попадают (маршруты длиннее и точнее), файловые 404
-            // отдаёт сам домен.
-            return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
-              if (spritesHit) return;
-              serveStatic(req, res, url);
+            // Личные окрасы (#83) — после адресных зон, до общих /sprites*:
+            // маршруты /sprites/mine* строже и не пересекаются с каталогом.
+            return Promise.resolve(handleMineSpritesHttp(req, res)).then((mineHit) => {
+              if (mineHit) return;
+              // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
+              // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
+              // в handler не попадают (маршруты длиннее и точнее), файловые 404
+              // отдаёт сам домен.
+              return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+                if (spritesHit) return;
+                serveStatic(req, res, url);
+              });
             });
           });
         });

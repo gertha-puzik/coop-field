@@ -5,12 +5,23 @@
  * волной W1-приёмки 2026-11-08, чтобы карточка не росла в god-файл):
  * иконки и «честные достижения», портрет-арена, чип-пресеты СП, группы
  * скинов, активный персонаж и человеческие тексты ошибок сохранения.
+ * #83: + зона «Свой окрас» (MineSpritesSection) — загрузка/удаление личных
+ * PNG через /sprites/mine, счётчик лимита, подтверждение вторым кликом.
  */
 
 import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Chip } from '@/components/ui';
+import { Button, Chip, Input } from '@/components/ui';
 import type { ProfileCard, ProfileMe, PublicProfile } from '@/lib/net/http-profiles';
+import {
+  httpDeleteMineSprite,
+  httpMineSprites,
+  httpUploadMineSprite,
+  humanMineError,
+  type MineError,
+  type MineSprite,
+} from '@/lib/net/http-my-sprites';
 import {
   MALYSHOCHKI_SET,
   SPRITES,
@@ -209,4 +220,256 @@ export function humanEditError(reason: string | undefined): string {
     default:
       return 'Не получилось сохранить.';
   }
+}
+
+/* ——— «Свой окрас» (#83): загрузка личного PNG, список своих (надеть /
+   удалить), счётчик лимита 3, подтверждение удаления вторым кликом ——— */
+
+const MINE_LIMIT_HINT = 'PNG до 1 МБ · сторона 100–1000 px · имя 2–24 символа · мест на аккаунт — 3.';
+
+export function MineSpritesSection({
+  accountName,
+  draftSprite,
+  wornSprite,
+  onPick,
+}: {
+  /** Ник карточки — для префилла имени окраса («Окрас от <ник> <дата>»). */
+  accountName: string;
+  /** Скин, выбранный в черновике формы (ещё не сохранён). */
+  draftSprite: string;
+  /** Скин, реально надетый персонажем прямо сейчас. */
+  wornSprite: string;
+  /** Черновой выбор скина активного персонажа (тот же state редактора). */
+  onPick: (id: string) => void;
+}) {
+  const [items, setItems] = useState<MineSprite[]>([]);
+  const [limit, setLimit] = useState(3);
+  const [loaded, setLoaded] = useState(false);
+  const [upName, setUpName] = useState(
+    `Окрас от ${accountName} ${new Date().toLocaleDateString('ru-RU')}`,
+  );
+  const [file, setFile] = useState<File | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  /** Вооружённое удаление: второй клик подтверждает (как в админ-вкладке). */
+  const [armedId, setArmedId] = useState<string | null>(null);
+  const armTimer = useRef<number | null>(null);
+  const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string; details?: string } | null>(null);
+
+  useEffect(
+    () => () => {
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+    },
+    [],
+  );
+
+  const flashStatus = useCallback((next: { kind: 'ok' | 'err'; text: string; details?: string } | null) => {
+    setStatus(next);
+    if (next) window.setTimeout(() => setStatus((cur) => (cur === next ? null : cur)), 6000);
+  }, []);
+
+  const reload = useCallback(async () => {
+    const res = await httpMineSprites();
+    if (res.ok) {
+      setItems(res.items);
+      setLimit(res.limit);
+      setLoaded(true);
+      return;
+    }
+    const err = res as MineError;
+    flashStatus({ kind: 'err', text: humanMineError(err.reason, 'Список своих окрасов не загрузился.') });
+  }, [flashStatus]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const upload = useCallback(async () => {
+    if (!file) {
+      flashStatus({ kind: 'err', text: 'Сначала выберите PNG-файл.' });
+      return;
+    }
+    const name = upName.replace(/\s+/g, ' ').trim();
+    if (name.length < 2 || name.length > 24) {
+      flashStatus({ kind: 'err', text: 'Имя окраса: 2–24 символа.' });
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      flashStatus({ kind: 'err', text: 'Файл больше 1 МБ не принимается — уменьшите картинку.' });
+      return;
+    }
+    setUploading(true);
+    const res = await httpUploadMineSprite(file, name);
+    setUploading(false);
+    setFile(null);
+    if (fileRef.current) fileRef.current.value = '';
+    if (!res.ok) {
+      const err = res as MineError;
+      const worn = err.wornBy || [];
+      flashStatus({
+        kind: 'err',
+        text: humanMineError(err.reason, 'Загрузить не удалось.'),
+        details:
+          err.message ||
+          (worn.length ? `Одет у: ${worn.map((w) => `${w.login} (${w.character})`).join(', ')}` : undefined),
+      });
+      await reload();
+      return;
+    }
+    flashStatus({
+      kind: 'ok',
+      text: res.dedup ? 'Такая картинка уже была загружена — показываем существующий окрас.' : 'Окрас загружен.',
+    });
+    await reload();
+  }, [file, upName, flashStatus, reload]);
+
+  const remove = useCallback(
+    async (id: string) => {
+      setBusyId(id);
+      const res = await httpDeleteMineSprite(id);
+      setBusyId(null);
+      setArmedId(null);
+      if (!res.ok) {
+        const err = res as MineError;
+        const worn = err.wornBy || [];
+        flashStatus({
+          kind: 'err',
+          text: humanMineError(err.reason, 'Удалить не удалось.'),
+          details:
+            err.message ||
+            (worn.length ? `Одет у: ${worn.map((w) => `${w.login} (${w.character})`).join(', ')}` : undefined),
+        });
+        await reload();
+        return;
+      }
+      // удалённое не может остаться выбранным в черновике — возвращаем текущий скин
+      if (draftSprite === id) onPick(wornSprite);
+      flashStatus({ kind: 'ok', text: 'Окрас удалён.' });
+      await reload();
+    },
+    [flashStatus, reload, draftSprite, onPick, wornSprite],
+  );
+
+  const armRemove = useCallback((id: string) => {
+    setArmedId(id);
+    if (armTimer.current) window.clearTimeout(armTimer.current);
+    armTimer.current = window.setTimeout(() => setArmedId(null), 5000);
+  }, []);
+
+  return (
+    <div className={styles.edField}>
+      <span className={styles.edLabel}>
+        Свой окрас{' '}
+        <span className="ml-1 text-[var(--sim-text-faint)]">
+          {items.length} из {limit}
+        </span>
+      </span>
+      <div className="mt-1.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+        {status ? (
+          <div
+            className={`mb-2 rounded-lg border p-2 ${
+              status.kind === 'ok' ? 'border-emerald-900/60 bg-emerald-950/40' : 'border-red-900/60 bg-red-950/40'
+            }`}
+          >
+            <p className={`text-[11px] font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
+              {status.text}
+            </p>
+            {status.details ? <p className="mt-1 text-[11px] text-red-200">{status.details}</p> : null}
+          </div>
+        ) : null}
+        <p className="mb-1.5 text-[10px] text-[var(--sim-text-faint)]">{MINE_LIMIT_HINT}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png"
+            className="h-8 max-w-full rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-xs text-[var(--sim-text-soft)] file:mr-2 file:rounded file:border-0 file:bg-black/40 file:px-2 file:py-1 file:text-xs file:text-[var(--sim-text-soft)]"
+            onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
+          />
+          <Input
+            className="h-8 w-44 text-xs"
+            value={upName}
+            maxLength={24}
+            placeholder="Имя окраса (2–24)"
+            onChange={(e) => setUpName(e.target.value)}
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+            disabled={uploading || !file}
+            onClick={() => void upload()}
+          >
+            {uploading ? 'Загружаем…' : 'Загрузить'}
+          </Button>
+        </div>
+        {loaded && items.length === 0 ? (
+          <p className="mt-2 text-[11px] text-[var(--sim-text-soft)]">
+            Своих окрасов пока нет — загрузите PNG из редактора окрасов.
+          </p>
+        ) : null}
+        {items.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {items.map((it) => {
+              const worn = wornSprite === it.id;
+              const picked = draftSprite === it.id && !worn;
+              return (
+                <div
+                  key={it.id}
+                  className={`flex w-24 flex-col items-center rounded-lg border p-1 transition-colors ${
+                    worn || picked
+                      ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
+                      : 'border-transparent hover:border-[var(--sim-line-hover)]'
+                  }`}
+                >
+                  <img src={it.src} alt={it.name} className="h-10 w-auto object-contain" draggable={false} />
+                  <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
+                    {it.name}
+                  </span>
+                  {worn ? (
+                    <span className="mt-0.5 rounded bg-[var(--sim-accent)] px-1 text-[9px] font-bold text-black">
+                      Сейчас на вас
+                    </span>
+                  ) : null}
+                  {it.hidden ? (
+                    <span className="mt-0.5 rounded bg-red-950 px-1 text-[9px] font-bold text-red-300">
+                      Скрыт администратором
+                    </span>
+                  ) : null}
+                  <div className="mt-1 flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-pressed={picked}
+                      disabled={worn || busyId === it.id}
+                      title={worn ? 'Окрас уже надет' : 'Выбрать окрас для активного персонажа'}
+                      onClick={() => onPick(it.id)}
+                      className="rounded border border-[var(--sim-line)] px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)] disabled:opacity-50"
+                    >
+                      {worn ? 'Надет' : picked ? 'Выбран' : 'Надеть'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === it.id}
+                      onClick={() => {
+                        if (armedId === it.id) void remove(it.id);
+                        else armRemove(it.id);
+                      }}
+                      className={`rounded border px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50 ${
+                        armedId === it.id
+                          ? 'border-red-500 bg-red-950 font-bold text-red-300'
+                          : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
+                      }`}
+                    >
+                      {armedId === it.id ? 'Точно удалить?' : 'Удалить'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }

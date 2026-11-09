@@ -49,6 +49,7 @@ import {
 import styles from './players-elyria.module.css';
 import {
   ACH_ICONS,
+  MineSpritesSection,
   Portrait,
   SKIN_GROUPS,
   SpChip,
@@ -383,6 +384,15 @@ function OwnProfileEditor({ profile, onSaved }: { profile: ProfileMe; onSaved: (
           ))}
         </div>
       </div>
+      {/* Свой окрас (#83): личные PNG игрока — выбор как у обычных скинов
+          (черновик сохраняется общей кнопкой «Сохранить»), удаление с
+          подтверждением — блок сам ходит в /sprites/mine (edField внутри). */}
+      <MineSpritesSection
+        accountName={profile.displayName || 'игрока'}
+        draftSprite={draftSprite}
+        wornSprite={originSprite}
+        onPick={setDraftSprite}
+      />
       <label className={styles.edField}>
         <span className={styles.edLabel}>Рост ({draftScale}%)</span>
         <div className="mt-1.5 flex items-center gap-2">
