@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 /**
  * Живой тест менеджера спрайтов (server/sprites.js, /sprites/* + /admin/sprites*).
  * Песочница как у test-admin-reset.mjs: mkdtemp-DATA_DIR (записей в data репо
@@ -62,6 +63,10 @@ const ADMIN = "lastochka_q";
 const USER = "kopeechka_q";
 /** Базовых в сида: сколько id в config.SPRITES (32 — источник истины счёта). */
 const BASE_COUNT = BASE_SPRITE_IDS.length;
+const originalTest1 = readFileSync(path.join(ROOT, 'public/sprites/test1.png'));
+if (createHash('sha256').update(originalTest1).digest('hex') !== '19b074917c3fcb1bdba606ffe0a61b73fa2add2bdace5a5a1a427d0bf95926d7') {
+  throw new Error('test1 must retain the supplied original PNG bytes and thin outline');
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -245,7 +250,7 @@ try {
   const cat0 = await pubCatalog();
   check(cat0.status === 200 && cat0.json?.ok === true, "публичный GET /sprites/catalog доступен без сессии");
   const items0 = cat0.json?.items || [];
-  check(items0.some(row => row.id === "test1" && row.name === "test1" && row.src === "/sprites/test1.png"),
+  check(items0.some(row => row.id === "test1" && row.name === "test1" && row.src === "/sprites/test1.png?v=original-300x200"),
     "новая builtin test1 добавляется в каталог из старого манифеста");
   check(!items0.some((row) => row.id === "origami-cat"), "снятый builtin не воскресает из манифеста");
   const relogin = await httpJson("/auth/login", {method:"POST",body:{login:USER,pass:"password1"}});

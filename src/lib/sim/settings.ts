@@ -112,7 +112,7 @@ export const SPRITES: SpriteMeta[] = [
   { id: 'puhlyashik-kit', name: 'Пухляшик', src: '/sprites/puhlyashik-kit.png' },
   { id: 'blestyashka-kit', name: 'Блестяшка', src: '/sprites/blestyashka-kit.png' },
   { id: 'chistolapik-kit', name: 'Чистолапик', src: '/sprites/chistolapik-kit.png' },
-  { id: 'test1', name: 'test1', src: '/sprites/test1.png' },
+  { id: 'test1', name: 'test1', src: '/sprites/test1.png?v=original-300x200' },
 ];
 
 /**

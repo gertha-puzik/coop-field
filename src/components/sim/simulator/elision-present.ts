@@ -1,3 +1,4 @@
+import type { EditorPlace } from '@/lib/sim/editor-model';
 /**
  * Кадр Элизии для WebGL-вида: собирает то, что 2D-цикл уже посчитал
  * (камера, свой кот, чужие, камни и деревья), без второго перевода
@@ -38,6 +39,7 @@ export type ElisionPresentInput = {
   space: ElisionSpace;
   remoteSpace: Map<string, ElisionSpace>;
   editor: boolean;
+  editorPlacement?: EditorPlace | null;
   day: ElisionDay;
   dayProgress: number;
   jumpTarget: ElisionFrame['jumpTarget'];
@@ -88,15 +90,10 @@ let surfaceMap: ReturnType<typeof currentTestMap> | null = null;
 let surfacePaint: HTMLCanvasElement | null = null;
 let surfacePack = -1;
 let paintRev = 0;
-let wasEditor = false;
+let surfaceEditor = false;
 
 /** Полный атлас поверхности: кисть/трава, покрытия, заходы и сетка на всех уровнях. */
 function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean) {
-  // Редактор рисует свой 2D-кадр; атлас GPU обновляется один раз при выходе.
-  if (editor) {
-    wasEditor = true;
-    return { paint: surface, paintRev };
-  }
   const map = currentTestMap();
   const real = paintCanvas();
   const revision = packRevision();
@@ -104,10 +101,10 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
   const h = Math.max(1, Math.round(rows * cellH));
   if (!surface) surface = document.createElement('canvas');
   if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
-      surface.width === w && surface.height === h && !wasEditor) {
+      surface.width === w && surface.height === h && surfaceEditor === editor) {
     return { paint: surface, paintRev };
   }
-  wasEditor = false;
+  surfaceEditor = editor;
   surfaceMap = map;
   surfacePaint = real;
   surfacePack = revision;
@@ -134,29 +131,6 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
       }
     }
   }
-  // В атлас попадает только явный грунт. Опора камня поднимает персонажа,
-  // но не рисует и не поднимает землю под предметом.
-  const effElev = effectiveElevRecord(map);
-  for (const [key, lv] of Object.entries(effElev)) {
-    if (lv < 1) continue;
-    const [c, r] = key.split(',').map(Number);
-    g.fillStyle = `rgba(255, 238, 176, ${Math.min(0.4, 0.055 * Math.max(0, lv - 1))})`;
-    g.fillRect(c * cellW, r * cellH, cellW, cellH);
-    g.strokeStyle = '#3a2a1c';
-    g.lineWidth = 2;
-    g.beginPath();
-    for (const [dc, dr, x0, y0, x1, y1] of [
-      [0, -1, c*cellW, r*cellH, (c+1)*cellW, r*cellH],
-      [1, 0, (c+1)*cellW, r*cellH, (c+1)*cellW, (r+1)*cellH],
-      [0, 1, c*cellW, (r+1)*cellH, (c+1)*cellW, (r+1)*cellH],
-      [-1, 0, c*cellW, r*cellH, c*cellW, (r+1)*cellH],
-    ]) {
-      if ((effElev[`${c+dc},${r+dr}`] ?? 0) >= lv) continue;
-      g.moveTo(x0, y0);
-      g.lineTo(x1, y1);
-    }
-    g.stroke();
-  }
   const battle = new Set<string>();
   for (const zone of map.zones) {
     if (zone.kind !== 'cells') continue;
@@ -178,6 +152,14 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     const [c, r] = key.split(',').map(Number);
     g.fillRect(c * cellW, r * cellH, cellW, cellH);
     g.strokeRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
+  }
+  if (editor) {
+    g.strokeStyle = 'rgba(240,255,235,.2)';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let c = 0; c <= cols; c++) { g.moveTo(c*cellW,0); g.lineTo(c*cellW,h); }
+    for (let r = 0; r <= rows; r++) { g.moveTo(0,r*cellH); g.lineTo(w,r*cellH); }
+    g.stroke();
   }
   g.restore();
   paintRev += 1;
@@ -255,7 +237,7 @@ function propActor(o: TestMapObject, cellW: number, cellH: number): ElisionActor
 
 export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
   const decals: ElisionActor[] = [];
-  if (!input.editor) {
+  {
     const self = selfWorldPx(input.engine, input.cellW, input.cellH, input.peace, input.now);
     pushActor(
       decals,
@@ -317,7 +299,16 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
         ),
       );
     }
-    for (const object of input.objects) pushActor(decals, propActor(object, input.cellW, input.cellH));
+    for (const object of input.objects) {
+      if (input.editor && object.id === input.editorPlacement?.pickId) continue;
+      pushActor(decals, propActor(object, input.cellW, input.cellH));
+    }
+    const place = input.editor ? input.editorPlacement : null;
+    if (place) {
+      const ghost = propActor({ id: '__ghost', kind: place.kind, c: Math.floor(place.x), r: Math.floor(place.y),
+        x: place.x, y: place.y, s: place.s, rot: place.rot, spr: place.spr, mir: place.mir }, input.cellW, input.cellH);
+      if (ghost) pushActor(decals, { ...ghost, opacity: .6 });
+    }
   }
   const painted = framePaint(input.cols, input.rows, input.cellW, input.cellH, input.editor);
   return {

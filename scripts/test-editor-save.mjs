@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const cache = new Map();
+function loadTs(url) {
+  const key = url.href;
+  if (cache.has(key)) return cache.get(key);
+  const out = {};
+  cache.set(key,out);
+  const js = ts.transpileModule(fs.readFileSync(url,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  new Function('require','exports',js)(id => id.startsWith('.') ? loadTs(new URL(id+'.ts',url)) : require(id),out);
+  return out;
+}
 let finish;
 const field = { ensurePaintDecoded: async () => true };
 const mapLib = { TERRAIN_MAX_LEVEL: 10, TEST_MAP_LIMITS: {objectsMax: 1000}, testMapConnectivityError: () => null };
@@ -13,6 +23,7 @@ const mocks = {
   '@/lib/sim/test-field': field,
   '@/lib/sim/test-map': mapLib,
   '@/lib/sim/geometry': {},
+  '@/lib/sim/terrain-editor': loadTs(new URL('../src/lib/sim/terrain-editor.ts',import.meta.url)),
   './editor-select': {buildEditorSelect: () => ({})},
   './editor-cells': {buildEditorCells: () => ({})},
 };
@@ -41,16 +52,6 @@ assert.deepEqual(original.elev,{'1,1':2},'preview does not mutate saved map');
 console.log('editor elevation save after close: OK');
 
 // Load the real field helpers; DOM is not needed for terrain/support queries.
-const cache = new Map();
-function loadTs(url) {
-  const key = url.href;
-  if (cache.has(key)) return cache.get(key);
-  const out = {};
-  cache.set(key,out);
-  const js = ts.transpileModule(fs.readFileSync(url,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('require','exports',js)(id => id.startsWith('.') ? loadTs(new URL(id+'.ts',url)) : require(id),out);
-  return out;
-}
 const actualField=loadTs(new URL('../src/lib/sim/test-field.ts',import.meta.url));
 const actualMap=loadTs(new URL('../src/lib/sim/test-map.ts',import.meta.url));
 const stoneMap={...structuredClone(actualMap.TEST_MAP_DEFAULT),elev:{'2,2':2},objects:[{id:'stone',kind:'stone',c:2,r:2,x:2.5,y:2.5,s:1,spr:'rock-1',rot:45}]};
@@ -80,3 +81,23 @@ assert(replies.some(([event,text])=>event==='info'&&text.includes('сохран�
 assert(!replies.some(([event])=>event==='map'||event==='field'),'failed save never broadcasts success');
 fs.rmSync(process.env.DATA_DIR,{recursive:true,force:true});
 console.log('editor disk failure rollback: OK');
+
+// Elevation stamps and inverse projection share the same pure implementation.
+const terrain = loadTs(new URL('../src/lib/sim/terrain-editor.ts',import.meta.url));
+const levels = {'1,1':2};
+const touched = new Set();
+assert(terrain.stampElevation(levels,'height',4,3,{width:3,depth:2,level:7},10,10,touched,0));
+for (const r of [3,4]) for (const c of [3,4,5]) assert.equal(levels[`${c},${r}`],7);
+assert.equal(levels['1,1'],2,'unrelated heights survive a rectangular stamp');
+assert(!terrain.stampElevation(levels,'raise',4,3,{width:3,depth:2,level:7},10,10,touched,0),'same stroke never stacks cells twice');
+terrain.stampElevation(levels,'height',4,3,{width:3,depth:2,level:0},10,10,new Set(),0);
+assert.deepEqual(levels,{'1,1':2},'level zero removes the entire rectangular stamp');
+for (const yaw of [0,.31,Math.PI/2,Math.PI,Math.PI*1.5]) {
+ for(const level of [1,5,10]) {
+  const x=550-Math.sin(yaw)*26*level,y=825-Math.cos(yaw)*26*level;
+  const hit=terrain.pickTerrainTop(x,y,100,150,12,12,(c,r)=>c===5&&r===5?level:0,26,yaw);
+  assert.equal(hit.c,5);assert.equal(hit.r,5);assert.equal(hit.level,level);
+ }
+}
+assert.deepEqual(terrain.clampBrush({width:99,depth:99,level:99},6,4),{width:6,depth:4,level:10});
+console.log('rectangular exact-height brush and terrain picking at five camera angles: OK');

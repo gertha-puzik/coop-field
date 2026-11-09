@@ -36,6 +36,7 @@ export type EditorTool =
   | 'raise'
   | 'lower'
   | 'flat'
+  | 'height'
   | 'paint'
   | 'battle'
   | 'select';
@@ -71,6 +72,8 @@ export type EditorDraft = {
   spawns: TestMapSpawn[];
   /** Карта высот черновика: «c,r» → уровень 1..TERRAIN_MAX_LEVEL (разреженно). */
   elev: Record<string, number>;
+  /** Размер прямоугольного штампа и точная высота: только настройки инструмента. */
+  elevBrush?: { width: number; depth: number; level: number };
   /** Кисть локации: холст рисунка (канонические px мира 100×150 на клетку),
    *  материал, размер/форма кисти, снимки для отмены мазков и закодированный
    *  рисунок последнего черновика. pcv null — рисунок ещё не начат: карта без

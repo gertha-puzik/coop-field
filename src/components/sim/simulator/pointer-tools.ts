@@ -1,3 +1,4 @@
+import { isElevationTool, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim canvas pointer tools carved out of simulator.tsx (W5b stage 2,
  * behavior-preserving): mouse move / down / up / leave / right-click /
@@ -63,8 +64,8 @@ export interface PointerToolsDeps {
   patchDummy: (id: string, p: Partial<DummyConfig>) => void;
   setSettings: Dispatch<SetStateAction<SimSettings>>;
   addEditorSpawn: (c: number, r: number) => boolean;
-  applyElevBrush: (mode: 'raise' | 'lower' | 'flat', c: number, r: number) => boolean;
-  beginElevStroke: (mode: 'raise' | 'lower' | 'flat', c: number, r: number) => void;
+  applyElevBrush: (mode: ElevationTool, c: number, r: number) => boolean;
+  beginElevStroke: (mode: ElevationTool, c: number, r: number) => void;
   clampPlacePos: (x: number, y: number) => { x: number; y: number };
   commitEditorDrag: () => void;
   endElevStroke: () => void;
@@ -207,6 +208,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // камня/дерева следует за курсором, пока точка не зафиксирована кликом.
       const ed = editorRef.current;
       if (editorOpenRef.current && ed) {
+        const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
+        mx = ground.x; my = ground.y;
         const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
         const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
         if (ed.drag) {
@@ -223,7 +226,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
           addEditorSpawn(c, r);
         }
         // протяжка кистей рельефа: каждая клетка росчерка — один раз
-        if (dirtPaintingRef.current && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat') && ev.buttons & 1) {
+        if (dirtPaintingRef.current && isElevationTool(ed.tool) && ev.buttons & 1) {
           applyElevBrush(ed.tool, c, r);
         }
         // мазок кисти локации: ЛКМ — материал, ПКМ — ластик; холст черновика
@@ -249,7 +252,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // Прицел прыжка: курсор в мире с поправкой на подъём земли — клик по
       // видимой поверхности возвышенности указывает в её клетку, а не в землю
       // перед обрывом. В редакторе прицел не нужен (прыжка там нет).
-      cursorWorldRef.current = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
+      cursorWorldRef.current = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
     }
     const dg = dragRef.current;
     if (dg) {
@@ -299,6 +302,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
   };
 
   const onLeave = () => {
+    cursorScreenRef.current = null;
+    cursorWorldRef.current = null;
     const e = engineRef.current;
     e.hover = null;
     const cv = canvasRef.current;
@@ -330,6 +335,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         mx = wpt.x;
         my = wpt.y;
       }
+      const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
+      mx = ground.x; my = ground.y;
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
       // Инструменты препятствий: призрак постановки (клик — фиксация/подъём);
@@ -384,7 +391,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         ev.preventDefault();
         return;
       }
-      if (ev.button === 0 && (ed.tool === 'raise' || ed.tool === 'lower' || ed.tool === 'flat')) {
+      if (ev.button === 0 && isElevationTool(ed.tool)) {
         pushEditorUndo();
         dirtPaintingRef.current = true;
         beginElevStroke(ed.tool, c, r);
@@ -593,7 +600,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // Поправка на подъём земли: клик по видимой поверхности возвышенности
       // указывает в её клетку, а не в землю перед обрывом — с ближнего ракурса
       // на возвышенность теперь можно и кликнуть, и забраться.
-      const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH);
+      const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x;
       my = ground.y;
       if (!s.arrow.battleMode) {
