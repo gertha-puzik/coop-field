@@ -77,8 +77,8 @@ function paintPatternFor(ctx: CanvasRenderingContext2D, mat: string): CanvasPatt
 }
 
 /** Штамп кисти по черновому холсту (канонические px мира). Круг — по курсору;
- *  пресеты «клетка»/«полклетки» — готовая область, привязанная к сетке клеток:
- *  штампуется ровно та клетка (или полклетка), под которой курсор. */
+ *  прямоугольные пресеты — свободные области с центром под курсором.
+ *  Промежутки между событиями мыши соединяются непрерывным росчерком. */
 export function stampPaintBrush(
   d: EditorDraft,
   mat: string,
@@ -101,16 +101,19 @@ export function stampPaintBrush(
     g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
   }
   g.imageSmoothingEnabled = false;
-  if (d.pshape === 'round') {
-    const r = Math.max(0.5, d.psize / 2);
-    g.beginPath();
-    g.arc(cx, cy, r, 0, Math.PI * 2);
-    g.fill();
-  } else {
-    const w = d.pshape === 'cell' ? PAINT_CELL_W : PAINT_CELL_W / 2;
-    const h = d.pshape === 'cell' ? PAINT_CELL_H : PAINT_CELL_H / 2;
-    g.fillRect(Math.floor(cx / w) * w, Math.floor(cy / h) * h, w, h);
+  const size=paintBrushSize(d),previous=d.paintLast?.mat===mat?d.paintLast:null;
+  if(d.pshape==='round'){
+    const r=Math.max(.5,d.psize/2);
+    g.beginPath();g.arc(cx,cy,r,0,Math.PI*2);g.fill();
+    if(previous){g.strokeStyle=g.fillStyle;g.lineWidth=r*2;g.lineCap='round';g.beginPath();g.moveTo(previous.x,previous.y);g.lineTo(cx,cy);g.stroke();}
+  }else{
+    const steps=previous?Math.max(1,Math.ceil(Math.hypot(cx-previous.x,cy-previous.y)/Math.max(1,Math.min(size.w,size.h)/3))):1;
+    for(let i=1;i<=steps;i++){
+      const x=previous?previous.x+(cx-previous.x)*i/steps:cx,y=previous?previous.y+(cy-previous.y)*i/steps:cy;
+      g.fillRect(x-size.w/2,y-size.h/2,size.w,size.h);
+    }
   }
+  d.paintLast={x:cx,y:cy,mat};
   g.restore();
   d.pdirty = true;
 }
@@ -308,4 +311,43 @@ export function ensureDraftPaint(d: EditorDraft): HTMLCanvasElement {
   d.pdirty = true;
   setPaintOverride(cv, true);
   return cv;
+}
+
+
+/** Raster presets are free-positioned areas, independent of the terrain grid. */
+export function paintBrushSize(d:Pick<EditorDraft,'pshape'|'psize'|'pwidth'|'pheight'>):{w:number;h:number}{
+  if(d.pshape==='round')return {w:d.psize,h:d.psize};
+  if(d.pshape==='rect')return {w:d.pwidth??150,h:d.pheight??100};
+  return {w:PAINT_CELL_W*(d.pshape==='half'?.5:1),h:PAINT_CELL_H*(d.pshape==='half'?.5:1)};
+}
+/** Scanline flood fill: stores one source image and compact horizontal spans.
+ * The connected color region is replaced with the chosen repeating material.
+ */
+export function fillPaintArea(d:EditorDraft,mat:string,mx:number,my:number,cellW:number,cellH:number):void {
+  const cv=d.pcv,g=cv?.getContext('2d');if(!cv||!g)return;
+  const w=cv.width,h=cv.height,x=Math.floor(mx/cellW*PAINT_CELL_W),y=Math.floor(my/cellH*PAINT_CELL_H);
+  if(x<0||y<0||x>=w||y>=h)return;
+  const source=g.getImageData(0,0,w,h).data,index=(y*w+x)*4;
+  const target=[source[index],source[index+1],source[index+2],source[index+3]];
+  const seen=new Uint8Array(w*h),stack=[y*w+x],spans:number[][]=[];
+  const match=(i:number)=>!seen[i]&&Math.abs(source[i*4+3]-target[3])<32&&
+    (target[3]<32||Math.max(Math.abs(source[i*4]-target[0]),Math.abs(source[i*4+1]-target[1]),Math.abs(source[i*4+2]-target[2]))<=48);
+  while(stack.length){
+    const i=stack.pop()!,row=Math.floor(i/w);let left=i%w,right=left;
+    if(!match(i))continue;
+    while(left>0&&match(row*w+left-1))left--;
+    while(right<w-1&&match(row*w+right+1))right++;
+    for(let xx=left;xx<=right;xx++)seen[row*w+xx]=1;
+    spans.push([left,row,right-left+1]);
+    for(const yy of [row-1,row+1])if(yy>=0&&yy<h){
+      let inside=false;
+      for(let xx=left;xx<=right;xx++){
+        const hit=match(yy*w+xx);if(hit&&!inside)stack.push(yy*w+xx);inside=hit;
+      }
+    }
+  }
+  g.save();g.fillStyle=mat==='erase'?'#000':paintPatternFor(g,mat)??'#42582c';
+  if(mat==='erase')g.globalCompositeOperation='destination-out';
+  for(const [xx,yy,width] of spans)g.fillRect(xx,yy,width,1);
+  g.restore();d.pdirty=true;d.paintLast=undefined;
 }

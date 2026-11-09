@@ -186,7 +186,10 @@ export function ensurePaintDecoded(): Promise<boolean> {
  * rebuild=false — во время мазка: маска обновляется, контур пересчитается по
  * окончании мазка (марширующие квадраты на весь мир каждый кадр — дорого).
  */
+let paintLayerVersion=0;
+export function paintRevision():number{return paintLayerVersion;}
 export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean): void {
+  paintLayerVersion++;
   paintCv = cv;
   paintW = cv?.width ?? 0;
   paintH = cv?.height ?? 0;

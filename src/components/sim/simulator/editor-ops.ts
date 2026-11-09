@@ -1,5 +1,5 @@
 import { terrainAt, terrainBrushBounds, stampTerrainRect, sanitizeTerrainElev, freeTerrainPlacement } from '@/lib/sim/terrain-shape';
-import { clampBrush, type ElevationTool } from '@/lib/sim/terrain-editor';
+import { clampBrush, isElevationTool, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim editor draft operations carved out of simulator.tsx (W5b stage 2,
  * behavior-preserving): draft sync/preview/undo, open/close, tool pick,
@@ -12,7 +12,7 @@ import { clampBrush, type ElevationTool } from '@/lib/sim/terrain-editor';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Engine } from './sim-model';
 import type { SimSettings } from '@/lib/sim/settings';
-import { EDITOR_PASS_KEY, SETMAP_MIN_GAP_MS, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
+import { EDITOR_PASS_KEY, SETMAP_MIN_GAP_MS, editorSnapshot, restoreEditorSnapshot, trimEditorHistory, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
 import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync } from '@/lib/sim/paint';
 import { createCoopClient } from '@/lib/net/coop';
 import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap, testObstacleBodies, testObjectAt } from '@/lib/sim/test-field';
@@ -109,25 +109,15 @@ export function buildEditorOps(params: EditorOpsParams) {
   const applyDraftPreview = () => {
     const d = editorRef.current;
     if (!d) return;
-    setTestMap(draftMap(d));
+    setTestMap({...draftMap(d,false),...(d.ppaint?{paint:d.ppaint}:{})});
     if (d.pcv) setPaintOverride(d.pcv, true);
   };
 
-  const pushEditorUndo = (withPaint = false) => {
+  const pushEditorUndo = (withPaint = false,label?:string) => {
     const d = editorRef.current;
     if (!d) return;
-    const entry: EditorDraft['undo'][number] = { zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), spawns: d.spawns.map((s) => ({ ...s })), elev: { ...d.elev }, cols: d.cols, rows: d.rows };
-    // Инструмент «Перенести» режет и пиксельную отрисовку — её откат нужен тем же
-    // шагом отмены (снимок холста кладётся в ту же запись, память — как у мазков).
-    if (withPaint && d.pcv) {
-      try {
-        entry.paint = d.pcv.getContext('2d')?.getImageData(0, 0, d.pcv.width, d.pcv.height) ?? undefined;
-      } catch {
-        /* холст мог быть испорчен — отмена коснётся только данных */
-      }
-    }
-    d.undo.push(entry);
-    if (d.undo.length > 40) d.undo.shift();
+    const entry=editorSnapshot(d,withPaint);entry.label=label??entry.label;
+    d.undo.push(entry);d.redo=[];trimEditorHistory(d);
   };
 
   const { pickEditorSelection, dragEditorSelection, dropEditorSelection } = buildEditorSelect({
@@ -167,7 +157,9 @@ export function buildEditorOps(params: EditorOpsParams) {
       ppaint: m.paint ?? null,
       cols: m.cols,
       rows: m.rows,
-      tool: 'cells',
+      tool: 'paint',
+      redo: [],
+      showGrid: false,
       drag: null,
       selRect: null,
       selFloat: null,
@@ -224,6 +216,8 @@ export function buildEditorOps(params: EditorOpsParams) {
     // Уход с инструмента «Перенести» с «плавающим» куском — ставим его на текущее
     // место: вырезанным локация остаться не должна.
     if (d.tool === 'select' && tool !== 'select' && d.selFloat) dropEditorSelection();
+    if(isElevationTool(tool))d.showGrid=true;
+    else if(isElevationTool(d.tool))d.showGrid=false;
     d.tool = tool;
     if (tool !== 'select') {
       d.selRect = null;
@@ -303,7 +297,11 @@ export function buildEditorOps(params: EditorOpsParams) {
    *  существующего объекта под курсором. */
   const editorPlacementClick = (mx: number, my: number) => {
     const p = editorPlaceRef.current;
-    if (!p) return;
+    if (!p) {
+      const hit=pickObstacleAt(mx,my,null);
+      if(hit){setEditorTool(hit.kind==='tree'?'tree':'stone');liftObstacleToPlace(hit);}
+      return;
+    }
     const s = settingsRef.current;
     if (p.anchored) {
       // клик по другому объекту — поднимаем его; по земле — переносим точку
@@ -374,7 +372,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const nc = Math.min(TEST_MAP_LIMITS.colsMax, Math.max(TEST_MAP_LIMITS.colsMin, cols));
     const nr = Math.min(TEST_MAP_LIMITS.rowsMax, Math.max(TEST_MAP_LIMITS.rowsMin, rows));
     if (nc === d.cols && nr === d.rows) return;
-    pushEditorUndo();
+    pushEditorUndo(true,'Размер мира');
     d.cols = nc;
     d.rows = nr;
     const kept: TestMapZone[] = [];
@@ -596,36 +594,25 @@ export function buildEditorOps(params: EditorOpsParams) {
     syncEditorView();
   };
 
-  const undoEditor = () => {
-    const d = editorRef.current;
-    if (!d || d.undo.length === 0) return;
-    // Плавающий кусок «Перенести» при отмене возвращается на место — иначе
-    // откат данных уедет от отрисовки (вырезанный участок так и останется пустым).
-    if (d.selFloat) dropEditorSelection();
-    const back = d.undo.pop()!;
-    d.zones = back.zones.map((z) => ({ ...z }));
-    d.objects = back.objects.map((o) => ({ ...o }));
-    d.spawns = back.spawns.map((s) => ({ ...s }));
-    d.elev = { ...back.elev };
-    d.cols = back.cols;
-    d.rows = back.rows;
-    d.selRect = null;
-    d.selFloat = null;
-    editorSelRef.current = null;
-    d.sel = d.sel.filter((id) => d.zones.some((z) => z.id === id));
-    if (back.paint && d.pcv && d.pcv.width === back.paint.width && d.pcv.height === back.paint.height) {
-      d.pcv.getContext('2d')?.putImageData(back.paint, 0, 0);
-      setPaintOverride(d.pcv, true);
+  const travelHistory=(direction:'undo'|'redo',steps=1)=>{
+    const d=editorRef.current;if(!d)return;
+    if(d.selFloat)dropEditorSelection();
+    d.redo??=[];
+    const from=direction==='undo'?d.undo:d.redo,to=direction==='undo'?d.redo:d.undo;
+    for(let i=0;i<steps&&from.length;i++){
+      const back=from.pop()!;const current=editorSnapshot(d,back.paint!==undefined);
+      current.label=back.label;to.push(current);restoreEditorSnapshot(d,back);
     }
-    patchField({ cols: d.cols, rows: d.rows });
-    applyDraftPreview();
-    syncEditorView();
+    trimEditorHistory(d);editorSelRef.current=null;
+    setPaintOverride(d.pcv,true);patchField({cols:d.cols,rows:d.rows});applyDraftPreview();syncEditorView();
   };
+  const undoEditor=(steps=1)=>travelHistory('undo',steps);
+  const redoEditor=(steps=1)=>travelHistory('redo',steps);
 
   const resetEditor = () => {
     const d = editorRef.current;
     if (!d) return;
-    pushEditorUndo();
+    pushEditorUndo(true,'Возврат сохранённой карты');
     const m = savedMapRef.current;
     d.zones = m.zones.map((z) => ({ ...z }));
     d.objects = (m.objects ?? []).map((o) => ({ ...o }));
@@ -637,7 +624,12 @@ export function buildEditorOps(params: EditorOpsParams) {
     d.selFloat = null;
     editorSelRef.current = null;
     d.sel = [];
-    d.dirty = true;
+    d.dirty = false;
+    d.pcv=null;d.ppaint=m.paint??null;d.pdirty=false;
+    setTestMap(m);setPaintOverride(null,true);
+    if(m.paint)void ensurePaintDecoded().then(ok=>{
+      if(ok&&editorRef.current===d&&!d.pdirty){d.pcv=copyPaintCanvas();applyDraftPreview();syncEditorView();}
+    });
     patchField({ cols: d.cols, rows: d.rows });
     applyDraftPreview();
     syncEditorView();
@@ -710,11 +702,11 @@ export function buildEditorOps(params: EditorOpsParams) {
       });
   };
   return {
-    syncEditorView, pushEditorUndo, openEditor, closeEditor, setEditorTool,
+    syncEditorView, refreshEditorPreview:applyDraftPreview, pushEditorUndo, openEditor, closeEditor, setEditorTool,
     clampPlacePos, editorPlacementClick, confirmEditorPlace, cancelEditorPlace,
     resizeEditorWorld, commitEditorDrag, deleteEditorZone, toggleEditorSel,
     mergeEditorZones, paintEditorCellObject, placeBattleCell, applyElevBrush,
-    beginElevStroke, endElevStroke, addEditorSpawn, toggleEditorSpawn,
+    redoEditor, beginElevStroke, endElevStroke, addEditorSpawn, toggleEditorSpawn,
     placeEditorEntry, renameEditorZone, undoEditor, resetEditor, saveEditorMap,
     pickEditorSelection, dragEditorSelection, dropEditorSelection,
   };

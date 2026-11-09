@@ -1,3 +1,4 @@
+import styles from './editor-workspace.module.css';
 /**
  * Field stage section, carved out of simulator.tsx (W5b stage 2): the bordered
  * frame that hosts the 2D world canvas, the HUD canvas and the atmosphere
@@ -59,18 +60,18 @@ export function FieldStage(props: FieldStageProps) {
     editorOverlay,
   } = props;
   return (
-      <section className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1">
+      <section className={`flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1 ${editorOverlay?'h-full min-h-[480px] flex-1':''}`}>
         <div className="relative w-full min-w-0 flex-1 lg:min-h-0">
           <div
             ref={fieldFrameRef}
             role="region"
             aria-label="Игровое поле"
-            className="relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0"
+            className={`${styles.frame} relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0`}
           >
             <div
               className={
                 testField
-                  ? 'relative h-full w-full'
+                  ? `${styles.scene} relative h-full w-full`
                   : fieldFit
                     ? 'relative mx-auto'
                     : 'relative mx-auto w-full max-w-full'

@@ -17,7 +17,7 @@ import { DUMMY_EMIT_MS, DUMMY_ID, DUMMY_SCALE, round2 } from '@/lib/sim/engine-c
 import { bfsPath } from '@/lib/sim/settings';
 import { createCoopClient } from '@/lib/net/coop';
 import { dummiesOf, dummyIsDrawn, othersOf, type CharRef } from '@/lib/sim/targeting';
-import { ensureDraftPaint, pushPaintUndo, stampPaintBrush } from '@/lib/sim/paint';
+import { ensureDraftPaint, fillPaintArea, stampPaintBrush } from '@/lib/sim/paint';
 import { groundPointAtWorld, setPaintOverride, testBattleRouteBlocked, testEntryAt, testEntryStrict, testPeaceBattleBlocked, testPointInCellsZone, testPointInIsland, testWalkableCell } from '@/lib/sim/test-field';
 import { peaceHalfBox, screenToWorld, spriteBoxOf } from '@/lib/sim/geometry';
 
@@ -69,6 +69,8 @@ export interface PointerToolsDeps {
   clampPlacePos: (x: number, y: number) => { x: number; y: number };
   commitEditorDrag: () => void;
   endElevStroke: () => void;
+  syncEditorView: () => void;
+  refreshEditorPreview: () => void;
   paintEditorCellObject: (kind: 'dirt' | 'ground', c: number, r: number) => boolean;
   placeBattleCell: (c: number, r: number) => void;
   placeEditorEntry: (c: number, r: number) => boolean;
@@ -117,6 +119,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     clampPlacePos,
     commitEditorDrag,
     endElevStroke,
+    syncEditorView,
+    refreshEditorPreview,
     paintEditorCellObject,
     placeBattleCell,
     placeEditorEntry,
@@ -179,6 +183,12 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     const s = settingsRef.current;
     const e = engineRef.current;
     const testMode = fieldFormatRef.current === 'test';
+    const pan=editorOpenRef.current?editorRef.current?.panDrag:null;
+    if(pan&&editorRef.current){
+      const dx=(ev.clientX-pan.sx)/camFxRef.current.z,dy=(ev.clientY-pan.sy)/camFxRef.current.z,yaw=camYawRef.current;
+      editorRef.current.pan={x:pan.x-dx*Math.cos(yaw)-dy*Math.sin(yaw),y:pan.y+dx*Math.sin(yaw)-dy*Math.cos(yaw)};
+      return;
+    }
     // «Тест»: мир больше вьюпорта — курсор переводится в мировые координаты через камеру
     let { mx, my } = canvasPoint(ev);
     if (testMode) {
@@ -317,7 +327,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
   const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     const ed = editorRef.current;
     if (editorOpenRef.current && ed) {
-      if (ev.button !== 0 && ev.button !== 2) return;
+      if (ev.button !== 0 && ev.button !== 2 && ev.button !== 1) return;
       const s = settingsRef.current;
       const cvp = canvasRef.current;
       let mx = 0;
@@ -337,6 +347,10 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         mx = wpt.x;
         my = wpt.y;
       }
+      if(ed.tool==='pan'||ed.spacePan||ev.button===1){
+        ed.panDrag={sx:ev.clientX,sy:ev.clientY,x:ed.pan?.x??0,y:ed.pan?.y??0};
+        ev.currentTarget.setPointerCapture(ev.pointerId);ev.currentTarget.style.cursor='grabbing';ev.preventDefault();return;
+      }
       const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x; my = ground.y;
       ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
@@ -346,6 +360,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // Инструменты препятствий: призрак постановки (клик — фиксация/подъём);
       // «Земля» и «Покрытие» красятся кликом и протяжкой (одна отмена на росчерк);
       // ПКМ по-прежнему рисует ластик, чтобы стирать зоны и объекты протяжкой.
+      if(ev.button===0&&ed.tool==='cursor'){editorPlacementClick(mx,my);ev.preventDefault();return;}
       if (ev.button === 0 && ed.tool === 'entry') {
         placeEditorEntry(c, r);
         ev.preventDefault();
@@ -372,11 +387,16 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         ev.preventDefault();
         return;
       }
-      if ((ev.button === 0 || ev.button === 2) && ed.tool === 'paint') {
+      if ((ev.button === 0 || ev.button === 2) && (ed.tool === 'paint'||ed.tool==='fill')) {
         // Кисть локации: ЛКМ — выбранный материал, ПКМ — ластик. Росчерк ставит
         // один снимок отмены; контур локации пересчитается на отпускании.
         ensureDraftPaint(ed);
-        pushPaintUndo(ed);
+        pushEditorUndo(true);
+        ed.paintLast=undefined;
+        if(ed.tool==='fill'){
+          fillPaintArea(ed,ev.button===2?'erase':ed.pmat,mx,my,s.field.cellW,s.field.cellH);
+          setPaintOverride(ed.pcv,true);ed.dirty=true;refreshEditorPreview();syncEditorView();ev.preventDefault();return;
+        }
         paintStrokeRef.current = true;
         stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH);
         if (ed.pcv) setPaintOverride(ed.pcv, false);
@@ -540,12 +560,13 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     // Редактор: отпускание кнопки завершает рисунок — прямоугольник становится
     // зоной; росчерк «Земли» просто заканчивается (отмена уже записана).
     const ed = editorRef.current;
+    if(ed){ed.panDrag=undefined;ed.paintLast=undefined;}
     dirtPaintingRef.current = false;
     endElevStroke();
     // Мазок кисти закончен: пересчитываем контур локации по обновлённой маске.
     if (paintStrokeRef.current) {
       paintStrokeRef.current = false;
-      if (ed?.pcv) setPaintOverride(ed.pcv, true);
+      if (ed?.pcv) {setPaintOverride(ed.pcv, true);refreshEditorPreview();}
     }
     if (editorOpenRef.current && ed) {
       try {
@@ -556,6 +577,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       // «Перенести»: отпускание кнопки ставит плавающий кусок на место.
       if (ed.selFloat) dropEditorSelection();
       commitEditorDrag();
+      syncEditorView();
       const cvE = canvasRef.current;
       if (cvE) cvE.style.cursor = 'crosshair';
       return;

@@ -147,6 +147,15 @@ export function useSimNet(deps: SimNetDeps) {
     // пока игрок печатает имя. Вход без имени не делаем — join уйдёт из
     // pickRoom(), где имя берётся из pendingJoinRef (его кладёт joinFromEntry).
     if (login) setPlayerName(login);
+    let lastMapSignature='';
+    const receiveMap=(map:TestMap,notify=false)=>{
+      const signature=JSON.stringify(map);
+      clearEditorSave();
+      if(signature===lastMapSignature)return;
+      lastMapSignature=signature;
+      if(notify)setEditorMsg('Локация обновлена.');
+      applyTestMap(map);showMapLoading();
+    };
     const client = createCoopClient({
       onWhoami: (row) => {
         setWhoami?.(row);
@@ -207,9 +216,7 @@ export function useSimNet(deps: SimNetDeps) {
         if (field.map) {
           const checkedMap = sanitizeTestMap(field.map).map;
           if (checkedMap) {
-            clearEditorSave(); // a reconnect also resolves a stale wait indicator
-            applyTestMap(checkedMap);
-            showMapLoading();
+            receiveMap(checkedMap);
           }
         }
         // Атмосфера комнаты — общая: якорь часов цикла и погода приходят в снапшоте
@@ -292,16 +299,7 @@ export function useSimNet(deps: SimNetDeps) {
         }
         applyRab(!!field.rab?.on);
       },
-      onMap: (map) => {
-        // Кто-то сохранил локацию в редакторе (и мы сами — сервер шлёт map и автору).
-        // Строка ставится ДО applyTestMap: при открытом запачканном черновике
-        // applyTestMap сбрасывает его на внешнюю карту и подменяет сообщение
-        // предупреждением о потерянной правке (applyTestMap в simulator.tsx).
-        clearEditorSave(); // прогресс сохранения завершён — локация применена
-        setEditorMsg('Локация обновлена.');
-        applyTestMap(map);
-        showMapLoading();
-      },
+      onMap: (map) => receiveMap(map,true),
       onCat: (cat) => {
         if (cat.x === 0 && cat.y === 0) {
           remoteAimRef.current.delete(`p${cat.id}`);
