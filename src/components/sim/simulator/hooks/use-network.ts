@@ -207,6 +207,7 @@ export function useSimNet(deps: SimNetDeps) {
         if (field.map) {
           const checkedMap = sanitizeTestMap(field.map).map;
           if (checkedMap) {
+            clearEditorSave(); // a reconnect also resolves a stale wait indicator
             applyTestMap(checkedMap);
             showMapLoading();
           }
@@ -599,6 +600,8 @@ export function useSimNet(deps: SimNetDeps) {
         jellyRef.current[RAB_ID] = 1;
       },
       onClose: (info) => {
+        clearEditorSave();
+        if(editorOpenRef.current)setEditorMsg('Связь прервалась. Подтверждение сохранения не получено; после подключения проверьте карту.');
         setNetReady(false);
         // При обрыве клиент сам переподключается с backoff и повторным join:
         // движение в это время заблокировано (requestStep), состояние вернут you/field.

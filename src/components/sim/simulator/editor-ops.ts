@@ -1,4 +1,4 @@
-import { terrainAt, terrainBrushBounds, stampTerrainRect, sanitizeTerrainElev } from '@/lib/sim/terrain-shape';
+import { terrainAt, terrainBrushBounds, stampTerrainRect, sanitizeTerrainElev, freeTerrainPlacement } from '@/lib/sim/terrain-shape';
 import { stampElevation, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim editor draft operations carved out of simulator.tsx (W5b stage 2,
@@ -164,7 +164,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       pshape: 'round',
       pundo: [],
       pdirty: false,
-      ppaint: null,
+      ppaint: m.paint ?? null,
       cols: m.cols,
       rows: m.rows,
       tool: 'cells',
@@ -565,7 +565,8 @@ export function buildEditorOps(params: EditorOpsParams) {
     const stroke = elevStrokeRef.current;
     if (!stroke) return false;
     const b = d.elevBrush ?? {width:1,depth:1,level:1};
-    if (!stampTerrainRect(d.elev, terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows), mode,b.level,stroke.touched,stroke.flat,TERRAIN_MAX_LEVEL)) return false;
+    const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(d.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows);
+    if (!stampTerrainRect(d.elev, rect, mode,b.level,stroke.touched,stroke.flat,TERRAIN_MAX_LEVEL)) return false;
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -700,8 +701,8 @@ export function buildEditorOps(params: EditorOpsParams) {
           return;
         }
         d.lastSaveSentAt = nowMs;
-        net.emit('setmap', { map: { ...snapshot, ...(paint ? { paint } : {}) } });
         setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
+        net.emit('setmap', { map: { ...snapshot, ...(paint ? { paint } : {}) } });
       })
       .catch(() => {
         setEditorSave(null);

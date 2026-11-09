@@ -332,3 +332,35 @@ export function drawRectTerrain(
     g.fillRect(x,y,w+.1,h+.1);
   }
 }
+
+/** Free placement uses the cursor as the block center. Magnet modes affect
+ * only nearby terrain rectangles, never the global editing grid or props.
+ * 'level' joins equal-height surfaces; 'all' also aligns stepped terraces.
+ */
+export function freeTerrainPlacement(
+  elev:Record<string,number>,x:number,y:number,width:number,depth:number,level:number,
+  cols:number,rows:number,mode:'off'|'level'|'all'='level',distance=.12,
+):TerrainRect & {snapped:boolean} {
+  const clampX=(v:number)=>Math.max(0,Math.min(cols-width,v));
+  const clampY=(v:number)=>Math.max(0,Math.min(rows-depth,v));
+  let bx=clampX(x-width/2),by=clampY(y-depth/2),snapped=false;
+  if(mode!=='off'){
+    const candidates=Object.entries(elev).map(([k,v])=>decodeTerrainRect(k,v)).filter((b):b is TerrainRect=>
+      !!b&&b.level>0&&(mode==='all'||Math.abs(b.level-level)<eps)&&
+      b.x+b.w>=bx-distance&&b.x<=bx+width+distance&&b.y+b.d>=by-distance&&b.y<=by+depth+distance);
+    const closest=(origin:number,values:number[])=>{
+      let best=origin,gap=distance+eps;
+      for(const value of values){const d=Math.abs(value-origin);if(d<gap){best=value;gap=d;}}
+      return {value:best,snapped:gap<=distance};
+    };
+    const xx:number[]=[];
+    for(const b of candidates)if(b.y+b.d>=by-distance&&b.y<=by+depth+distance)
+      xx.push(b.x,b.x+b.w,b.x-width,b.x+b.w-width);
+    const px=closest(bx,xx);bx=clampX(px.value);snapped=px.snapped;
+    const yy:number[]=[];
+    for(const b of candidates)if(b.x+b.w>=bx-eps&&b.x<=bx+width+eps)
+      yy.push(b.y,b.y+b.d,b.y-depth,b.y+b.d-depth);
+    const py=closest(by,yy);by=clampY(py.value);snapped ||= py.snapped;
+  }
+  return {x:round(bx),y:round(by),w:width,d:depth,level,snapped};
+}

@@ -210,6 +210,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       if (editorOpenRef.current && ed) {
         const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
         mx = ground.x; my = ground.y;
+        ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
+        ed.terrainSnapDistance=10/(s.field.cellW*camFxRef.current.z);
         const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
         const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
         if (ed.drag) {
@@ -337,6 +339,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       }
       const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x; my = ground.y;
+      ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
+      ed.terrainSnapDistance=10/(s.field.cellW*camFxRef.current.z);
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
       // Инструменты препятствий: призрак постановки (клик — фиксация/подъём);
@@ -395,6 +399,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         pushEditorUndo();
         dirtPaintingRef.current = true;
         beginElevStroke(ed.tool, c, r);
+        if(ed.elevFree){endElevStroke();dirtPaintingRef.current=false;}
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'crosshair';
         ev.preventDefault();

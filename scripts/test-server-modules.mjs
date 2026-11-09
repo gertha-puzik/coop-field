@@ -16,6 +16,7 @@
  *
  * Запуск: node scripts/test-server-modules.mjs (npm-раннер: npm run test:server-modules).
  */
+import { deflateSync } from "node:zlib";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -348,6 +349,30 @@ eq(
   const levelAt=(c,r)=>c===4&&r===3?2:0;
   eq("сервер: скругление у диагонального угла",world.terrainBodyOverlap(3.8,2.8,.28,28/150,0,levelAt),0);
   testmap.testMap.elev=oldElev;
+}
+
+
+// PNG scanline reconstruction is in-place to avoid a second full RGBA buffer.
+// Exercise every predictor, including alpha crossing the 127 threshold.
+function pngFixture(filter,bpp=4){
+ const w=3,h=2,pixels=Buffer.from(Array.from({length:w*h*bpp},(_,i)=>bpp===4&&i%4===3?[0,128,255][Math.floor(i/4)%3]:(i*37)%256));
+ const stride=w*bpp,raw=Buffer.alloc((stride+1)*h);
+ for(let y=0;y<h;y++){
+  raw[y*(stride+1)]=filter;
+  for(let x=0;x<stride;x++){
+   const i=y*stride+x,a=x>=bpp?pixels[i-bpp]:0,b=y?pixels[i-stride]:0,c=y&&x>=bpp?pixels[i-stride-bpp]:0;
+   const pp=a+b-c,pa=Math.abs(pp-a),pb=Math.abs(pp-b),pc=Math.abs(pp-c);
+   const pred=[0,a,b,(a+b)>>1,pa<=pb&&pa<=pc?a:pb<=pc?b:c][filter];
+   raw[y*(stride+1)+1+x]=(pixels[i]-pred)&255;
+  }
+ }
+ const chunk=(type,data)=>{const b=Buffer.alloc(data.length+12);b.writeUInt32BE(data.length);b.write(type,4);data.copy(b,8);return b;};
+ const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=bpp===4?6:2;
+ return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]).toString('base64');
+}
+for(let filter=0;filter<=4;filter++){
+ eq(`PNG filter ${filter}: exact alpha`,[...world.decodePaintPng(pngFixture(filter)).mask],[0,1,1,0,1,1]);
+ eq(`RGB filter ${filter}: opaque`,[...world.decodePaintPng(pngFixture(filter,3)).mask],[1,1,1,1,1,1]);
 }
 
 // ---------- отчёт ----------
