@@ -1,0 +1,23 @@
+---
+description: graphify local context graph navigation
+alwaysApply: true
+---
+
+Optional local knowledge graph (graphify). It is an accelerator, not a gate. The graph is
+NOT committed: `graphify-out/` is per-clone and gitignored — never commit graph files and
+never add graph builds to CI. Build stays AST-only (`--code-only`, no API keys): code never
+leaves the machine.
+
+If graphify is installed and `graphify-out/graph.json` exists, orient BEFORE grepping:
+
+- `graphify query "<question>"` — scoped subgraph with file:line refs (raise --budget when truncated)
+- `graphify path "<A>" "<B>"` and `graphify explain "<sym>"` — relations and focused reads
+- `graphify affected "<sym>"` — reverse impact list; run before refactors
+- Refresh when stale: `graphify update .` (incremental, AST cache; first build on a fresh
+  clone: `graphify extract . --code-only`, ~40 s)
+
+Read/Grep/Glob raw files only after the graph has oriented you, and verify the exact lines
+you change — graph output is a retrieval hint and ages with commits. Include this
+preference in every subagent prompt that explores code. If the sandbox lacks Python/uv or
+the graph is absent, proceed with the repo's AGENTS.md Code map — never block on graphify,
+and never justify file growth to a graph listing (the arch:check limits always win).

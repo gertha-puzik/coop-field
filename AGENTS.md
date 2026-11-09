@@ -79,6 +79,29 @@ Where to start common tasks:
 - **"Admin config"** → `server/cfg-registry.js` (whitelist + clamps) + `server/runtime-config.js` (routes) + `src/components/admin/cfg-dashboard.tsx`; `npm run test:cfg` pins the registry.
 - **"Site variant / new public page"** → inline `IS_ELYRIA`/`NEXT_PUBLIC_SITE` check in the page module (never a shared import for folding reasons — the arch gate `isolatedImports` bans importing `src/lib/site.ts` anywhere except site.ts itself), `scripts/prune-export.mjs` cut list, `build:variants` + `npm run check:variants` (A1) — the artifact gate must be green: zero Elysiae markers in www-grotto (incl. latin 'elisium'), no retired /combat//hunger/ routes in www-elyria, chunk links resolve.
 
+## Context graph: graphify (optional local index)
+
+A local knowledge graph over this codebase (graphify; the official PyPI package is
+`graphifyy` — double-y, any other `graphify*` package is unrelated). It is an OPTIONAL
+accelerator, not a gate and never a CI dependency. The graph is NOT committed:
+`graphify-out/` is gitignored and rebuilt per clone.
+
+Setup per machine (needs Python 3.10+ and uv): `uv tool install graphifyy`, then
+`graphify hook install` (writes `.git/hooks/*` only — untracked, rebuilds the graph on
+commit) and the first build `graphify extract . --code-only` (~40 s; later refreshes are
+`graphify update .`, seconds via the AST cache). AST-only means deterministic, free and
+nothing leaves the machine — do NOT configure LLM/semantic backends for this repo.
+Per-assistant skill/hook wiring: `graphify install` (user-level, reversible by
+`graphify uninstall`). Sandboxes without Python/uv (Cursor Cloud and similar) skip
+graphify — the Code map above stays the primary navigation.
+
+When `graphify-out/graph.json` exists, prefer it over blind grep for ORIENTATION:
+`graphify query "<question>"` (scoped node dump with file:line), `graphify path "<A>" "<B>"`,
+`graphify explain "<sym>"`, and `graphify affected "<sym>"` (reverse impact before
+refactors). Graph output is a retrieval HINT, not a fact: verify against the source before
+acting; file:line refs age with commits (check "Graph Freshness" in
+graphify-out/GRAPH_REPORT.md). God-node/degree listings never weaken arch:check rules.
+
 ## Room contract
 
 Frame format: JSON `[event, payload]`. The server is the cell authority: two cats never share a cell,
