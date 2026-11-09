@@ -27,7 +27,8 @@
  *     следующей БЕЗ ошибки; страницы стыкуются без дублей и без приватных
  *     полей на каждой; карточка по :id не зависит от limit/cursor/q;
  *  8. вариантная изоляция: www-grotto (после build:variants) не содержит
- *     players/, admin/ и elision/; нет корня сборки → SKIP (как юнит-раннер).
+ *     players/, admin/, игровое поле game/ и стаб elision/; нет корня сборки
+ *     → SKIP (как юнит-раннер).
  *
  * Запуск: node scripts/test-profiles.mjs (npm run test:profiles). Свои порт и
  * DATA_DIR (песочница), как test-auth.mjs; сервер убивается в finally; каталог
@@ -604,7 +605,8 @@ if (!existsSync(GROTTO)) {
   const dirs = existsSync(GROTTO) ? readdirSync(GROTTO).sort() : [];
   check(!dirs.includes("players"), "isolation: в www-grotto нет players/");
   check(!dirs.includes("admin"), "isolation: в www-grotto нет admin/");
-  check(!dirs.includes("elision"), "isolation: в www-grotto нет elision/ (P3 не регрессирует)");
+  check(!dirs.includes("game"), "isolation: в www-grotto нет game/ (поле elyria, P3 не регрессирует)");
+  check(!dirs.includes("elision"), "isolation: в www-grotto нет elision/-стаба (P3 не регрессирует)");
 }
 
 try {

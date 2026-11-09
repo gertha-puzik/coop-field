@@ -4,7 +4,7 @@
  * Общая шапка закрытого сайта (пересводка волны W2, мандат владелицы
  * 2026-11-08): тонкая стеклянная ночная полоса (52px, кант/стекло/цвета
  * существующих сессий-панелей auth-gate) — единая для страниц Элизии
- * (/, /elision/, /players/, /admin/).
+ * (/, /game/, /players/, /admin/).
  *
  * Слева — навигация: Главная, Игровая комната, Игроки, Настройки (якорь
  * #settings своей карточки — контракт с волной W1), Мой профиль; «Панель» —
@@ -82,7 +82,7 @@ export function SiteHeader() {
         <a className={NAV_LINK} href="/">
           Главная
         </a>
-        <a className={NAV_LINK} href="/elision/">
+        <a className={NAV_LINK} href={IS_ELYRIA ? '/game/' : '/'}>
           Игровая комната
         </a>
         <a className={NAV_LINK} href={IS_ELYRIA ? '/players/' : '/'}>

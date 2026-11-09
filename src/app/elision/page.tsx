@@ -1,21 +1,23 @@
-import type { Metadata } from "next";
-import Simulator from "@/components/sim/simulator";
-import { AuthGate } from "@/components/menu/auth-gate";
-// Пересводка W2 (2026-11-08): общая шапка сайта над симулятором — тонкая
-// стеклянная полоса сверху (экран входа и поле; слот селекта темы и
-// «Мой профиль» из пересводки-предшественницы демонтированы: их несёт шапка).
-import { SiteHeader } from "@/components/site/site-header";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Wanderpaws: Elysiae",
-  description: "Твой путь начинается здесь. Закрытая локация: мирная ходьба, редактор, сутки. Нужен аккаунт.",
-};
+/**
+ * Совместимый стаб старых ссылок (решение владелицы 2026-11-10): игровое
+ * поле переехало с /elision/ на /game/. Сюда попадают устаревшие инвайт-
+ * ссылки с query (?room=…&name=…) — на монтировании пересылаем на /game/
+ * с сохранением строки запроса. noindex: заглушка не для индексации.
+ */
+import { useEffect } from "react";
 
-export default function ElisionPage() {
+export default function ElisionRedirect() {
+  useEffect(() => {
+    window.location.replace("/game/" + window.location.search);
+  }, []);
   return (
-    <AuthGate>
-      <SiteHeader />
-      <Simulator mode="elision" />
-    </AuthGate>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#0a0e20] text-[#e8e4ff]">
+      <meta name="robots" content="noindex" />
+      <p>
+        Игра переехала на <a className="underline" href="/game/">/game/</a>
+      </p>
+    </main>
   );
 }

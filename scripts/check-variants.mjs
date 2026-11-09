@@ -36,16 +36,18 @@ const ELYRIA = path.isAbsolute(elyriaArg) ? elyriaArg : path.resolve(ROOT, elyri
  * «Элизи» покрывает все падежи («Элизии», «Элизии.» и т.д.); elisium —
  * домен/латиницу; /auth/ /players/ /admin/ — закрытые HTTP-зоны; coop_session
  * — имя куки сессии («Зарегистри» — форма регистрации, «Каталог игроков» и
- * «Панель админа» — тексты страниц Элизии).
+ * «Панель админа» — тексты страниц Элизии); /game/ — маршрут закрытого поля
+ * (с 2026-11-10 живёт на /game/, старые ссылки /elision/ пересылает стаб).
  */
 const GROTTO_FORBIDDEN = [
   "Элизи", "elisium", "phainonsmilk", "/players/", "/admin/", "/auth/",
-  "coop_session", "Зарегистри", "Каталог игроков", "Панель админа",
+  "coop_session", "Зарегистри", "Каталог игроков", "Панель админа", "/game/",
 ];
 /** Снятые легаси-маршруты, которых НЕ должно быть в актуальной Элизии. */
 const ELYRIA_FORBIDDEN = ["/combat/", "/hunger/"];
-/** Подпись живой Элизии в index.html (W2:.SiteHeader несёт навигацию). */
-const ELYRIA_INDEX_MUST = ["Elysiae", "Мой профиль"];
+/** Подпись живой Элизии в index.html (W2:.SiteHeader несёт навигацию).
+ *  /game/ — точка входа в мир (карточка меню и «Игровая комната» шапки). */
+const ELYRIA_INDEX_MUST = ["Elysiae", "Мой профиль", "/game/"];
 /** Расширения, в которых ищем маркеры/ссылки (чанки Next — .js/.css/.txt). */
 const TEXT_EXT = new Set([
   ".html", ".js", ".mjs", ".txt", ".json", ".css", ".map", ".svg", ".xml", ".webmanifest",
