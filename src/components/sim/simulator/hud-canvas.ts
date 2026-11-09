@@ -40,12 +40,19 @@ function weatherIcon(g:CanvasRenderingContext2D,x:number,y:number,kind:WeatherKi
   for(let i=-1;i<=1;i++) {g.beginPath();g.moveTo(x+i*6+1,y+5);g.lineTo(x+i*6-2,y+11);g.stroke();}
 }
 
+/** Every HUD frame uses the current work viewport, including hidden editor HUDs.
+ * Clearing without resizing leaves CSS stretching the old gameplay backing store.
+ */
+export function clearFieldHud(cv:HTMLCanvasElement,vw:number,vh:number){
+  const dpr=Math.min(2,window.devicePixelRatio||1),bw=Math.round(vw*dpr),bh=Math.round(vh*dpr);
+  if(cv.width!==bw||cv.height!==bh){cv.width=bw;cv.height=bh;}
+  const g=cv.getContext('2d');if(!g)return null;
+  g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,vw,vh);return g;
+}
+
 /** Fixed left needle reads the continuously rotating day disc. No rotation of the whole HUD. */
 export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,weather:WeatherKind,weatherPrev:WeatherKind,weatherAt:number) {
-  const dpr=Math.min(2,window.devicePixelRatio||1),bw=Math.round(vw*dpr),bh=Math.round(vh*dpr);
-  if(cv.width!==bw||cv.height!==bh) {cv.width=bw;cv.height=bh;}
-  const g=cv.getContext('2d');if(!g)return;
-  g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,vw,vh);
+  const g=clearFieldHud(cv,vw,vh);if(!g)return;
   const r=43,cx=vw-80,cy=64,satX=cx+r-2;
   g.save();g.shadowColor='rgba(0,0,0,.42)';g.shadowBlur=9;g.shadowOffsetY=3;
   circle(g,cx,cy,r+2);g.fillStyle='#132343';g.fill();g.restore();

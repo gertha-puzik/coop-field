@@ -170,3 +170,23 @@ historyOps.redoEditor();assert.equal(historyRef.current.elev['3,3'],6.7);assert.
 historyOps.undoEditor();historyOps.pushEditorUndo();historyRef.current.elev['4,4']=20;
 assert.equal(historyRef.current.redo.length,0,'a new edit after undo discards the redo branch');
 console.log('unified editor history, redo branching and unsaved baseline status: OK');
+
+// The editor must resize the HUD even when the gameplay weather dial is hidden.
+const hudModule={};
+const hudJs=ts.transpileModule(fs.readFileSync(new URL('../src/components/sim/simulator/hud-canvas.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+new Function('require','exports',hudJs)(()=>({}),hudModule);
+const oldWindow=globalThis.window;
+try{
+ for(const dpr of [1,2]){
+  globalThis.window={devicePixelRatio:dpr};
+  let transform;
+  const context={setTransform:(...args)=>{transform=args;},clearRect:()=>{}};
+  const canvas={width:1900,height:1050,getContext:()=>context};
+  for(const [w,h] of [[1400,900],[1048,716],[1328,716],[700,900]]){
+   hudModule.clearFieldHud(canvas,w,h);
+   assert.equal(canvas.width,w*dpr);assert.equal(canvas.height,h*dpr);
+   assert.deepEqual(transform,[dpr,0,0,dpr,0,0]);
+  }
+ }
+}finally{if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;}
+console.log('HUD backing store tracks editor layout at DPR 1 and 2: OK');
