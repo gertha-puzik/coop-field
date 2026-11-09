@@ -639,6 +639,7 @@ export function buildEditorOps(params: EditorOpsParams) {
 
   const replaceEditorMap = (m:TestMap,cv:HTMLCanvasElement|null,label:string) => {
     const d=editorRef.current;if(!d)return;
+    if(d.selFloat)dropEditorSelection();
     pushEditorUndo(true,label);
     Object.assign(d,{seed:m.seed,margin:m.margin,cols:m.cols,rows:m.rows,zones:m.zones.map(z=>({...z})),objects:(m.objects??[]).map(o=>({...o})),
       spawns:(m.spawns??[]).map(o=>({...o})),elev:{...m.elev},sel:[],selRect:null,selFloat:null,
@@ -654,6 +655,7 @@ export function buildEditorOps(params: EditorOpsParams) {
   const exportEditorMap = async () => {
     const d=editorRef.current;if(!d)return;
     try{
+      if(d.selFloat)dropEditorSelection();
       const snapshot=draftMap(d,false),paint=await encodeDraftPaintAsync(d);
       const bytes=encodeMapArchive({...snapshot,...(paint?{paint}:{})});
       const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
