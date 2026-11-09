@@ -1,5 +1,5 @@
 import { terrainAt, terrainBrushBounds, stampTerrainRect, sanitizeTerrainElev, freeTerrainPlacement } from '@/lib/sim/terrain-shape';
-import { stampElevation, type ElevationTool } from '@/lib/sim/terrain-editor';
+import { clampBrush, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim editor draft operations carved out of simulator.tsx (W5b stage 2,
  * behavior-preserving): draft sync/preview/undo, open/close, tool pick,
@@ -564,7 +564,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     if (c < 0 || r < 0 || c >= d.cols || r >= d.rows) return false;
     const stroke = elevStrokeRef.current;
     if (!stroke) return false;
-    const b = d.elevBrush ?? {width:1,depth:1,level:1};
+    const b = clampBrush(d.elevBrush,d.cols,d.rows);
     const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(d.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows);
     if (!stampTerrainRect(d.elev, rect, mode,b.level,stroke.touched,stroke.flat,TERRAIN_MAX_LEVEL)) return false;
     d.dirty = true;
