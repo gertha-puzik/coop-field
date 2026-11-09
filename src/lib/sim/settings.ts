@@ -1,3 +1,4 @@
+import { PEACE_SPEED_DEFAULT } from './engine-consts.ts';
 // ============================================================
 // Модель настроек симулятора боя и математика замедлений.
 //
@@ -429,8 +430,8 @@ export const DEFAULT_SETTINGS: SimSettings = {
     sprite: 'blestyashka',
     stepMs: 120,
     spriteScale: 100,
-    // Мирная ходьба по траве «теста»: прежний зашитый темп PEACE_SPEED_PX.
-    peaceSpeed: 320,
+    // Мирная ходьба: единое правило поля, независимо от старого localStorage.
+    peaceSpeed: PEACE_SPEED_DEFAULT,
   },
   arrow: {
     battleMode: true,
@@ -993,8 +994,8 @@ export function mergeSettings(raw: any): SimSettings {
       ...(raw?.character ?? {}),
       // размер модельки ограничен диапазоном 60–100%
       spriteScale: Math.min(100, Math.max(60, num(raw?.character?.spriteScale, d.character.spriteScale))),
-      // скорость мирной ходьбы: 40–800 px/с (медленный шаг — лёгкий спринт)
-      peaceSpeed: Math.min(800, Math.max(40, num(raw?.character?.peaceSpeed, d.character.peaceSpeed))),
+      // Скорость поля фиксирована: старое сохранённое значение не переносим.
+      peaceSpeed: PEACE_SPEED_DEFAULT,
     },
     arrow: { ...d.arrow, ...(raw?.arrow ?? {}) },
     slowdown: {
