@@ -28,6 +28,11 @@ WorkingDirectory=/opt/coop-field
 Environment=PORT=8787
 Environment=HOST=127.0.0.1
 Environment=COOP_INSTANCE_CLASS=production
+# Потолок памяти комнаты. До 2026-11-10 жил с MemoryMax=128M; после подселения
+# спрайт-менеджера и личных окрасов (#83/#88) старт трэшился в page-fault-шторм
+# (cgroup memory.events max=2242, swap.peak 241 МБ — старта V8 не хватало).
+# 256M — по фактическому старту: memory.current ~154 МБ после подъёма.
+MemoryMax=256M
 ExecStart=/opt/coop-field/.node/bin/node server.js
 Restart=on-failure
 RestartSec=2
