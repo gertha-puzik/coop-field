@@ -369,6 +369,9 @@ const SPAWNS = [
 const PALETTE = ["#d85e90", "#4b8fd0", "#e6b84d", "#73a13a", "#bf5af2", "#2dd4bf", "#ff9f0a", "#64d2ff"];
 const NAMES = ["Сырь", "Пухляшик", "Травожуй"];
 const SPRITES = ["blestyashka", "puhlyashik", "puhlyashshshshshshshsh", "puzatik", "razdora", "pohititel", "gromoryov", "gremuchnik", "syrstyashka", "ryzhiy", "trehcvetny", "negr", "chis", "lera", "anya1", "anya2", "serebristyy", "evr", "drel", "maslina", "buran", "sumrak", "izya", "kameshechek", "klubochek", "podushka", "plyushik", "rvanitse", "puhlyashik-kit", "blestyashka-kit", "chistolapik-kit", "test1", "test1-png"];
+/** #83 (личные окрасы): потолок PNG-окрасов на аккаунт в категории «Мои
+ *  окрасы»; превысившему — отказ limit с человеческим текстом (my-sprites.js). */
+const MAX_SPRITES_PER_ACCOUNT = 3;
 /* ---------- размеры спрайтов пака и их варианты.
    Объявлены ДО loadTestMap(): sanitizeTestMap читает их при загрузке карты —
    раньше константы стояли ниже по файлу, sanitize падал с «Cannot access
@@ -433,7 +436,7 @@ export {
   originAllowedHere, csrfDecision, siteClassOfRequest, csrfStrictFor,
   // field/rooms
   WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM,
-  STRIKE_COOLDOWN_MS,
+  STRIKE_COOLDOWN_MS, MAX_SPRITES_PER_ACCOUNT,
   // location objects (sanitize + geometry)
   OBJECT_DIMS, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
   ADMIN_PASS, DATA_DIR, WS_MAX_PER_IP, ROOMS_MAX,

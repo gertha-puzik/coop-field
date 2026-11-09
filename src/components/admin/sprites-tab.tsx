@@ -215,6 +215,32 @@ export function SpritesTab() {
     [reload],
   );
 
+  /** #83: скрытие — рычаг модерации «одетого» окраса (DELETE против него
+   *  бессилен): строка уходит из каталога и вайтлиста, файл остаётся. */
+  const toggleHidden = useCallback(
+    async (it: AdminSpriteItem) => {
+      setBusyId(it.id);
+      const res = await httpAdminSpritePatch(it.id, { hidden: !it.hidden });
+      setBusyId(null);
+      if (res.ok === true) {
+        setStatus({
+          kind: 'ok',
+          text: it.hidden ? `Окрас «${it.name}» снова виден.` : `Окрас «${it.name}» скрыт из каталога.`,
+        });
+        await reload();
+        return;
+      }
+      const err = res as AdminSpriteError;
+      setStatus({
+        kind: 'err',
+        text: humanError(err.reason, 'Скрытие не получилось.'),
+        details: err.message || undefined,
+      });
+      await reload();
+    },
+    [reload],
+  );
+
   const canUpload = !uploading && upFile !== null && upName.trim().length >= 2 && upCategory.trim().length > 0;
 
   return (
@@ -363,6 +389,18 @@ export function SpritesTab() {
                       <span className="text-[11px] text-[var(--sim-text-soft)]">
                         {it.category} · {addedLabel(it)} · id {it.id}
                       </span>
+                      {/* #83: владелец строки — логин игрока (личный окрас) или
+                          админский/uploads-builtin без владельца. */}
+                      {!it.builtin ? (
+                        <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-bold text-[var(--sim-text-soft)]">
+                          {it.owner ? `владелец: ${it.owner}` : 'владелец: админ'}
+                        </span>
+                      ) : null}
+                      {it.hidden ? (
+                        <span className="rounded bg-red-950/70 px-1.5 py-0.5 text-[10px] font-bold text-red-300">
+                          скрыт
+                        </span>
+                      ) : null}
                       {it.wornCount > 0 ? (
                         <span className="text-[11px] text-amber-300/90">
                           одет у {it.wornCount}:{' '}
@@ -372,6 +410,19 @@ export function SpritesTab() {
                         <span className="text-[11px] text-[var(--sim-text-faint)]">никем не одет</span>
                       )}
                       <span className="ml-auto flex items-center gap-1.5">
+                        {!it.builtin ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={busyId !== null}
+                            title={it.hidden ? 'Вернуть окрас в каталог' : 'Скрыть окрас из каталога (файл остаётся)'}
+                            onClick={() => void toggleHidden(it)}
+                          >
+                            {it.hidden ? 'Показать' : 'Скрыть'}
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"

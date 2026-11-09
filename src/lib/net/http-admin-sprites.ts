@@ -25,7 +25,9 @@ import { httpOrigin } from "./coop";
 /** Владелец спрайта: логин аккаунта + имя персонажа (для строки «одет у»). */
 export type SpriteWearer = { login: string; character: string };
 
-/** Строка админского каталога (владеет всем: и builtin, и загруженные). */
+/** Строка админского каталога (владеет всем: и builtin, и загруженные).
+ *  #83: owner — логин аккаунта-владельца личного окраса (null — админский/
+ *  builtin), hidden — рычаг модерации (из каталога/вайтлиста уходит, файл остаётся). */
 export type AdminSpriteItem = {
   id: string;
   name: string;
@@ -35,6 +37,8 @@ export type AdminSpriteItem = {
   addedAt: number;
   wornBy: SpriteWearer[];
   wornCount: number;
+  owner: string | null;
+  hidden: boolean;
 };
 
 /** Отказ операции: reason + человекочитаемый message сервера. */
@@ -72,6 +76,7 @@ function parseWearers(raw: unknown): SpriteWearer[] {
 /** Разбор строки каталога: доверяем только прочитанным полям DTO. */
 function parseItem(row: ApiRow, id?: string): AdminSpriteItem {
   const wornBy = parseWearers(row.wornBy);
+  const owner = asText(row.owner);
   return {
     id: asText(row.id, id || ""),
     name: asText(row.name),
@@ -81,6 +86,8 @@ function parseItem(row: ApiRow, id?: string): AdminSpriteItem {
     addedAt: asNum(row.addedAt, 0),
     wornBy,
     wornCount: asNum(row.wornCount, wornBy.length),
+    owner: owner || null,
+    hidden: row.hidden === true,
   };
 }
 
@@ -159,11 +166,13 @@ export async function httpAdminSpriteUpload(
   return parseErrorRow(row, status, "upload_failed");
 }
 
-/** Переименование/смена категории (PATCH /admin/sprites/:id JSON {name?,
- *  category?}); пустые значения не отправляем — за них отвечает сервер. */
+/** Переименование/смена категории и скрытие (PATCH /admin/sprites/:id JSON
+ *  {name?, category?, hidden?}); пустые значения не отправляем — за них
+ *  отвечает сервер. hidden — модерация «одетого» окраса: из каталога и
+ *  белого списка строка уходит, файл остаётся. */
 export async function httpAdminSpritePatch(
   id: string,
-  patch: { name?: string; category?: string },
+  patch: { name?: string; category?: string; hidden?: boolean },
 ): Promise<AdminSpriteMutationAction> {
   const { status, row } = await apiFetch(`/admin/sprites/${encodeURIComponent(id)}`, {
     method: "PATCH",
