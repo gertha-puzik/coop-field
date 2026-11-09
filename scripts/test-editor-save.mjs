@@ -138,3 +138,26 @@ const boot=spawnSync(process.execPath,['--input-type=module','-e',
   {cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:bootDir,EXPECT_ELEV:JSON.stringify(persisted.map.elev)},encoding:'utf8',timeout:10000});
 assert.equal(boot.status,0,boot.stderr);
 console.log('persisted rectangular terrain survives a fresh server process: OK');
+
+const neighboring={'2,2,1,1':6.7,'7,2,1,1':4};
+const free=shape.freeTerrainPlacement(neighboring,3.58,2.52,1,1,6.7,12,12,'level',.12);
+assert.equal(free.x,3);assert.equal(free.y,2);assert(free.snapped,'matching block aligns edges exactly');
+const off=shape.freeTerrainPlacement(neighboring,3.58,2.52,1,1,6.7,12,12,'off',.12);
+assert.equal(off.x,3.08);assert.equal(off.y,2.02);assert(!off.snapped,'free placement never snaps to global cells');
+const other=shape.freeTerrainPlacement(neighboring,8.58,2.52,1,1,6.7,12,12,'level',.12);
+assert.equal(other.x,8.08,'same-height magnet excludes different-height neighbors');
+assert.equal(shape.freeTerrainPlacement(neighboring,8.58,2.52,1,1,6.7,12,12,'all',.12).x,8);
+assert(!shape.freeTerrainPlacement(neighboring,5.5,5.5,1,1,6.7,12,12,'all',.12).snapped,'distant blocks do not attract');
+console.log('free terrain placement, optional snapping and height filter: OK');
+
+// A successful disk write has a small direct acknowledgement even without a broadcast room.
+const okReplies=[];
+const okWs={readyState:1,lastSetmap:0,send:data=>okReplies.push(JSON.parse(data))};
+okWs.room={code:'test',sockets:new Map([[okWs,{}]])};
+const oldIsland=serverMap.TEST_ISLAND,oldCells=serverMap.TEST_CELLS;
+serverMap.setMap(okWs,{map:{...previousMap,elev:{'2,2,1,1':6.7}}});
+assert.equal(serverMap.TEST_ISLAND,oldIsland,'height-only saves reuse the ground contour');
+assert.equal(serverMap.TEST_CELLS,oldCells,'height-only saves reuse the battle mask');
+assert(okReplies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'));
+assert(!replies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'),'disk failure never acknowledges success');
+console.log('explicit save acknowledgement follows durable write: OK');

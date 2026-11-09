@@ -74,6 +74,10 @@ export type EditorDraft = {
   elev: Record<string, number>;
   /** Размер прямоугольного штампа и точная высота: только настройки инструмента. */
   elevBrush?: { width: number; depth: number; level: number };
+  elevFree?: boolean;
+  elevSnap?: 'off' | 'level' | 'all';
+  terrainCursor?: { x: number; y: number };
+  terrainSnapDistance?: number;
   /** Кисть локации: холст рисунка (канонические px мира 100×150 на клетку),
    *  материал, размер/форма кисти, снимки для отмены мазков и закодированный
    *  рисунок последнего черновика. pcv null — рисунок ещё не начат: карта без

@@ -67,15 +67,15 @@ function decodePaintPng(b64) {
     const bpp = colorType === 6 ? 4 : 3;
     const stride = w * bpp;
     if (raw.length < (stride + 1) * h) return null;
-    const out = Buffer.alloc(stride * h);
+    const mask = new Uint8Array(w * h);
     for (let y = 0; y < h; y++) {
       const filter = raw[y * (stride + 1)];
       const src = y * (stride + 1) + 1;
-      const dst = y * stride;
+      const dst = src;
       for (let x = 0; x < stride; x++) {
-        const a = x >= bpp ? out[dst + x - bpp] : 0;
-        const b = y > 0 ? out[dst + x - stride] : 0;
-        const c = x >= bpp && y > 0 ? out[dst + x - stride - bpp] : 0;
+        const a = x >= bpp ? raw[dst + x - bpp] : 0;
+        const b = y > 0 ? raw[dst + x - (stride + 1)] : 0;
+        const c = x >= bpp && y > 0 ? raw[dst + x - (stride + 1) - bpp] : 0;
         let v = raw[src + x];
         if (filter === 1) v = (v + a) & 0xff;
         else if (filter === 2) v = (v + b) & 0xff;
@@ -87,12 +87,10 @@ function decodePaintPng(b64) {
           const pc = Math.abs(p - c);
           v = (v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 0xff;
         }
-        out[dst + x] = v;
+        raw[dst + x] = v;
       }
+      for(let x=0;x<w;x++)mask[y*w+x]=colorType===2 || raw[src+x*bpp+3]>127 ? 1 : 0;
     }
-    const mask = new Uint8Array(w * h);
-    const n = w * h;
-    for (let i = 0; i < n; i++) mask[i] = out[i * bpp + (bpp - 1)] > 127 ? 1 : 0;
     return { w, h, mask };
   } catch {
     return null;
@@ -393,7 +391,17 @@ function buildIsland(map) {
 }
 
 /** Клетка целиком внутри кромки: 4 угла, середины сторон и центр. */
-function testCellInIsland(c, r, island = TEST_ISLAND) {
+// Lazy initialization: testmap invokes these functions during the import cycle.
+var islandCellCache;
+function testCellInIsland(c,r,island=TEST_ISLAND){
+  islandCellCache ??= new WeakMap();
+  let cache=islandCellCache.get(island);
+  if(!cache){cache=new Map();islandCellCache.set(island,cache);}
+  const key=`${c},${r}`;
+  if(cache.has(key))return cache.get(key);
+  const inside=computeCellInIsland(c,r,island);cache.set(key,inside);return inside;
+}
+function computeCellInIsland(c, r, island = TEST_ISLAND) {
   for (let dy = 0; dy <= 2; dy++) {
     for (let dx = 0; dx <= 2; dx++) {
       if (!pointInPolygon(island, c + dx * 0.5, r + dy * 0.5)) return false;

@@ -202,6 +202,18 @@ export function EditorOverlay(props: EditorOverlayProps) {
                       </div>
                       {isElevationTool(editorView.tool) ? (
                         <div className="mt-2 rounded-md border border-[var(--sim-line)] p-2">
+                          <button type="button" aria-pressed={!!editorView.elevFree}
+                            className="mb-2 w-full rounded border border-[var(--sim-line-strong)] px-2 py-1"
+                            onClick={()=>{const d=editorRef.current;if(!d)return;d.elevFree=!d.elevFree;d.tool='height';syncEditorView();}}>
+                            {editorView.elevFree?'Свободная установка: ВКЛ':'Свободная установка: ВЫКЛ'}
+                          </button>
+                          {editorView.elevFree ? <label className="mb-2 flex flex-col gap-1">Привязка к блокам
+                            <select aria-label="Привязка к блокам" value={editorView.elevSnap??'level'}
+                              className="rounded bg-[var(--sim-input-bg)] px-1 py-1"
+                              onChange={event=>{const d=editorRef.current;if(!d)return;d.elevSnap=event.target.value as 'off'|'level'|'all';syncEditorView();}}>
+                              <option value="off">Без магнита</option><option value="level">Такая же высота</option><option value="all">Любая высота</option>
+                            </select>
+                          </label> : null}
                           <div className="mb-1 font-semibold">Размер блока в клетках</div>
                           <div className="grid grid-cols-3 gap-2">
                             {([
@@ -225,7 +237,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
                               </label>
                             ))}
                           </div>
-                          <p className="mt-1.5 text-[10px] text-[var(--sim-text-faint)]">«Блок» ставит выбранную высоту сразу. Высота 0 срезает до земли. Подсветка показывает весь штамп.</p>
+                          <p className="mt-1.5 text-[10px] text-[var(--sim-text-faint)]">«Блок» ставит выбранную высоту сразу. Высота 0 срезает до земли. В свободном режиме блок следует за мышью, клик ставит один блок. Золотая рамка означает магнитное соединение.</p>
                         </div>
                       ) : null}
                       <div className="mt-1.5 flex gap-1.5">

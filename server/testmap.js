@@ -192,13 +192,19 @@ export let TEST_PAINT = null;
 /** Пересборка геометрии «теста» из конфига: на старте и после каждой правки редактором.
  *  Пиксельная отрисовка: рисунок декодируется ДО геометрии — контур локации
  *  строится по маске кисти (не декодировался — форма считается по зонам). */
-function rebuildTestGeometry() {
+function rebuildTestGeometry(previousMap) {
   TEST_WIDTH = testMap.cols;
   TEST_HEIGHT = testMap.rows;
-  TEST_PAINT = testMap.paint ? decodePaintPng(testMap.paint) : null;
+  const sameGround=previousMap && previousMap.cols===testMap.cols && previousMap.rows===testMap.rows &&
+    previousMap.paint===testMap.paint && previousMap.seed===testMap.seed && previousMap.margin===testMap.margin &&
+    (TEST_PAINT && testMap.paint || JSON.stringify(previousMap.zones)===JSON.stringify(testMap.zones));
+  if(!sameGround)TEST_PAINT = testMap.paint ? decodePaintPng(testMap.paint) : null;
   if (testMap.paint && !TEST_PAINT) console.warn("paint decode failed — форма локации по зонам");
-  TEST_ISLAND = buildIsland(testMap);
-  TEST_CELLS = buildCells(testMap, TEST_ISLAND);
+  if(!sameGround)TEST_ISLAND = buildIsland(testMap);
+  const cellObjects=map=>(map.objects??[]).filter(o=>o.kind==='tree'||o.kind==='battle');
+  const sameCells=sameGround && JSON.stringify(previousMap.zones)===JSON.stringify(testMap.zones) &&
+    JSON.stringify(cellObjects(previousMap))===JSON.stringify(cellObjects(testMap));
+  if(!sameCells)TEST_CELLS = buildCells(testMap, TEST_ISLAND);
   TEST_OBST_CELLS = obstacleBlockedCells(testMap);
   TEST_OBST_BODIES = obstacleBodiesOf(testMap);
 }
@@ -593,7 +599,7 @@ function setMap(ws, payload = {}) {
   }
   const previousMap = testMap;
   testMap = r.map;
-  rebuildTestGeometry();
+  rebuildTestGeometry(previousMap);
   // Не сохранившаяся на диск правка умерла бы при первом же рестарте («карта
   // слетела») — ошибка записи видна автору сразу, а не после деплоя.
   try {
@@ -605,6 +611,9 @@ function setMap(ws, payload = {}) {
     send(ws, EV.INFO, `Редактор: сохранить локацию на диск не удалось — ${e?.message || e}. Правка осталась в черновике, попробуйте ещё раз.`);
     return;
   }
+  // Small acknowledgement follows the successful atomic write, before expensive
+  // player relocation and the full map broadcast. Only the author receives it.
+  send(ws,EV.INFO,'Редактор: сохранено.');
   const room = rooms.get(TEST_ROOM);
   if (room && room.sockets.size > 0) {
     for (const cat of room.cats.values()) {

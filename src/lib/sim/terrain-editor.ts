@@ -1,4 +1,4 @@
-import { terrainAt, terrainBrushBounds, pickTerrainTop, terrainScreenPoint, decodeTerrainRect, isElevationTool, clampBrush } from './terrain-shape';
+import { terrainAt, terrainBrushBounds, pickTerrainTop, terrainScreenPoint, decodeTerrainRect, freeTerrainPlacement, isElevationTool, clampBrush } from './terrain-shape';
 export { pickTerrainTop, terrainScreenPoint, terrainTopVisible, clampBrush, elevationBrushRect, stampElevation, isElevationTool } from './terrain-shape';
 export type { ElevationTool, ElevationBrush, CellRect } from './terrain-shape';
 import type { CellRect } from './terrain-shape';
@@ -152,16 +152,16 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
   }
   if (hover && isElevationTool(d.tool)) {
     const b = clampBrush(d.elevBrush,d.cols,d.rows);
-    const rect=terrainBrushBounds(hover.c,hover.r,b.width,b.depth,d.cols,d.rows);
-    const level=terrainAt(frame.elev,hover.c+.5,hover.r+.5);
-    g.lineWidth=2;g.strokeStyle='#baffd0';g.fillStyle='rgba(118,255,169,.18)';
+    const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(frame.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : {...terrainBrushBounds(hover.c,hover.r,b.width,b.depth,d.cols,d.rows),snapped:false};
+    const level=terrainAt(frame.elev,rect.x+rect.w/2,rect.y+rect.d/2);
+    g.lineWidth=2;g.strokeStyle=rect.snapped?'#ffdc85':'#baffd0';g.fillStyle='rgba(118,255,169,.18)';
     cellPath(g,frame,rect.x,rect.y,level,rect.w,rect.d);g.fill();g.stroke();
     if(d.tool==='height'&&b.level!==level){
       g.save();g.setLineDash([5,3]);g.strokeStyle='#ffe6a8';g.fillStyle='rgba(255,227,153,.07)';
       cellPath(g,frame,rect.x,rect.y,b.level,rect.w,rect.d);g.fill();g.stroke();g.restore();
     }
-    const p=terrainScreenPoint(frame,(hover.c+.5)*frame.cellW,(hover.r+.5)*frame.cellH,level*frame.terrainLiftStep);
-    label(g,p.x,p.y-23,`${b.width}×${b.depth}${d.tool==='height'?` · высота ${b.level}`:''}`,'#baffd0');
+    const p=terrainScreenPoint(frame,(rect.x+rect.w/2)*frame.cellW,(rect.y+rect.d/2)*frame.cellH,level*frame.terrainLiftStep);
+    label(g,p.x,p.y-23,`${rect.snapped?'Магнит · ':''}${b.width}×${b.depth}${d.tool==='height'?` · высота ${b.level}`:''}`,'#baffd0');
   } else if (hover && d.tool === 'paint') {
     const level = frame.elev[`${hover.c},${hover.r}`] ?? 0;
     const p = terrainScreenPoint(frame, (hover.c + .5) * frame.cellW, (hover.r + .5) * frame.cellH, level * frame.terrainLiftStep);

@@ -388,6 +388,14 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const editorPlaceRef = useRef<EditorPlace | null>(null);
   /** Прогресс сохранения локации (фазы кодирования/отправки/подтверждения). */
   const [editorSave, setEditorSave] = useState<EditorSaveState | null>(null);
+  useEffect(()=>{
+    if(editorSave?.phase!=='wait')return;
+    const timer=setTimeout(()=>{
+      setEditorSave(null);
+      setEditorMsg('Сервер пока не подтвердил сохранение. Черновик сохранён на экране; проверьте соединение и дождитесь обновления карты.');
+    },45000);
+    return ()=>clearTimeout(timer);
+  },[editorSave]);
   /** Вырезанный кусок инструмента «Перенести» (холст + уехавшие данные). */
   const editorSelRef = useRef<EditorSelState | null>(null);
   /** Размеры поля настроек едут вместе с черновиком редактора: отрисовка тянет
@@ -2339,6 +2347,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         if (csL) {
           const hit = screenToWorld(csL.x, csL.y, vw, vh, camRef.current.x, camRef.current.y, camFxRef.current.z, camYawRef.current);
           cursorWorldRef.current = groundPointAtWorld(hit.x, hit.y, cellW, cellH, camYawRef.current);
+          if(editorOn&&editorRef.current){
+            editorRef.current.terrainCursor={x:cursorWorldRef.current.x/cellW,y:cursorWorldRef.current.y/cellH};
+            editorRef.current.terrainSnapDistance=10/(cellW*camFxRef.current.z);
+          }
           if (editorOn) e.hover = { c: Math.min(s.field.cols-1,Math.max(0,Math.floor(cursorWorldRef.current.x/cellW))),
             r: Math.min(s.field.rows-1,Math.max(0,Math.floor(cursorWorldRef.current.y/cellH))) };
         }
