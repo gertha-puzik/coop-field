@@ -6,11 +6,8 @@
  * выбирает кадр по времени (walkFrameAt). Ресурс — обычная статика
  * /sprites/<id>-walk.gif, без новых зависимостей и без сборки спрайт-листов.
  *
- * Грейсфолбэк: где ImageDecoder нет (или GIF битый) — записи в кэше просто не
- * появляется, и скин рисуется статичным PNG ровно как раньше; анимация —
- * строго улучшение поверх текущей картинки, поломок быть не может.
- * Направление (flip) кадрам не нужно: кадры проходят тот же drawChar, что и
- * статичный спрайт — зеркалит его существующая механика «смотрят влево».
+ * Без ImageDecoder встроенная анимация загружается как lossless PNG-кадры.
+ * 2D и WebGL выбирают один и тот же кадр и сохраняют обычные flip-правила.
  */
 
 /** Раскодированный GIF ходьбы: кадры-канвасы + длительности (мс) по кадрам. */
@@ -114,4 +111,31 @@ export function walkFrameAt(walk: WalkGif, nowMs: number, phase: number): HTMLCa
 
 function framesCount(walk: WalkGif): number {
   return Math.min(walk.frames.length, walk.durations.length);
+}
+
+/** Lossless authored frames also work without WebCodecs (Firefox/Safari).
+ * These PNGs are exact RGBA extractions, not enlarged or redrawn sprites.
+ */
+export async function loadWalkGif(src:string):Promise<WalkGif> {
+  if(imageDecoderCtor()){
+    try{
+      const res=await fetch(src);
+      if(!res.ok)throw new Error('GIF load failed');
+      return await decodeGifFrames(await res.arrayBuffer());
+    }catch{
+      // A codec failure must not silently disable a builtin walking animation.
+    }
+  }
+  if(src.split('?')[0]!=='/sprites/test1-walk.gif')throw new Error('No compatible animation frames');
+  const frames=await Promise.all(Array.from({length:11},async(_,i)=>{
+    const image=new Image();
+    await new Promise<void>((resolve,reject)=>{
+      image.onload=()=>resolve();image.onerror=()=>reject(new Error('Walk frame load failed'));
+      image.src=`/sprites/test1-walk/${i}.png?v=walk-1`;
+    });
+    const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+    const context=canvas.getContext('2d');if(!context)throw new Error('Canvas unavailable');
+    context.drawImage(image,0,0);return canvas;
+  }));
+  return {frames,durations:frames.map(()=>200),total:frames.length*200};
 }

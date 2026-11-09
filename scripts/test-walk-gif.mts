@@ -4,6 +4,7 @@
 // декодера + целостность каталога (WALK_GIF_SRC ↔ SPRITES, test1-webp снят).
 import {
   decodeGifFrames,
+  loadWalkGif,
   walkFrameAt,
   walkPhaseOf,
   type WalkGif,
@@ -80,6 +81,7 @@ function fakeWalk(durations: number[], tags: string[]): WalkGif {
     assert(ids.has(id), `WALK_GIF_SRC: ${id} есть в SPRITES`);
   }
   assert(WALK_GIF_SRC.test1 === "/sprites/test1-walk.gif?v=walk-1", "test1 → /sprites/test1-walk.gif?v=walk-1");
+  assert(WALK_GIF_SRC["test1-png"]===WALK_GIF_SRC.test1,"PNG 600 shares the test1 walk animation");
   assert(!ids.has("test1-webp"), "test1-webp снят из SPRITES");
   assert(!SPRITE_GROUPS.some((g) => g.spriteIds.includes("test1-webp")), "test1-webp снят из групп");
   const group = SPRITE_GROUPS.find((g) => g.id === "test1");
@@ -87,3 +89,18 @@ function fakeWalk(durations: number[], tags: string[]): WalkGif {
 }
 
 console.log("OK test-walk-gif: кадры/фазы/фолбэк/каталог");
+
+// No WebCodecs: builtin PNG frames retain the exact GIF timing and dimensions.
+{
+ const oldImage=globalThis.Image,oldDocument=globalThis.document;
+ const paths=[];
+ try{
+  globalThis.Image=class{naturalWidth=215;naturalHeight=100;set src(path){paths.push(path);queueMicrotask(()=>this.onload());}};
+  globalThis.document={createElement:()=>({width:0,height:0,getContext:()=>({drawImage(){}})})};
+  const walk=await loadWalkGif(WALK_GIF_SRC['test1-png']);
+  assert(walk.frames.length===11&&walk.total===2200,'compatible frames preserve all 11 GIF frames and timing');
+  assert(walk.frames.every(f=>f.width===215&&f.height===100),'compatible frames keep native resolution');
+  assert(new Set(paths).size===11,'each authored frame has its own source');
+ }finally{globalThis.Image=oldImage;globalThis.document=oldDocument;}
+}
+console.log('OK builtin walk fallback without ImageDecoder');

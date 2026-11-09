@@ -252,10 +252,11 @@ export const FIELD_SPRITES: SpriteMeta[] = [...SPRITES, RAB_SPRITE];
 
 /** Пробные GIF-анимации ходьбы (первая — test1): спрайт id → файл с циклом шагов
  *  (байт-в-байт гиф владельца, builtin-статика). Кадры декодирует gif-walk.ts
- *  (WebCodecs ImageDecoder; где класса нет — скин остаётся статичным PNG).
+ *  (WebCodecs ImageDecoder либо совместимые lossless PNG-кадры).
  *  Ключ — SpriteId; URL с ?v= для будущего обновления файла без кэша. */
 export const WALK_GIF_SRC: Partial<Record<SpriteId, string>> = {
   test1: '/sprites/test1-walk.gif?v=walk-1',
+  'test1-png': '/sprites/test1-walk.gif?v=walk-1',
 };
 
 /** Настройки отдельного персонажа-мишени (манекена) на поле. */
