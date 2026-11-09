@@ -230,6 +230,22 @@ reset/restore с подтверждением.
   `?q` (debounce 300 мс), пагинация по `nextCursor`, deep-link `?id=`,
   инлайн-редактирование своей; ошибки сервера показываются целиком.
 
+- `POST/GET/DELETE /sprites/mine*` — личные окрасы игроков (#83): сессионная зона на стеке
+  `/profiles/me` (гость → 401 `auth_required`); на public-хосте (гроты) — 404 `not_found`
+  host-гейтом; unsafe-cookie POST/DELETE — Origin-щит `csrfDecision` (403 по матрице B1).
+  Загрузка: multipart `file` (один PNG; IHDR 100–1000 px, площадь ≤600k px, тело ≤1 МБ,
+  проверка при чтении) + `name` (2–24 кодпоинта, NFC, без control/bidi — как sanitize.js);
+  `category`/`id`/`owner` из запроса игнорируются: категория «Мои окрасы» — серверная
+  константа, id — транслит-слаг имени (никогда из uploaded filename), владелец — из сессии.
+  Дедуп sha256 тела своего же окраса → 200 существующего (слот не тратится — защита от
+  даблклика). Лимит 3/аккаунт (`MAX_SPRITES_PER_ACCOUNT`, 409 `limit`), rate 5/час + 20/день
+  на аккаунт (429 `rate`, in-memory — сброс при рестарте норма), аудит `sprites-audit.jsonl`
+  (append-only). Модерация: PATCH `/admin/sprites/:id` `hidden:true` — строка уходит из
+  каталога/whitelist/spriteIdAllowed (PNG-файл-улика остаётся на диске); DELETE `/sprites/mine/:id`
+  — владелец или админ, «одет» → 409 `worn` (сначала переодеться).
+  Перекопированный редактор KNS Paint — публичная статика `/paint-demo/` на обоих сайтах
+  (#84 ч.1, синхронизация версий — байт-в-байт shasum-сверкой из репо kns).
+
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 
 | Файл | Содержание |
