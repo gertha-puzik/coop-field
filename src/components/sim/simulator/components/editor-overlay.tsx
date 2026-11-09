@@ -205,13 +205,13 @@ export function EditorOverlay(props: EditorOverlayProps) {
                           <div className="mb-1 font-semibold">Размер блока в клетках</div>
                           <div className="grid grid-cols-3 gap-2">
                             {([
-                              ['width', 'Ширина', 1, editorView.cols],
-                              ['depth', 'Длина', 1, editorView.rows],
+                              ['width', 'Ширина', .1, editorView.cols],
+                              ['depth', 'Длина', .1, editorView.rows],
                               ['level', 'Высота', 0, TERRAIN_MAX_LEVEL],
                             ] as const).map(([key, title, min, max]) => (
                               <label key={key} className="flex flex-col gap-1">
                                 {title}
-                                <input type="number" aria-label={`${title} блока`} min={min} max={max} step={1}
+                                <input type="number" aria-label={`${title} блока`} min={min} max={max} step={0.1}
                                   value={clampBrush(editorView.elevBrush, editorView.cols, editorView.rows)[key]}
                                   className="min-w-0 rounded border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1 py-1"
                                   onBlur={syncEditorView}
@@ -572,7 +572,7 @@ export function EditorOverlay(props: EditorOverlayProps) {
                         курсором, размер и поворот подгоняются до ✓ «Поставить» (дерево непроходимо;
                         камень — платформа высоты 1, на него можно зайти шагом и стоять на нём).
                         Земля и покрытие — клик или протяжка, ходьбе не мешают. Кисти рельефа насыпают
-                        и срывают уступы (0–10). Перепад в один уровень — шагом, в два — половина
+                        и срывают уступы (0–20). Перепад в один уровень — шагом, в два — половина
                         шкалы прыжка, в три — полная, четыре и выше вверх не взять.
                         Заход — вход в боевую зону: травяная клетка с галочками,
                         в бою шаг с неё переносит по направлению захода.

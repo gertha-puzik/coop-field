@@ -17,7 +17,7 @@ import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
 import { TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
+import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainPointLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, pointInPolygon } from "./world.js";
 
 function move(ws, payload = {}) {
   const room = ws.room;
@@ -182,8 +182,8 @@ function freeMove(ws, payload = {}) {
     const x0 = fromX+previousFoot.dx, y0 = fromY+previousFoot.dy;
     const x1 = nx+foot.dx, y1 = ny+foot.dy;
     const levelAt = terrainLevelAt;
-    const level = levelAt(Math.floor(x0),Math.floor(y0));
-    if (Math.abs(levelAt(Math.floor(x1),Math.floor(y1))-level) > ELEV_STEP_MAX) return;
+    const level = terrainPointLevelAt(x0,y0);
+    if (Math.abs(terrainPointLevelAt(x1,y1)-level) > ELEV_STEP_MAX) return;
     const before = terrainBodyOverlap(x0,y0,rx,ry,level,levelAt);
     const after = terrainBodyOverlap(x1,y1,rx,ry,level,levelAt);
     if (after > Math.max(1e-7,before+1e-7)) return;

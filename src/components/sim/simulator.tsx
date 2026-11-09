@@ -1,4 +1,5 @@
 'use client';
+import { drawRectTerrain } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
 /**
  * Simulator — единственный компонент движка: канвас-сцена, сетевой контекст,
@@ -137,6 +138,8 @@ import {
   elevLevelAt,
   supportLevelAt,
   terrainLevelAt,
+  terrainPointLevelAt,
+  terrainContact,
   effectiveElevRecord,
   terrainCellClipPath,
   elevLiftAtPoint,
@@ -174,7 +177,7 @@ import {
   testPointInIsland,
   testWalkableCell,
 } from '@/lib/sim/test-field';
-import { coverPattern, grassPattern } from '@/lib/sim/textures';
+import { coverPattern, grassPattern, stonePattern } from '@/lib/sim/textures';
 import {
   entryDirDelta,
   newObjectId,
@@ -194,7 +197,6 @@ import {
   TERRAIN_MAX_LEVEL,
   elevJumpOk,
   elevStepOk,
-  terrainBodyOverlap,
   contactFraction,
   jumpFillOf,
   TEST_MAP_DEFAULT,
@@ -1493,7 +1495,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           if (strict && testPeaceBattleBlocked(px, py)) return false;
           const level = supportLevelAt(px,py);
           const radius = peaceBodyRadius(hb.dx*2*s.field.cellW);
-          if (terrainBodyOverlap(px,py,radius/s.field.cellW,radius/s.field.cellH,terrainLevelAt(Math.floor(px),Math.floor(py)),terrainLevelAt) > 1e-7) return false;
+          if (terrainContact(px,py,radius/s.field.cellW,radius/s.field.cellH,terrainPointLevelAt(px,py)) > 1e-7) return false;
           return elevJumpOk(curLevel, level, fill);
         };
         const packPeace = (px: number, py: number, ok: boolean, deg: number) => {
@@ -2045,11 +2047,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const elevWalkBlocked = (fxT: number, fyT: number): boolean => {
             const [x0, y0] = stand(e.fx, e.fy);
             const [x1, y1] = stand(fxT, fyT);
-            const level = terrainLevelAt(Math.floor(x0), Math.floor(y0));
-            if (!elevStepOk(level, terrainLevelAt(Math.floor(x1), Math.floor(y1)))) return true;
+            const level = terrainPointLevelAt(x0,y0);
+            if (!elevStepOk(level, terrainPointLevelAt(x1,y1))) return true;
             const rx = myR/cellW, ry = myR/cellH;
-            const before = terrainBodyOverlap(x0,y0,rx,ry,level,terrainLevelAt);
-            const after = terrainBodyOverlap(x1,y1,rx,ry,level,terrainLevelAt);
+            const before = terrainContact(x0,y0,rx,ry,level);
+            const after = terrainContact(x1,y1,rx,ry,level);
             // После посадки/правки карты разрешаем выйти из наложения, но не углубляться.
             return after > Math.max(1e-7,before+1e-7);
           };
@@ -3375,7 +3377,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // Лицо блока — ближайший прямой угол камеры. Один угол на кадр, чтобы
         // ключ сортировки стены и сама стена смотрели в одну сторону.
         const faceYaw = camYawRef.current;
-        for (const key of Object.keys(mapElev)) {
+        const exactTerrain=Object.keys(mapElev).some(key=>key.split(',').length===4);
+        if(exactTerrain)drawRectTerrain(ctx,mapElev,s.field.cols,s.field.rows,cwT,chT,TERRAIN_LIFT_PX,faceYaw,gpatT,stonePattern(ctx),pcvT);
+        for (const key of exactTerrain?[]:Object.keys(mapElev)) {
           const lvT = mapElev[key];
           if (!lvT || lvT <= 0) continue;
           const [cT, rT] = key.split(',').map(Number);
@@ -3547,6 +3551,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         if (testMode) ctx.rotate(-camYawRef.current);
         ctx.rotate(amp * 0.08 * Math.cos(now * 0.045) + extraRot);
         ctx.scale(flip * sqX * jx, sqY * jy);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         glow(-twd / 2, -th);
         ctx.drawImage(sprC, -twd / 2, -th, twd, th);
         ctx.restore();

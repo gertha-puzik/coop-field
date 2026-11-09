@@ -8,8 +8,8 @@ import { createHash } from "node:crypto";
  *
  * Позитив:
  *   1. при старте каталог сеидится: публичный GET /sprites/catalog без сессии
- *      отдаёт 32 базовых (config.SPRITES), все category «Базовые»;
- *   2. admin-список — те же 32 строкой c builtin:true, addedAt:0, wornBy:[],
+ *      отдаёт 34 базовых (config.SPRITES), все category «Базовые»;
+ *   2. admin-список — те же 34 строкой c builtin:true, addedAt:0, wornBy:[],
  *      имена из словаря владельца (puhlyashik — «Пухляшик», ryzhiy — «Сырь»);
  *   3. upload валидного PNG (мини 1×1) с именем «Тестовый Кот» и категорией
  *      «Праздничные» → id testovyy-kot, файл в DATA_DIR/sprites/, строка
@@ -61,11 +61,18 @@ const ORIGIN = `http://${HOST}:${PORT}`; // цикличный origin: клас�
 // кириллическими через поле name персонажа, регистрируемого тестом).
 const ADMIN = "lastochka_q";
 const USER = "kopeechka_q";
-/** Базовых в сида: сколько id в config.SPRITES (32 — источник истины счёта). */
+/** Базовых в сида: сколько id в config.SPRITES (34 — источник истины счёта). */
 const BASE_COUNT = BASE_SPRITE_IDS.length;
 const originalTest1 = readFileSync(path.join(ROOT, 'public/sprites/test1.png'));
 if (createHash('sha256').update(originalTest1).digest('hex') !== '19b074917c3fcb1bdba606ffe0a61b73fa2add2bdace5a5a1a427d0bf95926d7') {
   throw new Error('test1 must retain the supplied original PNG bytes and thin outline');
+}
+
+for(const [file,hash] of [
+  ['test1-png.png','d80317349686449d4e8be899aea5225e311331d08c91a247844c865ff67a2672'],
+  ['test1-webp.webp','7b3426a5a8c98364852534dcb73537a2c53e50274ae98fa5cfca1b7e0d4fd049'],
+]) {
+  if(createHash('sha256').update(readFileSync(path.join(ROOT,'public/sprites',file))).digest('hex')!==hash)throw new Error(`${file}: original asset bytes changed`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -252,6 +259,7 @@ try {
   const items0 = cat0.json?.items || [];
   check(items0.some(row => row.id === "test1" && row.name === "test1" && row.src === "/sprites/test1.png?v=original-300x200"),
     "новая builtin test1 добавляется в каталог из старого манифеста");
+  check(items0.some(row=>row.id==='test1-png'&&row.src==='/sprites/test1-png.png') && items0.some(row=>row.id==='test1-webp'&&row.src==='/sprites/test1-webp.webp'), 'both original 600px comparison variants are selectable');
   check(!items0.some((row) => row.id === "origami-cat"), "снятый builtin не воскресает из манифеста");
   const relogin = await httpJson("/auth/login", {method:"POST",body:{login:USER,pass:"password1"}});
   const me = await httpJson("/auth/me", {token:relogin.json?.token});

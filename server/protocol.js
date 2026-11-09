@@ -227,11 +227,11 @@ export const GROUND_COVER_IDS = Object.freeze([
   "floor-3",
 ]);
 
-/** Предел высоты рельефа (уровней над базовой землёй): 0..10.
+/** Предел высоты рельефа (уровней над базовой землёй): 0..20 (шаг 0.1).
  *  Клиентское зеркало — TERRAIN_MAX_LEVEL и elevStepOk/elevJumpOk в
  *  src/lib/sim/test-map.ts. Шаг берёт перепад ≤ ELEV_STEP_MAX; прыжок —
  *  по доле заряда (JUMP_CHARGE_*), вверх не выше JUMP_MAX_UP. */
-export const TERRAIN_MAX_LEVEL = 10;
+export const TERRAIN_MAX_LEVEL = 20;
 /** Перепад, который берётся шагом без прыжка (вверх и вниз). */
 export const ELEV_STEP_MAX = 1;
 /** Доля шкалы прыжка: половина берёт перепад 2, полная — перепад 3 и спуск 4+. */

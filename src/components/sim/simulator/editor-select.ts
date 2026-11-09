@@ -1,3 +1,4 @@
+import { sanitizeTerrainElev, invalidateTerrain } from '@/lib/sim/terrain-shape';
 /**
  * Tool «Перенести» of the location editor: cut a selected region (paint pixels,
  * zones fully inside, objects by base/cell, spawns, elevation cells) into a
@@ -107,6 +108,7 @@ export function buildEditorSelect({
         delete d.elev[key];
       }
     }
+    invalidateTerrain(d.elev);
     editorSelRef.current = { cv, c0: rect.c0, r0: rect.r0, c1: rect.c1, r1: rect.r1, zones, objects, spawns, elev };
     d.selFloat = { dc: 0, dr: 0 };
     d.dirty = true;
@@ -182,8 +184,10 @@ export function buildEditorSelect({
       const nc = cc + dc;
       const nr = rr + dr;
       if (nc < 0 || nr < 0 || nc >= d.cols || nr >= d.rows) continue;
-      d.elev[`${nc},${nr}`] = lv;
+      const parts=key.split(',');
+      d.elev[[nc,nr,...parts.slice(2)].join(',')] = lv;
     }
+    d.elev = sanitizeTerrainElev(d.elev,d.cols,d.rows,20) ?? {};
     d.selRect = { c0: buf.c0 + dc, r0: buf.r0 + dr, c1: buf.c1 + dc, r1: buf.r1 + dr };
     d.selFloat = null;
     editorSelRef.current = null;

@@ -1,3 +1,4 @@
+import { terrainTiles } from '@/lib/sim/terrain-shape';
 import type { EditorPlace } from '@/lib/sim/editor-model';
 /**
  * Кадр Элизии для WebGL-вида: собирает то, что 2D-цикл уже посчитал
@@ -130,6 +131,12 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
           (o.r + 0.5 + po.dy) * cellH, hashStr(o.id) & 7);
       }
     }
+  }
+  // Soft level tint: every higher surface is lighter, without covering the texture.
+  for (const b of terrainTiles(effectiveElevRecord(map),cols,rows)) {
+    if(!b.level)continue;
+    g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
+    g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
   const battle = new Set<string>();
   for (const zone of map.zones) {

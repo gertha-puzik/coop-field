@@ -1,3 +1,4 @@
+import { terrainAt, sanitizeTerrainElev } from './terrain-shape.ts';
 /**
  * Конфигурация локации комнаты «тест» — то, что правит редактор локации.
  *
@@ -222,12 +223,12 @@ export type TestMapZone = {
 export type TestMapSpawn = { c: number; r: number };
 
 /** Предел высоты рельефа (уровней над базовой землёй). 0 — обычная земля,
- *  10 — самый высокий уступ: десять ступеней высоты и столько же глубины
+ *  20 — самый высокий уступ: двадцать ступеней высоты и столько же глубины
  *  относительно соседа. Значения хранятся разреженно: ключ «c,r» (0-based) →
- *  уровень 1..10; отсутствие клетки и явный 0 — одно и то же (обычная земля).
+ *  уровень 0.1..20; отсутствие клетки и явный 0 — одно и то же (обычная земля).
  *  Ходьба и прыжок — elevStepOk / elevJumpOk; серверное зеркало чисел —
  *  server/protocol.js, функции — server/world.js. */
-export const TERRAIN_MAX_LEVEL = 10;
+export const TERRAIN_MAX_LEVEL = 20;
 
 /** Высота камня (уровней над землёй его клетки): камень — платформа уровня 1,
  *  на неё можно зайти шагом (перепад 1 — elevStepOk) и стоит на ней в мирном
@@ -272,8 +273,8 @@ export function elevJumpOk(from: number, to: number, fill: number): boolean {
   if (ad <= ELEV_STEP_MAX) return true;
   const f = Number.isFinite(fill) ? Math.min(1, Math.max(0, fill)) : 0;
   if (d > JUMP_MAX_UP) return false;
-  if (ad === 2) return f >= JUMP_CHARGE_HALF;
-  if (ad === 3 || d < 0) return f >= JUMP_CHARGE_FULL;
+  if (ad <= 2) return f >= JUMP_CHARGE_HALF;
+  if (ad <= 3 || d < 0) return f >= JUMP_CHARGE_FULL;
   return false;
 }
 
@@ -374,8 +375,8 @@ export function mapHasPaint(map: Pick<TestMap, 'paint'>): boolean {
 
 /** Уровень клетки из карты высот (0-based координаты; нет клетки — 0). */
 export function mapElevOf(map: Pick<TestMap, 'elev'>, c: number, r: number): number {
-  const v = map.elev?.[`${c},${r}`];
-  return typeof v === 'number' && Number.isFinite(v) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, Math.round(v))) : 0;
+  const v = terrainAt(map.elev,c+.5,r+.5);
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, Math.round(v * 10) / 10)) : 0;
 }
 
 export type TestMap = {
@@ -707,23 +708,13 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       spawns.push({ c, r });
     }
   }
-  // Карта высот рельефа: необязательный разреженный словарь «c,r» → уровень 1..3.
-  // Нули, мусор и клетки вне мира выбрасываются; целые уровни зажимаются в предел.
+  // Карта высот рельефа: необязательный разреженный словарь «c,r» / «x,y,w,d» → уровень 0..20 с шагом 0.1.
+  // Нули, мусор и клетки вне мира выбрасываются; уровни зажимаются в предел.
   let elev: Record<string, number> | undefined;
   if (src.elev != null) {
     if (typeof src.elev !== 'object' || Array.isArray(src.elev)) return { error: 'карта высот не распознана' };
-    const raw = src.elev as Record<string, unknown>;
-    const clean: Record<string, number> = {};
-    for (const [key, val] of Object.entries(raw)) {
-      const m = /^(\d+),(\d+)$/.exec(key);
-      if (!m) continue;
-      const c = Number(m[1]);
-      const r = Number(m[2]);
-      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
-      const lv = Math.round(Number(val));
-      if (!Number.isFinite(lv) || lv <= 0) continue;
-      clean[key] = Math.min(TERRAIN_MAX_LEVEL, lv);
-    }
+    const clean = sanitizeTerrainElev(src.elev, cols, rows, TERRAIN_MAX_LEVEL);
+    if(!clean)return {error: 'слишком много участков рельефа'};
     if (Object.keys(clean).length > 0) elev = clean;
   }
   return {

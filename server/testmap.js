@@ -23,6 +23,157 @@ import {
 import { send, broadcast, fieldPayload, rooms } from "./room.js";
 import { rememberCat } from "./persist.js";
 
+// Exact rectangular terrain mirror of src/lib/sim/terrain-shape.ts.
+export const TERRAIN_RECT_LIMIT = 10000;
+const eps = 1e-7;
+const round = (n) => Math.round(n * 10000) / 10000;
+export const terrainRectKey = (b) => [b.x, b.y, b.w, b.d].map(round).join(',');
+export function decodeTerrainRect(key, level) {
+    const a = key.split(',').map(Number);
+    if ((a.length !== 2 && a.length !== 4) || a.some(n => !Number.isFinite(n)))
+        return null;
+    const [x, y, w = 1, d = 1] = a;
+    return { x, y, w, d, level };
+}
+export function sanitizeTerrainElev(raw, cols, rows, max) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return null;
+    if (Object.keys(raw).length > TERRAIN_RECT_LIMIT)
+        return null;
+    const clean = {};
+    let count = 0;
+    for (const [key, value] of Object.entries(raw)) {
+        if (count++ >= TERRAIN_RECT_LIMIT)
+            break;
+        if (!/^\d+(?:\.\d+)?,\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?,\d+(?:\.\d+)?)?$/.test(key))
+            continue;
+        const level = Math.min(max, Math.max(0, Math.round(Number(value) * 10) / 10));
+        const b = decodeTerrainRect(key, level);
+        if (!b || !Number.isFinite(level) || b.x < 0 || b.y < 0 || b.x >= cols || b.y >= rows || b.w <= 0 || b.d <= 0)
+            continue;
+        if (key.split(',').length === 2) {
+            if (!Number.isInteger(b.x) || !Number.isInteger(b.y) || !level)
+                continue;
+            clean[`${b.x},${b.y}`] = level;
+        }
+        else {
+            b.w = round(Math.min(b.w, cols - b.x));
+            b.d = round(Math.min(b.d, rows - b.y));
+            if (b.w < .0001 || b.d < .0001)
+                continue;
+            clean[terrainRectKey(b)] = level;
+        }
+    }
+    return clean;
+}
+export function intersects(a, b) {
+    return a.x < b.x + b.w - eps && a.x + a.w > b.x + eps && a.y < b.y + b.d - eps && a.y + a.d > b.y + eps;
+}
+/** At most four disjoint pieces; no implicit rounding to a whole cell. */
+export function subtractTerrainRect(a, b) {
+    if (!intersects(a, b))
+        return [a];
+    const x0 = Math.max(a.x, b.x), x1 = Math.min(a.x + a.w, b.x + b.w);
+    const y0 = Math.max(a.y, b.y), y1 = Math.min(a.y + a.d, b.y + b.d);
+    return [
+        { ...a, w: x0 - a.x }, { ...a, x: x1, w: a.x + a.w - x1 },
+        { ...a, x: x0, w: x1 - x0, d: y0 - a.y }, { ...a, x: x0, y: y1, w: x1 - x0, d: a.y + a.d - y1 },
+    ].filter(r => r.w > eps && r.d > eps).map(r => ({ ...r, x: round(r.x), y: round(r.y), w: round(r.w), d: round(r.d) }));
+}
+const indices = new WeakMap();
+function makeIndex(elev) {
+    const cells = new Map(), rects = [];
+    // Legacy cells are the base; rectangle overrides always win, even after JSON roundtrips.
+    for (const [key, level] of Object.entries(elev)) {
+        if (key.split(',').length !== 4)
+            continue;
+        const b = decodeTerrainRect(key, level);
+        if (!b)
+            continue;
+        rects.push(b);
+        for (let r = Math.floor(b.y); r < Math.ceil(b.y + b.d - eps); r++)
+            for (let c = Math.floor(b.x); c < Math.ceil(b.x + b.w - eps); c++) {
+                const k = `${c},${r}`;
+                const list = cells.get(k) ?? [];
+                list.push(b);
+                cells.set(k, list);
+            }
+    }
+    return { cells, rects };
+}
+export function terrainIndex(elev) {
+    let index = indices.get(elev);
+    if (!index) {
+        index = makeIndex(elev);
+        indices.set(elev, index);
+    }
+    return index;
+}
+export function invalidateTerrain(elev) { indices.delete(elev); tileCaches.delete(elev); }
+export function terrainAt(elev, x, y) {
+    if (!elev)
+        return 0;
+    const c = Math.floor(x), r = Math.floor(y), list = terrainIndex(elev).cells.get(`${c},${r}`) ?? [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const b = list[i];
+        if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.d)
+            return b.level;
+    }
+    return elev[`${c},${r}`] ?? 0;
+}
+/** Geometry partition: each tile and its neighboring edge segments have a constant level.
+ * Only nearby rectangle boundaries subdivide a cell; a 0.1-wide block does not
+ * force the whole world onto a ten-times denser grid.
+ */
+export function terrainTiles(elev, cols, rows) {
+    const out = [], index = terrainIndex(elev);
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++) {
+            const xs = new Set([c, c + 1]), ys = new Set([r, r + 1]);
+            for (let nr = r - 1; nr <= r + 1; nr++)
+                for (let nc = c - 1; nc <= c + 1; nc++) {
+                    for (const b of index.cells.get(`${nc},${nr}`) ?? []) {
+                        for (const v of [b.x, b.x + b.w])
+                            if (v > c + eps && v < c + 1 - eps)
+                                xs.add(v);
+                        for (const v of [b.y, b.y + b.d])
+                            if (v > r + eps && v < r + 1 - eps)
+                                ys.add(v);
+                    }
+                }
+            const xx = [...xs].sort((a, b) => a - b), yy = [...ys].sort((a, b) => a - b);
+            for (let j = 0; j < yy.length - 1; j++)
+                for (let i = 0; i < xx.length - 1; i++) {
+                    const x = xx[i], y = yy[j], w = xx[i + 1] - x, d = yy[j + 1] - y;
+                    out.push({ x, y, w, d, level: terrainAt(elev, x + w / 2, y + d / 2) });
+                }
+        }
+    return out;
+}
+/** Exact body contact against rectangular cliffs, including subcell ledges. */
+const tileCaches = new WeakMap();
+export function cachedTerrainTiles(elev, cols, rows) {
+    const cached = tileCaches.get(elev);
+    if (cached && cached.cols === cols && cached.rows === rows)
+        return cached.tiles;
+    const tiles = terrainTiles(elev, cols, rows);
+    tileCaches.set(elev, { cols, rows, tiles });
+    return tiles;
+}
+export function terrainBodyContact(elev, cols, rows, x, y, rx, ry, level) {
+    if (!(rx > 0 && ry > 0))
+        return 0;
+    let overlap = 0;
+    for (const b of cachedTerrainTiles(elev, cols, rows)) {
+        if (b.x > x + rx || b.x + b.w < x - rx || b.y > y + ry || b.y + b.d < y - ry || Math.abs(b.level - level) <= 1 + eps)
+            continue;
+        const dx = (x - Math.max(b.x, Math.min(b.x + b.w, x))) / rx;
+        const dy = (y - Math.max(b.y, Math.min(b.y + b.d, y))) / ry;
+        overlap = Math.max(overlap, 1 - Math.hypot(dx, dy));
+    }
+    return overlap;
+}
+
 const MAP_FILE = path.join(DATA_DIR, "test-map.json");
 
 export let testMap = loadTestMap();
@@ -321,17 +472,8 @@ function sanitizeTestMap(raw) {
   let elev;
   if (raw.elev != null) {
     if (typeof raw.elev !== 'object' || Array.isArray(raw.elev)) return { error: 'карта высот не распознана' };
-    elev = {};
-    for (const [key, val] of Object.entries(raw.elev)) {
-      const m = /^(\d+),(\d+)$/.exec(key);
-      if (!m) continue;
-      const c = Number(m[1]);
-      const r = Number(m[2]);
-      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
-      const lv = Math.round(Number(val));
-      if (!Number.isFinite(lv) || lv <= 0) continue;
-      elev[key] = Math.min(TERRAIN_MAX_LEVEL, lv);
-    }
+    elev = sanitizeTerrainElev(raw.elev, cols, rows, TERRAIN_MAX_LEVEL);
+    if(!elev)return {error:"слишком много участков рельефа"};
     if (Object.keys(elev).length === 0) elev = undefined;
   }
   return {

@@ -1,3 +1,4 @@
+import { terrainTiles, terrainAt } from './terrain-shape.ts';
 /**
  * Чистая геометрия вида Элизии. Сюда не импортируется Babylon: юнит-тест и
  * сборщик кадра живут без WebGL, а сам движок подгружается отдельно
@@ -187,8 +188,8 @@ export function elisionTerrainGeometry(
   const tops = part();
   const walls = part();
   const fringe = part();
-  const level = (c: number, r: number) =>
-    c < 0 || r < 0 || c >= cols || r >= rows ? 0 : Math.max(0, elev[`${c},${r}`] ?? 0);
+  const level = (x: number, y: number) =>
+    x < 0 || y < 0 || x >= cols || y >= rows ? 0 : terrainAt(elev,x,y);
   const quad = (out: TerrainPart, points: number[][], uv: number[]) => {
     const i = out.positions.length / 3;
     out.positions.push(...points.flat());
@@ -196,22 +197,22 @@ export function elisionTerrainGeometry(
     out.uvs.push(...uv);
     out.uvs2.push(0, 0, 1, 0, 1, 1, 0, 1);
   };
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const lv = level(c, r);
+  for (const tile of terrainTiles(elev,cols,rows)) {
+      const {x:c,y:r,w,d,level:lv}=tile;
       if (!lv) continue;
       const x = c * cellW, z = r * cellH, y = lv * liftStep;
-      const u0 = c / cols, u1 = (c + 1) / cols, v0 = r / rows, v1 = (r + 1) / rows;
-      quad(tops, [[x,y,z], [x+cellW,y,z], [x+cellW,y,z+cellH], [x,y,z+cellH]],
+      const cw=w*cellW,ch=d*cellH;
+      const u0 = c / cols, u1 = (c + w) / cols, v0 = r / rows, v1 = (r + d) / rows;
+      quad(tops, [[x,y,z], [x+cw,y,z], [x+cw,y,z+ch], [x,y,z+ch]],
         [u0,v0, u1,v0, u1,v1, u0,v1]);
       const edges = [
-        { dc: 0, dr: -1, a: [x,z], b: [x+cellW,z], uv: [u0,v0,u1,v0] },
-        { dc: 1, dr: 0, a: [x+cellW,z], b: [x+cellW,z+cellH], uv: [u1,v0,u1,v1] },
-        { dc: 0, dr: 1, a: [x+cellW,z+cellH], b: [x,z+cellH], uv: [u1,v1,u0,v1] },
-        { dc: -1, dr: 0, a: [x,z+cellH], b: [x,z], uv: [u0,v1,u0,v0] },
+        { dc: 0, dr: -1, a: [x,z], b: [x+cw,z], uv: [u0,v0,u1,v0] },
+        { dc: 1, dr: 0, a: [x+cw,z], b: [x+cw,z+ch], uv: [u1,v0,u1,v1] },
+        { dc: 0, dr: 1, a: [x+cw,z+ch], b: [x,z+ch], uv: [u1,v1,u0,v1] },
+        { dc: -1, dr: 0, a: [x,z+ch], b: [x,z], uv: [u0,v1,u0,v0] },
       ];
       for (const edge of edges) {
-        const nb = level(c + edge.dc, r + edge.dr);
+        const nb = level((edge.a[0]+edge.b[0])/2/cellW+edge.dc*1e-6, (edge.a[1]+edge.b[1])/2/cellH+edge.dr*1e-6);
         if (nb >= lv) continue;
         const bottom = nb * liftStep;
         const [ax,az] = edge.a, [bx,bz] = edge.b;
@@ -224,7 +225,7 @@ export function elisionTerrainGeometry(
         // Hanging grass follows only exposed edges; same-level neighbors
         // have no seam. Small teeth are visual only and keep collision exact.
         const segments = Math.max(2, Math.ceil(length / 7));
-        const tooth = (n: number) => Math.min(height, 2 + ((c*17+r*31+n*13) % 6));
+        const tooth = (n: number) => Math.min(height, 2 + ((Math.round(c*17+r*31)+n*13) % 6));
         for (let i=0;i<segments;i++) {
           const t0=i/segments,t1=(i+1)/segments;
           const x0=ax+(bx-ax)*t0+edge.dc*.4,z0=az+(bz-az)*t0+edge.dr*.4;
@@ -237,7 +238,6 @@ export function elisionTerrainGeometry(
             [uA,vA,uB,vB,uB,vB,uA,vA]);
         }
       }
-    }
   }
   return { tops, walls, fringe };
 }

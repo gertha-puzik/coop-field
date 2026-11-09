@@ -1,3 +1,4 @@
+import { terrainAt, terrainBodyContact } from "./testmap.js";
 /**
  * Geometry of the drawn «test» location (W4 carve, behavior-preserving):
  * PNG alpha-mask decode, paint pixel/coverage probes, marching-squares edge
@@ -573,9 +574,7 @@ function stoneCellsOf(map) {
  *  зажатые в TERRAIN_MAX_LEVEL. Зеркало elevLevelAt клиента (test-field.ts):
  *  обе стороны считают перепады по одному правилу. */
 function testElev(x, y) {
-  const v = testMap.elev?.[`${x - 1},${y - 1}`];
-  const n = Math.round(Number(v));
-  const base = Number.isFinite(n) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0, n)) : 0;
+  const base = terrainAt(testMap.elev,x-.5,y-.5);
   const c = x - 1;
   const r = y - 1;
   const stone = c >= 0 && r >= 0 && c < testMap.cols && r < testMap.rows && stoneCellsOf(testMap).has(`${c},${r}`);
@@ -583,9 +582,9 @@ function testElev(x, y) {
 }
 
 /** Явный грунт отдельно от опоры предмета (0-based). */
+function terrainPointLevelAt(x,y) { return terrainAt(testMap.elev,x,y); }
 function terrainLevelAt(c, r) {
-  const v = Math.round(Number(testMap.elev?.[`${c},${r}`]));
-  return Number.isFinite(v) ? Math.min(TERRAIN_MAX_LEVEL, Math.max(0,v)) : 0;
+  return terrainAt(testMap.elev,c+.5,r+.5);
 }
 function supportLevelAt(x, y) {
   const stone = obstacleBodiesOf(testMap).some(b => {
@@ -594,7 +593,7 @@ function supportLevelAt(x, y) {
     const cos = Math.cos(-b.rot), sin = Math.sin(-b.rot);
     return ((dx*cos-dy*sin)/(b.hw+2))**2 + ((dx*sin+dy*cos)/(b.h+2))**2 <= 1;
   });
-  return Math.min(TERRAIN_MAX_LEVEL, terrainLevelAt(Math.floor(x),Math.floor(y)) + (stone ? STONE_LEVEL : 0));
+  return Math.min(TERRAIN_MAX_LEVEL, terrainAt(testMap.elev,x,y) + (stone ? STONE_LEVEL : 0));
 }
 
 /** Перепад больше одного уровня — стенка: шагом не проходится, только
@@ -647,6 +646,7 @@ function inSouthWall(x, y) {
  * rx/ry — радиус в долях клетки; результат 0..1 — глубина проникновения.
  * Переданный level фиксирует текущую опору, чтобы граница не меняла сторону проверки. */
 function terrainBodyOverlap(x,y,rx,ry,level,levelAt) {
+  if(testMap.elev && Object.keys(testMap.elev).some(k=>k.split(",").length===4)) return terrainBodyContact(testMap.elev,testMap.cols,testMap.rows,x,y,rx,ry,level);
   if (!(rx > 0 && ry > 0)) return 0;
   let overlap = 0;
   for (let r = Math.floor(y-ry); r <= Math.floor(y+ry); r++) {
@@ -675,8 +675,8 @@ function elevJumpOk(from, to, fill) {
   const f = Number.isFinite(fill) ? Math.min(1, Math.max(0, fill)) : 0;
   if (d > JUMP_MAX_UP) return false;
   if (ad > JUMP_MAX_DROP) return false;
-  if (ad === 2) return f >= JUMP_CHARGE_HALF;
-  if (ad === 3 || d < 0) return f >= JUMP_CHARGE_FULL;
+  if (ad <= 2) return f >= JUMP_CHARGE_HALF;
+  if (ad <= 3 || d < 0) return f >= JUMP_CHARGE_FULL;
   return false;
 }
 
@@ -733,7 +733,7 @@ export {
   decodePaintPng, paintPxOn, paintCellCoverage, tracePaintLoops, traceMaskOutline,
   buildIsland, testCellInIsland, buildCells, obstacleBodiesOf, obstacleBlockedCells,
   pointInPolygon, objectBase, objectSprite, objectScale, objectRotDeg, obstacleBodyPx,
-  terrainLevelAt, supportLevelAt, terrainBodyOverlap, testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
+  terrainLevelAt, terrainPointLevelAt, supportLevelAt, terrainBodyOverlap, testCellWalkable, testWalkable, testElev, cliffBetween, elevJumpOk, surfaceLevel, inSouthWall, nearestTestCell, testEntryCell,
   paintPxMask, paintCellCoverageMask,
   hashStr, mulberry32, chaikin,
 };

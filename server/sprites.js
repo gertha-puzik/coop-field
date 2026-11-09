@@ -98,6 +98,8 @@ const BASE_NAMES = {
   "blestyashka-kit": "Блестяшка",
   "chistolapik-kit": "Чистолапик",
   test1: "test1",
+  "test1-png": "test1 PNG 600",
+  "test1-webp": "test1 WebP 600",
 };
 
 function writeFileAtomic(file, data) {
@@ -171,7 +173,7 @@ function flushManifest() {
 /** src каталога: builtin — статика www/sprites (как до менеджера), загруженный —
  *  API-отдача файла из DATA_DIR. */
 function srcOf(row) {
-  return row.builtin ? `/sprites/${row.id}.png${row.id === "test1" ? "?v=original-300x200" : ""}` : `/sprites/file/${row.id}.png`;
+  return row.builtin ? `/sprites/${row.id}.${row.id === "test1-webp" ? "webp" : "png"}${row.id === "test1" ? "?v=original-300x200" : ""}` : `/sprites/file/${row.id}.png`;
 }
 
 /** Зеркалирование манифеста в config.SPRITES IN PLACE: room.js/dummy-rab.js

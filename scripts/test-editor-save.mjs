@@ -1,5 +1,6 @@
 // Regression: saving elevation must finish even when the editor closes during PNG encoding.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
@@ -11,18 +12,19 @@ function loadTs(url) {
   const out = {};
   cache.set(key,out);
   const js = ts.transpileModule(fs.readFileSync(url,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('require','exports',js)(id => id.startsWith('.') ? loadTs(new URL(id+'.ts',url)) : require(id),out);
+  new Function('require','exports',js)(id => id.startsWith('.') ? loadTs(new URL(id+(id.endsWith('.ts')?'':'.ts'),url)) : require(id),out);
   return out;
 }
 let finish;
 const field = { ensurePaintDecoded: async () => true };
-const mapLib = { TERRAIN_MAX_LEVEL: 10, TEST_MAP_LIMITS: {objectsMax: 1000}, testMapConnectivityError: () => null };
+const mapLib = { TERRAIN_MAX_LEVEL: 20, TEST_MAP_LIMITS: {objectsMax: 1000}, testMapConnectivityError: () => null };
 const mocks = {
   '@/lib/sim/editor-model': { SETMAP_MIN_GAP_MS: 10000 },
   '@/lib/sim/paint': { encodeDraftPaint: () => '', encodeDraftPaintAsync: () => new Promise(r => {finish=r;}) },
   '@/lib/sim/test-field': field,
   '@/lib/sim/test-map': mapLib,
   '@/lib/sim/geometry': {},
+  '@/lib/sim/terrain-shape': loadTs(new URL('../src/lib/sim/terrain-shape.ts',import.meta.url)),
   '@/lib/sim/terrain-editor': loadTs(new URL('../src/lib/sim/terrain-editor.ts',import.meta.url)),
   './editor-select': {buildEditorSelect: () => ({})},
   './editor-cells': {buildEditorCells: () => ({})},
@@ -39,7 +41,7 @@ for(const name of ['setEditorView','setEditorOpen','setEditorMsg','setEditorSave
 const ops=exports.buildEditorOps(params);
 ops.beginElevStroke('raise',2,2);
 ops.endElevStroke();
-assert.deepEqual(editorRef.current.elev,{'1,1':2,'2,2':1});
+assert.deepEqual(editorRef.current.elev,{'1,1':2,'2,2,1,1':1});
 ops.saveEditorMap();
 ops.closeEditor();
 finish('');
@@ -47,7 +49,7 @@ await new Promise(r=>setImmediate(r));
 assert.equal(sent.length,1,'closing editor must not silently cancel saving');
 assert.equal(sent[0][0],'setmap');
 assert(!('pass' in sent[0][1]),'client sends no editor password');
-assert.deepEqual(sent[0][1].map.elev,{'1,1':2,'2,2':1},'old and new elevations both survive');
+assert.deepEqual(sent[0][1].map.elev,{'1,1':2,'2,2,1,1':1},'old and new elevations both survive');
 assert.deepEqual(original.elev,{'1,1':2},'preview does not mutate saved map');
 console.log('editor elevation save after close: OK');
 
@@ -63,7 +65,7 @@ assert.deepEqual(actualField.effectiveElevRecord(stoneMap),{'2,2':2},'no generat
 actualField.setTestMap({...stoneMap,elev:{}});
 assert.equal(actualField.elevAny(),false,'stone on flat map does not render a plateau');
 const roundtrip=actualMap.sanitizeTestMap(sent[0][1].map).map;
-assert.deepEqual(roundtrip.elev,{'1,1':2,'2,2':1},'received map preserves both heights for reopening');
+assert.deepEqual(roundtrip.elev,{'1,1':2,'2,2,1,1':1},'received map preserves both heights for reopening');
 console.log('stone support, terrain separation and elevation roundtrip: OK');
 
 // A disk failure cannot be acknowledged as a saved map or replace the live map.
@@ -75,7 +77,7 @@ fs.mkdirSync(process.env.DATA_DIR+'/test-map.json'); // force atomic rename to f
 const replies=[];
 const ws={readyState:1,lastSetmap:0,send:data=>replies.push(JSON.parse(data))};
 ws.room={code:'test',sockets:new Map([[ws,{}]])};
-serverMap.setMap(ws,{map:{...previousMap,elev:{'2,2':1}}});
+serverMap.setMap(ws,{map:{...previousMap,elev:{'2,2,1,1':1}}});
 assert.equal(serverMap.testMap,previousMap,'failed save restores previous live map');
 assert(replies.some(([event,text])=>event==='info'&&text.includes('сохранить локацию на диск не удалось')));
 assert(!replies.some(([event])=>event==='map'||event==='field'),'failed save never broadcasts success');
@@ -93,11 +95,46 @@ assert(!terrain.stampElevation(levels,'raise',4,3,{width:3,depth:2,level:7},10,1
 terrain.stampElevation(levels,'height',4,3,{width:3,depth:2,level:0},10,10,new Set(),0);
 assert.deepEqual(levels,{'1,1':2},'level zero removes the entire rectangular stamp');
 for (const yaw of [0,.31,Math.PI/2,Math.PI,Math.PI*1.5]) {
- for(const level of [1,5,10]) {
+ for(const level of [1,5,10,20]) {
   const x=550-Math.sin(yaw)*26*level,y=825-Math.cos(yaw)*26*level;
   const hit=terrain.pickTerrainTop(x,y,100,150,12,12,(c,r)=>c===5&&r===5?level:0,26,yaw);
   assert.equal(hit.c,5);assert.equal(hit.r,5);assert.equal(hit.level,level);
  }
 }
-assert.deepEqual(terrain.clampBrush({width:99,depth:99,level:99},6,4),{width:6,depth:4,level:10});
+assert.deepEqual(terrain.clampBrush({width:99,depth:99,level:99},6,4),{width:6,depth:4,level:20});
 console.log('rectangular exact-height brush and terrain picking at five camera angles: OK');
+
+// Exact dimensions must survive rendering, server sanitization and JSON storage.
+const shape=loadTs(new URL('../src/lib/sim/terrain-shape.ts',import.meta.url));
+const precise={'1,1':2};
+const bounds=shape.terrainBrushBounds(2,2,.2,3.2,12,12);
+assert.equal(bounds.w,.2);assert.equal(bounds.d,3.2);
+const stroke=new Set();
+assert(shape.stampTerrainRect(precise,bounds,'height',6.7,stroke,0,20));
+assert.equal(shape.terrainAt(precise,bounds.x+.1,bounds.y+.1),6.7);
+assert.equal(shape.terrainAt(precise,bounds.x-.001,bounds.y+.1),0);
+assert.equal(shape.terrainAt(precise,bounds.x+bounds.w+.001,bounds.y+.1),0);
+assert(!shape.stampTerrainRect(precise,bounds,'raise',6.7,stroke,0,20),'same stroke does not stack rectangles');
+const persisted=serverMap.sanitizeTestMap({...structuredClone(actualMap.TEST_MAP_DEFAULT),cols:12,rows:12,zones:[{id:'all',kind:'cells',c0:0,r0:0,c1:11,r1:11}],elev:precise});
+assert(!persisted.error,persisted.error);
+assert.deepEqual(persisted.map.elev,shape.sanitizeTerrainElev(precise,12,12,20));
+assert.equal(serverMap.terrainAt(JSON.parse(JSON.stringify(persisted.map.elev)),bounds.x+.1,bounds.y+.1),6.7);
+assert(shape.terrainBodyContact(precise,12,12,bounds.x-.05,bounds.y+.2,.1,.1,0)>0,'fractional cliff blocks a body at its exact boundary');
+for(const yaw of [0,Math.PI/2,Math.PI,Math.PI*1.5,.37]){
+ const wx=(bounds.x+.1)*100,wy=(bounds.y+.2)*150,lv=6.7;
+ const hit=shape.pickTerrainTop(wx-Math.sin(yaw)*lv*26,wy-Math.cos(yaw)*lv*26,100,150,12,12,()=>0,26,yaw,precise);
+ assert.equal(hit.level,6.7,'fractional top ray intersection at every angle');
+}
+shape.stampTerrainRect(precise,bounds,'height',0,new Set(),0,20);
+assert.equal(shape.terrainAt(precise,bounds.x+.1,bounds.y+.1),0,'zero explicitly erases a fractional block');
+assert.equal(shape.terrainAt(precise,1.5,1.5),2,'legacy terrain survives');
+assert.deepEqual(shape.clampBrush({width:.1,depth:3.2,level:6.7},12,12),{width:.1,depth:3.2,level:6.7});
+console.log('exact decimal geometry, picking, collision, server persistence and erase: OK');
+
+const bootDir=fs.mkdtempSync('/tmp/coop-decimal-map-boot-');
+fs.writeFileSync(bootDir+'/test-map.json',JSON.stringify(persisted.map));
+const boot=spawnSync(process.execPath,['--input-type=module','-e',
+  `import {testMap} from './server/testmap.js'; if(JSON.stringify(testMap.elev)!==process.env.EXPECT_ELEV)throw new Error('persisted decimal terrain lost at startup');`],
+  {cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:bootDir,EXPECT_ELEV:JSON.stringify(persisted.map.elev)},encoding:'utf8',timeout:10000});
+assert.equal(boot.status,0,boot.stderr);
+console.log('persisted rectangular terrain survives a fresh server process: OK');

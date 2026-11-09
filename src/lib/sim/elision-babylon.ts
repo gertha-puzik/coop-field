@@ -269,8 +269,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         mat.diffuseTexture = tex;
         // Берём альфу один раз: повторная opacityTexture темнила и обрезала края.
         mat.useAlphaFromDiffuseTexture = true;
-        mat.transparencyMode = Material.MATERIAL_ALPHATEST;
-        mat.alphaCutOff = 0.35;
+        mat.transparencyMode = Material.MATERIAL_ALPHATESTANDBLEND;
+        mat.alphaCutOff = 0.01;
         mat.backFaceCulling = false;
         mat.zOffset = elisionDepthBias(actor.id);
         const mesh = new Mesh(`decal-${actor.id}`, scene);
@@ -302,8 +302,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
         : node.mat.alpha + (targetAlpha - node.mat.alpha) * 0.18;
       node.mat.alpha = alpha;
-      node.mat.alphaCutOff = alpha < 1 ? 0.05 : 0.35;
-      node.mat.transparencyMode = alpha < 1 ? Material.MATERIAL_ALPHATESTANDBLEND : Material.MATERIAL_ALPHATEST;
+      node.mat.alphaCutOff = 0.01;
+      node.mat.transparencyMode = Material.MATERIAL_ALPHATESTANDBLEND;
       const foot = elisionActorFoot(actor);
       node.root.position.set(foot.x + (pose?.sway ?? 0)*Math.cos(frame.yaw),
         foot.y + (pose?.lift ?? 0), foot.z - (pose?.sway ?? 0)*Math.sin(frame.yaw));

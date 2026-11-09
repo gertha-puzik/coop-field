@@ -1,3 +1,4 @@
+import { terrainAt, terrainBodyContact } from './terrain-shape';
 import { pickTerrainTop } from './terrain-editor';
 /**
  * Поле комнаты «тест» — другой формат играбельной площади вместо жёсткой сетки 10×6.
@@ -942,6 +943,10 @@ export function effectiveElevRecord(map: TestMap): Record<string, number> {
   return map.elev ?? {};
 }
 
+export function terrainPointLevelAt(x: number,y: number): number { return terrainAt(currentMap.elev,x,y); }
+export function terrainContact(x:number,y:number,rx:number,ry:number,level:number):number {
+  return terrainBodyContact(currentMap.elev??{},currentMap.cols,currentMap.rows,x,y,rx,ry,level);
+}
 export function terrainLevelAt(c: number, r: number): number {
   return mapElevOf(currentMap, c, r);
 }
@@ -956,7 +961,7 @@ export function supportLevelAt(x: number, y: number): number {
     const ux = dx*cos - dy*sin, uy = dx*sin + dy*cos;
     if ((ux / (b.hw + 2)) ** 2 + (uy / (b.h + 2)) ** 2 <= 1) { stone = true; break; }
   }
-  return Math.min(TERRAIN_MAX_LEVEL, terrainLevelAt(Math.floor(x), Math.floor(y)) + (stone ? STONE_LEVEL : 0));
+  return Math.min(TERRAIN_MAX_LEVEL, terrainAt(currentMap.elev,x,y) + (stone ? STONE_LEVEL : 0));
 }
 
 export function elevAny(): boolean {
@@ -965,7 +970,7 @@ export function elevAny(): boolean {
 
 /** Подъём земли (px) в точке (клеточные доли мира) — уровень её клетки. */
 export function elevLiftAtPoint(x: number, y: number): number {
-  return terrainLevelAt(Math.floor(x), Math.floor(y)) * TERRAIN_LIFT_PX;
+  return terrainAt(currentMap.elev,x,y) * TERRAIN_LIFT_PX;
 }
 
 /** Уровень нарисованного верха под точкой (доли клетки), не логической клетки.
@@ -995,7 +1000,7 @@ export function groundPointAtWorld(
   cellH: number,
   yaw = 0,
 ): { x: number; y: number } {
-  const hit = pickTerrainTop(x, y, cellW, cellH, currentMap.cols, currentMap.rows, terrainLevelAt, TERRAIN_LIFT_PX, yaw);
+  const hit = pickTerrainTop(x, y, cellW, cellH, currentMap.cols, currentMap.rows, terrainLevelAt, TERRAIN_LIFT_PX, yaw, currentMap.elev);
   return { x: hit.x, y: hit.y };
 }
 
@@ -1184,6 +1189,8 @@ export function drawTerrainTop(
     ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
   }
 
+  ctx.fillStyle = `rgba(255,245,200,${Math.min(.5,e*.025)})`;
+  ctx.fillRect(x,y,cellW+.5,cellH+.5);
 }
 
 /* ---------- детерминированный шум ---------- */
