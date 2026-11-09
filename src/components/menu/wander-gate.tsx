@@ -214,7 +214,7 @@ function PawTrail() {
       {paws.map((paw) => (
         <img
           key={paw.id}
-          src="/paw-cursor.svg"
+          src="/lapka.svg"
           alt=""
           className="wander-paw"
           style={{ left: paw.x, top: paw.y, ['--rot' as string]: `${paw.rot}deg` }}

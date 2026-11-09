@@ -386,12 +386,12 @@
   overflow: hidden;
   background: #070b18;
   color: #f4f0ff;
-  cursor: url('/paw-cursor.svg') 16 22, auto;
+  cursor: url('/lapka.svg') 16 22, auto;
 }
 
 .wander-sky a,
 .wander-sky button {
-  cursor: url('/paw-cursor.svg') 16 22, pointer;
+  cursor: url('/lapka.svg') 16 22, pointer;
 }
 
 .wander-drift {
