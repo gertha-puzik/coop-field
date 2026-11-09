@@ -12,7 +12,7 @@ function loadTs(url) {
   const out = {};
   cache.set(key,out);
   const js = ts.transpileModule(fs.readFileSync(url,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('require','exports',js)(id => id.startsWith('.') ? loadTs(new URL(id+(id.endsWith('.ts')?'':'.ts'),url)) : require(id),out);
+  new Function('require','exports',js)(id => id.endsWith('.json') ? {default:JSON.parse(fs.readFileSync(new URL(id,url),'utf8'))} : id.startsWith('.') ? loadTs(new URL(id+(id.endsWith('.ts')?'':'.ts'),url)) : require(id),out);
   return out;
 }
 let finish;
@@ -261,3 +261,29 @@ try{
  assert.equal(terrainScans,0,'annotation pass does not enumerate all 2400 terrain blocks');
 }finally{globalThis.window=previousGuideWindow;}
 console.log('dense terrain overlay: one hovered height, none on leave, no per-frame terrain scan: OK');
+
+// Plants are free decorative objects: preserve all catalog variants and transforms,
+// allow overlaps, and never add terrain support, battle walls or entry interference.
+const plantCatalog=actualMap.PLANT_SPRITE_OPTS;
+assert.equal(plantCatalog.length,75);
+assert.deepEqual(JSON.parse(fs.readFileSync(new URL('../server/plant-sprites.json',import.meta.url))),plantCatalog);
+const plantMap=actualMap.sanitizeTestMap({...original,v:2,elev:{},objects:plantCatalog.map(p=>({id:p.id,kind:'plant',spr:p.id,c:2,r:2,x:2.5,y:2.8,s:2.5,rot:90,mir:1}))});
+assert(plantMap.map,plantMap.error);
+const plantServer=serverMap.sanitizeTestMap(plantMap.map);assert(plantServer.map,plantServer.error);
+assert.equal(plantServer.map.objects.length,75,'decorative plants do not collapse to one object per cell');
+assert.deepEqual(plantServer.map.objects.map(({dir,...o})=>o),plantMap.map.objects.map(({dir,...o})=>o),'client and server preserve all free plant transforms');
+actualField.setTestMap(plantMap.map);
+assert.equal(actualField.testObstacleAt(2,2),null);assert.equal(actualField.supportLevelAt(2.5,2.8),0);assert.equal(actualField.testPeaceObjectDepth(2.5,2.8,100,150,5),0);
+assert(actualField.testWalkableCell(2,2),'plants leave battle cells walkable');
+const plantWorld=await import('../server/world.js');assert.equal(plantWorld.obstacleBodiesOf(plantServer.map).length,0);
+for(const p of plantCatalog){
+ const bytes=fs.readFileSync(new URL(`../public/tex/${p.id}.png`,import.meta.url));
+ assert.deepEqual([bytes.readUInt32BE(16),bytes.readUInt32BE(20)],[p.width,p.height]);
+ assert.deepEqual(actualMap.OBJECT_DIMS[p.id],[p.width,p.height]);
+ assert.equal(plantWorld.objectSprite({kind:'plant',spr:p.id}),p.id);
+}
+const plantArchive=archive.decodeMapArchive(archive.encodeMapArchive(plantMap.map));assert.deepEqual(plantArchive.objects,plantMap.map.objects,'plants survive ZIP location archive roundtrip');
+console.log('75 plant catalog assets, client/server transforms, overlap, non-collision and archive persistence: OK');
+
+actualField.setTestMap({...plantMap.map,objects:[plantMap.map.objects[0],{id:'entry-overlap',kind:'entry',c:2,r:2,dir:'right'}]});
+assert.equal(actualField.testEntryAt(2,2)?.id,'entry-overlap','a decorative plant never hides an entry in the cell index');

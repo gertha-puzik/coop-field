@@ -78,7 +78,7 @@ export function buildEditorSelect({
     d.zones = kept;
     const objects: TestMapObject[] = [];
     d.objects = d.objects.filter((o) => {
-      if (o.kind === 'stone' || o.kind === 'tree') {
+      if (o.kind === 'stone' || o.kind === 'tree' || o.kind === 'plant') {
         const b = objectBase(o);
         if (inRect(Math.floor(b.x), Math.floor(b.y - 0.01))) {
           objects.push(o);
@@ -155,7 +155,7 @@ export function buildEditorSelect({
     }
     for (const o of buf.objects) {
       const no: TestMapObject = { ...o };
-      if (no.kind === 'stone' || no.kind === 'tree') {
+      if (no.kind === 'stone' || no.kind === 'tree' || no.kind === 'plant') {
         const b = objectBase(o);
         const nx = b.x + dc;
         const ny = b.y + dr;

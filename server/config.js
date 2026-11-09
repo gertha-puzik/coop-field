@@ -7,6 +7,9 @@
  * and DATA_DIR.
  */
 import path from "node:path";
+import fs from "node:fs";
+const PLANT_SPRITES=JSON.parse(fs.readFileSync(new URL("./plant-sprites.json",import.meta.url),"utf8"));
+const PLANT_SPRITE_IDS=new Set(PLANT_SPRITES.map(p=>p.id));
 import { fileURLToPath } from "node:url";
 
 // Репозиторный корень: config.js после выреза W4 живёт в server/, а PUBLIC и
@@ -385,6 +388,7 @@ const OBJECT_DIMS = {
   'rock-8': [18, 16],
   'rock-9': [19, 16],
   'rock-10': [31, 19],
+  ...Object.fromEntries(PLANT_SPRITES.map(p=>[p.id,[p.width,p.height]])),
 };
 const TREE_SPRITE_IDS = new Set(['tree-1', 'tree-2', 'tree-3']);
 const ROCK_SPRITE_IDS = new Set(Object.keys(OBJECT_DIMS).filter((k) => k.startsWith('rock')));
@@ -431,6 +435,6 @@ export {
   WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM,
   STRIKE_COOLDOWN_MS,
   // location objects (sanitize + geometry)
-  OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
+  OBJECT_DIMS, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
   ADMIN_PASS, DATA_DIR, WS_MAX_PER_IP, ROOMS_MAX,
 };

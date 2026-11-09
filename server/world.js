@@ -10,7 +10,7 @@ import { terrainAt, terrainBodyContact } from "./testmap.js";
  * Pure helpers: no writes, no sockets, no wire format.
  */
 import zlib from "node:zlib";
-import { TEST_ROOM, OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS } from "./config.js";
+import { TEST_ROOM, OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, PLANT_SPRITE_IDS } from "./config.js";
 import { testMap, TEST_ISLAND, TEST_CELLS, TEST_WIDTH, TEST_HEIGHT, TEST_PAINT } from "./testmap.js";
 import {
   ELEV_STEP_MAX,
@@ -526,6 +526,7 @@ function objectBase(o) {
 }
 
 function objectSprite(o) {
+  if(o.kind==='plant')return PLANT_SPRITE_IDS.has(o.spr)?o.spr:'plant-001';
   if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1';
   return ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
 }

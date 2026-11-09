@@ -15,7 +15,7 @@ import type { SimSettings } from '@/lib/sim/settings';
 import { EDITOR_PASS_KEY, SETMAP_MIN_GAP_MS, editorSnapshot, restoreEditorSnapshot, trimEditorHistory, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
 import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync, encodeMapArchive, decodeMapArchive, archivePaintCanvas } from '@/lib/sim/paint';
 import { createCoopClient } from '@/lib/net/coop';
-import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap, testObstacleBodies, testObjectAt } from '@/lib/sim/test-field';
+import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap } from '@/lib/sim/test-field';
 import { newObjectId, newZoneId, objectBase, objectMir, objectRotDeg, objectScale, objectSprite, mapHasPaint, paintFormatError, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, testMapConnectivityError, type GroundCover, type TestMap, type TestMapEntryDir, type TestMapObject, type TestMapSpawn, type TestMapZone, type TestMapZoneKind } from '@/lib/sim/test-map';
 import { rr } from '@/lib/sim/geometry';
 import { buildEditorSelect, type EditorSelState } from './editor-select';
@@ -33,7 +33,7 @@ export interface EditorOpsParams {
   editorEntryDirRef: RefObject<TestMapEntryDir>;
   editorPlaceRef: RefObject<EditorPlace | null>;
   engineRef: RefObject<Engine>;
-  lastSprRef: RefObject<{ tree: string; stone: string }>;
+  lastSprRef: RefObject<{ tree: string; stone: string; plant:string }>;
   settingsRef: RefObject<SimSettings>;
   patchEditorPlace: (p: Partial<EditorPlace>) => void;
   setPaintOverride: (cv: HTMLCanvasElement | null, rebuild: boolean) => void;
@@ -227,7 +227,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     }
     // Камень/дерево: сразу создаём «призрак» постановки — следует за курсором,
     // размер/поворот подгоняются до клика-фиксации; остальные инструменты его снимают.
-    if (tool === 'tree' || tool === 'stone') {
+    if (tool === 'tree' || tool === 'stone' || tool === 'plant') {
       const p = editorPlaceRef.current;
       if (!p || p.kind !== tool) {
         patchEditorPlace({
@@ -265,13 +265,11 @@ export function buildEditorOps(params: EditorOpsParams) {
     const s = settingsRef.current;
     let best: TestMapObject | null = null;
     let bestD = 34; // px вокруг точки опоры — щедрый захват
-    for (const ob of testObstacleBodies()) {
-      if (exceptId && ob.o.id === exceptId) continue;
-      const dist = Math.hypot(mx - ob.x * s.field.cellW, my - ob.y * s.field.cellH);
-      if (dist < bestD) {
-        bestD = dist;
-        best = ob.o;
-      }
+    for (const object of editorRef.current?.objects??[]) {
+      if(!['stone','tree','plant'].includes(object.kind)||object.id===exceptId)continue;
+      const base=objectBase(object);
+      const dist=Math.hypot(mx-base.x*s.field.cellW,my-base.y*s.field.cellH);
+      if(dist<bestD){bestD=dist;best=object;}
     }
     return best;
   };
@@ -280,9 +278,9 @@ export function buildEditorOps(params: EditorOpsParams) {
    * но скрывается — ✓ поставит правленый объект вместо него, ✕ вернёт как было. */
   const liftObstacleToPlace = (o: TestMapObject) => {
     const b = objectBase(o);
-    lastSprRef.current[o.kind === 'tree' ? 'tree' : 'stone'] = objectSprite(o);
+    lastSprRef.current[o.kind === 'plant' ? 'plant' : o.kind === 'tree' ? 'tree' : 'stone'] = objectSprite(o);
     patchEditorPlace({
-      kind: o.kind === 'tree' ? 'tree' : 'stone',
+      kind: o.kind === 'plant' ? 'plant' : o.kind === 'tree' ? 'tree' : 'stone',
       spr: objectSprite(o),
       s: objectScale(o),
       rot: objectRotDeg(o),
@@ -300,7 +298,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const p = editorPlaceRef.current;
     if (!p) {
       const hit=pickObstacleAt(mx,my,null);
-      if(hit){setEditorTool(hit.kind==='tree'?'tree':'stone');liftObstacleToPlace(hit);}
+      if(hit){setEditorTool(hit.kind==='plant'?'plant':hit.kind==='tree'?'tree':'stone');liftObstacleToPlace(hit);}
       return;
     }
     const s = settingsRef.current;
@@ -384,7 +382,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     }
     d.zones = kept;
     d.objects = d.objects.filter((o) => {
-      if (o.kind === 'stone' || o.kind === 'tree') {
+      if (o.kind === 'stone' || o.kind === 'tree' || o.kind === 'plant') {
         const b = objectBase(o);
         return b.x < nc && b.y - 0.01 < nr;
       }
@@ -474,7 +472,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       // ластик снимает препятствия (по точке опоры), клеточные объекты
       // (землю/покрытие/заход) и клетки спавна внутри стёртого прямоугольника
       d.objects = d.objects.filter((o) => {
-        if (o.kind === 'stone' || o.kind === 'tree') {
+        if (o.kind === 'stone' || o.kind === 'tree' || o.kind === 'plant') {
           const b = objectBase(o);
           const fc = Math.floor(b.x);
           const fr = Math.floor(b.y - 0.01);

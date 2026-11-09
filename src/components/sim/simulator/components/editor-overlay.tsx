@@ -7,7 +7,7 @@ import { Button } from '@/components/ui';
 import type { EditorDraft, EditorPlace, EditorTool } from '@/lib/sim/editor-model';
 import { PAINT_MATS } from '@/lib/sim/paint';
 import { clampBrush, isElevationTool } from '@/lib/sim/terrain-editor';
-import { TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, TREE_SPRITE_OPTS, ROCK_SPRITE_OPTS, type GroundCover, type TestMapEntryDir } from '@/lib/sim/test-map';
+import { TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, TREE_SPRITE_OPTS, ROCK_SPRITE_OPTS, PLANT_SPRITE_OPTS, type GroundCover, type TestMapEntryDir } from '@/lib/sim/test-map';
 import type { EditorSaveState } from '../editor-ops';
 import styles from './editor-workspace.module.css';
 export interface EditorOverlayProps {
@@ -57,6 +57,7 @@ const tools:{id:EditorTool;label:string;icon:string;category:Category;key?:strin
   {id:'fill',label:'Заливка',icon:'fill',category:'surface'},
   {id:'select',label:'Выделение',icon:'zone',category:'zones'},
   {id:'pan',label:'Перемещение',icon:'move',category:'world',key:'Пробел'},
+  {id:'plant',label:'Растения',icon:'tree',category:'objects'},
   {id:'tree',label:'Дерево',icon:'tree',category:'objects'},
   {id:'stone',label:'Камень',icon:'rock',category:'objects'},
   {id:'height',label:'Блок',icon:'layers',category:'terrain'},
@@ -94,6 +95,7 @@ export function EditorOverlay(p:EditorOverlayProps){
  const [collapsed,setCollapsed]=useState(false);
  const [query,setQuery]=useState('');
  const [filter,setFilter]=useState('all');
+ const [plantGroup,setPlantGroup]=useState('all');
  const [world,setWorld]=useState({cols:d.cols,rows:d.rows});
  const [elapsed,setElapsed]=useState(0);
  const [clearPending,setClearPending]=useState(false);
@@ -139,7 +141,7 @@ export function EditorOverlay(p:EditorOverlayProps){
  const material=(id:string,label:string)=>{choose('paint');update({pmat:id});};
  const mats=PAINT_MATS.filter(m=>m.id!=='erase').filter(m=>filter==='all'||(filter==='stone'?/stone|rock|плит|кам|скал|кирп|пес/i.test(m.id+' '+m.label):!/stone|rock|плит|кам|скал|кирп|пес/i.test(m.id+' '+m.label)));
  const q=query.trim().toLowerCase();
- const searchResults=[...tools.map(t=>({id:t.id,label:t.label,kind:'Инструмент',run:()=>choose(t.id)})),...PAINT_MATS.map(m=>({id:'mat-'+m.id,label:m.label,kind:'Материал',run:()=>material(m.id,m.label)})),...TREE_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('tree');p.patchEditorPlace({kind:'tree',spr:o.id,pickId:null,anchored:false});}})),...ROCK_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('stone');p.patchEditorPlace({kind:'stone',spr:o.id,pickId:null,anchored:false});}}))].filter(r=>r.label.toLowerCase().includes(q));
+ const searchResults=[...tools.map(t=>({id:t.id,label:t.label,kind:'Инструмент',run:()=>choose(t.id)})),...PAINT_MATS.map(m=>({id:'mat-'+m.id,label:m.label,kind:'Материал',run:()=>material(m.id,m.label)})),...PLANT_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Растение',run:()=>{choose('plant');p.patchEditorPlace({kind:'plant',spr:o.id,pickId:null,anchored:false});}})),...TREE_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('tree');p.patchEditorPlace({kind:'tree',spr:o.id,pickId:null,anchored:false});}})),...ROCK_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('stone');p.patchEditorPlace({kind:'stone',spr:o.id,pickId:null,anchored:false});}}))].filter(r=>r.label.toLowerCase().includes(q));
  return <div className={styles.workspace} data-collapsed={collapsed} aria-label="Редактор локации">
    <header className={styles.header}>
      <div className={styles.brand}><img className={styles.paw} src="/lapka.svg" alt=""/><strong>Редактор локации</strong><span className={styles.dimensions}>{d.cols} × {d.rows}</span><span className={styles.editorWeather} title="Ясный свет для строительства; погода комнаты сохраняется">☀ Солнечно</span></div>
@@ -171,9 +173,10 @@ export function EditorOverlay(p:EditorOverlayProps){
          <p className={styles.hint}>Свободный мазок без привязки к клеткам. ПКМ стирает. Заливка заменяет материал в связной области.</p>
        </>}
        {section==='objects'&&<>
-         <div className={styles.segment}>{tools.filter(t=>['cursor','tree','stone'].includes(t.id)).map(toolButton)}</div>
-         <h3>{d.tool==='tree'?'Деревья':'Камни'}</h3>
-         <div className={styles.objects}>{(d.tool==='tree'?TREE_SPRITE_OPTS:ROCK_SPRITE_OPTS).map(o=><button type="button" key={o.id} aria-pressed={p.editorPlace?.spr===o.id} onClick={()=>{choose(d.tool==='tree'?'tree':'stone');p.patchEditorPlace({kind:d.tool==='tree'?'tree':'stone',spr:o.id,anchored:false,pickId:null});}}><img src={`/tex/${o.id}.png`} alt=""/><span>{o.label}</span></button>)}</div>
+         <div className={styles.toolGrid}>{tools.filter(t=>['cursor','plant','tree','stone'].includes(t.id)).map(toolButton)}</div>
+         <h3>{d.tool==='plant'?'Растения':d.tool==='tree'?'Деревья':'Камни'}</h3>
+         {d.tool==='plant'&&<label className={styles.field}>Группа растений<select aria-label="Группа растений" value={plantGroup} onChange={e=>setPlantGroup(e.target.value)}><option value="all">Все растения (75)</option>{Array.from(new Set(PLANT_SPRITE_OPTS.map(p=>p.group))).map(group=><option key={group}>{group}</option>)}</select></label>}
+         <div className={styles.objects}>{(d.tool==='plant'?PLANT_SPRITE_OPTS.filter(p=>plantGroup==='all'||p.group===plantGroup):d.tool==='tree'?TREE_SPRITE_OPTS:ROCK_SPRITE_OPTS).map(o=><button type="button" key={o.id} aria-pressed={p.editorPlace?.spr===o.id} onClick={()=>{choose(d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone');p.patchEditorPlace({kind:d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone',spr:o.id,anchored:false,pickId:null});}}><img loading="lazy" src={`/tex/${o.id}.png`} alt=""/><span>{o.label}</span></button>)}</div>
          {p.editorPlace&&<>
            <div className={styles.two}><NumberField label="Масштаб" min={OBJECT_SCALE_MIN} max={OBJECT_SCALE_MAX} step={.1} value={p.editorPlace.s} onChange={s=>p.patchEditorPlace({s})}/><NumberField label="Поворот, °" min={0} max={359} step={15} value={p.editorPlace.rot} onChange={rot=>p.patchEditorPlace({rot})}/></div>
            <button type="button" className={styles.wide} aria-pressed={p.editorPlace.mir===1} onClick={()=>p.patchEditorPlace({mir:p.editorPlace?.mir===1?0:1})}>⇋ Отразить по горизонтали</button>

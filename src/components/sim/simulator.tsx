@@ -377,7 +377,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const [editorView, setEditorView] = useState<EditorDraft | null>(null);
   /** Пароль редактора: хранится в localStorage, подставляется при открытии. */
   /** Вариант спрайта при постановке: последнее выбранное дерево и камень. */
-  const lastSprRef = useRef<{ tree: string; stone: string }>({ tree: 'tree-1', stone: 'rock-1' });
+  const lastSprRef = useRef<{ tree: string; stone: string; plant:string }>({ tree: 'tree-1', stone: 'rock-1',plant:'plant-001' });
   /** Вариант покрытия земли при покраске (инструмент «Покрытие»). */
   const [editorCover, setEditorCover] = useState<GroundCover>('flower-1');
   const editorCoverRef = useRef<GroundCover>('flower-1');

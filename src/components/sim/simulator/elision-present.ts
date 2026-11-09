@@ -227,7 +227,7 @@ function catActor(
 }
 
 function propActor(o: TestMapObject, cellW: number, cellH: number): ElisionActor | null {
-  if (o.kind !== 'stone' && o.kind !== 'tree') return null;
+  if (o.kind !== 'stone' && o.kind !== 'tree' && o.kind !== 'plant') return null;
   const spr = objectSprite(o);
   const dims = OBJECT_DIMS[spr] ?? [57, 42];
   const sc = objectScale(o);

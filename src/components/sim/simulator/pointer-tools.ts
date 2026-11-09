@@ -379,7 +379,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         ev.preventDefault();
         return;
       }
-      if (ev.button === 0 && (ed.tool === 'stone' || ed.tool === 'tree')) {
+      if (ev.button === 0 && (ed.tool === 'stone' || ed.tool === 'tree' || ed.tool === 'plant')) {
         editorPlacementClick(mx, my);
         ev.preventDefault();
         return;
