@@ -4217,6 +4217,15 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                   ? { key: dragRef.current.key, x: dragRef.current.x, y: dragRef.current.y, w: dragRef.current.w, h: dragRef.current.h }
                   : null,
                 spriteImage: (id) => spritesRef.current[id as SpriteId],
+                walkFrame: (id,sprite) => {
+                  if(editorOpenRef.current||dragRef.current?.key===id)return undefined;
+                  const walk=walkGifsRef.current[sprite];if(!walk)return undefined;
+                  const free=remoteFreeRef.current.get(id),remote=remoteDrawRef.current.get(id);
+                  const moving=id===sNow.controlled
+                    ? (sNow.arrow.battleMode?!!engineRef.current.leap:freeSyncRef.current.moving)
+                    : free?Math.hypot(free.tx-free.x,free.ty-free.y)>.02:(remote?.queue.length??0)>0;
+                  return moving?walkFrameAt(walk,now,walkPhaseOf(id)):undefined;
+                },
                 objects: currentTestMap().objects ?? [],
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });

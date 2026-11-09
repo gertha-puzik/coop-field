@@ -29,6 +29,8 @@ export type ElisionActor = {
   /** Высота над землёй, px мира. В сцене это Y, не экранный сдвиг. */
   lift: number;
   url: string;
+  /** Decoded animation frame; texture upload is cached per source frame. */
+  image?: HTMLCanvasElement;
   /** Отразить по горизонтали (мирный бег лицом вправо). */
   mirror: boolean;
   /** Поворот декали вокруг вертикали, градусы. */

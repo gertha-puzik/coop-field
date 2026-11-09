@@ -105,7 +105,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   let groundMode: ElisionView['ground'] = 'boot';
   let lastCssW = 0;
   let lastCssH = 0;
-  const textures = new Map<string, Texture>();
+  const textures = new Map<string|HTMLCanvasElement, Texture>();
   const decals = new Map<string, DecalNode>();
 
   const fitCanvas = () => {
@@ -229,10 +229,14 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     syncTerrain(frame);
   };
 
-  const textureFor = (url: string): Texture => {
-    const cached = textures.get(url);
+  const textureFor = (url: string,image?:HTMLCanvasElement): Texture => {
+    const key=image??url;
+    const cached = textures.get(key);
     if (cached) return cached;
-    const tex = new Texture(
+    const tex = image ? RawTexture.CreateRGBATexture(
+      new Uint8Array(image.getContext('2d')!.getImageData(0,0,image.width,image.height).data),
+      image.width,image.height,scene,true,true,Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
+    ) : new Texture(
       url,
       scene,
       false,
@@ -242,7 +246,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     tex.hasAlpha = true;
     tex.anisotropicFilteringLevel = 8;
     tex.wrapU = tex.wrapV = Texture.CLAMP_ADDRESSMODE;
-    textures.set(url, tex);
+    textures.set(key, tex);
     return tex;
   };
 
@@ -264,7 +268,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         const mat = new StandardMaterial(`decal-${actor.id}`, scene);
         mat.disableLighting = true;
         mat.specularColor = new Color3(0, 0, 0);
-        const tex = textureFor(actor.url);
+        const tex = textureFor(actor.url,actor.image);
         mat.emissiveColor = Color3.White();
         mat.diffuseTexture = tex;
         // Берём альфу один раз: повторная opacityTexture темнила и обрезала края.
@@ -296,6 +300,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
           actor.rot + (pose?.rot ?? 0) * 180/Math.PI, actor.mirror), true);
         node.poseSig = poseSig;
       }
+      // Switching GIF frames reuses the mesh/material and each uploaded texture.
+      const texture=textureFor(actor.url,actor.image);
+      if(node.mat.diffuseTexture!==texture)node.mat.diffuseTexture=texture;
       node.sig = sig;
       node.mat.emissiveColor.set(...tint);
       const targetAlpha = actor.opacity ?? elisionObstacleAlpha(actor, self, frame.yaw);

@@ -69,6 +69,7 @@ export type ElisionPresentInput = {
   remoteDraw: Map<string, { col: number; row: number }>;
   drag: { key: string; x: number; y: number; w: number; h: number } | null;
   spriteImage: (id: string) => SpriteImg | undefined;
+  walkFrame?: (id:string,sprite:string) => HTMLCanvasElement|undefined;
   objects: TestMapObject[];
   rab: { col: number; row: number; scale: number } | null;
 };
@@ -207,12 +208,15 @@ function catActor(
     };
   }
   const size = spriteSizePx(input.cellH, scale, aspectOf(input.spriteImage(sprite)));
+  const image=input.walkFrame?.(id,sprite);
+  // Fit the authored frame without stretching it or moving the static foot anchor.
+  const fit=image?Math.min(size.w/image.width,size.h/image.height):1;
+  const w=image?image.width*fit:size.w,h=image?image.height*fit:size.h;
   return {
     id,
-    x: topLeft.x,
-    y: topLeft.y,
-    w: size.w,
-    h: size.h,
+    x: topLeft.x+(size.w-w)/2,
+    y: topLeft.y+size.h-h,
+    w, h, image,
     lift,
     url: spriteUrl(sprite),
     mirror,
