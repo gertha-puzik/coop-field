@@ -23,6 +23,7 @@ import { Lilita_One } from 'next/font/google';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
+import { SiteHeader } from '@/components/site/site-header';
 import { httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import {
   DAMAGE_LEVELS,
@@ -571,6 +572,10 @@ export default function PlayerProfile({
   return (
     <div className={styles.sky}>
       <Starscape />
+      {/* W2 (2026-11-08): общая шапка сайта и над открытым профилем —
+          из карточки/настроек можно уйти в любой раздел и выйти из аккаунта;
+          паттерн каталога: sticky-полоса лежит на звёздном небе .sky. */}
+      <SiteHeader />
       <div className={styles.page}>
         <BrandRow />
         <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
