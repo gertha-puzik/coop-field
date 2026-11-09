@@ -26,6 +26,9 @@ export interface EditorOverlayProps {
   undoEditor: (steps?:number) => void;
   redoEditor: (steps?:number) => void;
   resetEditor: () => void;
+  clearEditorMap: () => void;
+  exportEditorMap: () => Promise<void>;
+  importEditorMap: (file:File) => Promise<void>;
   mergeEditorZones: () => void;
   toggleEditorSel: (id: string) => void;
   renameEditorZone: (id: string, name: string) => void;
@@ -93,6 +96,9 @@ export function EditorOverlay(p:EditorOverlayProps){
  const [filter,setFilter]=useState('all');
  const [world,setWorld]=useState({cols:d.cols,rows:d.rows});
  const [elapsed,setElapsed]=useState(0);
+ const [clearPending,setClearPending]=useState(false);
+ const [archiveBusy,setArchiveBusy]=useState(false);
+ useEffect(()=>setWorld({cols:d.cols,rows:d.rows}),[d.cols,d.rows]);
  useEffect(()=>{if(window.matchMedia('(max-width:800px)').matches)setCollapsed(true);},[]);
  const update=(patch:Partial<EditorDraft>)=>{if(p.editorRef.current)Object.assign(p.editorRef.current,patch);p.syncEditorView();};
  const choose=(tool:EditorTool)=>{
@@ -199,6 +205,11 @@ export function EditorOverlay(p:EditorOverlayProps){
          <h3>Обзор</h3><div className={styles.two}><button type="button" onClick={()=>p.rotateCamera(-1)}>↶ Повернуть влево</button><button type="button" onClick={()=>p.rotateCamera(1)}>↷ Повернуть вправо</button></div>
          <label className={styles.check}><input type="checkbox" checked={d.showGrid??false} onChange={e=>update({showGrid:e.target.checked})}/>Сетка высот</label>
          <button type="button" className={styles.wide} onClick={()=>update({pan:{x:0,y:0,reset:true}})}>Вернуть карту в центр</button>
+         <h3>Архив локации</h3>
+         <button type="button" className={styles.wide} disabled={archiveBusy||!!p.editorSave} onClick={async()=>{setArchiveBusy(true);try{await p.exportEditorMap();}finally{setArchiveBusy(false);}}}>Скачать архив ZIP</button>
+         <label className={styles.field}>Применить архив ZIP<input type="file" accept=".zip,application/zip" aria-label="Применить архив локации" disabled={archiveBusy||!!p.editorSave} onChange={async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;setArchiveBusy(true);try{await p.importEditorMap(file);}finally{setArchiveBusy(false);}}}/></label>
+         <p className={styles.hint}>Архив содержит рисунок, размеры, объекты, высоты и зоны. Загрузка заменяет черновик; действие можно отменить.</p>
+         <details className={styles.details}><summary>Полная очистка</summary><p className={styles.hint}>Удаляет все объекты, высоты, зоны, точки появления и рисунок. Останется ровное травяное поле. Изменения попадут на общую карту после сохранения.</p>{clearPending?<><button type="button" disabled={archiveBusy||!!p.editorSave} onClick={()=>{p.clearEditorMap();setClearPending(false);}}>Да, очистить всю локацию</button><button type="button" onClick={()=>setClearPending(false)}>Отмена</button></>:<button type="button" disabled={archiveBusy||!!p.editorSave} onClick={()=>setClearPending(true)}>Очистить всю локацию</button>}</details>
          <details className={styles.details}><summary>Восстановление</summary><p className={styles.hint}>Вернуть последнюю сохранённую карту. Действие можно отменить.</p><button type="button" onClick={p.resetEditor}>Вернуть сохранённую локацию</button></details>
          <p className={styles.hint}>Колесо — масштаб. Пробел + перетаскивание — перемещение карты. [ и ] — поворот камеры.</p>
        </>}

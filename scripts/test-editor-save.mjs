@@ -20,7 +20,7 @@ const field = { ensurePaintDecoded: async () => true };
 const mapLib = { TERRAIN_MAX_LEVEL: 20, TEST_MAP_LIMITS: {objectsMax: 1000}, testMapConnectivityError: () => null };
 const mocks = {
   '@/lib/sim/editor-model': loadTs(new URL('../src/lib/sim/editor-model.ts',import.meta.url)),
-  '@/lib/sim/paint': { encodeDraftPaint: () => '', encodeDraftPaintAsync: () => new Promise(r => {finish=r;}) },
+  '@/lib/sim/paint': { ...loadTs(new URL('../src/lib/sim/paint.ts',import.meta.url)), encodeDraftPaint: () => '', encodeDraftPaintAsync: () => new Promise(r => {finish=r;}) },
   '@/lib/sim/test-field': field,
   '@/lib/sim/test-map': mapLib,
   '@/lib/sim/geometry': {},
@@ -190,3 +190,55 @@ try{
  }
 }finally{if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;}
 console.log('HUD backing store tracks editor layout at DPR 1 and 2: OK');
+
+const archive=loadTs(new URL('../src/lib/sim/paint.ts',import.meta.url));
+const archiveMap={v:2,cols:12,rows:9,margin:.5,seed:'portable-map',zones:[],objects:[{id:'oak',kind:'tree',c:3,r:3,spr:'tree-1'}],spawns:[],elev:{'5.1,2.3,1.2,0.4':6.7}};
+const archiveBytes=archive.encodeMapArchive(archiveMap),archiveRestored=archive.decodeMapArchive(archiveBytes);
+assert.equal(archiveRestored.seed,'portable-map');assert.deepEqual(archiveRestored.elev,archiveMap.elev);assert.equal(archiveRestored.objects[0].spr,'tree-1');
+const corrupt=archiveBytes.slice();corrupt[45]^=1;assert.throws(()=>archive.decodeMapArchive(corrupt),/повреждён/);
+assert.throws(()=>archive.decodeMapArchive(new Uint8Array(32)),/ZIP/);
+assert(serverMap.sanitizeTestMap(archiveRestored).map,'peace-only map passes both validators');
+const cleanRef={current:{...structuredClone(original),tool:'height',undo:[],redo:[],dirty:false,pcv:null,sel:[]}};
+const cleanOps=exports.buildEditorOps({...params,editorRef:cleanRef,editorPlaceRef:{current:null},editorSelRef:{current:null},patchField:()=>{},setPaintOverride:()=>{}});
+cleanOps.clearEditorMap();assert.deepEqual(cleanRef.current.zones,[]);assert.deepEqual(cleanRef.current.elev,{});assert(cleanRef.current.dirty);
+cleanOps.undoEditor();assert.deepEqual(cleanRef.current.elev,original.elev);assert.deepEqual(cleanRef.current.zones,original.zones);
+cleanOps.redoEditor();assert.deepEqual(cleanRef.current.zones,[]);
+console.log('portable ZIP roundtrip, corruption rejection, peace-only server validation and reversible full clear: OK');
+
+const collisionShape=loadTs(new URL('../src/lib/sim/terrain-shape.ts',import.meta.url));
+let scans=0;const flat=new Proxy({},{ownKeys:()=>{scans++;return [];}});
+const benchStart=performance.now();
+for(let i=0;i<10000;i++)assert.equal(collisionShape.terrainBodyContact(flat,60,40,25+i%20/10,20,.1,.1,0),0);
+assert.equal(scans,1,'flat ground never allocates a world-sized partition for each movement probe');
+console.log(`10000 flat collision probes: ${Math.round(performance.now()-benchStart)} ms, one index scan`);
+const cliffs={'3,3':5,'3.4,3.2,0.3,0.6':0,'4.1,3.2,0.6,0.6':6.7};
+for(let y=2.9;y<4.1;y+=.09)for(let x=2.9;x<5;x+=.09)for(const level of [0,5,6.7]){
+ const actual=collisionShape.terrainBodyContact(cliffs,12,9,x,y,.2,.15,level);
+ let expected=0;
+ for(const b of collisionShape.cachedTerrainTiles(cliffs,12,9)){
+  if(Math.abs(b.level-level)<=1+1e-7)continue;
+  expected=Math.max(expected,1-Math.hypot((x-Math.max(b.x,Math.min(b.x+b.w,x)))/.2,(y-Math.max(b.y,Math.min(b.y+b.d,y)))/.15));
+ }
+ assert(Math.abs(actual-expected)<1e-7);assert.equal(serverMap.terrainBodyContact(cliffs,12,9,x,y,.2,.15,level),actual);
+}
+console.log('local collision queries match full geometry and server for fractional cliffs/erased cuts: OK');
+
+const liveField=loadTs(new URL('../src/lib/sim/test-field.ts',import.meta.url));
+const oldImage=globalThis.Image,oldDocument=globalThis.document;
+const images=[];
+try{
+ globalThis.Image=class{constructor(){images.push(this);}set src(value){this.source=value;}};
+ globalThis.document={createElement:()=>({width:0,height:0,getContext(){return {drawImage(){},getImageData:()=>({data:new Uint8ClampedArray(this.width*this.height*4).fill(255)})};}})};
+ const fakePng='iVBORw0KGgo'+'A'.repeat(40);
+ liveField.setTestMap({...archiveMap,paint:fakePng});const first=liveField.ensurePaintDecoded();
+ assert.equal(liveField.ensurePaintDecoded(),first,'same decode request is deduplicated');
+ liveField.setTestMap({...archiveMap,zones:[{id:'old',name:'old',kind:'green',c0:3,r0:3,c1:6,r1:6}],cols:13,paint:fakePng+'B'});const second=liveField.ensurePaintDecoded();
+ images[1].naturalWidth=1300;images[1].naturalHeight=1350;images[1].onload();assert(await second);
+ const loaded=liveField.paintCanvas();images[0].onerror();assert.equal(await first,false);assert.equal(liveField.paintCanvas(),loaded,'late old decode cannot erase current ground');
+ assert(liveField.testPeacePointFree(12.5,5),'expanded painted area is walkable outside old zones');
+ assert(!liveField.testPeacePointFree(13.1,5),'outside painted map stays blocked');
+ liveField.setTestMap({...archiveMap,paint:fakePng});const third=liveField.ensurePaintDecoded();
+ const canvas=globalThis.document.createElement('canvas');canvas.width=1200;canvas.height=1350;
+ liveField.setPaintOverride(canvas,true);images[2].naturalWidth=1200;images[2].naturalHeight=1350;images[2].onload();assert.equal(await third,false);assert.equal(liveField.paintCanvas(),canvas,'live editor override wins over pending PNG');
+}finally{globalThis.Image=oldImage;globalThis.document=oldDocument;}
+console.log('paint decode races, deduplication, expanded ground and editor override: OK');

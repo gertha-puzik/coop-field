@@ -71,7 +71,7 @@ function makeIndex(elev: Record<string,number>): TerrainIndex {
 export function terrainIndex(elev: Record<string,number>): TerrainIndex {
   let index=indices.get(elev);if(!index){index=makeIndex(elev);indices.set(elev,index);}return index;
 }
-export function invalidateTerrain(elev: Record<string,number>) { indices.delete(elev); tileCaches.delete(elev); }
+export function invalidateTerrain(elev: Record<string,number>) { indices.delete(elev); tileCaches.delete(elev); contactCaches.delete(elev); }
 export function terrainAt(elev: Record<string,number>|undefined,x:number,y:number):number {
   if(!elev)return 0;
   const c=Math.floor(x),r=Math.floor(y),list=terrainIndex(elev).cells.get(`${c},${r}`)??[];
@@ -152,14 +152,33 @@ export function cachedTerrainTiles(elev:Record<string,number>,cols:number,rows:n
   if(cached&&cached.cols===cols&&cached.rows===rows)return cached.tiles;
   const tiles=terrainTiles(elev,cols,rows);tileCaches.set(elev,{cols,rows,tiles});return tiles;
 }
+const contactCaches = new WeakMap<Record<string,number>,{cols:number;rows:number;cells:Map<string,TerrainRect[]>}>();
 export function terrainBodyContact(elev:Record<string,number>,cols:number,rows:number,x:number,y:number,rx:number,ry:number,level:number):number {
   if(!(rx>0&&ry>0))return 0;
+  let index=contactCaches.get(elev);
+  if(!index||index.cols!==cols||index.rows!==rows){
+    const cells=new Map<string,TerrainRect[]>();
+    // Build once per terrain revision; each movement probe visits nearby cells only.
+    if(Object.keys(elev).length)for(const b of cachedTerrainTiles(elev,cols,rows)){
+      const key=`${Math.floor(b.x)},${Math.floor(b.y)}`;
+      const list=cells.get(key)??[];list.push(b);cells.set(key,list);
+    }
+    index={cols,rows,cells};contactCaches.set(elev,index);
+  }
   let overlap=0;
-  for(const b of cachedTerrainTiles(elev,cols,rows)){
-    if(b.x>x+rx||b.x+b.w<x-rx||b.y>y+ry||b.y+b.d<y-ry||Math.abs(b.level-level)<=1+eps)continue;
-    const dx=(x-Math.max(b.x,Math.min(b.x+b.w,x)))/rx;
-    const dy=(y-Math.max(b.y,Math.min(b.y+b.d,y)))/ry;
-    overlap=Math.max(overlap,1-Math.hypot(dx,dy));
+  for(let r=Math.max(0,Math.floor(y-ry));r<=Math.min(rows-1,Math.floor(y+ry));r++)
+  for(let c=Math.max(0,Math.floor(x-rx));c<=Math.min(cols-1,Math.floor(x+rx));c++){
+    const tiles=index.cells.get(`${c},${r}`);
+    if(!tiles){
+      if(Math.abs(level)<=1+eps)continue;
+      const dx=(x-Math.max(c,Math.min(c+1,x)))/rx,dy=(y-Math.max(r,Math.min(r+1,y)))/ry;
+      overlap=Math.max(overlap,1-Math.hypot(dx,dy));continue;
+    }
+    for(const b of tiles){
+      if(b.x>x+rx||b.x+b.w<x-rx||b.y>y+ry||b.y+b.d<y-ry||Math.abs(b.level-level)<=1+eps)continue;
+      const dx=(x-Math.max(b.x,Math.min(b.x+b.w,x)))/rx,dy=(y-Math.max(b.y,Math.min(b.y+b.d,y)))/ry;
+      overlap=Math.max(overlap,1-Math.hypot(dx,dy));
+    }
   }
   return overlap;
 }

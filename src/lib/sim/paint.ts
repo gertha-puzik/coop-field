@@ -12,7 +12,7 @@
  * other two) — change all sides in one PR (ARCHITECTURE.md §4).
  */
 
-import { GROUND_COVER_OPTS, objectPosOffset, type GroundCover } from './test-map';
+import { sanitizeTestMap, type TestMap, GROUND_COVER_OPTS, objectPosOffset, type GroundCover } from './test-map';
 import {
   currentTestMap,
   drawDirtPatch,
@@ -350,4 +350,61 @@ export function fillPaintArea(d:EditorDraft,mat:string,mx:number,my:number,cellW
   if(mat==='erase')g.globalCompositeOperation='destination-out';
   for(const [xx,yy,width] of spans)g.fillRect(xx,yy,width,1);
   g.restore();d.pdirty=true;d.paintLast=undefined;
+}
+
+/** Portable editor archive. ZIP/store deliberately needs no runtime package.
+ * One versioned map.json contains the complete map, including its PNG paint.
+ * Import accepts only this format and validates bytes before touching a draft.
+ */
+
+const MAX_BYTES=16*1024*1024;
+const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
+const filename=encoder.encode('map.json');
+export function archiveCrc32(bytes:Uint8Array):number {
+  let crc=0xffffffff;
+  for(const byte of bytes){crc^=byte;for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
+  return (crc^0xffffffff)>>>0;
+}
+export function encodeMapArchive(map:TestMap):Uint8Array<ArrayBuffer> {
+  const result=sanitizeTestMap(map);
+  if(!result.map)throw new Error(result.error??'Некорректная карта');
+  const data=encoder.encode(JSON.stringify({format:'coop-field-location',version:1,map:result.map}));
+  if(data.length>MAX_BYTES)throw new Error('Архив локации слишком велик');
+  const n=filename.length,local=30+n+data.length,central=46+n;
+  const bytes=new Uint8Array(local+central+22),v=new DataView(bytes.buffer),crc=archiveCrc32(data);
+  v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);
+  v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,n,true);
+  bytes.set(filename,30);bytes.set(data,30+n);
+  v.setUint32(local,0x02014b50,true);v.setUint16(local+4,20,true);v.setUint16(local+6,20,true);
+  v.setUint32(local+16,crc,true);v.setUint32(local+20,data.length,true);v.setUint32(local+24,data.length,true);v.setUint16(local+28,n,true);
+  bytes.set(filename,local+46);
+  const end=local+central;v.setUint32(end,0x06054b50,true);v.setUint16(end+8,1,true);v.setUint16(end+10,1,true);
+  v.setUint32(end+12,central,true);v.setUint32(end+16,local,true);
+  return bytes;
+}
+export function decodeMapArchive(bytes:Uint8Array):TestMap {
+  if(bytes.length>MAX_BYTES+1024||bytes.length<30)throw new Error('Неверный размер архива');
+  const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  if(v.getUint32(0,true)!==0x04034b50||v.getUint16(6,true)!==0||v.getUint16(8,true)!==0)
+    throw new Error('Выберите ZIP-архив, созданный редактором локации');
+  const size=v.getUint32(18,true),n=v.getUint16(26,true),extra=v.getUint16(28,true),start=30+n+extra;
+  if(size!==v.getUint32(22,true)||size>MAX_BYTES||start+size>bytes.length||decoder.decode(bytes.subarray(30,30+n))!=='map.json')
+    throw new Error('Архив повреждён: не найден map.json');
+  const data=bytes.subarray(start,start+size);
+  if(archiveCrc32(data)!==v.getUint32(14,true))throw new Error('Архив повреждён: контрольная сумма не совпала');
+  const raw=JSON.parse(decoder.decode(data));
+  if(raw?.format!=='coop-field-location'||raw.version!==1)throw new Error('Неизвестная версия архива локации');
+  const result=sanitizeTestMap(raw.map);
+  if(!result.map)throw new Error(result.error??'Некорректная карта в архиве');
+  return result.map;
+}
+/** Decode into an isolated canvas; failure never changes the active map. */
+export async function archivePaintCanvas(map:TestMap):Promise<HTMLCanvasElement|null> {
+  if(!map.paint)return null;
+  const img=new Image();
+  await new Promise<void>((resolve,reject)=>{img.onload=()=>resolve();img.onerror=()=>reject(new Error('Не удалось прочитать рисунок карты'));img.src=`data:image/png;base64,${map.paint}`;});
+  if(img.naturalWidth!==map.cols*100||img.naturalHeight!==map.rows*150)throw new Error('Размер рисунка не соответствует карте');
+  const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+  const g=cv.getContext('2d');if(!g)throw new Error('Не удалось подготовить рисунок карты');
+  g.drawImage(img,0,0);return cv;
 }

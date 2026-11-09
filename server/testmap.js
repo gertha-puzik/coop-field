@@ -18,7 +18,7 @@ import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./prot
 import {
   decodePaintPng, paintPxMask, paintCellCoverageMask,
   buildIsland, buildCells, obstacleBlockedCells, obstacleBodiesOf,
-  pointInPolygon, nearestTestCell, testWalkable,
+  nearestTestCell, testPointInIsland, testWalkable,
 } from "./world.js";
 import { send, broadcast, fieldPayload, rooms } from "./room.js";
 import { rememberCat } from "./persist.js";
@@ -109,7 +109,7 @@ export function terrainIndex(elev) {
     }
     return index;
 }
-export function invalidateTerrain(elev) { indices.delete(elev); tileCaches.delete(elev); }
+export function invalidateTerrain(elev) { indices.delete(elev); tileCaches.delete(elev); contactCaches.delete(elev); }
 export function terrainAt(elev, x, y) {
     if (!elev)
         return 0;
@@ -160,18 +160,35 @@ export function cachedTerrainTiles(elev, cols, rows) {
     tileCaches.set(elev, { cols, rows, tiles });
     return tiles;
 }
-export function terrainBodyContact(elev, cols, rows, x, y, rx, ry, level) {
-    if (!(rx > 0 && ry > 0))
-        return 0;
-    let overlap = 0;
-    for (const b of cachedTerrainTiles(elev, cols, rows)) {
-        if (b.x > x + rx || b.x + b.w < x - rx || b.y > y + ry || b.y + b.d < y - ry || Math.abs(b.level - level) <= 1 + eps)
-            continue;
-        const dx = (x - Math.max(b.x, Math.min(b.x + b.w, x))) / rx;
-        const dy = (y - Math.max(b.y, Math.min(b.y + b.d, y))) / ry;
-        overlap = Math.max(overlap, 1 - Math.hypot(dx, dy));
+const contactCaches = new WeakMap();
+export function terrainBodyContact(elev,cols,rows,x,y,rx,ry,level) {
+  if(!(rx>0&&ry>0))return 0;
+  let index=contactCaches.get(elev);
+  if(!index||index.cols!==cols||index.rows!==rows){
+    const cells=new Map();
+    // Build once per terrain revision; each movement probe visits nearby cells only.
+    if(Object.keys(elev).length)for(const b of cachedTerrainTiles(elev,cols,rows)){
+      const key=`${Math.floor(b.x)},${Math.floor(b.y)}`;
+      const list=cells.get(key)??[];list.push(b);cells.set(key,list);
     }
-    return overlap;
+    index={cols,rows,cells};contactCaches.set(elev,index);
+  }
+  let overlap=0;
+  for(let r=Math.max(0,Math.floor(y-ry));r<=Math.min(rows-1,Math.floor(y+ry));r++)
+  for(let c=Math.max(0,Math.floor(x-rx));c<=Math.min(cols-1,Math.floor(x+rx));c++){
+    const tiles=index.cells.get(`${c},${r}`);
+    if(!tiles){
+      if(Math.abs(level)<=1+eps)continue;
+      const dx=(x-Math.max(c,Math.min(c+1,x)))/rx,dy=(y-Math.max(r,Math.min(r+1,y)))/ry;
+      overlap=Math.max(overlap,1-Math.hypot(dx,dy));continue;
+    }
+    for(const b of tiles){
+      if(b.x>x+rx||b.x+b.w<x-rx||b.y>y+ry||b.y+b.d<y-ry||Math.abs(b.level-level)<=1+eps)continue;
+      const dx=(x-Math.max(b.x,Math.min(b.x+b.w,x)))/rx,dy=(y-Math.max(b.y,Math.min(b.y+b.d,y)))/ry;
+      overlap=Math.max(overlap,1-Math.hypot(dx,dy));
+    }
+  }
+  return overlap;
 }
 
 const MAP_FILE = path.join(DATA_DIR, "test-map.json");
@@ -241,7 +258,7 @@ function sanitizeTestMap(raw) {
   if (cols === null || rows === null) return { error: 'размер мира не распознан' };
   if (cols < TEST_MAP_LIMITS.colsMin || cols > TEST_MAP_LIMITS.colsMax) return { error: 'ширина мира должна быть 6–60' };
   if (rows < TEST_MAP_LIMITS.rowsMin || rows > TEST_MAP_LIMITS.rowsMax) return { error: 'высота мира должна быть 3–40' };
-  if (!Array.isArray(raw.zones) || raw.zones.length === 0) return { error: 'список зон пуст' };
+  if (!Array.isArray(raw.zones)) return { error: 'список зон пуст' };
   if (raw.zones.length > TEST_MAP_LIMITS.zonesMax) return { error: 'зон не больше 48' };
   // Препятствия необязательны (старые конфиги без objects читаются как «пусто»):
   // камень/дерево стоят свободно (точка опоры, масштаб, поворот), через их тело
@@ -377,9 +394,7 @@ function sanitizeTestMap(raw) {
       String(z.name ?? '').trim().slice(0, TEST_MAP_LIMITS.nameMax) || (kind === 'cells' ? 'Клетки' : 'Зелёная зона');
     zones.push({ id: `z${i + 1}`, name, kind, c0, r0, c1, r1 });
   }
-  if (!zones.some((z) => z.kind === 'cells') && !(paint && objects.some((o) => o.kind === 'battle'))) {
-    return { error: 'нужна хотя бы одна зона с клетками — иначе бой не работает' };
-  }
+
   // Клетки захода: только на траве, и по направлению шага обязана быть боевая
   // клетка (зеркало проверки из src/lib/sim/test-map.ts).
   const battleAt = (c, r) =>
@@ -422,8 +437,8 @@ function sanitizeTestMap(raw) {
     }
   }
   const start = cells.values().next().value;
-  const seen = new Set([start]);
-  const queue = [start];
+  const seen = new Set(start===undefined?[]:[start]);
+  const queue = start===undefined?[]:[start];
   while (queue.length > 0) {
     const [c, r] = queue.pop().split(',').map(Number);
     for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -620,7 +635,7 @@ function setMap(ws, payload = {}) {
       if (cat.fm === 1) {
         const fx = Number.isFinite(cat.fx) ? cat.fx : 0;
         const fy = Number.isFinite(cat.fy) ? cat.fy : 0;
-        if (!pointInPolygon(TEST_ISLAND, fx, fy) && !pointInPolygon(TEST_ISLAND, fx + 0.45, fy + 0.45)) {
+        if (!testPointInIsland(fx, fy) && !testPointInIsland(fx + 0.45, fy + 0.45)) {
           const c = nearestTestCell(fx, fy);
           if (c) {
             cat.fm = 0;

@@ -61,6 +61,7 @@ export function currentTestMap(): TestMap {
  *  новый рисунок сбрасывает декод (до готовности форма локации считается по зонам,
  *  как в конфигах до кисти). */
 export function setTestMap(map: TestMap): void {
+  const resized=currentMap.cols!==map.cols||currentMap.rows!==map.rows;
   currentMap = map;
   islandPoly = null;
   islandLoopsCache = undefined;
@@ -70,7 +71,8 @@ export function setTestMap(map: TestMap): void {
   geoCache = null;
   objCache = null;
   if (mapHasPaint(map)) {
-    if (paintPng !== map.paint) {
+    if (paintPng !== map.paint || resized) {
+      paintDecodeRevision++;paintPending=null;
       paintPng = map.paint ?? null;
       paintCv = null;
       paintMask = null;
@@ -78,6 +80,7 @@ export function setTestMap(map: TestMap): void {
       paintH = 0;
     }
   } else {
+    paintDecodeRevision++;paintPending=null;
     paintPng = null;
     paintCv = null;
     paintMask = null;
@@ -109,6 +112,8 @@ let paintCv: HTMLCanvasElement | null = null;
 let paintMask: Uint8Array | null = null; // 0/1 по пикселям (альфа > 127 — земля)
 let paintW = 0;
 let paintH = 0;
+let paintDecodeRevision=0;
+let paintPending:Promise<boolean>|null=null;
 
 /** Декодированный канвас отрисовки (null — нет рисунка или ещё не готов). */
 export function paintCanvas(): HTMLCanvasElement | null {
@@ -134,12 +139,14 @@ export function paintReady(): boolean {
 export function ensurePaintDecoded(): Promise<boolean> {
   if (!paintPng) return Promise.resolve(false);
   if (paintCv && paintMask) return Promise.resolve(true);
-  return new Promise((resolve) => {
+  if (paintPending) return paintPending;
+  const source=paintPng, revision=paintDecodeRevision;
+  const wExpected=currentMap.cols*PAINT_CELL_W,hExpected=currentMap.rows*PAINT_CELL_H;
+  const valid=()=>source===paintPng && revision===paintDecodeRevision;
+  const pending = new Promise<boolean>((resolve) => {
     const img = new Image();
     img.onload = () => {
-      if (!paintPng) return resolve(false);
-      const wExpected = currentMap.cols * PAINT_CELL_W;
-      const hExpected = currentMap.rows * PAINT_CELL_H;
+      if (!valid()) return resolve(false);
       const w = img.naturalWidth;
       const h = img.naturalHeight;
       if (w !== wExpected || h !== hExpected) {
@@ -167,17 +174,22 @@ export function ensurePaintDecoded(): Promise<boolean> {
       paintW = w;
       paintH = h;
       islandPoly = null;
+      islandLoopsCache = undefined;
+      paintLayerVersion++;
       geoCache = null;
       cellClipCache.clear();
       cellClipFull = null;
       resolve(true);
     };
     img.onerror = () => {
-      paintPng = null; // битый рисунок — локация живёт по зонам
+      if(valid()) paintPng = null; // obsolete decodes cannot replace the new map
       resolve(false);
     };
-    img.src = `data:image/png;base64,${paintPng}`;
+    img.src = `data:image/png;base64,${source}`;
   });
+  paintPending=pending;
+  void pending.finally(()=>{if(paintPending===pending)paintPending=null;});
+  return pending;
 }
 
 /**
@@ -190,6 +202,7 @@ let paintLayerVersion=0;
 export function paintRevision():number{return paintLayerVersion;}
 export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean): void {
   paintLayerVersion++;
+  paintDecodeRevision++;paintPending=null;
   paintCv = cv;
   paintW = cv?.width ?? 0;
   paintH = cv?.height ?? 0;
@@ -419,8 +432,12 @@ export function paintPointOn(x: number, y: number): boolean {
 
 /** Доля закрашенных пикселей клетки (0-based) — годится ли место под боевую
  *  клетку/заход: объект ставится только на место, покрашенное целиком. */
+const paintCoverageCache=new WeakMap<Uint8Array,Map<string,number>>();
 export function paintCellCoverage(c: number, r: number): number {
   if (!paintMask) return 1;
+  let cache=paintCoverageCache.get(paintMask);
+  if(!cache){cache=new Map();paintCoverageCache.set(paintMask,cache);}
+  const key=`${c},${r}`,cached=cache.get(key);if(cached!==undefined)return cached;
   const x0 = c * PAINT_CELL_W;
   const y0 = r * PAINT_CELL_H;
   if (x0 < 0 || y0 < 0 || x0 + PAINT_CELL_W > paintW || y0 + PAINT_CELL_H > paintH) return 0;
@@ -429,7 +446,7 @@ export function paintCellCoverage(c: number, r: number): number {
     const row = y * paintW;
     for (let x = x0; x < x0 + PAINT_CELL_W; x++) on += paintMask[row + x];
   }
-  return on / (PAINT_CELL_W * PAINT_CELL_H);
+  const coverage=on / (PAINT_CELL_W * PAINT_CELL_H);cache.set(key,coverage);return coverage;
 }
 
 /** Шаг сетки контура маски: 1/50 клетки (2x3 px канонического мира) — контур
@@ -575,7 +592,7 @@ function islandPolygon(): Pt[] {
       islandLoopsCache = loops;
       const flat: Pt[] = [];
       for (const l of loops) flat.push(...l);
-      islandPoly = flat.length > 0 ? flat : buildTestPolygon(currentMap.seed);
+      islandPoly = flat;
     } else {
       islandLoopsCache = null;
       islandPoly = buildTestPolygon(currentMap.seed);
@@ -593,6 +610,8 @@ function islandLoops(): Pt[][] | null {
 /** Клетка целиком внутри нарисованной кромки: 4 угла, середины сторон и центр.
  *  Сглаженный край подрезает углы зон — такие клетки «задеты» кромкой. */
 export function testCellInIsland(c: number, r: number): boolean {
+  if(paintReady())return paintCellCoverage(c,r)>=.995;
+  if(paintActive())return false;
   const poly = islandPolygon();
   for (let dy = 0; dy <= 2; dy++) {
     for (let dx = 0; dx <= 2; dx++) {
@@ -904,14 +923,14 @@ export function testPointInCellsZone(x: number, y: number): boolean {
 
 /** Точка (клеточные доли) внутри нарисованной кромки локации. */
 export function testPointInIsland(x: number, y: number): boolean {
-  return pointInPolygon(islandPolygon(), x, y);
+  return paintReady() ? paintPointOn(x, y) : !paintActive() && pointInPolygon(islandPolygon(), x, y);
 }
 
 /** Точка проходима в мирном режиме (свободная ходьба по пикселям): внутри кромки
  *  локации. Препятствия проверяет testPeaceObjectsFree по точке опоры кота —
  *  у них физические тела по настоящим размерам спрайтов, а не вся клетка. */
 export function testPeacePointFree(x: number, y: number): boolean {
-  return pointInPolygon(islandPolygon(), x, y);
+  return paintReady() ? paintPointOn(x, y) : !paintActive() && pointInPolygon(islandPolygon(), x, y);
 }
 
 /* ---------- рельеф: уровни высоты, плато и обрывы ---------- */
@@ -942,13 +961,14 @@ export function elevLevelAt(c: number, r: number): number {
 }
 
 /** Только явный грунт: опора камня никогда не создаёт видимых клеток рельефа. */
+const EMPTY_ELEV: Record<string,number> = {};
 export function effectiveElevRecord(map: TestMap): Record<string, number> {
-  return map.elev ?? {};
+  return map.elev ?? EMPTY_ELEV;
 }
 
 export function terrainPointLevelAt(x: number,y: number): number { return terrainAt(currentMap.elev,x,y); }
 export function terrainContact(x:number,y:number,rx:number,ry:number,level:number):number {
-  return terrainBodyContact(currentMap.elev??{},currentMap.cols,currentMap.rows,x,y,rx,ry,level);
+  return terrainBodyContact(currentMap.elev??EMPTY_ELEV,currentMap.cols,currentMap.rows,x,y,rx,ry,level);
 }
 export function terrainLevelAt(c: number, r: number): number {
   return mapElevOf(currentMap, c, r);

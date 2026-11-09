@@ -22,8 +22,8 @@ import { initialRoomAtmo } from "./room-config.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
-import { testMap, TEST_PAINT, TEST_OBST_CELLS, TEST_WIDTH, TEST_HEIGHT, TEST_ISLAND } from "./testmap.js";
-import { testCellInIsland, testWalkable, paintPxOn, pointInPolygon } from "./world.js";
+import { testMap, TEST_PAINT, TEST_OBST_CELLS, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
+import { testCellInIsland, testWalkable, testPointInIsland } from "./world.js";
 
 const rooms = new Map();
 let nextId = 1001;
@@ -119,14 +119,13 @@ function spawnCell(room) {
     }
     // С пиксельной отрисовкой зелёные зоны больше не задают мирную территорию:
     // новичок появляется на любой закрашенной кистью клетке не на боевых.
-    if (TEST_PAINT) {
+    if (TEST_PAINT || testMap.zones.length===0) {
       for (let y = 1; y <= H; y++) {
         for (let x = 1; x <= W; x++) {
-          if (!paintPxOn((x - 0.5) * 100, (y - 0.5) * 150)) continue;
+          if (!testPointInIsland(x-.5,y-.5)) continue;
           if (testWalkable(x, y)) continue; // боевые клетки — не для мирного спавна
           if (TEST_OBST_CELLS.has(`${x - 1},${y - 1}`)) continue;
-          if (!pointInPolygon(TEST_ISLAND, x - 0.5, y - 0.5)) continue;
-          if (occupied(room, x, y)) return [x, y];
+          if (!occupied(room, x, y)) return [x, y];
         }
       }
       // закрашенных свободных нет — fallback на обычный перебор ниже

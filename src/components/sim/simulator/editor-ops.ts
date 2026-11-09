@@ -13,7 +13,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Engine } from './sim-model';
 import type { SimSettings } from '@/lib/sim/settings';
 import { EDITOR_PASS_KEY, SETMAP_MIN_GAP_MS, editorSnapshot, restoreEditorSnapshot, trimEditorHistory, type EditorDraft, type EditorPlace, type EditorTool } from '@/lib/sim/editor-model';
-import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync } from '@/lib/sim/paint';
+import { copyPaintCanvas, encodeDraftPaint, encodeDraftPaintAsync, encodeMapArchive, decodeMapArchive, archivePaintCanvas } from '@/lib/sim/paint';
 import { createCoopClient } from '@/lib/net/coop';
 import { ensurePaintDecoded, paintCellCoverage, paintPointOn, PAINT_CELL_H, PAINT_CELL_W, setPaintOverride, setTestMap, testObstacleBodies, testObjectAt } from '@/lib/sim/test-field';
 import { newObjectId, newZoneId, objectBase, objectMir, objectRotDeg, objectScale, objectSprite, mapHasPaint, paintFormatError, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, testMapConnectivityError, type GroundCover, type TestMap, type TestMapEntryDir, type TestMapObject, type TestMapSpawn, type TestMapZone, type TestMapZoneKind } from '@/lib/sim/test-map';
@@ -92,8 +92,8 @@ export function buildEditorOps(params: EditorOpsParams) {
     v: 2,
     cols: d.cols,
     rows: d.rows,
-    margin: savedMapRef.current.margin,
-    seed: savedMapRef.current.seed,
+    margin: d.margin??savedMapRef.current.margin,
+    seed: d.seed??savedMapRef.current.seed,
     zones: d.zones.map((z) => ({ ...z })),
     objects: d.objects.map((o) => ({ ...o })),
     spawns: d.spawns.map((s) => ({ ...s })),
@@ -143,6 +143,7 @@ export function buildEditorOps(params: EditorOpsParams) {
   const openEditor = () => {
     const m = savedMapRef.current;
     const draft: EditorDraft = {
+      seed:m.seed,margin:m.margin,
       zones: m.zones.map((z) => ({ ...z })),
       objects: (m.objects ?? []).map((o) => ({ ...o })),
       spawns: (m.spawns ?? []).map((s) => ({ ...s })),
@@ -618,6 +619,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     d.objects = (m.objects ?? []).map((o) => ({ ...o }));
     d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
     d.elev = { ...(m.elev ?? {}) };
+    d.seed=m.seed;d.margin=m.margin;
     d.cols = m.cols;
     d.rows = m.rows;
     d.selRect = null;
@@ -635,6 +637,41 @@ export function buildEditorOps(params: EditorOpsParams) {
     syncEditorView();
   };
 
+  const replaceEditorMap = (m:TestMap,cv:HTMLCanvasElement|null,label:string) => {
+    const d=editorRef.current;if(!d)return;
+    pushEditorUndo(true,label);
+    Object.assign(d,{seed:m.seed,margin:m.margin,cols:m.cols,rows:m.rows,zones:m.zones.map(z=>({...z})),objects:(m.objects??[]).map(o=>({...o})),
+      spawns:(m.spawns??[]).map(o=>({...o})),elev:{...m.elev},sel:[],selRect:null,selFloat:null,
+      pcv:cv,ppaint:m.paint??null,pdirty:false,dirty:true,pan:{x:0,y:0,reset:true}});
+    editorSelRef.current=null;setEditorPlace(null);editorPlaceRef.current=null;
+    patchField({cols:d.cols,rows:d.rows});setTestMap(m);setPaintOverride(cv,true);applyDraftPreview();syncEditorView();
+  };
+  const clearEditorMap = () => {
+    const d=editorRef.current;if(!d)return;
+    replaceEditorMap({...draftMap(d,false),zones:[],objects:[],spawns:[],elev:{}},null,'Полная очистка локации');
+    setEditorMsg('Локация очищена в черновике. Можно отменить или сохранить.');
+  };
+  const exportEditorMap = async () => {
+    const d=editorRef.current;if(!d)return;
+    try{
+      const snapshot=draftMap(d,false),paint=await encodeDraftPaintAsync(d);
+      const bytes=encodeMapArchive({...snapshot,...(paint?{paint}:{})});
+      const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
+      const link=document.createElement('a');link.href=url;link.download=`location-${d.cols}x${d.rows}-${new Date().toISOString().slice(0,10)}.zip`;link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);setEditorMsg('Архив локации скачан.');
+    }catch(error){setEditorMsg(`Не удалось создать архив: ${error instanceof Error?error.message:String(error)}`);}
+  };
+  const importEditorMap = async (file:File) => {
+    const d=editorRef.current;if(!d)return;
+    try{
+      if(file.size>16*1024*1024+1024)throw new Error('Архив больше 16 МБ');
+      const map=decodeMapArchive(new Uint8Array(await file.arrayBuffer())),cv=await archivePaintCanvas(map);
+      if(editorRef.current!==d)return;
+      replaceEditorMap(map,cv,'Загрузка архива локации');
+      setEditorMsg('Архив применён к черновику. Нажмите «Сохранить локацию», чтобы применить для всех.');
+    }catch(error){setEditorMsg(`Не удалось загрузить архив: ${error instanceof Error?error.message:String(error)}`);}
+  };
+
   /** Предварительная проверка черновика — те же правила, что у сервера. */
   const editorDraftError = (checkPaint = true): string | null => {
     const d = editorRef.current;
@@ -644,18 +681,8 @@ export function buildEditorOps(params: EditorOpsParams) {
       const perr = paintFormatError(encodeDraftPaint(d));
       if (perr) return perr === 'рисунок локации слишком велик' ? 'Рисунок локации слишком велик — сотрите лишнее и сохраните снова.' : perr;
     }
-    if (d.pcv) {
-      // С рисунком зоны не обязаны быть вовсе (форма — из пикселей), но бой
-      // обязан быть: зоны с клетками или одиночные боевые клетки.
-      const hasBattle =
-        d.zones.some((z) => z.kind === 'cells') || d.objects.some((o) => o.kind === 'battle');
-      if (!hasBattle) return 'Нужна хотя бы одна боевая клетка или зона с клетками — иначе бой не работает.';
-      return null;
-    }
-    if (d.zones.length === 0) return 'Нужна хотя бы одна зона.';
-    if (!d.zones.some((z) => z.kind === 'cells')) return 'Нужна хотя бы одна зона с клетками.';
     if (d.objects.length > TEST_MAP_LIMITS.objectsMax) return `Препятствий не больше ${TEST_MAP_LIMITS.objectsMax}.`;
-    return testMapConnectivityError(d.zones);
+    return d.pcv ? null : testMapConnectivityError(d.zones);
   };
 
   const saveEditorMap = () => {
@@ -707,7 +734,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     resizeEditorWorld, commitEditorDrag, deleteEditorZone, toggleEditorSel,
     mergeEditorZones, paintEditorCellObject, placeBattleCell, applyElevBrush,
     redoEditor, beginElevStroke, endElevStroke, addEditorSpawn, toggleEditorSpawn,
-    placeEditorEntry, renameEditorZone, undoEditor, resetEditor, saveEditorMap,
+    placeEditorEntry, renameEditorZone, undoEditor, resetEditor, saveEditorMap, clearEditorMap, exportEditorMap, importEditorMap,
     pickEditorSelection, dragEditorSelection, dropEditorSelection,
   };
 }
