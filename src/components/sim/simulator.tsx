@@ -81,7 +81,7 @@ import {
   mergeLog,
   saveLayout,
 } from '@/lib/sim/combat-log';
-import { SPRINT_GRAVITY, SPRINT_SPAWN_MS, spawnSprintPart, type SprintPart } from '@/lib/sim/particles';
+import { SPRINT_SPAWN_MS, spawnSprintPart, spawnLandingDust, advanceGroundParticles, createGroundEffects, drawGroundEffects, type SprintPart } from '@/lib/sim/particles';
 import {
   copyPaintCanvas,
   encodeDraftPaint,
@@ -366,6 +366,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const sprintAccRef = useRef(0);
   /** Живые частицы спринта: обновляет игровой цикл, рисует секция грунта. */
   const sprintPartsRef = useRef<SprintPart[]>([]);
+  const groundEffectsRef=useRef(createGroundEffects());
   /** Редактор локации: открыт/закрыт (ref — для игрового цикла и обработчиков мыши). */
   const [editorOpen, setEditorOpen] = useState(false);
   const editorOpenRef = useRef(false);
@@ -1728,6 +1729,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             if (net?.ready) net.emit('freemove', { foot: freeFoot(), x: e.fx, y: e.fy, stop: true });
             freeSyncRef.current.moving = false;
           }
+          const foot=freeFoot();
+          spawnLandingDust(sprintPartsRef.current,
+            (lp.battle?lp.x1:lp.x1*s.field.cellW)+foot.dx*s.field.cellW,
+            (lp.battle?lp.y1:lp.y1*s.field.cellH)+foot.dy*s.field.cellH,lp.l1);
           e.leap = null;
           e.leapZ = 0;
           return;
@@ -2141,7 +2146,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             const bdy = e.pvy / spdNow;
             while (sprintAccRef.current >= SPRINT_SPAWN_MS) {
               sprintAccRef.current -= SPRINT_SPAWN_MS;
-              spawnSprintPart(sprintPartsRef.current, feetX, feetY, bdx, bdy);
+              spawnSprintPart(sprintPartsRef.current, feetX, feetY, bdx, bdy,e.liftV);
             }
           } else {
             sprintAccRef.current = 0;
@@ -2188,25 +2193,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         if (Math.abs(targetLift - e.liftV) < 0.4) e.liftV = targetLift;
       }
 
-      // Физика частиц спринта (даже когда бег кончился — комочки в полёте):
-      // полёт по инерции, гравитация тянет вниз, приземлившиеся и отжившие — долой.
-      const parts = sprintPartsRef.current;
-      if (parts.length > 0) {
-        const dts = dt / 1000;
-        let alive = 0;
-        for (let i = 0; i < parts.length; i++) {
-          const p = parts[i];
-          p.life += dt;
-          if (p.life >= p.ttl) continue;
-          p.x += p.vx * dts;
-          p.y += p.vy * dts;
-          p.z += p.vz * dts;
-          p.vz -= SPRINT_GRAVITY * dts;
-          if (p.z <= 0) continue; // приземлился в траву
-          parts[alive++] = p;
-        }
-        parts.length = alive;
-      }
+      advanceGroundParticles(sprintPartsRef.current,dt);
 
       // Режим «теста» — страховка от «не туда»: бой включается кнопкой с клетки
       // захода, поэтому здесь остаются только аварийные случаи (спавн в зоне,
@@ -2277,7 +2264,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const dl = Math.hypot(dvx, dvy);
           if (dl < 2) continue; // стоит на месте (доведение дотухло) — комочков нет
           if (Math.random() < dt / SPRINT_SPAWN_MS) {
-            spawnSprintPart(sprintPartsRef.current, feetX, feetY, dvx / dl, dvy / dl);
+            spawnSprintPart(sprintPartsRef.current, feetX, feetY, dvx / dl, dvy / dl,supportLevelAt(feetX/cellWR,feetY/cellHR)*TERRAIN_LIFT_PX);
           }
         }
       }
@@ -3022,15 +3009,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             const clipK = raised(k.c * s.field.cellW, k.r * s.field.cellH, liftK);
             ctx.fillRect(clipK.x, clipK.y, s.field.cellW, s.field.cellH);
           }
-        }
-        const partsD = sprintPartsRef.current;
-        if (partsD.length > 0) {
-          for (const p of partsD) {
-            ctx.globalAlpha = Math.min(1, (1 - p.life / p.ttl) * 1.6);
-            ctx.fillStyle = p.col;
-            ctx.fillRect(p.x - p.size / 2, p.y - p.z - p.size / 2, p.size, p.size);
-          }
-          ctx.globalAlpha = 1;
         }
         ctx.restore();
         // земляная кромка поверх подрезанной доски: срезанный край сетки
@@ -4148,7 +4126,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         }
         tickAtmo();
         const elision = elisionViewRef.current;
-        if ((elision || editorState().on) && (!paintActive() || paintReady())) {
+        if ((elision || editorState().on || sprintPartsRef.current.length > 0) && (!paintActive() || paintReady())) {
           try {
             const sNow = settingsRef.current;
             const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
@@ -4201,6 +4179,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });
             elision?.frame(frame);
+            drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
+              atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
             drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
             const draft = editorRef.current;
