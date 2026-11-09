@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { PEACE_SPEED_DEFAULT, SPRINT_MULT } from '@/lib/sim/engine-consts';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
@@ -806,20 +807,9 @@ export function SettingsPanel(props: Props) {
           hint="Интервал движения при зажатой клавише (ещё растягивается замедлением); новое нажатие срабатывает сразу, но не раньше, чем завершится предыдущий шаг, — спам не может превысить скорость, разрешённую замедлением."
           onChange={(v) => props.patchCharacter({ stepMs: v })}
         />
-        <SlideNum
-          label="Скорость ходьбы (мирный режим)"
-          value={s.character.peaceSpeed}
-          min={40}
-          max={800}
-          step={10}
-          suffix="px/с"
-          hint={
-            IS_ELYRIA
-              ? 'Свободная ходьба по траве «Элизии Эйдес»: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель).'
-              : 'Свободная ходьба по полю: сколько пикселей мира кот проходит в секунду, пока зажаты клавиши (или летит клик-цель).'
-          }
-          onChange={(v) => props.patchCharacter({ peaceSpeed: v })}
-        />
+        <div className="mb-2 text-xs text-[var(--sim-text-muted)]">
+          Мирный режим: ходьба {PEACE_SPEED_DEFAULT} px/с · спринт ×{SPRINT_MULT} ({PEACE_SPEED_DEFAULT * SPRINT_MULT} px/с).
+        </div>
         <div className="mb-1 text-[11px] leading-snug text-[var(--sim-text-muted)]">
           Окно — диапазон углов стрелы, при котором прыжок в этом направлении идёт без замедления. Углы: 0°=вправо,
           90°=вниз, окно идёт от «от» до «до» по часовой.

@@ -64,7 +64,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     };
     const down = (ev: KeyboardEvent) => {
-      // Shift — спринт мирного режима (×2 к скорости + комочки из-под лап):
+      // Shift — спринт мирного режима (×1,5 к скорости + комочки из-под лап):
       // ловим раньше всех ранних выходов, зажатие не зависит от контекста
       if (ev.key === 'Shift') sprintRef.current = true;
       if (!enteredRef.current) return;

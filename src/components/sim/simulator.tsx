@@ -2002,7 +2002,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // быстро (полсотни мс), на выбегании плавно: кот не встаёт как вкопанный,
         // а мягко докатывается. После спринта выбегание дольше — инерция заметнее.
         const hasInput = vx !== 0 || vy !== 0;
-        const tSpd = (s.character.peaceSpeed || PEACE_SPEED_DEFAULT) * (sprint ? SPRINT_MULT : 1);
+        const tSpd = PEACE_SPEED_DEFAULT * (sprint ? SPRINT_MULT : 1);
         let tvx = 0;
         let tvy = 0;
         if (hasInput) {
