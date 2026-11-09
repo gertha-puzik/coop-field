@@ -36,13 +36,13 @@
   font-size: 15px;
   line-height: 1.5;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  cursor: url('/paw-cursor.svg') 16 22, auto;
+  cursor: url('/lapka.svg') 16 22, auto;
 }
 
 .sky a,
 .sky button,
 .sky [role='button'] {
-  cursor: url('/paw-cursor.svg') 16 22, pointer;
+  cursor: url('/lapka.svg') 16 22, pointer;
 }
 
 .star {
