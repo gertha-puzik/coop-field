@@ -465,3 +465,5 @@ particles.ts ведёт ограниченные пулы (90 частиц зе�
 через общую проекцию с учётом yaw, zoom и высоты опоры. Старый скрытый проход
 частиц удалён. В редакторе пулы очищаются, погодный тумблер мгновенно убирает
 брызги, но не отключает частицы движения.
+
+Remote free-move jumps reuse the existing `jp` flag: repeated airborne packets do not restart the visual arc; a single dust burst is emitted when it ends. Sprint chips and landing dust are rendered locally for every visible peer, using its interpolated feet and terrain support.

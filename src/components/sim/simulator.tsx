@@ -2245,20 +2245,20 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         }
       }
 
-      // Чужой спринт: комочки земли/травы из-под лап котов с флагом sp (freemove).
-      // Позиция — текущая доведённая (экранная), направление — к цели доведения;
-      // темп тот же, что у своего спринта (~1 комочек на SPRINT_SPAWN_MS).
       if (testMode && remoteFreeRef.current.size > 0) {
         const cellWR = s.field.cellW;
         const cellHR = s.field.cellH;
         for (const [key, fr] of remoteFreeRef.current) {
-          if (!fr.sp) continue;
           const rem = liveRemotesRef.current.find((t) => t.id === key);
           const imgR = spritesRef.current[rem?.sprite ?? s.character.sprite];
           const aspectR = imgR && imgR.height > 0 ? imgR.width / imgR.height : 2 / 3;
           const boxR = spriteBoxOf(s, aspectR, 0, 0, rem?.scale ?? s.character.spriteScale);
           const feetX = fr.x * cellWR + boxR.w / 2;
           const feetY = fr.y * cellHR + boxR.h;
+          if(fr.jpUntil && fr.jpUntil > 0 && now >= fr.jpUntil){
+            spawnLandingDust(sprintPartsRef.current,feetX,feetY,supportLevelAt(feetX/cellWR,feetY/cellHR)*TERRAIN_LIFT_PX);fr.jpUntil=-1;
+          }
+          if(!fr.sp || (fr.jpUntil ?? 0)>now)continue;
           const dvx = (fr.tx - fr.x) * cellWR;
           const dvy = (fr.ty - fr.y) * cellHR;
           const dl = Math.hypot(dvx, dvy);
