@@ -2,7 +2,7 @@
  * Чистые хелперы представления для страниц игроков (P5-редизайн каталога):
  * даты и «луны», статусы и активность из lastSeenAt, аватар/спрайт карточки.
  * Всё детерминировано и без внешних источников: любой вывод ЛЕЖИТ на данных
- * DTO карточки (createdAt/lastSeenAt/lastSeenRoom) — отсутствующие данные
+ * DTO карточки (createdAt/lastSeenAt/birthday) — отсутствующие данные
  * оформляются честным «неизвестно»/«—», а не выдуманным значением.
  *
  * Пороги статуса/активности — сознательное решение редизайна: сервер не
@@ -11,7 +11,6 @@
  * Формулировки согласованы с референсом лучших профилей жанра.
  */
 
-import { namedRoom } from '@/lib/net/modes';
 import type { ProfileCharacter } from '@/lib/net/http-profiles';
 
 /** Луна = 30 дней (жанровый «месяц» котёнка). */
@@ -58,17 +57,34 @@ export function ruDate(ts: number): string {
   }
 }
 
-/** «8 ноября 2011» из строки-маски ГГГГ-ММ-ДД (день рождения профиля);
- *  мусор или пусто → '' — карточка останется на честных данных DTO. */
-export function ruBirthday(raw: string | null | undefined): string {
-  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return '';
-  const year = Number(raw.slice(0, 4));
-  const month = Number(raw.slice(5, 7));
-  const day = Number(raw.slice(8, 10));
-  // только реальная дата календаря: «30 февраля» — мусор, а не день рождения
-  const probe = new Date(year, month - 1, day);
-  if (probe.getDate() !== day || probe.getMonth() !== month - 1 || probe.getFullYear() !== year) return '';
-  return `${day} ${MONTHS_GEN[month - 1]} ${year}`;
+/** «5 марта» из публичной «ММ-ДД» или полной «ГГГГ-ММ-ДД».
+ *  Год печатается только при withYear (своя карточка, где /profiles/me
+ *  вернул полную дату). Чужая карточка год не показывает. Мусор или
+ *  пусто → '' — отсутствие остаётся пустым, дату не выдумываем.
+ *  «ММ-ДД» проверяется на календаре високосного 2000 года, чтобы
+ *  29 февраля прошло, а 30 февраля — нет. */
+export function ruBirthday(raw: string | null | undefined, withYear = false): string {
+  if (!raw) return '';
+  const full = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const monthDay = /^(\d{2})-(\d{2})$/.exec(raw);
+  let year: number | null = null;
+  let month = 0;
+  let day = 0;
+  if (full) {
+    year = Number(full[1]);
+    month = Number(full[2]);
+    day = Number(full[3]);
+  } else if (monthDay) {
+    month = Number(monthDay[1]);
+    day = Number(monthDay[2]);
+  } else {
+    return '';
+  }
+  const probeYear = year ?? 2000;
+  const probe = new Date(probeYear, month - 1, day);
+  if (probe.getDate() !== day || probe.getMonth() !== month - 1 || probe.getFullYear() !== probeYear) return '';
+  const label = `${day} ${MONTHS_GEN[month - 1]}`;
+  return withYear && year !== null ? `${label} ${year}` : label;
 }
 
 /** «8 ноября, 14:32» — момент последней успешной загрузки каталога. */
@@ -199,41 +215,12 @@ export function spriteUrl(char: ProfileCharacter | null): string | null {
   return char && char.sprite ? `/sprites/${char.sprite}.png` : null;
 }
 
-/** Человеческое название комнаты «дома»: канон каталога комнат, иначе честный
- *  код комнаты (без выдуманных названий — в каталоге этого варианта комнаты
- *  может не оказаться, тогда показываем ровно то, что есть в данных). */
-export function homeRoomTitle(room: string | null | undefined): string | null {
-  if (!room) return null;
-  const hit = namedRoom(room);
-  return hit ? hit.title : room;
-}
-
 /* ---------------------- deep-link параметры каталога ---------------------- */
-
-/** Строгий приём ?coat=: только ОДИН параметр, сырая (до url-декодирования)
- *  длина значения ≤2048 — мусорная очередь до движка не доезжает вовсе. */
-export const COAT_DEEPLINK_MAX_RAW = 2048;
-
-/** Сырые значения параметра query БЕЗ декодирования, включая повторы:
- *  URLSearchParams молча склеивает повторные ключи, а строгому приёму
- *  ?coat= нужно видеть и сырое число вхождений, и сырую длину значения. */
-function rawQueryValues(search: string, key: string): string[] {
-  const out: string[] = [];
-  if (!search) return out;
-  for (const part of search.replace(/^\?/, '').split('&')) {
-    if (!part) continue;
-    const eq = part.indexOf('=');
-    if ((eq < 0 ? part : part.slice(0, eq)) === key) out.push(eq < 0 ? '' : part.slice(eq + 1));
-  }
-  return out;
-}
 
 /** Разобранная адресная строка каталога: все одноразовые параметры. */
 export type CatalogDeepLink = {
   id: string | null;
   mine: string | null;
-  /** #84 в3: url-кодированный код CatWar из ссылки конструктора KNS. */
-  coat: string | null;
 };
 
 /**
@@ -243,14 +230,7 @@ export type CatalogDeepLink = {
  *     (/paint-demo/?back=profile): подсветить свежий окрас в блоке
  *     «Свой окрас» своей карточки. Параметр одноразовый — сразу
  *     убирается из адреса, чтобы перезагрузка не мигала снова.
- *   ?coat=<urlencoded код CatWar> — #84 в3: приём окраса из конструктора
- *     KNS (kns.phainonsmilk.ru). Строгий приём: ровно ОДИН coat и сырая длина
- *     ≤2048; грамматику ЗДЕСЬ не проверяем (код парсится движком
- *     лениво, в зоне «Свой окрас»), битый код покажет тот же отказ,
- *     что и ручная вставка. Никаких запросов серверу факт открытия
- *     ссылки не делает: заполнение поля и превью — сохранение только
- *     кнопкой (прогнозируемость + лимит загрузок не выжигается).
- * Одноразовые параметры (mine, coat) сразу вычищаются replaceState —
+ * Одноразовый параметр mine сразу вычищается replaceState —
  * якорь (#settings ведёт на форму профиля) переживает чистку.
  * Обращается только к window.location/history клиента (страница
  * 'use client'), при отсутствии history (тесты) тихо возвращает нули.
@@ -259,26 +239,12 @@ export function consumeCatalogDeepLink(): CatalogDeepLink {
   try {
     const q = new URLSearchParams(window.location.search);
     const mine = q.get('mine') || null;
-    if (mine) q.delete('mine');
-    // сырые вхождения coat: число повторов и длину меряем ДО декодирования
-    const rawCoats = rawQueryValues(window.location.search, 'coat');
-    let coat: string | null = null;
-    if (rawCoats.length > 0) {
-      q.delete('coat');
-      if (rawCoats.length === 1 && rawCoats[0].length <= COAT_DEEPLINK_MAX_RAW) {
-        try {
-          const decoded = decodeURIComponent(rawCoats[0]);
-          coat = decoded.trim() ? decoded : null;
-        } catch {
-          coat = null; // сломанный %-escape — честный отказ, адрес уже чист
-        }
-      }
-    }
-    if (mine || rawCoats.length > 0) {
+    if (mine) {
+      q.delete('mine');
       window.history.replaceState(null, '', `?${q.toString()}${window.location.hash}`);
     }
-    return { id: q.get('id') || null, mine, coat };
+    return { id: q.get('id') || null, mine };
   } catch {
-    return { id: null, mine: null, coat: null };
+    return { id: null, mine: null };
   }
 }

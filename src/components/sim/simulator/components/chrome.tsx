@@ -8,7 +8,7 @@
  * bodies are byte-identical); parents keep rendering the same DOM tree —
  * the component wrapper adds no DOM nodes.
  */
-import { useRef, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dropdown } from '@/components/ui';
 import { RoomPicker, type RoomRow } from '../../room-picker';
@@ -17,6 +17,7 @@ import { fmtSec } from '../sim-model';
 import { damageLevelLabel, type SimSettings } from '@/lib/sim/settings';
 import { THEMES, type ThemeId } from '@/lib/sim/theme';
 import { roomTitle, type CoopRoomInfo } from '@/lib/net/coop';
+import { tabTitle } from '@/lib/net/modes';
 
 /**
  * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
@@ -114,6 +115,16 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     setSwitchOpen,
     canSwitch = true,
   } = props;
+  // Вкладка называет комнату, в которую вошли (то же людское имя, что в выборе).
+  // Размонтирование — «Главное меню» или уход со страницы — возвращает заголовок маршрута.
+  useEffect(() => {
+    if (!roomCode) return;
+    const previous = document.title;
+    document.title = tabTitle(roomTitle(roomCode));
+    return () => {
+      document.title = previous;
+    };
+  }, [roomCode]);
   return (
   <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
     {testField ? <span aria-label="Игроков на поле" className="text-xs text-[var(--sim-text-muted)]">{peerCount} на поле</span> : <>

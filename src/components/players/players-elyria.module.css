@@ -281,7 +281,7 @@
 }
 
 .tableWrap {
-  --cols: 62px minmax(150px, 1.7fr) 128px 150px 110px 78px 106px minmax(120px, 1fr);
+  --cols: 62px minmax(150px, 1.7fr) 128px 150px 78px 106px minmax(120px, 1fr);
 }
 
 .thead {
@@ -493,8 +493,7 @@
   border-color: rgba(185, 179, 217, 0.18);
 }
 
-.bornC,
-.homeC {
+.bornC {
   font-size: 13.5px;
   color: var(--muted);
 }
@@ -1193,8 +1192,7 @@
   .cBorn,
   .cSeen,
   .cAge,
-  .cAct,
-  .cHome {
+  .cAct {
     display: none;
   }
 
