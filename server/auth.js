@@ -62,6 +62,50 @@ const LOGIN_FAIL_WINDOW_MS = envMs("AUTH_LOGIN_FAIL_WINDOW_MS", 15 * 60_000);
 
 let sessions = loadSessions();
 const hits = new Map();
+/** Потолок карты адресов. Просроченные бакеты вычищаются как у loginFails;
+ *  если после чистки карта всё ещё полна свежих IP, самый старый выселяется.
+ *  Иначе флуд уникальными адресами растит Map без границы. */
+const HITS_MAP_MAX = 4096;
+const HITS_WINDOW_MS = 60 * 60_000;
+
+function pruneHits(now) {
+  for (const [ip, bucket] of hits) {
+    const next = {};
+    let live = false;
+    for (const [key, arr] of Object.entries(bucket)) {
+      const keep = arr.filter((t) => now - t < HITS_WINDOW_MS);
+      if (keep.length) {
+        next[key] = keep;
+        live = true;
+      }
+    }
+    if (live) hits.set(ip, next);
+    else hits.delete(ip);
+  }
+}
+
+function evictOldestHit() {
+  let oldestIp = null;
+  let oldestT = Infinity;
+  for (const [ip, bucket] of hits) {
+    let last = 0;
+    for (const arr of Object.values(bucket)) {
+      if (arr.length && arr[arr.length - 1] > last) last = arr[arr.length - 1];
+    }
+    if (last < oldestT) {
+      oldestT = last;
+      oldestIp = ip;
+    }
+  }
+  if (oldestIp != null) hits.delete(oldestIp);
+}
+
+/** Новому адресу нужно место. Уже известный IP не выселяем: его бакет обновляется. */
+function ensureHitsRoom(ip, now) {
+  if (hits.has(ip) || hits.size < HITS_MAP_MAX) return;
+  pruneHits(now);
+  while (hits.size >= HITS_MAP_MAX) evictOldestHit();
+}
 
 function writeFileAtomic(file, data) {
   const tmp = `${file}.tmp`;
@@ -183,8 +227,9 @@ function isLoopback(ip) {
 function rate(ip, key, gapMs, hourMax) {
   if (isLoopback(ip)) return true;
   const now = Date.now();
+  ensureHitsRoom(ip, now);
   const bucket = hits.get(ip) || {};
-  const arr = (bucket[key] || []).filter((t) => now - t < 60 * 60_000);
+  const arr = (bucket[key] || []).filter((t) => now - t < HITS_WINDOW_MS);
   if (arr.length && now - arr[arr.length - 1] < gapMs) {
     hits.set(ip, { ...bucket, [key]: arr });
     return false;
@@ -196,6 +241,10 @@ function rate(ip, key, gapMs, hourMax) {
   arr.push(now);
   hits.set(ip, { ...bucket, [key]: arr });
   return true;
+}
+
+function hitsMapSize() {
+  return hits.size;
 }
 
 /* ---------- per-LOGIN замок неудачных входов ----------
@@ -295,9 +344,19 @@ function bindToken(ws, token) {
 }
 
 function whoamiBody(ws, extra = {}) {
+  const { token: extraToken, ...rest } = extra || {};
   const acc = ws.account;
-  if (!acc) return { ok: true, role: "guest", ...extra };
-  return { ok: true, ...publicAccount(acc), token: extra.token || ws.sessionToken || undefined, ...extra };
+  // Токен в кадре whoami — только hostClass local (тесты и dev). На public и
+  // elyria кадр читает JS страницы: отдача sessionToken сняла бы HttpOnly.
+  const token = ws.hostClass === "local" ? extraToken || ws.sessionToken || undefined : undefined;
+  if (!acc) {
+    const body = { ok: true, role: "guest", ...rest };
+    if (token) body.token = token;
+    return body;
+  }
+  const body = { ok: true, ...publicAccount(acc), ...rest };
+  if (token) body.token = token;
+  return body;
 }
 
 function reasonText(code) {
@@ -393,7 +452,15 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     return;
   }
   if (action === "hello") {
-    const token = String(payload.token || ws.sessionToken || "");
+    const fromPayload = String(payload.token || "");
+    // Токен в теле hello на public/elyria — только со своим Origin. Пустой
+    // или чужой Origin не поднимает сессию по украденной строке. local
+    // остаётся прежним: скрипты и dev шлют hello без Origin.
+    if (fromPayload && ws.hostClass !== "local" && !ws.originOk) {
+      sendWhoami(ws, { ok: false, reason: "error" });
+      return;
+    }
+    const token = fromPayload || String(ws.sessionToken || "");
     if (token) bindToken(ws, token);
     sendWhoami(ws, whoamiBody(ws));
     return;
@@ -582,6 +649,9 @@ export {
   lastSeenByAccount,
   flushAuth,
   registerLimits,
+  rate,
+  hitsMapSize,
+  HITS_MAP_MAX,
   COOKIE,
   TTL_MS,
 };

@@ -44,9 +44,11 @@ book forgets a cat (`forgetCat`, admin reset).
   `Domain` attribute — B1). On https: `Secure` + `SameSite=Lax` (legacy
   `SameSite=None` only behind `COOKIE_LOOSE=1`). The token is never put in
   `localStorage`; on the elyria host class it is cookie-only (`?t=` acceptance
-  off unless `AUTH_LEGACY_TOKEN=1`); on `local` the token also appears in HTTP
-  response bodies (tests/dev rely on it); on `public` old clients' `?t=` still
-  works transitively.
+  off unless `AUTH_LEGACY_TOKEN=1`) and the WS `whoami` frame does not echo it;
+  on `local` the token also appears in HTTP response bodies and in `whoami`
+  (tests/dev rely on it); on `public` old clients' `?t=` still works transitively,
+  but `whoami` does not echo the token. `hello` carrying `payload.token` on
+  public/elyria requires a class-matching Origin.
 - Rate limiting (anti-guessing) — **memory-only, never persisted**: per-IP buckets
   (`hits` map, register 60s/5h prod, login 6s gap) and the per-LOGIN failure lock
   (`AUTH_LOGIN_FAIL_MAX`, default 20 failures / 15 min window, success resets).

@@ -55,40 +55,40 @@ const angle = (Math.atan2(dYou.y - aYou.y, dYou.x - aYou.x) * 180) / Math.PI;
 console.log(`server=${url} room=${room} atk=${aYou.x},${aYou.y} def=${dYou.x},${dYou.y} angle=${angle.toFixed(0)}`);
 await sleep(80);
 
-// 1) Блок стоит → удар в хвост должен пройти ХВОСТОМ с уроном бьющего (33):
-//    блок не ловит удар в хвост — исключение из правила.
+// 1) Блок стоит → удар в хвост должен пройти ХВОСТОМ.
+//    Клиентский урон игнорируется (гость: таблица уровня 0). Блок хвост не ловит.
 def.send(JSON.stringify(["block", { on: true }]));
 await waitFor(atk, "block");
 atk.inbox.length = 0;
 def.inbox.length = 0;
-atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 33, pawsDamage: 5 }]));
+atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 999, pawsDamage: 999 }]));
 const r1 = (await waitFor(def, "fight"))[1];
 console.log(`1) хвост по стоящему блоку: ${fmt(r1)} → ${r1.zone === "tail" ? "OK исключение" : "БАГ: блок перехватил хвост"}`);
 
-// 2) Без блока → хвост остаётся хвостом (урон бьющего 33).
+// 2) Без блока → хвост остаётся хвостом (таблица уровня 0, не число клиента).
 def.send(JSON.stringify(["block", { on: false }]));
 await waitFor(atk, "block");
 await sleep(120);
 atk.inbox.length = 0;
 def.inbox.length = 0;
-atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 33 }]));
+atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 999 }]));
 const r2 = (await waitFor(def, "fight"))[1];
 console.log(`2) хвост без блока:        ${fmt(r2)} → ${r2.zone === "tail" ? "OK хвост" : "неожиданно"}`);
 
-// 3) Блок встаёт, пока удар летит → хвост всё равно проходит хвостом (33).
+// 3) Блок встаёт, пока удар летит → хвост всё равно проходит хвостом.
 await sleep(120);
 atk.inbox.length = 0;
 def.inbox.length = 0;
-atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 33, pawsDamage: 5, flightMs: 200 }]));
+atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "tail", angle, damage: 999, pawsDamage: 999, flightMs: 200 }]));
 def.send(JSON.stringify(["block", { on: true }]));
 const r3 = (await waitFor(def, "fight"))[1];
 console.log(`3) хвост, блок в полёте:   ${fmt(r3)} → ${r3.zone === "tail" ? "OK исключение" : "БАГ: блок перехватил хвост"}`);
 
-// 4) Контраст: морда по стоящему блоку → «Лапы» с лаповым уроном (5).
+// 4) Контраст: морда по стоящему блоку → «Лапы» таблицы уровня 0, не pawsDamage клиента.
 await sleep(120);
 atk.inbox.length = 0;
 def.inbox.length = 0;
-atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "muzzle", angle, damage: 33, pawsDamage: 5 }]));
+atk.send(JSON.stringify(["strike", { target: dYou.id, zone: "muzzle", angle, damage: 999, pawsDamage: 999 }]));
 const r4 = (await waitFor(def, "fight"))[1];
 console.log(`4) морда по стоящему блоку: ${fmt(r4)} → ${r4.zone === "paws" ? "OK редирект" : "неожиданно"}`);
 
