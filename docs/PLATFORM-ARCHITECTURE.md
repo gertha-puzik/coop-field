@@ -251,14 +251,8 @@ reset/restore с подтверждением.
   `/players/?id&mine=<id>#settings` с подсветкой плитки. Мост — третий файл
   `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
   гейт check:paint-seam); из www-grotto вырезан.
-  Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
-  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.phainonsmilk.ru → клиентский конвейер
-  `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
-  дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
-  Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы
-  хвоста и пр.) на паре M2 в KNS ещё не отрисованы — честная подпись в UI. Движок грузится
-  динамическим import() только в зоне профиля; www-grotto без /catwar (prune EXCLUDE).
-  Отказы человеческие: bad_syntax / no_coat_zones / engine_unavailable.
+  Решение владелицы 2026-11-10: окрасы CatWar в игре не используются, пак изображений
+  в этом репозитории не лежит. Личная загрузка PNG и редактор KNS Paint остаются.
 
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 

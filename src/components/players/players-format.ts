@@ -210,30 +210,10 @@ export function homeRoomTitle(room: string | null | undefined): string | null {
 
 /* ---------------------- deep-link параметры каталога ---------------------- */
 
-/** Строгий приём ?coat=: только ОДИН параметр, сырая (до url-декодирования)
- *  длина значения ≤2048 — мусорная очередь до движка не доезжает вовсе. */
-export const COAT_DEEPLINK_MAX_RAW = 2048;
-
-/** Сырые значения параметра query БЕЗ декодирования, включая повторы:
- *  URLSearchParams молча склеивает повторные ключи, а строгому приёму
- *  ?coat= нужно видеть и сырое число вхождений, и сырую длину значения. */
-function rawQueryValues(search: string, key: string): string[] {
-  const out: string[] = [];
-  if (!search) return out;
-  for (const part of search.replace(/^\?/, '').split('&')) {
-    if (!part) continue;
-    const eq = part.indexOf('=');
-    if ((eq < 0 ? part : part.slice(0, eq)) === key) out.push(eq < 0 ? '' : part.slice(eq + 1));
-  }
-  return out;
-}
-
 /** Разобранная адресная строка каталога: все одноразовые параметры. */
 export type CatalogDeepLink = {
   id: string | null;
   mine: string | null;
-  /** #84 в3: url-кодированный код CatWar из ссылки конструктора KNS. */
-  coat: string | null;
 };
 
 /**
@@ -243,14 +223,7 @@ export type CatalogDeepLink = {
  *     (/paint-demo/?back=profile): подсветить свежий окрас в блоке
  *     «Свой окрас» своей карточки. Параметр одноразовый — сразу
  *     убирается из адреса, чтобы перезагрузка не мигала снова.
- *   ?coat=<urlencoded код CatWar> — #84 в3: приём окраса из конструктора
- *     KNS (kns.phainonsmilk.ru). Строгий приём: ровно ОДИН coat и сырая длина
- *     ≤2048; грамматику ЗДЕСЬ не проверяем (код парсится движком
- *     лениво, в зоне «Свой окрас»), битый код покажет тот же отказ,
- *     что и ручная вставка. Никаких запросов серверу факт открытия
- *     ссылки не делает: заполнение поля и превью — сохранение только
- *     кнопкой (прогнозируемость + лимит загрузок не выжигается).
- * Одноразовые параметры (mine, coat) сразу вычищаются replaceState —
+ * Одноразовый параметр mine сразу вычищается replaceState —
  * якорь (#settings ведёт на форму профиля) переживает чистку.
  * Обращается только к window.location/history клиента (страница
  * 'use client'), при отсутствии history (тесты) тихо возвращает нули.
@@ -259,26 +232,12 @@ export function consumeCatalogDeepLink(): CatalogDeepLink {
   try {
     const q = new URLSearchParams(window.location.search);
     const mine = q.get('mine') || null;
-    if (mine) q.delete('mine');
-    // сырые вхождения coat: число повторов и длину меряем ДО декодирования
-    const rawCoats = rawQueryValues(window.location.search, 'coat');
-    let coat: string | null = null;
-    if (rawCoats.length > 0) {
-      q.delete('coat');
-      if (rawCoats.length === 1 && rawCoats[0].length <= COAT_DEEPLINK_MAX_RAW) {
-        try {
-          const decoded = decodeURIComponent(rawCoats[0]);
-          coat = decoded.trim() ? decoded : null;
-        } catch {
-          coat = null; // сломанный %-escape — честный отказ, адрес уже чист
-        }
-      }
-    }
-    if (mine || rawCoats.length > 0) {
+    if (mine) {
+      q.delete('mine');
       window.history.replaceState(null, '', `?${q.toString()}${window.location.hash}`);
     }
-    return { id: q.get('id') || null, mine, coat };
+    return { id: q.get('id') || null, mine };
   } catch {
-    return { id: null, mine: null, coat: null };
+    return { id: null, mine: null };
   }
 }

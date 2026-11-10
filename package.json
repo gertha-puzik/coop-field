@@ -36,8 +36,6 @@
     "check:landmarks": "node scripts/check-doc-landmarks.mjs",
     "check:variants": "node scripts/check-variants.mjs",
     "check:paint-seam": "node scripts/check-paint-seam.mjs",
-    "check:catwar-vendor": "node scripts/check-catwar-vendor.mjs",
-    "test:catwar-coat": "node scripts/test-catwar-coat.mjs",
     "arch:check": "node scripts/check-architecture.mjs",
     "typecheck": "tsc --noEmit",
     "map:restore": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06.json",

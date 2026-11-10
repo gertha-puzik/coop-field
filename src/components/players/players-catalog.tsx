@@ -423,9 +423,8 @@ export default function PlayersCatalog() {
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
-  /** #84 ч.2: ?mine= — подсветка возврата из редактора; в3: ?coat= — автозаполнение кода KNS. */
+  /** #84 ч.2: ?mine= — подсветка возврата из редактора. */
   const [mineFlash, setMineFlash] = useState<string | null>(null);
-  const [coatLink, setCoatLink] = useState<string | null>(null);
   /** Момент последней успешной загрузки: от него считаются статусы и
    *  «обновлено …» — «сейчас» фиксируется, а не тикает на каждом рендере. */
   const [fetchedAt, setFetchedAt] = useState(0);
@@ -462,7 +461,6 @@ export default function PlayersCatalog() {
       deepLinkHoldRef.current = !!wantId;
       if (wantId) setProfileWait(true);
       setMineFlash(dl.mine); // null без параметра — подсветки нет
-      setCoatLink(dl.coat ?? null); // null без coat — автозаполнения нет
       const profileP = wantId ? httpProfileById(wantId) : null;
       const me = await httpMe();
       if (dead) return;
@@ -662,7 +660,6 @@ export default function PlayersCatalog() {
         onSaved={handleSaved}
         onClose={closeCard}
         mineHighlight={mineFlash}
-        coatLink={coatLink}
       />
     );
   }
