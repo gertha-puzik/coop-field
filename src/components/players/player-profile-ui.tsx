@@ -10,6 +10,9 @@
  * #84/в3: + второй вход той же зоны (CatwarCodeEntry) — окрас по КОДУ
  * CatWar (конструктор kns.miew.ru): клиентский рендер M2-котика без
  * загрузки картинки, сохранение тем же POST /sprites/mine.
+ * Контент-волна профиля: Portrait рисует свою картинку (DTO avatar) вместо
+ * спрайта; AvatarField — блок «Аватар» редактора (сетевой клиент аватаров —
+ * отдельный модуль lib/net, сюда его не импортируем).
  */
 
 import type { ReactNode } from 'react';
@@ -128,44 +131,53 @@ export function Portrait({ card, name }: { card: ProfileCard; name: string }) {
   const char = avatarOf(card);
   const url = spriteUrl(char);
   const scale = Math.min(120, Math.max(60, char?.size || 100));
+  // своя картинка профиля (DTO-поле avatar) заменяет спрайт персонажа:
+  // рамка и размер портрета прежние, object-fit: contain несёт .portrait
+  const ownAvatar = typeof card.avatar === 'string' && card.avatar ? card.avatar : null;
   return (
     <figure className={styles.avatar}>
       <span className={styles.avatarArt}>
-        <span className={styles.meadow} aria-hidden>
-          <svg className={styles.grass} viewBox="0 0 198 74" preserveAspectRatio="none" aria-hidden>
-            <g fill="#101d3c" opacity=".85">
-              <path d="M8 74C10 52 14 40 12 24c5 16 7 34 8 50z" />
-              <path d="M30 74c3-24-1-40 4-56 4 18 6 38 7 56z" />
-              <path d="M55 74c2-20 6-32 4-46 5 16 7 32 8 46z" />
-              <path d="M132 74c2-18-2-34 4-48 4 16 5 34 7 48z" />
-              <path d="M158 74c2-22 6-36 3-52 6 18 8 38 9 52z" />
-              <path d="M179 74c2-18-1-32 4-44 3 16 5 32 5 44z" />
-            </g>
-            <g fill="#060d1e" opacity=".95">
-              <path d="M0 74C3 48 6 30 4 12c7 20 9 42 10 62z" />
-              <path d="M22 74c4-30 2-48 8-66 4 22 5 44 6 66z" />
-              <path d="M163 74c3-28 0-46 7-64 3 22 4 44 4 64z" />
-              <path d="M184 74c3-24 1-40 6-54 3 18 3 38 4 54z" />
-            </g>
-            <g fill="#ffffff">
-              <circle cx="34" cy="22" r="1.2" opacity=".55" />
-              <circle cx="164" cy="14" r="1.4" opacity=".45" />
-              <circle cx="99" cy="9" r="1" opacity=".5" />
-            </g>
-          </svg>
-        </span>
-        {url ? (
-          <img
-            className={styles.portrait}
-            src={url}
-            alt={`Спрайт персонажа: ${name}`}
-            style={{ width: `${scale}%`, height: 'auto' }}
-          />
+        {ownAvatar ? (
+          <img className={styles.portrait} src={ownAvatar} alt={name} draggable={false} />
         ) : (
-          // спрайт не выбран — безликая лапа, а не выдуманный портрет
-          <span className={styles.portraitPaw} aria-hidden>
-            🐾
-          </span>
+          <>
+            <span className={styles.meadow} aria-hidden>
+              <svg className={styles.grass} viewBox="0 0 198 74" preserveAspectRatio="none" aria-hidden>
+                <g fill="#101d3c" opacity=".85">
+                  <path d="M8 74C10 52 14 40 12 24c5 16 7 34 8 50z" />
+                  <path d="M30 74c3-24-1-40 4-56 4 18 6 38 7 56z" />
+                  <path d="M55 74c2-20 6-32 4-46 5 16 7 32 8 46z" />
+                  <path d="M132 74c2-18-2-34 4-48 4 16 5 34 7 48z" />
+                  <path d="M158 74c2-22 6-36 3-52 6 18 8 38 9 52z" />
+                  <path d="M179 74c2-18-1-32 4-44 3 16 5 32 5 44z" />
+                </g>
+                <g fill="#060d1e" opacity=".95">
+                  <path d="M0 74C3 48 6 30 4 12c7 20 9 42 10 62z" />
+                  <path d="M22 74c4-30 2-48 8-66 4 22 5 44 6 66z" />
+                  <path d="M163 74c3-28 0-46 7-64 3 22 4 44 4 64z" />
+                  <path d="M184 74c3-24 1-40 6-54 3 18 3 38 4 54z" />
+                </g>
+                <g fill="#ffffff">
+                  <circle cx="34" cy="22" r="1.2" opacity=".55" />
+                  <circle cx="164" cy="14" r="1.4" opacity=".45" />
+                  <circle cx="99" cy="9" r="1" opacity=".5" />
+                </g>
+              </svg>
+            </span>
+            {url ? (
+              <img
+                className={styles.portrait}
+                src={url}
+                alt={`Спрайт персонажа: ${name}`}
+                style={{ width: `${scale}%`, height: 'auto' }}
+              />
+            ) : (
+              // спрайт не выбран — безликая лапа, а не выдуманный портрет
+              <span className={styles.portraitPaw} aria-hidden>
+                🐾
+              </span>
+            )}
+          </>
         )}
       </span>
       <figcaption className={styles.avatarCap}>{name}</figcaption>
@@ -224,6 +236,86 @@ export function humanEditError(reason: string | undefined): string {
     default:
       return 'Не получилось сохранить.';
   }
+}
+
+/* ——— «Аватар» (контент-волна профиля): своя картинка игрока. Блок чисто
+   презентационный — сетевыми ходоками владеет player-profile.tsx, здесь
+   только состояние-props: превью, скрытый файл-инпут, подтверждение
+   удаления вторым кликом (канон MineSpritesSection) ——— */
+
+export function AvatarField({
+  avatarUrl,
+  busy,
+  armed,
+  onFile,
+  onRemoveClick,
+}: {
+  /** DTO-URL своей картинки ('' — картинки нет: превью и «убрать» скрыты). */
+  avatarUrl: string;
+  busy: boolean;
+  /** «Убрать картинку» вооружена: следующий клик удаляет (5 сек назад). */
+  armed: boolean;
+  onFile: (file: File) => void;
+  onRemoveClick: () => void;
+}) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div className={styles.edField}>
+      <span className={styles.edLabel}>Аватар</span>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt="Своя картинка профиля"
+            className="h-16 w-16 shrink-0 rounded-md border border-[var(--sim-line)] bg-black/20 object-contain"
+            draggable={false}
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] text-[var(--sim-text-faint)]">
+            Своя картинка (PNG или JPEG, сторона 64–1500 px, до 2 МБ)
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                e.target.value = '';
+                if (file) onFile(file);
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+            >
+              {busy ? 'Загружаем…' : 'Загрузить картинку'}
+            </Button>
+            {avatarUrl ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onRemoveClick}
+                className={`rounded border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-50 ${
+                  armed
+                    ? 'border-red-500 bg-red-950 font-bold text-red-300'
+                    : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
+                }`}
+                title={armed ? 'Ещё раз — и картинки не будет' : 'Убрать свою картинку'}
+              >
+                {armed ? 'Точно убрать?' : 'Убрать картинку'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ——— «Свой окрас» (#83): загрузка личного PNG, список своих (надеть /

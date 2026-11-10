@@ -17,7 +17,7 @@
  * броня) — только владелец, сервер хранит их в записи профиля.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
 import { httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
+import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -43,6 +44,7 @@ import {
   moonsText,
   plural,
   ruAgo,
+  ruBirthday,
   ruDate,
   statusOf,
   type StatusTone,
@@ -50,6 +52,7 @@ import {
 import styles from './players-elyria.module.css';
 import {
   ACH_ICONS,
+  AvatarField,
   MineSpritesSection,
   Portrait,
   SKIN_GROUPS,
@@ -232,6 +235,8 @@ function OwnProfileEditor({
 }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
+  /** День рождения черновика: '' — очищено (в PATCH уедет null). */
+  const [draftBirthday, setDraftBirthday] = useState(profile.birthday || '');
   const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
   const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
   const originChar = activeCharOf(profile);
@@ -242,6 +247,13 @@ function OwnProfileEditor({
       : 100;
   const [draftSprite, setDraftSprite] = useState(originSprite);
   const [draftScale, setDraftScale] = useState(originScale);
+  // Своя картинка-аватар: DTO-URL профиля; мутацию подтверждают ответ
+  // сервера и рефреш (onSaved обновляет myProfile-кэш каталога).
+  const [avatarUrl, setAvatarUrl] = useState(profile.avatar || '');
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  /** Вооружённое удаление картинки: второй клик подтверждает (5 сек). */
+  const [armedAvatar, setArmedAvatar] = useState(false);
+  const armAvatarTimer = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -249,6 +261,8 @@ function OwnProfileEditor({
   useEffect(() => {
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
+    setDraftBirthday(profile.birthday || '');
+    setAvatarUrl(profile.avatar || '');
     setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
@@ -257,6 +271,11 @@ function OwnProfileEditor({
       ch && Number.isFinite(ch.size) ? Math.min(100, Math.max(60, Math.round(ch.size))) : 100,
     );
   }, [profile]);
+
+  // вооружённое «Убрать картинку» гаснет само — таймер чистим на выходе
+  useEffect(() => () => {
+    if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
+  }, []);
 
   /** СП едут в PATCH только если игрок их реально тронул: неточно равные
    *  наборы не перезаписывают профиль (и не мешают правке имени/био). */
@@ -269,6 +288,14 @@ function OwnProfileEditor({
   /** Внешность (скин/рост) — та же дисциплина: менять — только тронутое,
    *  пустой скин не сохраняем (сервер требует валидный id). */
   const appearanceChanged = draftSprite !== originSprite || draftScale !== originScale;
+
+  /** День рождения: едет в PATCH только тронутое; '' → null (сброс). */
+  const originBirthday = profile.birthday || null;
+  const birthdayChanged = (draftBirthday || null) !== originBirthday;
+
+  /** Верхняя граница календаря — сегодня локали (нижняя — 1900-01-01). */
+  const todayDate = new Date();
+  const birthdayMax = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
 
   const save = async () => {
     setFail(null);
@@ -285,6 +312,8 @@ function OwnProfileEditor({
       bio: draftBio.trim(),
       avatarCharacterId: draftAvatar || null,
     };
+    // день рождения — строка или null, только при отличии от исходного
+    if (birthdayChanged) patch.birthday = draftBirthday || null;
     if (spChanged) patch.sp = { ...draftSp };
     // скин и рост персонажа — плоские поля активной записи; сервер валидирует
     // id по каталогу и зажимает рост в 60–100
@@ -309,6 +338,59 @@ function OwnProfileEditor({
     } else {
       setFail({ title: 'Изменения сохранились, но свежий профиль не прочитался — обновите страницу.' });
     }
+  };
+
+  /** Рефреш профиля после аватара — канон PATCH-успехов соседей:
+   *  свежий /profiles/me + onSaved. */
+  const refreshMineAfterAvatar = async () => {
+    const fresh = await httpMyProfile();
+    if (fresh.ok && fresh.profile) onSaved(fresh.profile);
+  };
+
+  /** Загрузка своей картинки: размер проверяем локально, остальное —
+   *  за сервером; по успеху свежий URL в превью и рефреш карточки. */
+  const uploadOwnAvatar = async (file: File) => {
+    if (avatarBusy) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setFail({ title: 'Файл больше 2 МБ не принимается — уменьшите картинку.' });
+      return;
+    }
+    setFail(null);
+    setAvatarBusy(true);
+    const res = await httpUploadAvatar(file);
+    setAvatarBusy(false);
+    if (!res.ok) {
+      setFail({ title: humanAvatarError(res.reason, 'Загрузить картинку не удалось.'), details: res.message || undefined });
+      return;
+    }
+    setAvatarUrl(res.avatar || '');
+    setArmedAvatar(false);
+    setNote('Картинка загружена.');
+    window.setTimeout(() => setNote(null), 2500);
+    await refreshMineAfterAvatar();
+  };
+
+  /** Удаление своей картинки — уже подтверждённый второй клик кнопки. */
+  const removeOwnAvatar = async () => {
+    setAvatarBusy(true);
+    const res = await httpDeleteAvatar();
+    setAvatarBusy(false);
+    if (!res.ok) {
+      setFail({ title: humanAvatarError(res.reason, 'Убрать картинку не удалось.'), details: res.message || undefined });
+      return;
+    }
+    setAvatarUrl('');
+    setArmedAvatar(false);
+    setNote('Картинка убрана.');
+    window.setTimeout(() => setNote(null), 2500);
+    await refreshMineAfterAvatar();
+  };
+
+  /** Первый клик «Убрать картинку» — вооружение на 5 секунд, второй — ход. */
+  const armAvatarRemoval = () => {
+    setArmedAvatar(true);
+    if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
+    armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
   return (
@@ -357,6 +439,30 @@ function OwnProfileEditor({
           onChange={(e) => setDraftBio(e.target.value)}
         />
       </label>
+      <label className={styles.edField}>
+        <span className={styles.edLabel}>День рождения</span>
+        <input
+          type="date"
+          className="mt-1 h-8 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
+          min="1900-01-01"
+          max={birthdayMax}
+          value={draftBirthday}
+          onChange={(e) => setDraftBirthday(e.target.value)}
+        />
+        <span className="mt-1 block text-[10px] text-[var(--sim-text-faint)]">
+          виден на карточке; пусто — показываем дату регистрации
+        </span>
+      </label>
+
+      {/* Своя картинка-аватар: сетевым клиентом владеет этот модуль,
+          превью обновляется сразу, портрет карточки — рефрешем профиля. */}
+      <AvatarField
+        avatarUrl={avatarUrl}
+        busy={avatarBusy}
+        armed={armedAvatar}
+        onFile={(file) => void uploadOwnAvatar(file)}
+        onRemoveClick={() => (armedAvatar ? void removeOwnAvatar() : armAvatarRemoval())}
+      />
 
       {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
           и применяется на поле сам; плитки те же группы, что на карусели входа. */}
@@ -527,6 +633,10 @@ export default function PlayerProfile({
   // перерисовками и не расходятся с пререндером.
   const [now] = useState(() => Date.now());
 
+  // Своя карточка: myProfile (/profiles/me) после правок свежее deep-link-
+  // карточки каталога (его обновляет onSaved), поэтому день рождения и свою
+  // картинку своей карточки берём из него — правки и аватар видны сразу.
+  const shownCard = mine && myProfile ? { ...card, birthday: myProfile.birthday, avatar: myProfile.avatar } : card;
   const seen = card.lastSeenAt ?? 0;
   const status = statusOf(seen, now);
   const activity = activityOf(seen, now);
@@ -539,6 +649,9 @@ export default function PlayerProfile({
   const birth = ruDate(card.createdAt);
   const birthNote =
     card.createdAt > 0 ? `дата регистрации аккаунта — ${ruDate(card.createdAt)}` : 'дата регистрации неизвестна';
+  /** День рождения владельца, если он указан: приоритетнее даты
+   *  регистрации; parse-слой уже обезвредил мусор в null. */
+  const ownBirthday = ruBirthday(shownCard.birthday);
   const seenAgo = seen > 0 ? ruAgo(seen, now) : UNKNOWN;
 
   // честная строка-резюме: только факты карточки в читаемом виде
@@ -550,7 +663,9 @@ export default function PlayerProfile({
 
   const infoRows: { icon: InfoIcon; label: string; value: string; title?: string }[] = [
     { icon: 'id', label: 'ID профиля', value: shortId, title: card.accountId || undefined },
-    { icon: 'calendar', label: 'Дата рождения', value: birth, title: birthNote },
+    ownBirthday
+      ? { icon: 'calendar', label: 'День рождения', value: ownBirthday, title: 'день рождения, указанный самим игроком' }
+      : { icon: 'calendar', label: 'Дата рождения', value: birth, title: birthNote },
     { icon: 'moon', label: 'Возраст (в лунах)', value: moonsLine },
     { icon: 'activity', label: 'Последний вход', value: seenAgo, title: seen > 0 ? ruDate(seen) : 'нет записей о входе' },
     { icon: 'home', label: 'Дом', value: home || UNKNOWN, title: 'комната последней записи кота на поле' },
@@ -584,7 +699,7 @@ export default function PlayerProfile({
         <BrandRow />
         <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
           <div className={styles.head}>
-            <Portrait card={card} name={name} />
+            <Portrait card={shownCard} name={name} />
             <div className={styles.headMain}>
               <h1 className={styles.catNameBig}>
                 {name}{' '}
@@ -658,10 +773,6 @@ export default function PlayerProfile({
                 ))}
               </tbody>
             </table>
-            <p className={styles.sub} style={{ marginTop: 10, fontSize: 12 }}>
-              Боевые счётчики («убито мышей» и т.п.) сервер пока не собирает — строки появятся, когда появятся реальные
-              данные.
-            </p>
           </section>
 
           <footer className={styles.panelFoot}>

@@ -50,6 +50,13 @@ export type ProfileCharacter = { id: string; name: string; sprite: string; size:
 export type PublicProfile = {
   displayName: string;
   bio: string;
+  /** День рождения (строка-маска ГГГГ-ММ-ДД) или null — владелец задал
+   *  его в настройках карточки; null → карточка честно показывает
+   *  дату регистрации. */
+  birthday: string | null;
+  /** Своя загруженная картинка: URL файла аватара или null — портрет
+   *  карточки рисует её вместо спрайта персонажа. */
+  avatar: string | null;
   avatarCharacterId: string | null;
   characters: ProfileCharacter[];
   activeCharacterId: string | null;
@@ -77,6 +84,9 @@ export type ProfileMe = PublicProfile & { sp?: ProfileSp };
 export type ProfilePatch = {
   displayName?: string;
   bio?: string;
+  /** День рождения: строка ГГГГ-ММ-ДД или null (сброс) — уезжает в PATCH
+   *  обычной строкой (не датой-объектом); partial: шлём только при отличии. */
+  birthday?: string | null;
   avatarCharacterId?: string | null;
   /** Скин активного персонажа — id из каталога спрайтов (GET /sprites/catalog);
    *  сервер валидирует по live-whitelist и отвечает 400 при чужом id. */
@@ -87,6 +97,15 @@ export type ProfilePatch = {
 };
 
 export type ProfileResult = { ok: boolean; reason?: string; details?: string; profile?: ProfileMe };
+
+/** Маска дня рождения (input type=date): ГГГГ-ММ-ДД — 4 цифры, дефис,
+ *  2 цифры, дефис, 2 цифры; прочий мусор DTO сворачивается в null. */
+const BIRTHDAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** День рождения DTO: строка с маской остаётся строкой, мусор → null. */
+function asBirthday(v: unknown): string | null {
+  return typeof v === "string" && BIRTHDAY_RE.test(v) ? v : null;
+}
 
 function parseCharacters(raw: unknown): ProfileCharacter[] {
   if (!Array.isArray(raw)) return [];
@@ -124,6 +143,8 @@ function parseProfile(row: ApiRow): ProfileMe {
   return {
     displayName: asText(row.displayName),
     bio: asText(row.bio),
+    birthday: asBirthday(row.birthday),
+    avatar: asId(row.avatar),
     avatarCharacterId: asId(row.avatarCharacterId),
     characters: parseCharacters(row.characters),
     activeCharacterId: asId(row.activeCharacterId),
