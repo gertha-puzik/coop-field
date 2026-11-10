@@ -38,7 +38,7 @@ import {
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import PlayerProfile, { BrandRow, Starscape, displayFont } from './player-profile';
+import PlayerProfile, { BrandRow, ProfileSkeleton, Starscape, displayFont } from './player-profile';
 import {
   ACTIVITY_TEXT,
   STATUS_TEXT,
@@ -579,27 +579,12 @@ export default function PlayersCatalog() {
     );
   }
 
-  // Deep-link-заход (?id=), карточка в пути: список не грузится и не
-  // рисуется — вместо него экран ожидания в той же ночной оболочке
-  // (PR #93-паттерн: sky → Starscape → SiteHeader), без мигания каталога.
+  // Deep-link-заход (?id=), карточка в пути: каталог не грузится и не
+  // рисуется. Вместо текстовой заглушки — каркас будущего профиля той же
+  // геометрии (заголовки/лейблы настоящие, контентные места — полосы):
+  // страница стоит на месте, приход карточки не перестраивает верстку.
   if (profileWait) {
-    return (
-      <div className={styles.sky}>
-        <Starscape />
-        <SiteHeader />
-        <div className={styles.page}>
-          <BrandRow />
-          <div className={`${styles.panel} ${styles.empty}`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4.5 4.5" />
-            </svg>
-            <div className={styles.eTitle}>Загружаем профиль…</div>
-            <p>Открываем карточку игрока по ссылке.</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <ProfileSkeleton />;
   }
 
   const onlineNow = rows.filter((r) => r.status === 'online').length;
