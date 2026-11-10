@@ -244,7 +244,7 @@ default preserves current gameplay); админ снял для комнаты �
 ### Setmap (редактор локации)
 
 ```
-любой игрок комнаты test ── setmap {map} (без пароля) ──► sanitize: v 1|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000
+админ комнаты test ── setmap {map} (role=admin, без пароля) ──► sanitize: v 1|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000
 сервер: атомарная запись data/test-map.json (+8 бэкапов), тестовая прогонка
 сервер ── map (новый конфиг) ──► каждому сокету комнаты «test»
 сервер ── field (свежий снимок) ──► всем: сетка, dummy/rab/atmo пересчитаны

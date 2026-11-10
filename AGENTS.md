@@ -153,7 +153,7 @@ Invariants (violating one = a bug):
 | `freemove` | `{x, y, sp?, jp?, stop?, foot?:{dx,dy,rx?,ry?}}` | `test` room only; cell fractions; ≤1/50 ms; point-in-polygon check |
 | `cellsync` | `{x, y}` 1-based | `test` only; enter battle mode: cell must be walkable/entry, occupied → ring search ≤6; → `update cat` to ALL |
 | `jump` | `{x, y, deg?, charge?}` 1-based | cooldown 450 ms; 8 directions, 1–3 cells; `charge` 0–1 is the spacebar fill. Step is free when the elevation delta is at most 1. Jump: delta 2 needs charge ≥ 0.5, delta 3 needs charge ≥ 1, climbing 4 or more is impossible, dropping 4 or more needs a full charge |
-| `setmap` | `{map}` | shared location editor for every joined player: sanitize (v1\|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000), ≥8 backups; no password or admin role required; joined test-room member required; throttle 1/10 s per socket (any frame); → `map`+`field` to the `test` room; errors → `info` |
+| `setmap` | `{map}` | location editor for an admin in the test room: sanitize (v1\|2, cols 6–60, rows 3–40, zones ≤48, objects ≤2000), ≥8 backups; no password, role admin required (`ws.account.role`); joined test-room member required; throttle 1/10 s per socket (any frame); → `map`+`field` to the `test` room; errors → `info` |
 | `rooms` | `{ids: [...]}` ≤32 | 1/250 ms; → `roomsinfo` (does not materialize rooms) |
 | `auth` | `{action, login?, pass?, token?}` | `hello`/`register`/`login`/`logout`; register 1/min/IP; login 10/min/IP; pass ≥8; → `whoami`. Token also on WS query `t` or Cookie `coop_session`. |
 
@@ -188,7 +188,7 @@ Invariants (violating one = a bug):
 | `PORT` / `HOST` | listen socket | 3780 (prod: 8787 behind nginx) / 0.0.0.0 |
 | `REQUIRE_ORIGIN` | enforce the browser Origin check | prod = 1; `ALLOWED_ORIGINS` holds the whitelist |
 | `PUBLIC_HOSTS` / `ELYRIA_HOSTS` | host classes for `hostClassOf` (server/config.js): `public` = grottoes, `elyria` = Elysiae, everything else = `local` (dev/tests) | prod sets both; unknown hosts fall to `public` — fail closed |
-| `ADMIN_PASS` | Deprecated compatibility env, ignored by the location editor | no effect; any player in the location can save |
+| `ADMIN_PASS` | Deprecated compatibility env, ignored by the location editor | no effect; only an admin in the location can save |
 | `BOOTSTRAP_ADMIN` | MIGRATION list of logins (trim, case-insensitive): registration of a listed name gives `registered` + a log warning (S1); the `admin` role is handed out ONLY by the one-shot CLI `scripts/make-admin.mjs` (server stopped) | empty = no migration list |
 | `AUTH_LEGACY_TOKEN` | return `?t=` token acceptance on elyria for the transition period | off: elyria is cookie-only |
 | `COOKIE_LOOSE` | relax session cookie to legacy `SameSite=None` | off: `SameSite=Lax` (+`Secure` on https) |
@@ -272,11 +272,11 @@ PR previews). Variant checks are inline `IS_ELYRIA` constants in each module (se
 - A localhost page connects to `ws://localhost:3780` by itself. The plain dev build is the GROTTO variant — to see Elysiae run `NEXT_PUBLIC_SITE=elyria npm run dev`. Hello-world: `/?name=...`, confirm the three hidden parameters («Использовать предыдущие СП»), pick «Пивной грот №1». Join answers `you` then `field`; a step answers `update cat` or `refuse`. Elision (`/game/` or room `test`; old `/elision/` links are forwarded by the stub) needs register/login first (`auth` → `whoami`); catalog is `/players/`, admin dashboard is `/admin/` (admin session only). Extra tests: `npm run test:auth`, `npm run test:cfg`, `npm run test:profiles`, `npm run test:my-sprites`, `npm run test:preview-slug`, `npm run test:preview-apply`, `npm run test:preview-pr-link`, `npm run test:write-openssh-key`.
 - `npm run test:queue` spawns its own server on a random port. `npm run test:ws` needs the room already listening (`WS_URL`, default `ws://127.0.0.1:3780`).
 - `next dev` rewrites `next-env.d.ts` to `.next/dev/types`; `next build` points it back at `.next/types`. Leave that flip out of feature commits. `agentRules: false` in `next.config.ts` keeps `next dev` from appending its own block to this file.
-- Production sockets stay untouched unless a script is given `--prod`. The location editor is open to every joined player without a password; `ADMIN_PASS` is ignored.
+- Production sockets stay untouched unless a script is given `--prod`. The location editor saves only for an admin in the room; `ADMIN_PASS` is ignored.
 
 Камни: явный рельеф (`terrainLevelAt`, `effectiveElevRecord`) рисуется отдельно от опоры предметов. Мирная опора `supportLevelAt` добавляет STONE_LEVEL=1 только внутри повёрнутого тела камня; сам камень стоит на грунте и остаётся непрозрачным. Боевые клетки сохраняют дискретный уровень `elevLevelAt`/`testElev`. Сохранение редактора отправляет снимок черновика даже после закрытия панели во время кодирования; ошибка диска откатывает серверную карту и не рассылает успешный `map`. Регрессии: `npm run test:editor-save`.
 
-Директива владелицы 2026-11-09: редактор локации открыт всем игрокам комнаты test без пароля и роли admin. Сервер проверяет участие в комнате, валидность карты и лимит сохранений; бэкапы и атомарная запись сохранены.
+Директива владелицы 2026-11-10 отменила правило от 2026-11-09: карту Элизии меняет и сохраняет только администратор. Сервер принимает `setmap` при `ws.account.role===admin`, проверяет участие в комнате, валидность карты и лимит сохранений; пароль не спрашивает. Бэкапы и атомарная запись сохранены.
 
 Сохранение профиля (`PATCH /profiles/me`) использует общую пару Origin/класс сайта через originAllowedHere и csrfDecision, как /auth и HTTP-слой. Доверенный адрес сайта не нужно повторно добавлять в старый глобальный ALLOWED_ORIGINS; посторонние Origin и запросы с cookie без Origin отклоняются. Регрессия test:cross-origin: смена и повторная смена скина с последующим GET.
 

@@ -97,7 +97,7 @@ Deploy of a PR serves both hosts `pr-<N>.abnocw.phainonsmilk.ru` (grottoes) and
 | `src/lib/net/move-book.ts` | 89 | Step prediction (≤1 unconfirmed). **The reference module — copy its style for new files** |
 | `src/components/players/players-catalog.tsx` | 918 | `/players` catalog (elyria build only): public cards, server-side `?q` search (300 ms debounce) + keyset pagination via `nextCursor`, `?id=` deep links, inline edit of your own card |
 | `src/components/admin/cfg-dashboard.tsx` + `room-config-panel.tsx` | 736 + — | `/admin` dashboard (elyria only, renders for `role==='admin'`): registry values/apply policies (6 keys), editors for allowed-value LISTS with an EXPLICIT playerSelectable toggle (F2 §4: flip does NOT cut the list; off-then-on returns the curated list), was→will-become diff preview (incl. choice flip line), narrowing warning, collapsible tech details, honest ok/err statuses, reset, restore by history name, export/import JSON; «Комнатные настройки» section (F2 §3) — room select, layer table global/override/effective, per-key badges, atmoset gate, reset/restore with confirm |
-| `server.js` + `server/*.js` | 10 + 20 | Room server: config 386 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; WS_MAX_PER_IP def. 8 / ROOMS_MAX def. 32 — S5), protocol 284 (canon), net 401 (HTTP host gate, per-destination Origin/CSRF B1, per-IP socket cap S5a, `/health` `clientIpMode` S4; room-роуты /cfg/rooms* ПЕРЕД глобальным /cfg-хендлером), room 466 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias, live-rooms cap → `rooms_full`; F2: стартовый якорь atmo из per-room initialRoomAtmo), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 128 (якорь + F2 per-room гейт allowPlayerAtmosphereControl: atmoset-кадры игроков молчаливо дропаются), persist 134, sanitize 95, testmap 502 (сохранение любым игроком локации без пароля), world 663, modes 45, accounts 372 (S1: admin ONLY via `scripts/make-admin.mjs`; `MAX_ACCOUNTS` def. 500), auth 538 (sessions/cookies/token matrix; host-only cookie), profiles 430 (catalog with ?q/?limit/?cursor), runtime-config 375, cfg-registry 431 (6-key whitelist: 5 numeric + bool atmoset gate; §4 playerSelectable), room-config 589 (F2 per-room layer: /cfg/rooms*, layers, room-configs.json), hunger 11 (skeleton) |
+| `server.js` + `server/*.js` | 10 + 20 | Room server: config 386 (host policy `hostClassOf` public/elyria/local + env `PUBLIC_HOSTS`/`ELYRIA_HOSTS`; WS_MAX_PER_IP def. 8 / ROOMS_MAX def. 32 — S5), protocol 284 (canon), net 401 (HTTP host gate, per-destination Origin/CSRF B1, per-IP socket cap S5a, `/health` `clientIpMode` S4; room-роуты /cfg/rooms* ПЕРЕД глобальным /cfg-хендлером), room 466 (join gate, roomsinfo ghost for guests, RETIRED_ROOMS alias, live-rooms cap → `rooms_full`; F2: стартовый якорь atmo из per-room initialRoomAtmo), movement 295, combat 285 (registry clamps), dummy-rab 133, atmo 128 (якорь + F2 per-room гейт allowPlayerAtmosphereControl: atmoset-кадры игроков молчаливо дропаются), persist 134, sanitize 95, testmap 502 (сохранение локации только role=admin, без пароля), world 663, modes 45, accounts 372 (S1: admin ONLY via `scripts/make-admin.mjs`; `MAX_ACCOUNTS` def. 500), auth 538 (sessions/cookies/token matrix; host-only cookie), profiles 430 (catalog with ?q/?limit/?cursor), runtime-config 375, cfg-registry 431 (6-key whitelist: 5 numeric + bool atmoset gate; §4 playerSelectable), room-config 589 (F2 per-room layer: /cfg/rooms*, layers, room-configs.json), hunger 11 (skeleton) |
 
 Docs: `docs/ARCHITECTURE.md` — data flows, client↔server mirrors, THREE coordinate
 systems (network 1-based, canvas 0-based, peace-mode fractions), mutable-singleton contract.
@@ -116,8 +116,8 @@ class, config registry (5 keys, apply policies), profiles, RETIRED_ROOMS.
    update the tables in `AGENTS.md` and `docs/ARCHITECTURE.md` (§2) in the same PR;
    drifted size numbers fail CI (`check:landmarks`).
 4. **No secrets in the client bundle; secrets come from env only.** The owner
-   removed the editor password on 2026-11-09: every joined test-room player may
-   save maps, regardless of account role. ADMIN_PASS is obsolete and ignored.
+   removed the editor password on 2026-11-09. On 2026-11-10 the owner limited
+   saving to role admin: a joined test-room admin may save maps. ADMIN_PASS is obsolete and ignored.
 
 5. **Production/VPS is owner-only.** An agent needing prod operations writes the exact
    commands for the owner and waits — it never improvises server work itself.
@@ -153,8 +153,8 @@ Audit canons (Z.AI security audit 2026-11-08, follow-up waves B/C — hard rules
   `registered` (NOT admin) + a warning line in the server log; the ONLY way to become
   admin is the owner's one-shot `node scripts/make-admin.mjs <login> [pass]`, run with
   the server stopped (a live server would overwrite accounts.json from memory).
-- **Location editor:** no password since the owner directive of 2026-11-09.
-  Legacy localStorage password keys are only removed, never reused.
+- **Location editor:** no password. Since 2026-11-10 only `role=admin` may save
+  the test-room map. Legacy localStorage password keys are only removed, never reused.
 - **S5 — resource caps:** `WS_MAX_PER_IP` (default 8) — per-IP simultaneous WS sockets,
   over the cap the socket is closed with `too_many_sockets`; `ROOMS_MAX` (default 32) —
   live rooms per process, over the cap new rooms get `noplace rooms_full`. `/health`

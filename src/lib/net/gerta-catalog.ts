@@ -398,13 +398,13 @@ export const MECHANIC_CARDS: readonly MechanicCard[] = IS_ELYRIA
       {
         id: "editor",
         title: "Редактор локации",
-        does: "Кисть, зоны, спавны, высоты. Сохранение — setmap. Пароль проверяет сервер, не панель.",
+        does: "Кисть, зоны, спавны, высоты. Сохранение — setmap, только role=admin.",
         mode: "elision",
         files: ["src/components/sim/simulator/editor-ops.ts", "server/testmap.js", "src/lib/sim/test-map.ts"],
         functions: ["setMap", "sanitizeTestMap", "buildEditorOps"],
-        params: ["pass", "map"],
+        params: ["map"],
         breaks: "Карта за лимитами; запись без бэкапа; клиентский «пароль вкладок» как защита.",
-        deps: ["Любой игрок локации", "backups/"],
+        deps: ["роль admin", "backups/"],
       },
     ]
   : [...MECHANIC_CARDS_BASE, ...GROTTO_MECHANIC_CARDS];
