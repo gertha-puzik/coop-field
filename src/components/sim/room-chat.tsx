@@ -55,7 +55,7 @@ export function RoomChat({
   return (
     <section
       aria-label="Чат комнаты"
-      className="sim-chat flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-[var(--sim-line)]"
+      className="sim-chat flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-[var(--sim-line)] max-lg:bg-none! max-lg:bg-[var(--sim-panel)]/85!"
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
         <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Чат</h2>

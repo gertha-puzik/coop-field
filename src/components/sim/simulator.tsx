@@ -256,8 +256,13 @@ import { useElisionView } from './simulator/hooks/use-elision-view';
 import { collectElisionFrame } from './simulator/elision-present';
 import { elisionLeapClearance, elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
 
-
-
+/** Мобильный масштаб карты (<lg, viewport <1024 css-px): базовый зум вида 1:1
+ *  показывал на телефоне всего 2–3 клетки; умножаем базу на коэффициент, чтобы
+ *  было видно больше поля. Колесо (camUserZoomRef) работает поверх как раньше;
+ *  ветка редактора (fitZ) не затрагивается. */
+const MOBILE_MAP_ZOOM = 0.55; // 0.3..1
+const mobileMapZoomFactor = () =>
+  typeof window !== 'undefined' && window.innerWidth < 1024 ? Math.min(1, Math.max(0.3, MOBILE_MAP_ZOOM)) : 1;
 
 export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
@@ -785,7 +790,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   useEffect(() => {
     if (!battleOn) return;
     if (editorOpenRef.current) return; // в редакторе камера сама подстраивается
-    camFxRef.current.z = camUserZoomRef.current;
+    // Мобильная база зума ниже 1:1 — мгновенный вход в боевой режим ставит
+    // тот же целевой зум, какой дальше держит rAF-цикл, без вспышки 1.0.
+    camFxRef.current.z = camUserZoomRef.current * mobileMapZoomFactor();
   }, [battleOn]);
 
   /** Строка удара из комнаты пишется в тот же боевой лог. Урон цели тоже живёт здесь, не только у бьющего. */
@@ -2314,7 +2321,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           cxT+=editorRef.current?.pan?.x??0;cyT+=editorRef.current?.pan?.y??0;
           camRef.current.x=cxT;camRef.current.y=cyT;camRef.current.init=true;
         } else {
-          const zBase = camUserZoomRef.current;
+          // База зума: 1:1 на десктопе, на <lg — умноженная на мобильный
+          // коэффициент (mobileMapZoomFactor), чтобы было видно больше поля.
+          const zBase = camUserZoomRef.current * mobileMapZoomFactor();
           camFxRef.current.z += (zBase - camFxRef.current.z) * kz;
           const { z } = camFxRef.current;
           const txP = peaceWalk ? e.fx * cellW + cellW / 2 : e.col * cellW + cellW / 2;
