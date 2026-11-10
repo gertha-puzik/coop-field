@@ -244,6 +244,7 @@ import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } fro
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
 import { FieldStage } from './simulator/components/field-stage';
+import { TouchControls } from './simulator/components/touch-controls';
 import { buildEditorOps, type EditorSaveState, type EditorSelState } from './simulator/editor-ops';
 import { buildPointerTools } from './simulator/pointer-tools';
 import { useStrike } from './simulator/hooks/use-strike';
@@ -4765,6 +4766,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onEnd={() => saveLayout(layoutRef.current)}
         /> : null}
 
+        {/* Сенсорное управление (тач-устройства): внутри FieldStage рисует
+            джойстик движения и кнопку «прыжок» с семантикой клавиатуры
+            (use-touch-controls.ts). Монтируется только вне редактора:
+            редактор локации глушит и клавиши, и тач в одном стиле. */}
         <FieldStage
           fieldFrameRef={fieldFrameRef}
           testField={testField}
@@ -4784,6 +4789,17 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           hudRef={hudRef}
           battleHint={battleHint}
           mapLoading={mapLoading}
+          touchControls={editorOpen ? null : (
+            <TouchControls
+              engineRef={engineRef}
+              settingsRef={settingsRef}
+              spaceHoldRef={spaceHoldRef}
+              netRef={netRef}
+              fieldFormatRef={fieldFormatRef}
+              startStepRef={startStepRef}
+              leapRequestRef={leapRequestRef}
+            />
+          )}
           editorOverlay={
             editorOpen && editorView ? (
               <EditorOverlay

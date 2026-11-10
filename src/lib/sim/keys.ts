@@ -63,6 +63,14 @@ const BY_KEY: Record<string, KeyAction> = {
   и: { type: 'battle' },
 };
 
+/**
+ * 8 направлений движения в SCREEN-градусах (ось Y смотрит вниз):
+ * 0=вправо (KeyD), 90=вниз (KeyS), 180=влево (KeyA), 270=вверх (KeyW) —
+ *  те же углы, что и у WASD/QEZX выше. Сенсорный джойстик «снапит» угол
+ *  пальца на ближайший из них, поэтому семантика тача = семантика клавиш.
+ */
+export const MOVE_DIRS = [0, 45, 90, 135, 180, 225, 270, 315] as const;
+
 export function keyAction(ev: { code?: string; key?: string }): KeyAction | null {
   const code = ev.code || '';
   const fromCode = BY_CODE[code];
