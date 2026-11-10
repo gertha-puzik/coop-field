@@ -29,8 +29,32 @@ per account:
 There are **no** email/phone/payment fields anywhere in the store — the code
 simply does not collect them. Account count is capped (`MAX_ACCOUNTS`,
 default 500). Unknown file versions migrate without dropping rows
-(`migrateStore`). There is **no account-deletion route**; only the position
-book forgets a cat (`forgetCat`, admin reset).
+(`migrateStore`).
+
+Self-service deletion is `DELETE /profiles/me` (same Origin/CSRF and host
+gate as `PATCH /profiles/me`; the public host class still answers 404). The
+body must include the current password; a wrong or empty password changes
+nothing. On success the **row stays** in `accounts.json` and is anonymized
+rather than removed: `login` becomes `x` plus the account id (the old login
+is no longer a credential), `pass` is replaced with a scrypt hash of a
+random secret so the old password cannot log in, `profile.birthday`,
+`bio`, `sp` and the avatar fields are cleared, `profile.displayName`
+becomes `Удалён <id>`, and `profile.deletedAt` is set. `deletedAt` keeps
+the row out of the public catalog and out of `GET /profiles/:id`. Character
+names on the row are left unchanged. Every session of that `accountId` is
+removed from `sessions.json`, and the response clears the `coop_session`
+cookie. Files removed are only this account's: `avatars/<id>.png` and
+`avatars/<id>.jpg`, plus sprite-manifest rows whose `ownerAccountId` equals
+this id (builtin rows and any other owner's files stay). An already-open
+WebSocket is not closed by this HTTP handler; the dead cookie and the
+revoked session store make the next HTTP call and a fresh socket bind fail.
+
+The position book is **not** part of that cleanup. `test-cats.json` rows
+are keyed only by character name (`{login, fm, fx, fy, x, y, ts}` — no
+`accountId`). The same name can belong to another player or to a guest, so
+deletion does not call `forgetCat` and does not remove any row, even one
+whose name matches this account's character. Admin reset remains the only
+path that forgets a cat, and it is still name-keyed.
 
 ## 2. Sessions (server/auth.js)
 
@@ -109,13 +133,14 @@ default `<repo>/data`, overridable per environment):
 
 | File / dir | Content | Retention |
 | --- | --- | --- |
-| `accounts.json` | §1 | until manually removed (no TTL, no delete route) |
-| `sessions.json` | §2 | 14-day TTL, pruned on save |
+| `accounts.json` | §1 | row kept after self-delete, anonymized in place (no TTL) |
+| `sessions.json` | §2 | 14-day TTL, pruned on save; self-delete drops every token of that accountId immediately |
 | `test-cats.json` | cat position book ("test" room only): `{login(name, lower), fm, fx, fy, x, y, ts}` per character | 30-day TTL, throttled atomic flush |
 | `runtime-config.json` | registry values only (no secrets) | until changed; last 8 backups in `cfg-backups/` |
 | `room-configs.json` | per-room overrides + named backup history | rolling backups |
 | `test-map.json` | location layout (no personal data) | last 8 backups in `backups/`; invalid files quarantined as `test-map.invalid-*.json` |
-| `sprites/` | admin-uploaded sprite files + manifest | admin-managed |
+| `avatars/` | one png/jpg per account id | removed on self-delete for that id only |
+| `sprites/` | admin-uploaded and personal sprite files + manifest | a deleted account's rows (`ownerAccountId`) are unlinked; other owners and builtins stay |
 
 Where that root lives per environment:
 

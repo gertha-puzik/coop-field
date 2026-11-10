@@ -16,6 +16,9 @@
  *                          armorLevel — partial, отсутствие поля не трогает
  *                          сохранённое); никакой идентификации из body
  *                          (id/логин/роль — unknown_keys)
+ *   DELETE /profiles/me    200 { ok, message } — тот же Origin/CSRF, что PATCH;
+ *                          тело {password}. Неверный пароль не удаляет.
+ *                          Строка обезличивается и пропадает из каталога.
  *   GET    /profiles       200 { ok:true, items, total, nextCursor } — каталог
  *                          публичных карточек с серверной пагинацией/поиском:
  *                          ?limit (default 24; выше 48 — клэмп, НЕ 400;
@@ -58,7 +61,7 @@
  * до этого обработчика; сюда класс public дотянуться не может.
  */
 import { originAllowedHere, csrfDecision, siteClassOfRequest } from "./config.js";
-import { sessionFromRequest, lastSeenByAccount } from "./auth.js";
+import { clearedSessionCookie, sessionFromRequest, lastSeenByAccount } from "./auth.js";
 import {
   publicProfile,
   findById,
@@ -69,6 +72,7 @@ import {
 } from "./accounts.js";
 import { catSeenAt } from "./persist.js";
 import { spriteIdAllowed } from "./sprites.js";
+import { deleteOwnAccount } from "./account-delete.js";
 
 const NAME_MIN = 1;
 const NAME_MAX = 24;
@@ -98,8 +102,8 @@ const CURSOR_MAX = 256; // символов сырого курсора: дли�
  * визуально неотличимо от «Сырь» и подменяет показное имя. */
 const INVISIBLE_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
-function json(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+function json(res, status, body, extraHeaders) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...extraHeaders });
   res.end(JSON.stringify(body));
 }
 
@@ -112,7 +116,7 @@ function setCors(req, res) {
     res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Headers", "content-type");
-  res.setHeader("Access-Control-Allow-Methods", "GET,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,PATCH,DELETE,OPTIONS");
 }
 
 /** Тела PATCH немного: общий парсер auth.readJson здесь недоступен без
@@ -195,13 +199,14 @@ function bySeniority(a, b) {
   return a.accountId < b.accountId ? -1 : a.accountId > b.accountId ? 1 : 0;
 }
 
-/** Публичная карточка есть только у строки с заполненным profile (см. шапку). */
+/** Публичная карточка есть только у строки с заполненным profile (см. шапку).
+ *  Самоудаление оставляет строку в сторе, но profile.deletedAt прячет её
+ *  из каталога и с /profiles/:id — маркер имени наружу не выходит. */
 function hasPublicProfile(row) {
   if (!row || typeof row !== "object") return false;
   const p = row.profile;
-  return (
-    !!p && typeof p === "object" && typeof p.displayName === "string" && p.displayName.trim().length > 0
-  );
+  if (!p || typeof p !== "object" || p.deletedAt) return false;
+  return typeof p.displayName === "string" && p.displayName.trim().length > 0;
 }
 
 /* ------------- B3: разбор limit/cursor/q и keyset-навигация --------------- */
@@ -504,7 +509,7 @@ export async function handleProfilesHttp(req, res) {
   if (p === "/profiles/me") {
     if (req.method === "GET") {
       const session = sessionFromRequest(req);
-      if (!session) {
+      if (!session || session.account.profile?.deletedAt) {
         json(res, 401, { ok: false, reason: "auth_required" });
         return true;
       }
@@ -515,7 +520,7 @@ export async function handleProfilesHttp(req, res) {
     if (req.method === "PATCH") {
       // Правка — только по сессии и только своей записи.
       const session = sessionFromRequest(req);
-      if (!session) {
+      if (!session || session.account.profile?.deletedAt) {
         json(res, 401, { ok: false, reason: "auth_required" });
         return true;
       }
@@ -584,6 +589,57 @@ export async function handleProfilesHttp(req, res) {
       }
       flushAccounts(true); // форс-проход: markDirty внутри accounts не экспортирован
       json(res, 200, { ok: true, ...publicProfile(acc), sp: spView(acc) });
+      return true;
+    }
+    if (req.method === "DELETE") {
+      const session = sessionFromRequest(req);
+      if (!session) {
+        json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт." });
+        return true;
+      }
+      const csrfBad = csrfDecision({
+        method: req.method, origin: req.headers.origin,
+        destClass: siteClassOfRequest(req), hasAuth: true,
+      });
+      if (csrfBad) {
+        json(res, csrfBad.status, { ok: false, reason: csrfBad.reason, message: "Запрос отклонён защитой сайта." });
+        return true;
+      }
+      let body;
+      try {
+        body = await readJson(req);
+      } catch {
+        json(res, 400, { ok: false, reason: "invalid_body", message: "Запрос не читается." });
+        return true;
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        json(res, 400, { ok: false, reason: "invalid_body", message: "Запрос не читается." });
+        return true;
+      }
+      const result = await deleteOwnAccount(session.account, body.password);
+      if (result.error === "password_required") {
+        json(res, 400, { ok: false, reason: "password_required", message: "Введите текущий пароль." });
+        return true;
+      }
+      if (result.error === "bad_password") {
+        json(res, 403, {
+          ok: false,
+          reason: "bad_password",
+          message: "Неверный пароль. Аккаунт не удалён.",
+        });
+        return true;
+      }
+      if (!result.ok) {
+        json(res, 500, { ok: false, reason: "io", message: "Не удалось удалить аккаунт. Попробуйте ещё раз." });
+        return true;
+      }
+      const secure = req.headers["x-forwarded-proto"] === "https" || url.protocol === "https:";
+      json(
+        res,
+        200,
+        { ok: true, message: "Аккаунт удалён. Войти с прежним паролем больше нельзя." },
+        { "Set-Cookie": clearedSessionCookie(secure) },
+      );
       return true;
     }
   }
