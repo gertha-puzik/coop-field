@@ -10,14 +10,22 @@
 // ADMIN_PASS с тем же значением).
 import { WebSocket } from "ws";
 import zlib from "node:zlib";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { sendJoin } from "./ws-auth.mjs";
 
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || "1946";
 
+// Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
+// оба setmap-загрузчика теста логинятся админом. Аккаунт создаётся в DATA_DIR
+// ДО старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
+const ADMIN_LOGIN = "mapboss";
+const ADMIN_PASS = "password1";
+
+const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 3993 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 const room = "test";
@@ -29,16 +37,24 @@ const ok = (cond, label) => {
 };
 
 // Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
+// стартом — аккаунт-админ для setmap-загрузок теста.
+const DATA = mkdtempSync(path.join(tmpdir(), "coop-paint-"));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: "utf8",
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ["server.js"], {
-      cwd: path.resolve(new URL("..", import.meta.url).pathname),
+      cwd: ROOT,
       env: {
         ...process.env,
         PORT: String(PORT),
         HOST: "127.0.0.1",
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), "coop-paint-")),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -140,10 +156,18 @@ function client(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.inbox = [];
-    ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
+    ws.on("message", (raw) => {
+      try {
+        ws.inbox.push(JSON.parse(String(raw)));
+      } catch {
+        /* мусорный кадр — не наш случай */
+      }
+    });
     ws.on("error", reject);
-    ws.on("open", () => {
-      ws.send(JSON.stringify(["join", { room, login: name }]));
+    // Комната «test» закрыта (requiresAccount): register/login через ws-auth.mjs,
+    // затем join. setmap-загрузчики — админ (ADMIN_LOGIN).
+    ws.once("open", () => {
+      sendJoin(ws, { room, login: name });
       resolve(ws);
     });
   });
@@ -181,7 +205,8 @@ const baseMap = {
 };
 
 // --- валидный setmap: рисунок + боевые клетки на закрашенных местах ---
-const a = await client(`А-${rnd}`);
+// Загрузчик — подготовленный админ: setmap за админ-гейтом (server/testmap.js).
+const a = await client(ADMIN_LOGIN);
 await waitFor(a, "you");
 await waitFor(a, "field");
 clear(a);
@@ -201,8 +226,9 @@ ok(
 
 // --- боевая клетка на наполовину закрашенном месте — отказ ---
 // setmap уходит с НОВОГО сокета: предыдущий кадр прогнан меньше секунды назад,
-// а сервер троттлит любые setmap-кадры раз в 10 с на сокет.
-const admin2 = await client(`Админ2-${rnd}`);
+// а сервер троттлит любые setmap-кадры раз в 10 с на сокет. Сокет — тоже
+// подготовленный админ: негатив про санитайзер карты, не про гейт.
+const admin2 = await client(ADMIN_LOGIN);
 await waitFor(admin2, "you");
 await waitFor(admin2, "field");
 clear(admin2);
@@ -218,7 +244,7 @@ ok(
 admin2.close();
 
 // --- мирная ходьба только по закрашенному ---
-const b = await client(`В-${rnd}`);
+const b = await client(`walker-${rnd}`);
 await waitFor(b, "you");
 const fieldB = await waitFor(b, "field");
 ok(fieldB[1]?.atmo, "новичок получает снапшот с якорем атмосферы");
@@ -233,7 +259,7 @@ await new Promise((r) => setTimeout(r, 400));
 ok(!b.inbox.some((m) => m[0] === "freemove"), "freemove в стёртую дырку отвергнут сервером");
 
 // --- спавн новичка на закрашенной земле (зелёных зон с боем нет — только painted) ---
-const meB = fieldB[1]?.cats?.find((c) => c.login === `В-${rnd}`);
+const meB = fieldB[1]?.cats?.find((c) => c.login === `walker-${rnd}`);
 const [bx, by] = [meB?.fx, meB?.fy];
 ok(
   typeof bx === "number" && bx >= 0 && by >= 0 && bx < 9 && by < 6,
