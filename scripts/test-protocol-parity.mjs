@@ -211,8 +211,11 @@ if (!deepEq(clientCfgKeys, CFG_KEYS_EXPECTED)) {
   fail.push(`FAIL cfg-registry: набор ключей зеркала = ${fmt(clientCfgKeys)}, ожидается ${fmt(CFG_KEYS_EXPECTED)}.`);
 }
 const CFG_PIN_FIELDS = [
-  "key", "label", "description", "unit", "kind", "values", "default",
-  "engineCap", "applyPolicy", "applyHint", "visibility", "scope",
+  "key", "label", "description", "unit", "kind", "values", "default", "engineCap",
+  // custom — границы своих значений ВНЕ пресетов (universes.arrowSpeed, мандат
+  // 2026-11-08): клиент валидирует ввод теми же числами, что и сервер.
+  "custom",
+  "applyPolicy", "applyHint", "visibility", "scope",
 ];
 for (const key of cfgReg.KEYS) {
   const s = cfgReg.REGISTRY[key];

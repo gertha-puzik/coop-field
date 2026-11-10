@@ -181,14 +181,9 @@ export function ArmorTab({
         </svg>
         <div className="flex-1 text-[11px] text-[var(--sim-text-faint)]">
           <p>
-            На сервере сейчас: {savedRows.length} тч. (
-            {savedRows.map((p) => `${String(p[0]).replace('.', ',')}→${p[1]}%`).join(', ') || '—'}).
+            На сервере: {savedRows.length} тч. ({savedRows.map((p) => `${String(p[0]).replace('.', ',')}→${p[1]}%`).join(', ') || '—'}).
           </p>
-          <p>
-            Черновик: {previewPoints.length} тч. Первая точка = масштаб (её урон% принимается за 100%); между точками —
-            линейная интерполяция, после последней — наклон последнего отрезка до 0,9.
-          </p>
-          <p>Сервер пересортирует и перепроверит кривую на PATCH-е: дублей x и растущего урона% не пропустит.</p>
+          <p className="mt-1">Первая точка = масштаб; между точками — линейно.</p>
         </div>
       </div>
 
@@ -204,9 +199,6 @@ export function ArmorTab({
         >
           Проверить и применить…
         </Button>
-        <span className="text-[11px] text-[var(--sim-text-faint)]">
-          Отправка — единым PATCH со всеми правками вкладки «Конфиг» (после предпросмотра).
-        </span>
       </div>
     </section>
   );

@@ -63,10 +63,10 @@ import { httpMe } from '@/lib/net/http-auth';
 // сайта (SiteHeader над оболочкой: ссылки, бейдж входа, тема — в ней).
 import { SiteHeader } from '@/components/site/site-header';
 
-// Строки-редакторы полей (Range/Bool/List/Diff + каркас) — вынесены в
+// Строки-редакторы полей (Range/Bool/List + каркас) — вынесены в
 // cfg-fields.tsx: дашборд держим под лимитом 800 строк (как players-field-tab).
 import { RoomConfigPanel } from './room-config-panel';
-import { BoolFieldRow, DiffRow, FieldShell, ListFieldRow, RangeFieldRow } from './cfg-fields';
+import { BoolFieldRow, ListFieldRow, RangeFieldRow } from './cfg-fields';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
 import { PlayersFieldTab } from './players-field-tab';
@@ -252,8 +252,6 @@ export default function CfgDashboard() {
     setDraft((prev) => (prev ? { ...prev, points: { ...prev.points, [field]: pts } } : prev));
   }, []);
 
-  const diffCount = useMemo(() => (snap && draft ? buildDiff(snap, draft).length : 0), [snap, draft]);
-
   /** Шаг 1 применения: собрать диф «было → станет» и показать предпросмотр —
    * НИЧЕГО не отправлять до второго подтверждения (§4.5). */
   const requestApply = useCallback(() => {
@@ -330,7 +328,7 @@ export default function CfgDashboard() {
 
   const reset = () => {
     if (!window.confirm('Сбросить ВСЕ настройки к исходным значениям?')) return;
-    void runAction('reset', httpCfgReset, 'Значения сброшены к исходным (когда вступят в силу — подсказки у полей).');
+    void runAction('reset', httpCfgReset, 'Значения сброшены к исходным.');
   };
   const restore = (name: string) => {
     void runAction(name, () => httpCfgRestore(name), `Резервная копия «${name}» восстановлена.`);
@@ -365,7 +363,7 @@ export default function CfgDashboard() {
       setStatus({ kind: 'err', text: 'Файл пустой — импорт ничего не сделает.' });
       return;
     }
-    await runAction('import', () => httpCfgImportText(text), 'Импорт принят — значения заменены (момент вступления в силу — по подсказкам полей).');
+    await runAction('import', () => httpCfgImportText(text), 'Импорт принят — значения заменены.');
     ev.target.value = '';
   };
 
@@ -378,30 +376,18 @@ export default function CfgDashboard() {
     snap && draft ? (
       <>
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
-            <p className="text-xs text-[var(--sim-text-faint)]">
-              Формат настроек v{snap.v} · {registryKeys.length} ключей · хранится {snap.historyKeep} последних резервных копий.
-            </p>
-            <div className="mt-3 grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               {registryKeys.map((key) => {
                 const def = snap.registry[key];
                 const [section, field] = def.key.split('.');
                 if (section === 'combat') {
-                  // Кривая брони живёт на своей вкладке «Броня» (мандат 2026-11-08);
-                  // здесь оставляем только консервативную ссылку.
+                  // Кривая брони живёт на своей вкладке «Броня» (мандат 2026-11-08).
                   return null;
                 }
                 if (section === 'atmo' && def.kind === 'bool' && def.scope === 'room') {
-                  // Справочная плашка per-room гейта (глобальным POST /cfg не
-                  // пишется): главный выключатель — master-ключ глобального слоя,
-                  // он рендерится выше (реестр держит его перед per-room ключом).
-                  return (
-                    <FieldShell key={key} def={def}>
-                      <p className="mt-2 text-[11px] text-[var(--sim-text-faint)]">
-                        Тонкая настройка по комнатам: главный выключатель — «{snap.registry['atmo.playerControl']?.label ?? 'общий выключатель атмосферы'}» выше в этой секции, сама настройка комнаты — в «Комнатных настройках» ниже. По умолчанию{' '}
-                        {def.default ? 'разрешено' : 'запрещено'}.
-                      </p>
-                    </FieldShell>
-                  );
+                  // Per-room гейт настраивается в «Комнатных настройках» ниже;
+                  // здесь общего контроля у него нет (scope room).
+                  return null;
                 }
                 if (section === 'atmo' && def.kind === 'bool') {
                   // Глобальный bool (master-гейт atmoset, мандат владелицы
@@ -454,16 +440,8 @@ export default function CfgDashboard() {
                 );
               })}
             </div>
-            {pending ? (
-              <div className="mt-3">
-                <p className="text-[11px] text-[var(--sim-text-faint)]">
-                  Предпросмотр и подтверждение — панелью над разделами (общая для вкладок).
-                </p>
-              </div>
-            ) : null}
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-[var(--sim-text-faint)]">Несохранённых изменений: {diffCount}</span>
               <Button
                 type="button"
                 size="sm"
@@ -486,11 +464,8 @@ export default function CfgDashboard() {
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
             <h2 className="text-base font-bold text-[var(--sim-text)]">Комнатные настройки</h2>
-            <p className="mt-2 text-sm text-[var(--sim-text-soft)]">
-              Значения считаются так: сначала берутся встроенные значения игры, поверх — общие настройки сервера, и
-              последнее слово за явной настройкой комнаты. Комната без своей настройки берёт общие значения; итог считает
-              сервер. Настройка комнаты вступает в силу при создании новой комнаты и не трогает уже идущую игру.
-              Разрешение игрокам менять погоду и время суток настраивается по комнатам, по умолчанию оно включено.
+            <p className="mt-2 text-xs text-[var(--sim-text-faint)]">
+              Настройка комнаты переопределяет общие значения; вступает в силу для новых комнат.
             </p>
             <RoomConfigPanel registry={snap.registry} />
           </section>
@@ -519,10 +494,6 @@ export default function CfgDashboard() {
                 onChange={(ev) => void onImportFile(ev)}
               />
             </div>
-            <p className="mt-2 text-[11px] text-[var(--sim-text-faint)]">
-              Импорт применяется целиком или не применяется вовсе; ответ сервера при ошибке
-              показывается полностью.
-            </p>
           </section>
 
           <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
