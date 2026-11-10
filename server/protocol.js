@@ -152,9 +152,9 @@ export const STRIKE_CATCH_MS = 170;
 export const STRIKE_CATCH_MAX_MS = 600;
 
 /**
- * Зоны abnocw (id → подпись и урон при пресете 0,0); без числа в strike сервер
- * берёт урон отсюда. Совпадает с DEFAULT_SETTINGS.combat.zones клиента
- * (id → name/damage). Когтей и зубов нет: weapon в логе пустой.
+ * Зоны abnocw (id → подпись и база урона при уровне 0). Поля damage и
+ * pawsDamage в strike принимаются и игнорируются: сервер считает урон
+ * отсюда × profile.sp.damageLevel бьющего (потолок — реестр). weapon пустой.
  */
 export const STRIKE_ZONES = Object.freeze({
   tail: Object.freeze({ part: "Хвост", damage: 2 }),
