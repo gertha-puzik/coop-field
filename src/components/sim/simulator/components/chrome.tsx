@@ -8,7 +8,7 @@
  * bodies are byte-identical); parents keep rendering the same DOM tree —
  * the component wrapper adds no DOM nodes.
  */
-import { useRef, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { RoomPicker, type RoomRow } from '../../room-picker';
 import { SettingsPanel } from '../../settings-panel';
@@ -85,6 +85,9 @@ export interface SimulatorHeaderProps {
   setSwitchOpen: Dispatch<SetStateAction<boolean>>;
   /** Несколько комнат на этой странице — иначе кнопка перехода не нужна. */
   canSwitch?: boolean;
+  /** Роль сессии (whoami): «Редактор локации» рендерится только админу —
+   *  сервер закрыл мутации карт гейтом (server/testmap.js, setMap). */
+  role?: PanelProps['role'];
 }
 
 export function SimulatorHeader(props: SimulatorHeaderProps) {
@@ -112,55 +115,36 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     setRoomsStale,
     setSwitchOpen,
     canSwitch = true,
+    role,
   } = props;
-  return (
-  <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
-    {testField ? <span aria-label="Игроков на поле" className="text-xs text-[var(--sim-text-muted)]">{peerCount} на поле</span> : <>
-    <div>
-      <h1 className="text-base font-bold leading-tight">abnocw</h1>
-      <p className="text-[11px] text-[var(--sim-text-faint)]">
-        {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
-      </p>
-    </div>
-    {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
-    <div
-      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
-      aria-label="Выбранные скрытые параметры"
-    >
-      <span className="font-bold text-[var(--sim-text)]">СП:</span>
-      <span className="text-[var(--sim-text-muted)]">
-        стрела <b className="font-semibold text-[var(--sim-text)]">{fmtSec(settings.arrow.periodSec)}</b>
-      </span>
-      <span className="text-[var(--sim-text-faint)]">·</span>
-      <span className="text-[var(--sim-text-muted)]">
-        дамаг <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.damageLevel)}</b>
-      </span>
-      <span className="text-[var(--sim-text-faint)]">·</span>
-      <span className="text-[var(--sim-text-muted)]">
-        броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
-      </span>
-    </div>
-    <div className="flex flex-wrap items-center gap-2 text-[11px]">
-      <Button asChild size="sm" variant="outline" className="btn-neutral h-8 text-xs">
-        <a href="/">Главное меню</a>
-      </Button>
-      {canSwitch ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="btn-neutral h-8 text-xs"
-          onClick={() => {
-            setRoomsStale(false);
-            setSwitchOpen(true);
-          }}
-        >
-          Перейти в другую комнату
-        </Button>
-      ) : null}
-      <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
-    </div>
-    </>}
-    <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
+  /** Мобильное меню игровой панели (<lg): вся правая группа кнопок шапки
+   *  сворачивается в шестерёнку, раскрывается в вертикальный столбец тех же
+   *  элементов. На lg+ меню не участвует в рендере — строка контролов прежняя. */
+  const [gameMenuOpen, setGameMenuOpen] = useState(false);
+  const gameMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!gameMenuOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setGameMenuOpen(false);
+    };
+    const onPointerDown = (ev: PointerEvent) => {
+      if (gameMenuRef.current && ev.target instanceof Node && !gameMenuRef.current.contains(ev.target)) {
+        setGameMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [gameMenuOpen]);
+  /** Игровая панель шапки: ОДИН набор узлов и хендлеров — он же строка на
+   *  lg+, он же содержимое мобильного выпадающего меню (без дублирования).
+   *  «Редактор локации» — только админам (role), мутации карт закрыты
+   *  сервером. */
+  const gameControls = (
+    <>
       {!testField ? <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
         тема
         <select
@@ -175,7 +159,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
           ))}
         </select>
       </label> : null}
-      {fieldFormat === 'test' ? (
+      {fieldFormat === 'test' && role === 'admin' ? (
         <Button
           size="sm"
           variant={editorOpen ? 'default' : 'outline'}
@@ -253,6 +237,93 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
       >
         Настройки
       </Button>
+    </>
+  );
+  return (
+  <header className="relative z-10 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--sim-line)] bg-[var(--sim-panel)] px-4 py-2.5">
+    {testField ? <span aria-label="Игроков на поле" className="text-xs text-[var(--sim-text-muted)]">{peerCount} на поле</span> : <>
+    <div>
+      <h1 className="text-base font-bold leading-tight">abnocw</h1>
+      <p className="text-[11px] text-[var(--sim-text-faint)]">
+        {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
+      </p>
+    </div>
+    {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
+    <div
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
+      aria-label="Выбранные скрытые параметры"
+    >
+      <span className="font-bold text-[var(--sim-text)]">СП:</span>
+      <span className="text-[var(--sim-text-muted)]">
+        стрела <b className="font-semibold text-[var(--sim-text)]">{fmtSec(settings.arrow.periodSec)}</b>
+      </span>
+      <span className="text-[var(--sim-text-faint)]">·</span>
+      <span className="text-[var(--sim-text-muted)]">
+        дамаг <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.damageLevel)}</b>
+      </span>
+      <span className="text-[var(--sim-text-faint)]">·</span>
+      <span className="text-[var(--sim-text-muted)]">
+        броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
+      </span>
+    </div>
+    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+      <Button asChild size="sm" variant="outline" className="btn-neutral h-8 text-xs">
+        <a href="/">Главное меню</a>
+      </Button>
+      {canSwitch ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="btn-neutral h-8 text-xs"
+          onClick={() => {
+            setRoomsStale(false);
+            setSwitchOpen(true);
+          }}
+        >
+          Перейти в другую комнату
+        </Button>
+      ) : null}
+      <span className="max-w-[280px] truncate text-[var(--sim-text-muted)]">{netStatus}</span>
+    </div>
+    </>}
+    <div className="relative z-10 ml-auto flex flex-wrap items-center gap-2">
+      {/* <lg: вся игровая панель — за одной шестерёнкой; тап раскрывает
+          вертикальное меню из тех же узлов (gameControls). */}
+      <div className="relative lg:hidden" ref={gameMenuRef}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="btn-neutral h-9 w-9 p-0"
+          aria-label="Настройки игры"
+          aria-expanded={gameMenuOpen}
+          aria-controls="sim-game-menu"
+          onClick={() => setGameMenuOpen((v) => !v)}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-5 w-5"
+            aria-hidden="true"
+          >
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </Button>
+        {gameMenuOpen ? (
+          <div
+            id="sim-game-menu"
+            className="absolute right-0 top-full z-50 mt-2 flex w-56 flex-col gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--sim-panel)] p-2 shadow-xl"
+          >
+            {gameControls}
+          </div>
+        ) : null}
+      </div>
+      {/* lg+: прежняя строка контролов — те же узлы, вид и поведение без изменений */}
+      <div className="hidden flex-wrap items-center gap-2 lg:flex">{gameControls}</div>
     </div>
   </header>
   );

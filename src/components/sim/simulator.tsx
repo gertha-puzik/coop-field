@@ -958,7 +958,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     syncEditorView,
     refreshEditorPreview,
     pushEditorUndo,
-    openEditor,
+    openEditor: openEditorBase,
     closeEditor,
     setEditorTool,
     clampPlacePos,
@@ -1175,6 +1175,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     showMapLoading,
     wantedRoomIds,
   });
+
+  /** Гвард редактора локации (ux/admin-gate): черновик открывается только
+   *  админам — setEditorOpen(true) живёт только внутри openEditorBase, поэтому
+   *  не-админ не попадёт в редактор даже программно (hotkey/консоль). Кнопка
+   *  скрыта в chrome.tsx (role === 'admin'), сервер вдобавок гейтит сам кадр
+   *  setmap по роли WS-сессии (server/testmap.js). */
+  const openEditor = whoami?.role === 'admin' ? openEditorBase : () => {};
 
   /** Обновление ?room=/&name= в адресной строке после выбора/смены комнаты: ссылкой
    *  можно вернуться прямо в тот же грот (и имя подставится в пикер персонажа). */
@@ -4732,6 +4739,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         setRoomsStale={setRoomsStale}
         setSwitchOpen={setSwitchOpen}
         canSwitch={roomsForMode(mode).length > 1}
+        role={whoami?.role}
       /></div>
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
