@@ -26,6 +26,7 @@ import { createRemoteAim, noteRemoteAim, type RemoteAim } from '@/lib/sim/remote
 import { DUMMY_ID, NET_ROLLBACK_LOCK_MS, RAB_ID, RAB_POS } from '@/lib/sim/engine-consts';
 import { sanitizeTestMap, type TestMap } from '@/lib/sim/test-map';
 import { SPRITES, type DummyConfig, type SimSettings, type SpriteId } from '@/lib/sim/settings';
+import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
 import { rememberRemoteCell, type Engine } from '../sim-model';
 
 export interface SimNetDeps {
@@ -179,6 +180,14 @@ export function useSimNet(deps: SimNetDeps) {
       onYou: (cat) => {
         meIdRef.current = cat.id;
         setMeId(cat.id);
+        const worn = typeof cat.sprite === 'string' ? cat.sprite.trim() : '';
+        if (worn) {
+          ensureFieldSprite(worn);
+          setSettings((s) => (s.character.sprite === worn ? s : {
+            ...s,
+            character: { ...s.character, sprite: worn },
+          }));
+        }
         setNetReady(true);
         freshJoinRef.current = true;
         const e = engineRef.current;

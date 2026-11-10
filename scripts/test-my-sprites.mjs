@@ -335,6 +335,26 @@ try {
   check((mineCard.json?.characters || []).some((c) => c.sprite === mainSpriteId),
     "активный персонаж аккаунта носит личный окрас (применится при входе)");
 
+  /* join с базовым id не снимает надетый личный окрас и не переписывает профиль */
+  const wearWs = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS);
+    ws.inbox = [];
+    ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
+    ws.on("error", reject);
+    ws.once("open", () => resolve(ws));
+  });
+  wearWs.send(JSON.stringify(["auth", { action: "login", login: MAIN, pass: "password1" }]));
+  await waitFor(wearWs, ([ev, p]) => ev === "whoami" && p?.ok && p?.accountId);
+  wearWs.send(JSON.stringify(["join", { room: "test", login: "не-имя", sprite: "chis", size: 70 }]));
+  const wornYou = await waitFor(wearWs, ([ev]) => ev === "you");
+  check(wornYou && wornYou[1]?.sprite === mainSpriteId,
+    "WS join со спрайтом chis не снимает надетый личный окрас");
+  const stillWorn = await httpJson("/profiles/me", { token: mainTok });
+  check((stillWorn.json?.characters || []).some((c) => c.sprite === mainSpriteId),
+    "join не перезаписал спрайт профиля клиентским id");
+  wearWs.close();
+  await sleep(150);
+
   /* ---------- GET /sprites/mine ---------- */
 
   const mineList = await httpJson("/sprites/mine", { token: mainTok });

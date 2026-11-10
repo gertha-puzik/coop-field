@@ -6,8 +6,9 @@
  *  - `useAimPublisher`: installs `publishAimRef` — throttled (~32 ms)
  *    publisher of the local arrow angle into the room; the effect keeps the
  *    original shape and has NO deps array (re-installed on every render);
- *  - `useSpriteCache`: preloads all FIELD_SPRITES into images plus white
- *    silhouette canvases, remembering broken ones; runs once (`[]`);
+ *  - `useSpriteCache`: preloads FIELD_SPRITES into images plus white
+ *    silhouette canvases, remembering broken ones; the effect runs once
+ *    and also picks up catalog arrivals (личный окрас после монтирования);
  *  - `useWalkGifCache`: decodes walk-cycle GIFs (trial: test1) into frame
  *    canvases via WebCodecs or exact PNG frame fallback; runs once (`[]`);
  *  - `useAtmosphereLayer`: mounts the dynamic Pixi atmosphere over the field
@@ -21,6 +22,7 @@
 import { useEffect, type RefObject } from 'react';
 import type { CoopAtmo, createCoopClient } from '@/lib/net/coop';
 import { FIELD_SPRITES, WALK_GIF_SRC, wrap180, wrap360, type SimSettings, type SpriteId } from '@/lib/sim/settings';
+import { subscribeSpriteCatalog } from '@/lib/sim/sprite-catalog';
 import { loadWalkGif, type WalkGif } from '@/lib/sim/gif-walk';
 import type { AtmosphereLike } from '../sim-model';
 // Статический импорт: динамические async-чанки не выписываются в
@@ -126,7 +128,8 @@ export function useSpriteCache(deps: SpriteCacheDeps) {
   const { spritesRef, whiteSpritesRef, brokenSpritesRef } = deps;
   useEffect(() => {
     let cancelled = false;
-    for (const sp of FIELD_SPRITES) {
+    const loadOne = (sp: { id: string; src: string }) => {
+      if (cancelled || spritesRef.current[sp.id] || brokenSpritesRef.current.has(sp.id)) return;
       const img = new Image();
       const store = () => {
         if (cancelled || spritesRef.current[sp.id]) return;
@@ -152,9 +155,16 @@ export function useSpriteCache(deps: SpriteCacheDeps) {
       };
       img.src = sp.src;
       if (img.complete && img.naturalWidth > 0) store();
-    }
+    };
+    const loadAll = () => {
+      for (const sp of FIELD_SPRITES) loadOne(sp);
+    };
+    loadAll();
+    // Личный окрас приходит после монтирования (каталог или ensureFieldSprite).
+    const unsub = subscribeSpriteCatalog(loadAll);
     return () => {
       cancelled = true;
+      unsub();
     };
   }, []);
 }

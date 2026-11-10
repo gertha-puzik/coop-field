@@ -239,6 +239,8 @@ import {
   type DayPart,
   type WeatherKind,
 } from '@/lib/sim/settings';
+import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
+import { useBootSignal } from './simulator/hooks/use-boot-signal';
 import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
@@ -1264,6 +1266,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /* ---------- спрайты ---------- */
 
   useSpriteCache({ spritesRef, whiteSpritesRef, brokenSpritesRef });
+  useBootSignal(stage);
   useWalkGifCache({ walkGifsRef });
 
   /* ---------- геометрия ---------- */
@@ -4545,7 +4548,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     (roomId: string, who: { name: string; sprite: SpriteId; scale: number }) => {
       const login = who.name.trim().slice(0, 24);
       if (!login) return;
-      const sprite = SPRITES.some((sp) => sp.id === who.sprite) ? who.sprite : settingsRef.current.character.sprite;
+      const requested = who.sprite.trim();
+      const sprite = SPRITES.some((sp) => sp.id === requested) || /^[a-z0-9-]{1,64}$/.test(requested)
+        ? requested
+        : settingsRef.current.character.sprite;
+      ensureFieldSprite(sprite);
       const scale = Math.min(100, Math.max(60, Math.round(who.scale)));
       setSettings((s) => ({
         ...s,

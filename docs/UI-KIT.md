@@ -107,6 +107,7 @@ gradient point — accepted, existing look).
 | `LoadingState` | `loading-state.tsx` | inline busy row: `role="status"`, spinner freezes under `prefers-reduced-motion` |
 | `Dialog` | `dialog.tsx` | accessible native modal: role/aria-modal, real focus trap, Escape/s scrim close, opener-focus restore, scroll lock — **no extra dependency** |
 | `ConfirmDialog` | `confirm-dialog.tsx` | `Dialog` + title/description/two buttons; `danger` tone, `busy` blocks closing; the themed replacement target for raw `window.confirm` |
+| `EditorShell` | `editor-shell.tsx` | root of the location-editor chrome. Paints class `uk-editor`, which reads `--ed-*` from `public/ui/editor-chrome.css` (the same file the KNS Paint bridge attaches). Slots are the existing editor children; the component does not restyle tools. Paint cannot import React, so it reuses the stylesheet, not the component |
 
 ## 4. Usage examples
 

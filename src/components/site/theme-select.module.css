@@ -26,6 +26,6 @@
   font-size: 12px;
   padding: 0 0.35rem;
   outline: none;
-  cursor: pointer;
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
 }
 

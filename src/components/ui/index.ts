@@ -28,3 +28,4 @@ export { LoadingState } from "./loading-state";
 export { Dialog } from "./dialog";
 export { ConfirmDialog } from "./confirm-dialog";
 export { PawCursor } from "./paw-cursor";
+export { EditorShell } from "./editor-shell";

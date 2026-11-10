@@ -1025,7 +1025,7 @@ export function mergeSettings(raw: any): SimSettings {
     controlled: 'main',
     combat: mergeCombat(raw?.combat, d.combat),
   };
-  if (!SPRITES.some((sp) => sp.id === out.character.sprite)) {
+  if (!SPRITES.some((sp) => sp.id === out.character.sprite) && !/^[a-z0-9-]{1,64}$/.test(out.character.sprite)) {
     out.character.sprite = d.character.sprite;
   }
   // Одноразовая миграция: раньше параметры стрелы задавались в «абсолютных» px и не
