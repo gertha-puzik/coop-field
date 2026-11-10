@@ -210,6 +210,8 @@ POST /cfg | /cfg/restore | /cfg/import   → admin, CSRF Origin-щит (B1: per-
 сервер ── atmo {t, cs, pl, wl, w, ws, dp} (якорь) ──► ВСЕМ, включая инициатора (эхо = подтверждение)
 ```
 
+Кадры `atmo`, `atmoset`, `block`, `space`, `dummy`, `dummyMove`, `dummyGrab`, `dummyDrop`, `rab` и `rabHit` делят один бакет на сокет (`server/frame-limit.js`): 50 мс, как рассылка `freemove`, запас 2 кадра, лишнее молча отбрасывается. Смысл принятого кадра не меняется.
+
 Клиент едет по ЛОКАЛЬНЫМ часам от якоря `t`; тикер сервера раз в 5 с resendит якорь только
 при смене dp/w; на rejoin якорь приезжает внутри `field`. Стартовые длины новых комнат —
 из runtime-config (реестровые ключи atmo.phaseMin/weatherMin); живую комнату крутит atmoset.
