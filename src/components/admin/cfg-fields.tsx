@@ -21,6 +21,8 @@
 
 import { useState } from 'react';
 
+import { Dropdown } from '@/components/ui';
+
 import {
   canonByKind,
   customValueIssue,
@@ -103,14 +105,16 @@ function BoolFieldRow({
   return (
     <FieldShell def={def}>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <select
-          className={INPUT_CLS}
+        <Dropdown
+          aria-label={def.label}
+          className="w-auto"
           value={Number.isFinite(value) && value === 0 ? 0 : 1}
-          onChange={(e) => onChange(Number(e.target.value))}
-        >
-          <option value={1}>Разрешено</option>
-          <option value={0}>Запрещено</option>
-        </select>
+          onChange={(v) => onChange(v)}
+          options={[
+            { value: 1, label: 'Разрешено' },
+            { value: 0, label: 'Запрещено' },
+          ]}
+        />
         {dirty ? (
           <span className="text-[11px] text-amber-300/90">
             не сохранено (на сервере сейчас {saved ? 'разрешено' : 'запрещено'})
@@ -205,18 +209,15 @@ function ListFieldRow({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--sim-text-soft)]">
         <span>Дефолт:</span>
-        <select
-          className={`${INPUT_CLS} h-7`}
-          value={list.includes(draftDefault) ? draftDefault : ''}
-          onChange={(e) => onDefault(Number(e.target.value))}
-        >
-          {!list.includes(draftDefault) ? <option value="">— выберите —</option> : null}
-          {list.map((v) => (
-            <option key={v} value={v}>
-              {fmtNum(v)} {def.unit}
-            </option>
-          ))}
-        </select>
+        <Dropdown
+          size="sm"
+          aria-label="Дефолт"
+          className="w-auto"
+          value={list.includes(draftDefault) ? draftDefault : null}
+          placeholder="— выберите —"
+          onChange={(v) => onDefault(v)}
+          options={list.map((v) => ({ value: v, label: `${fmtNum(v)} ${def.unit}` }))}
+        />
       </div>
       {issue ? <p className="mt-1 text-[11px] font-semibold text-red-300">{issue}</p> : null}
       {savedChoice !== choiceOn ? (

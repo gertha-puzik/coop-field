@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Dropdown } from '@/components/ui';
 import {
   fmtNum,
   httpRoomConfig,
@@ -191,19 +192,18 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
         {rooms === null ? (
           <span>загружаем каталог…</span>
         ) : (
-          <select
-            className="h-8 rounded border border-[var(--sim-line)] bg-black/30 px-2 text-xs text-[var(--sim-text)]"
-            value={picked}
+          <Dropdown
+            aria-label="Комната"
+            className="w-auto"
+            value={picked === '' ? null : picked}
+            placeholder="— выберите комнату —"
             disabled={busy}
-            onChange={(e) => void pickRoom(e.target.value)}
-          >
-            <option value="">— выберите комнату —</option>
-            {rooms.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.title} [{r.mode}]{r.hasOverrides ? ` — своих настроек: ${r.overrideCount}` : ''}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => void pickRoom(v)}
+            options={rooms.map((r) => ({
+              value: r.id,
+              label: `${r.title} [${r.mode}]${r.hasOverrides ? ` — своих настроек: ${r.overrideCount}` : ''}`,
+            }))}
+          />
         )}
         {view && view.hasOverrides ? (
           <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => void resetAll()}>
@@ -261,19 +261,19 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
                       игроки в этой комнате могут менять погоду и время суток
                     </label>
                   ) : (
-                    <select
-                      className="h-7 rounded border border-[var(--sim-line)] bg-black/30 px-1.5 text-xs text-[var(--sim-text)]"
-                      value={numEdit === null ? '' : String(numEdit)}
+                    <Dropdown
+                      size="sm"
+                      aria-label={meta.label}
+                      className="w-auto"
+                      value={numEdit}
+                      placeholder="— как глобально —"
                       disabled={busy}
-                      onChange={(e) => setEdits((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
-                    >
-                      <option value="">— как глобально —</option>
-                      {stepOptions(meta, row.effective as number).map((v) => (
-                        <option key={v} value={v}>
-                          {fmtNum(v)} {meta.unit}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setEdits((prev) => ({ ...prev, [key]: v }))}
+                      options={stepOptions(meta, row.effective as number).map((v) => ({
+                        value: v,
+                        label: `${fmtNum(v)} ${meta.unit}`,
+                      }))}
+                    />
                   )}
                   <Button
                     type="button"

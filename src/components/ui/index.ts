@@ -15,6 +15,7 @@
 export { Button, buttonVariants } from "./button";
 export { Input } from "./input";
 export { Select } from "./select";
+export { Dropdown } from "./dropdown";
 export { Slider } from "./slider";
 export { Switch } from "./switch";
 export { Field } from "./field";
