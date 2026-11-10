@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
  * «Бой», свежая сверху. Колонка уже чата и тянется на всю высоту поля.
  * Кнопка «Очистить» в шапке стирает лог (энергия персонажей не трогается).
  */
-export function FightLog({ lines, onClear }: { lines: string[]; onClear?: () => void }) {
+export function FightLog({ lines, onClear, onClose }: { lines: string[]; onClear?: () => void; onClose?: () => void }) {
   const logRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const signature = lines.join('\n');
@@ -26,8 +26,9 @@ export function FightLog({ lines, onClear }: { lines: string[]; onClear?: () => 
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
         <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Бой</h2>
-        <div className="flex items-center gap-2">
-          <p className="text-[11px] text-[var(--sim-text-faint)]">I — удар</p>
+        <div className="flex min-w-0 items-center gap-2">
+          {/* Подсказку про клавишу удара показываем только на широких экранах (lg+) */}
+          <p className="hidden text-[11px] text-[var(--sim-text-faint)] lg:block">I — удар</p>
           {onClear ? (
             <Button
               type="button"
@@ -39,6 +40,17 @@ export function FightLog({ lines, onClear }: { lines: string[]; onClear?: () => 
             >
               Очистить лог
             </Button>
+          ) : null}
+          {/* Мобильная раскрытая панель закрывается крестиком; на lg+ кнопки нет */}
+          {onClose ? (
+            <button
+              type="button"
+              aria-label="Закрыть лог"
+              onClick={onClose}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[var(--sim-line-strong)] text-xs leading-none text-[var(--sim-text-muted)] hover:border-[var(--sim-line-hover)] hover:text-[var(--sim-text)] lg:hidden"
+            >
+              ✕
+            </button>
           ) : null}
         </div>
       </div>
