@@ -252,7 +252,7 @@ reset/restore с подтверждением.
   `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
   гейт check:paint-seam); из www-grotto вырезан.
   Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
-  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.miew.ru → клиентский конвейер
+  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.phainonsmilk.ru → клиентский конвейер
   `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
   дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
   Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы
@@ -332,8 +332,8 @@ main; репо-часть конвейера в этой ветке — толь
 | `src/lib/net/cfg-live.ts` | 122 | universes из GET /cfg: кэш на вкладку, дефолты при сбое, снап к дефолту |
 | `src/lib/cfg-registry.ts` | 139 | зеркало реестра для клиента (паритет — parity-гейт) |
 | `src/components/sim/auth-panel.tsx` | 189 | форма входа/регистрации (только elyria): reason→человекочитаемые тексты, локальная валидация, автофокус, сброс пароля после выхода (B6) |
-| `src/components/sim/settings-panel.tsx` | 1240 | ролевой рендер вкладок (role из whoami; паролей нет) |
-| `src/components/players/players-catalog.tsx` | 628 | каталог игроков /players (поиск ?q, пагинация nextCursor, deep-link, правка своей) |
+| `src/components/sim/settings-panel.tsx` | 1222 | ролевой рендер вкладок (role из whoami; паролей нет) |
+| `src/components/players/players-catalog.tsx` | 918 | каталог игроков /players (поиск ?q, пагинация nextCursor, deep-link, правка своей) |
 | `src/components/admin/cfg-dashboard.tsx` | 736 | админ-дашборд /admin: реестр/списки разрешённых значений (B2)/restore/export/import, диф-предпросмотр |
 | `src/app/*/page.tsx` | 11–13 | оболочки Simulator: `/` hub, `/combat/` beer, `/game/` elision (+ `/elision/` — redirect-стаб), `/hunger/` каркас, `/players/`, `/admin/` |
 

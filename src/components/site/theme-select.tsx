@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { Dropdown } from '@/components/ui';
+
 import { applyTheme, loadTheme, subscribeTheme, THEMES, type ThemeId } from '@/lib/sim/theme';
 import styles from './theme-select.module.css';
 
@@ -40,13 +42,14 @@ export function ThemeSelect() {
   return (
     <label className={styles.themeCompact} title="Оформление интерфейса (действует на весь сайт)">
       <span>тема</span>
-      <select value={theme} onChange={(ev) => change(ev.target.value as ThemeId)} aria-label="Тема оформления">
-        {THEMES.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.label}
-          </option>
-        ))}
-      </select>
+      <Dropdown
+        value={theme}
+        onChange={(v) => change(v as ThemeId)}
+        options={THEMES.map((t) => ({ value: t.id, label: t.label }))}
+        size="sm"
+        className="w-auto"
+        aria-label="Тема оформления"
+      />
     </label>
   );
 }

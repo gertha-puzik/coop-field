@@ -38,7 +38,7 @@ import {
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import PlayerProfile, { BrandRow, Starscape, displayFont } from './player-profile';
+import PlayerProfile, { BrandRow, ProfileSkeleton, Starscape, displayFont } from './player-profile';
 import {
   ACTIVITY_TEXT,
   STATUS_TEXT,
@@ -295,6 +295,80 @@ function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
   );
 }
 
+/** Каркас каталога на время первого fetch: панель .listPanel той же сетки --
+ *  заголовки колонок настоящие (они не грузятся), строки/плитки -- полосы .skel
+ *  ровно на местах значений. Приход списка меняет полосы на контент, верстка
+ *  не перестраивается -- страница не дёргается (аналог ProfileSkeleton, #111). */
+const SKEL_ROWS = 14;
+
+function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
+  const strip = (w: string, h = 12) => (
+    <span className={styles.skel} style={{ width: w, height: h }} />
+  );
+  const pill = (w: number) => (
+    <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: w, height: 24 }} />
+  );
+  const idx = Array.from({ length: SKEL_ROWS }, (_, i) => i);
+  if (viewMode === 'table') {
+    return (
+      <section
+        className={`${styles.panel} ${styles.listPanel}`}
+        role="status"
+        aria-label="Загружаем каталог"
+      >
+        <div className={styles.tableWrap}>
+          <div className={styles.thead} aria-hidden>
+            <div />
+            <div>{SORT_TITLE.name}</div>
+            <div className={styles.cBorn}>{SORT_TITLE.born}</div>
+            <div className={styles.cSeen}>{SORT_TITLE.seen}</div>
+            <div className={styles.cHome}>{SORT_TITLE.home}</div>
+            <div className={styles.cAge}>{SORT_TITLE.age}</div>
+            <div className={styles.cAct}>{SORT_TITLE.act}</div>
+            <div className={styles.cStatus}>{SORT_TITLE.status}</div>
+          </div>
+          <div className={styles.tbody} aria-hidden>
+            {idx.map((i) => (
+              <div className={styles.row} key={i}>
+                <span className={`${styles.miniArena} ${styles.skel}`} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {strip('62%', 14)}
+                  {strip('44%', 10)}
+                </span>
+                {strip('84%')}
+                {strip('96%')}
+                {strip('74%')}
+                {strip('58%')}
+                {strip('88%')}
+                {pill(78)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section
+      className={`${styles.panel} ${styles.listPanel}`}
+      role="status"
+      aria-label="Загружаем каталог"
+    >
+      <div className={styles.tiles} aria-hidden>
+        {idx.map((i) => (
+          <div className={styles.tile} key={i}>
+            <span className={`${styles.miniArena} ${styles.tileArena} ${styles.skel}`} />
+            {strip('68%', 15)}
+            {strip('46%', 10)}
+            {pill(74)}
+            {strip('72%')}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Плитка плиточного вида: те же честные данные, компактнее. */
 function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
   return (
@@ -331,17 +405,40 @@ export default function PlayersCatalog() {
   const [query, setQuery] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'status', dir: 1 });
-  const [viewMode, setViewMode] = useState<'table' | 'tiles'>('table');
+  /** Вид каталога персистится между визитами (паттерн elyria-admin-tab, W2-δ3):
+   *  так скелетон первой загрузки сразу рисует правильный режим — и ветка
+   *  tiles-каркаса достижима на возвратных заходах, а не только в теории. */
+  const [viewMode, setViewMode] = useState<'table' | 'tiles'>(() => {
+    if (typeof window === 'undefined') return 'table';
+    return window.localStorage.getItem('elyria-players-view') === 'tiles' ? 'tiles' : 'table';
+  });
+  const pickView = useCallback((mode: 'table' | 'tiles') => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem('elyria-players-view', mode);
+    } catch {
+      /* приватный режим/квота — вид просто не переживёт перезагрузку */
+    }
+  }, []);
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
-  /** #84 ч.2: ?mine=<id> из адреса (возврат из редактора) — подсветка. */
+  /** #84 ч.2: ?mine= — подсветка возврата из редактора; в3: ?coat= — автозаполнение кода KNS. */
   const [mineFlash, setMineFlash] = useState<string | null>(null);
+  const [coatLink, setCoatLink] = useState<string | null>(null);
   /** Момент последней успешной загрузки: от него считаются статусы и
    *  «обновлено …» — «сейчас» фиксируется, а не тикает на каждом рендере. */
   const [fetchedAt, setFetchedAt] = useState(0);
   /** Счётчик ходов за списком: ответ с устаревшим номером молча отбрасывается. */
   const seqRef = useRef(0);
+  /** Deep-link ?id=<accountId> при заходе по ссылке: пока он не разрешён
+   *  (страница ждёт карточку по GET /profiles/:id), каталог не запрашивается
+   *  и не рисуется — по ссылке ?id= не мигает список перед профилем.
+   *  deepLinkHoldRef читает каталог-эффект СИНХРОННО в том же mount-flush
+   *  (ref, а не state, — замыкание эффекта не отстаёт от первого рендера),
+   *  profileWait включает экран «Загружаем профиль…» со стороны рендера. */
+  const [profileWait, setProfileWait] = useState(false);
+  const deepLinkHoldRef = useRef(false);
 
   /** Поиск: debounce 300 мс; применённый запрос живёт отдельно от поля. */
   useEffect(() => {
@@ -349,10 +446,56 @@ export default function PlayersCatalog() {
     return () => window.clearTimeout(t);
   }, [searchInput]);
 
-  /** Первая страница каталога: монтирование, смена запроса, повтор. Никакой
-   *  клиентской фильтрации — фильтрует сервер (q), и он же режет страницы. */
+  /** Сессия + своя карточка + deep-link ?id= — поток ОТДЕЛЬНЫЙ от пагинации:
+   *  карточка открывается по GET /profiles/:id, даже если списка ещё нет.
+   *  Запрос карточки стартует ПЕРВЫМ, параллельно /auth/me (сессия нужна
+   *  только бейджу «своя карточка», не самому профилю); каталог-эффект ниже
+   *  по коду видит deepLinkHoldRef и не грузит список, пока ссылка не
+   *  разрешена. Порядок объявления важен: эффекты одного mount-flush идут
+   *  сверху вниз, hold ставится до запуска каталог-эффекта. */
   useEffect(() => {
     if (!IS_ELYRIA) return;
+    let dead = false;
+    (async () => {
+      const dl = consumeCatalogDeepLink();
+      const wantId = dl.id;
+      deepLinkHoldRef.current = !!wantId;
+      if (wantId) setProfileWait(true);
+      setMineFlash(dl.mine); // null без параметра — подсветки нет
+      setCoatLink(dl.coat ?? null); // null без coat — автозаполнения нет
+      const profileP = wantId ? httpProfileById(wantId) : null;
+      const me = await httpMe();
+      if (dead) return;
+      setSession(me);
+      const mineP = me.ok && me.accountId ? httpMyProfile() : null;
+      const mine = mineP ? await mineP : null;
+      const one = profileP ? await profileP : null;
+      if (dead) return;
+      if (mine?.ok && mine.profile) setMyProfile(mine.profile);
+      if (one && wantId) {
+        if (one.ok && one.card) setFocused(one.card);
+        else {
+          // Карточка по ссылке не открылась: честная ошибка поверх каталога —
+          // hold снимаем и сами запускаем загрузку списка (он в паузе).
+          deepLinkHoldRef.current = false;
+          setProfileWait(false);
+          setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
+          setReloadTick((t) => t + 1);
+        }
+      }
+    })();
+    return () => {
+      dead = true;
+    };
+  }, []);
+
+  /** Первая страница каталога: монтирование, смена запроса, повтор. Никакой
+   *  клиентской фильтрации — фильтрует сервер (q), и он же режет страницы.
+   *  Deep-link ?id= держит список на паузе: пока hold не снят (карточка
+   *  получена/ошибка/профиль закрыли), запрос каталога не стартует вовсе. */
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    if (deepLinkHoldRef.current) return;
     let dead = false;
     const seq = ++seqRef.current;
     setLoadingFirst(true);
@@ -379,35 +522,6 @@ export default function PlayersCatalog() {
       dead = true;
     };
   }, [query, reloadTick]);
-
-  /** Сессия + своя карточка + deep-link ?id= — поток ОТДЕЛЬНЫЙ от пагинации:
-   *  карточка открывается по GET /profiles/:id, даже если списка ещё нет. */
-  useEffect(() => {
-    if (!IS_ELYRIA) return;
-    let dead = false;
-    (async () => {
-      const dl = consumeCatalogDeepLink();
-      const wantId = dl.id;
-      setMineFlash(dl.mine); // null без параметра — подсветки нет
-      const me = await httpMe();
-      if (dead) return;
-      setSession(me);
-      if (me.ok && me.accountId) {
-        const mine = await httpMyProfile();
-        if (dead) return;
-        if (mine.ok && mine.profile) setMyProfile(mine.profile);
-      }
-      if (wantId) {
-        const one = await httpProfileById(wantId);
-        if (dead) return;
-        if (one.ok && one.card) setFocused(one.card);
-        else setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
-      }
-    })();
-    return () => {
-      dead = true;
-    };
-  }, []);
 
   /** Следующая страница по nextCursor: append к уже показанным, дубликаты
    *  по accountId отбрасываются (страховка от гонки с правками профилей). */
@@ -481,6 +595,14 @@ export default function PlayersCatalog() {
   const closeCard = useCallback(() => {
     setFocused(null);
     setFocusMissing(null);
+    // Закрыли профиль, открытый по deep-link-ссылке: список так и не грузился
+    // (hold) — снимаем паузу и дёргаем загрузку сами. Из обычного захода
+    // (клик по строке) каталог уже на месте, тик не нужен.
+    if (deepLinkHoldRef.current) {
+      deepLinkHoldRef.current = false;
+      setProfileWait(false);
+      setReloadTick((t) => t + 1);
+    }
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete('id');
@@ -540,8 +662,17 @@ export default function PlayersCatalog() {
         onSaved={handleSaved}
         onClose={closeCard}
         mineHighlight={mineFlash}
+        coatLink={coatLink}
       />
     );
+  }
+
+  // Deep-link-заход (?id=), карточка в пути: каталог не грузится и не
+  // рисуется. Вместо текстовой заглушки — каркас будущего профиля той же
+  // геометрии (заголовки/лейблы настоящие, контентные места — полосы):
+  // страница стоит на месте, приход карточки не перестраивает верстку.
+  if (profileWait) {
+    return <ProfileSkeleton />;
   }
 
   const onlineNow = rows.filter((r) => r.status === 'online').length;
@@ -612,7 +743,7 @@ export default function PlayersCatalog() {
               type="button"
               className={`${styles.segBtn} ${viewMode === 'table' ? styles.segOn : ''}`}
               aria-pressed={viewMode === 'table'}
-              onClick={() => setViewMode('table')}
+              onClick={() => pickView('table')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <rect x="4" y="5" width="16" height="14" rx="2.5" />
@@ -625,7 +756,7 @@ export default function PlayersCatalog() {
               type="button"
               className={`${styles.segBtn} ${viewMode === 'tiles' ? styles.segOn : ''}`}
               aria-pressed={viewMode === 'tiles'}
-              onClick={() => setViewMode('tiles')}
+              onClick={() => pickView('tiles')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
                 <rect x="4" y="4" width="7" height="7" rx="1.5" />
@@ -655,16 +786,7 @@ export default function PlayersCatalog() {
           </div>
         ) : null}
 
-        {loadingFirst && !cards ? (
-          <div className={`${styles.panel} ${styles.empty}`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4.5 4.5" />
-            </svg>
-            <div className={styles.eTitle}>Загружаем каталог…</div>
-            <p>Запрашиваем публичные карточки у сервера.</p>
-          </div>
-        ) : null}
+        {loadingFirst && !cards ? <CatalogSkeleton viewMode={viewMode} /> : null}
 
         {!loadingFirst && cards && cards.length === 0 ? (
           <div className={`${styles.panel} ${styles.empty}`}>

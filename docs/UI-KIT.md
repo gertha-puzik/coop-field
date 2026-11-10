@@ -95,7 +95,8 @@ gradient point — accepted, existing look).
 | --- | --- | --- |
 | `Button`, `buttonVariants` | `button.tsx` | cva button; kit variants `primary` (accent pair) and `danger` (danger-strong pair) added additively over the stock base; sizes `sm/md/lg/icon` (`md` = default); `loading` prop → spinner + `disabled` + `aria-busy` |
 | `Input` | `input.tsx` | stock styled input (unchanged) |
-| `Select` | `select.tsx` | native styled `<select>` (avatar/theme picker look; the OS keeps its own arrow) |
+| `Select` | `select.tsx` | native styled `<select>` — minimal fallback where the OS control is fine; internal panels moved to `Dropdown` (2026-11-10) |
+| `Dropdown` | `dropdown.tsx` | kit single-select replacing the native one: combobox trigger (today's select look + own chevron) + glass listbox portalled to `<body>`, positioned fixed by the trigger rect (flips up when short on space, escapes overflow-clipped panels); keyboard/ARIA per the owner-approved prototype — Enter/Space/arrows/Home/End/PgUp/PgDn, Esc, Tab closes, one open instance per page; data-driven options (`value`/`label`/`disabled`), sizes `md`/`sm`, `placeholder`; no animation by design |
 | `Slider`, `Switch` | `slider.tsx`, `switch.tsx` | Radix wrappers (unchanged) |
 | `Field` | `field.tsx` | label + ONE control + hint + error; auto-wires `htmlFor`, `aria-describedby` (incl. caller `describedBy`), `aria-invalid` on error |
 | `Panel`, `panelVariants` | `panel.tsx` | glass surface `rounded-xl` + `--uk-panel-*` + explicit 6px blur; tones `default/soft/inset/muted`; `as="form"` renders a form panel |
@@ -187,6 +188,7 @@ import { Badge, Button, Chip, ConfirmDialog, Field, Input, Panel } from '@/compo
 - `Dialog` restores opener focus optimistically; page-level unmount races
   (opener removed while dialog open) are not compensated — callers should pass
   stable openers.
+- `Dropdown` has no option-group headers yet (the SettingsPanel dummy-sprite picker used to have native `<optgroup>` labels; its options are now a flat group-ordered list) — add a `groups` prop if a picker needs headers back.
 - Light-theme soft pairs sit marginally under 4.5:1 on the very top gradient
   point (documented above); tightening means deviating from the live
   `--sim-danger` hue — owner's call, not a drive-by change.

@@ -424,5 +424,111 @@ const SYNTH_FORMS = synth(["1/16", "0", "0", "0", "0", "0", "0", "0", "0", "0", 
   }
 }
 
+/* ---------- (д) coat-deeplink: строгий приём ?coat= из ссылки конструктора ---------- */
+/* Правила приёма — ДУБЛЬ consumeCatalogDeepLink из src/components/players/
+ * players-format.ts (ровно ОДИН coat, СЫРАЯ длина ≤2048, декод не рвётся,
+ * у пустой строки нет рендера, адрес вычищается, id/#settings живут);
+ * правки — синхронно в оба места. Поток профиля: принятый код → fill →
+ * parseCode/validate (та же валидация UI) → preview-конвейер (без POST:
+ * сохранение — только ручная кнопка, действие 'post' в модели отсутствует). */
+const COAT_MAX_RAW = 2048;
+function consumeCatalogDeepLinkModel(search, hash) {
+  const q = new URLSearchParams(search);
+  const mine = q.get("mine") || null;
+  if (mine) q.delete("mine");
+  const rawCoats = [];
+  for (const part of search.replace(/^\?/, "").split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    if ((eq < 0 ? part : part.slice(0, eq)) === "coat") rawCoats.push(eq < 0 ? "" : part.slice(eq + 1));
+  }
+  let coat = null;
+  if (rawCoats.length > 0) {
+    q.delete("coat");
+    if (rawCoats.length === 1 && rawCoats[0].length <= COAT_MAX_RAW) {
+      try {
+        const decoded = decodeURIComponent(rawCoats[0]);
+        coat = decoded.trim() ? decoded : null;
+      } catch {
+        coat = null; // сломанный %-escape — честный отказ
+      }
+    }
+  }
+  const next = mine || rawCoats.length > 0 ? `?${q.toString()}${hash}` : search;
+  return { id: q.get("id") || null, mine, coat, next };
+}
+
+/** Действия deep-link-потока: fill/preview/canvas|fail-toast; 'post' НИКОГДА. */
+function deeplinkProfileFlow(search, hash = "") {
+  const log = [];
+  const dl = consumeCatalogDeepLinkModel(search, hash);
+  if (dl.coat !== null) {
+    log.push("fill");
+    const parsed = Tint.parseCode(dl.coat);
+    if (!validate(parsed).ok) {
+      log.push("fail-toast");
+      return { log, dl };
+    }
+    log.push("preview");
+    const run = pipelineReplica(dl.coat);
+    log.push(run.ok ? "canvas" : "no-render");
+  }
+  return { log, dl };
+}
+
+{
+  const enc = encodeURIComponent(LIVE_CODE);
+  const a = deeplinkProfileFlow(`?id=0123456789abcdef&coat=${enc}`, "#settings");
+  ok(a.dl.coat === LIVE_CODE, "(д) валидный код: принят и декодирован в исходный");
+  ok(
+    a.log.length === 3 && a.log[0] === "fill" && a.log[1] === "preview" && a.log[2] === "canvas",
+    "(д) валидный код: автозаполнение + превью собраны движком",
+    a.log.join(","),
+  );
+  ok(!a.log.includes("post"), "(д) валидный код: без POST — сохранение только кнопкой");
+  ok(a.dl.id === "0123456789abcdef", "(д) id живёт в адресе, чистка его не тронула");
+  ok(a.dl.next === "?id=0123456789abcdef#settings", "(д) адрес вычищен, #settings пережил", a.dl.next);
+
+  const b = deeplinkProfileFlow(`?coat=${encodeURIComponent("x".repeat(2049))}`);
+  ok(b.dl.coat === null && b.log.length === 0, "(д) мусор сырой длины >2048: отброшен ДО движка — без рендера");
+  ok(b.dl.next === "?", "(д) мусор >2048: параметр всё равно вычищен из адреса", b.dl.next);
+  ok(!b.log.includes("post"), "(д) мусор >2048: без POST");
+
+  const c = deeplinkProfileFlow(`?coat=${"y".repeat(2048)}`);
+  ok(c.dl.coat !== null, "(д) сырая длина ровно 2048: проходит длину, дальше решает движок");
+  ok(
+    c.log.length === 2 && c.log[1] === "fail-toast",
+    "(д) непарсимый мусор 2048: тост как при ручной вставке, без рендера",
+    c.log.join(","),
+  );
+  ok(!c.log.includes("post"), "(д) отказ движка: без POST");
+
+  const e0 = deeplinkProfileFlow("?coat=");
+  ok(e0.dl.coat === null && e0.log.length === 0, "(д) пустой coat: ничего не рендерим вообще");
+  ok(e0.dl.next === "?", "(д) пустой coat: адрес вычищен", e0.dl.next);
+
+  const bad = deeplinkProfileFlow(`?coat=${encodeURIComponent("abc def/ghi")}`);
+  ok(
+    bad.log.length === 2 && bad.log[1] === "fail-toast",
+    "(д) битый код из ссылки: тост ручной вставки, без рендера",
+    bad.log.join(","),
+  );
+  ok(!bad.log.includes("post"), "(д) битый код: без POST");
+
+  const brokenEsc = deeplinkProfileFlow("?coat=%E0%A4%A");
+  ok(brokenEsc.dl.coat === null && brokenEsc.log.length === 0, "(д) сломанный %-escape: отказ приёма без рендера");
+
+  const dup = deeplinkProfileFlow(`?coat=${enc}&coat=${enc}`);
+  ok(dup.dl.coat === null && dup.log.length === 0, "(д) два coat: строгий приём — параметр один или ничего");
+  ok(!dup.dl.next.includes("coat"), "(д) два coat: оба вычищены из адреса", dup.dl.next);
+
+  const noCoat = deeplinkProfileFlow("?id=abc&mine=m1");
+  ok(
+    noCoat.dl.id === "abc" && noCoat.dl.mine === "m1" && noCoat.dl.coat === null,
+    "(д) без coat: прежнее поведение ?id/?mine не тронуто",
+  );
+  ok(noCoat.dl.next === "?id=abc", "(д) без coat: чистка только ?mine, как раньше", noCoat.dl.next);
+}
+
 console.log(`\ntest-catwar-coat: ${passes} PASS, ${fails} FAIL`);
 process.exit(fails ? 1 : 0);

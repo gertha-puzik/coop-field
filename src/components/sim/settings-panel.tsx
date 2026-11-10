@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
+import { Dropdown } from '@/components/ui';
 import type { DirectionWindow, SimSettings, SlowdownTier, SpriteId, SpriteMeta, StrikeZone, WindowKey, ZoneSide, DayPart, WeatherKind } from '@/lib/sim/settings';
 import {
   DAYPARTS,
@@ -566,28 +567,19 @@ export function SettingsPanel(props: Props) {
               Скин «ПОЧУХАТЬ» из списка присвоенных имён персонажей; выбор виден всей комнате.
             </div>
           </div>
-          <select
+          <Dropdown
             aria-label="Спрайт манекена"
+            size="sm"
+            className="w-auto max-w-36"
             value={props.dummySprite}
-            onChange={(e) => props.onDummySprite(e.target.value as SpriteId)}
-            className="h-7 max-w-36 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-1.5 text-xs text-[var(--sim-text)] outline-none focus:border-[var(--sim-accent)]"
-          >
-            {SPRITE_GROUPS.map((g) => {
-              const opts = g.spriteIds
+            onChange={(v) => props.onDummySprite(v)}
+            options={SPRITE_GROUPS.flatMap((g) =>
+              g.spriteIds
                 .map((id) => SPRITES.find((sp) => sp.id === id))
-                .filter((sp): sp is SpriteMeta => Boolean(sp));
-              if (!opts.length) return null;
-              return (
-                <optgroup key={g.id} label={g.name}>
-                  {opts.map((sp) => (
-                    <option key={sp.id} value={sp.id}>
-                      {sp.name}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
+                .filter((sp): sp is SpriteMeta => Boolean(sp))
+                .map((sp) => ({ value: sp.id, label: sp.name }))
+            )}
+          />
         </div>
         <Toggle
           label="Включить мишень"

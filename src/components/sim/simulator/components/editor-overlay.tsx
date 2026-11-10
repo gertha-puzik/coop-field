@@ -3,7 +3,7 @@
  */
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
-import { Button } from '@/components/ui';
+import { Button, Dropdown } from '@/components/ui';
 import type { EditorDraft, EditorPlace, EditorTool } from '@/lib/sim/editor-model';
 import { PAINT_MATS } from '@/lib/sim/paint';
 import { clampBrush, isElevationTool } from '@/lib/sim/terrain-editor';
@@ -175,7 +175,7 @@ export function EditorOverlay(p:EditorOverlayProps){
        {section==='objects'&&<>
          <div className={styles.toolGrid}>{tools.filter(t=>['cursor','plant','tree','stone'].includes(t.id)).map(toolButton)}</div>
          <h3>{d.tool==='plant'?'Растения':d.tool==='tree'?'Деревья':'Камни'}</h3>
-         {d.tool==='plant'&&<label className={styles.field}>Группа растений<select aria-label="Группа растений" value={plantGroup} onChange={e=>setPlantGroup(e.target.value)}><option value="all">Все растения (75)</option>{Array.from(new Set(PLANT_SPRITE_OPTS.map(p=>p.group))).map(group=><option key={group}>{group}</option>)}</select></label>}
+         {d.tool==='plant'&&<label className={styles.field}>Группа растений<Dropdown aria-label="Группа растений" value={plantGroup} onChange={v=>setPlantGroup(v)} className="w-auto" options={[{value:'all',label:'Все растения (75)'},...Array.from(new Set(PLANT_SPRITE_OPTS.map(p=>p.group))).map(group=>({value:group,label:group}))]}/></label>}
          <div className={styles.objects}>{(d.tool==='plant'?PLANT_SPRITE_OPTS.filter(p=>plantGroup==='all'||p.group===plantGroup):d.tool==='tree'?TREE_SPRITE_OPTS:ROCK_SPRITE_OPTS).map(o=><button type="button" key={o.id} aria-pressed={p.editorPlace?.spr===o.id} onClick={()=>{choose(d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone');p.patchEditorPlace({kind:d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone',spr:o.id,anchored:false,pickId:null});}}><img loading="lazy" src={`/tex/${o.id}.png`} alt=""/><span>{o.label}</span></button>)}</div>
          {p.editorPlace&&<>
            <div className={styles.two}><NumberField label="Масштаб" min={OBJECT_SCALE_MIN} max={OBJECT_SCALE_MAX} step={.1} value={p.editorPlace.s} onChange={s=>p.patchEditorPlace({s})}/><NumberField label="Поворот, °" min={0} max={359} step={15} value={p.editorPlace.rot} onChange={rot=>p.patchEditorPlace({rot})}/></div>
@@ -189,13 +189,13 @@ export function EditorOverlay(p:EditorOverlayProps){
          <h3>Размер блока</h3>
          <div className={styles.two}>{([['width','Ширина блока',.1,d.cols],['depth','Длина блока',.1,d.rows],['level','Высота блока',0,TERRAIN_MAX_LEVEL]] as const).map(([key,label,min,max])=><NumberField key={key} label={label} min={min} max={max} step={.1} value={clampBrush(d.elevBrush,d.cols,d.rows)[key]} onChange={value=>update({elevBrush:{...clampBrush(d.elevBrush,d.cols,d.rows),[key]:value}})}/>)}</div>
          <button type="button" className={styles.wide} aria-pressed={!!d.elevFree} onClick={()=>{choose('height');update({elevFree:!d.elevFree});}}>Свободная установка: {d.elevFree?'ВКЛ':'ВЫКЛ'}</button>
-         {d.elevFree&&<label className={styles.field}>Привязка к блокам<select aria-label="Привязка к блокам" value={d.elevSnap??'level'} onChange={e=>update({elevSnap:e.target.value as 'off'|'level'|'all'})}><option value="off">Без магнита</option><option value="level">Такая же высота</option><option value="all">Любая высота</option></select></label>}
+         {d.elevFree&&<label className={styles.field}>Привязка к блокам<Dropdown aria-label="Привязка к блокам" value={d.elevSnap??'level'} onChange={v=>update({elevSnap:v as 'off'|'level'|'all'})} className="w-auto" options={[{value:'off',label:'Без магнита'},{value:'level',label:'Такая же высота'},{value:'all',label:'Любая высота'}]}/></label>}
          <label className={styles.check}><input type="checkbox" checked={d.showGrid??false} onChange={e=>update({showGrid:e.target.checked})}/>Показывать сетку</label>
          <p className={styles.hint}>Высоты от 0 до 20, шаг 0,1. Золотой контур — точное соединение магнитом. Нулевая высота срезает блок.</p>
        </>}
        {section==='zones'&&<>
          <div className={styles.toolGrid}>{tools.filter(t=>t.category==='zones').map(toolButton)}</div>
-         {d.tool==='entry'&&<label className={styles.field}>Направление входа<select aria-label="Направление входа" value={p.editorEntryDir} onChange={e=>p.setEditorEntryDir(e.target.value as TestMapEntryDir)}>{[['left','Влево'],['right','Вправо'],['up','Вверх'],['down','Вниз']].map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>}
+         {d.tool==='entry'&&<label className={styles.field}>Направление входа<Dropdown aria-label="Направление входа" value={p.editorEntryDir} onChange={v=>p.setEditorEntryDir(v as TestMapEntryDir)} className="w-auto" options={([['left','Влево'],['right','Вправо'],['up','Вверх'],['down','Вниз']] as const).map(([id,label])=>({value:id,label}))}/></label>}
          <h3>Зоны локации <span>{d.zones.length}</span></h3>
          <div className={styles.zoneList}>{d.zones.map(z=><div key={z.id} className={styles.zone} data-selected={d.sel.includes(z.id)}><input type="checkbox" aria-label={`Выбрать зону ${z.name}`} checked={d.sel.includes(z.id)} onChange={()=>p.toggleEditorSel(z.id)}/><i data-kind={z.kind}/><input aria-label={`Имя зоны ${z.name}`} defaultValue={z.name} key={z.id+z.name} onBlur={e=>{if(e.target.value!==z.name)p.renameEditorZone(z.id,e.target.value);}}/><small>{z.c1-z.c0+1}×{z.r1-z.r0+1}</small><button type="button" aria-label={`Удалить зону ${z.name}`} onClick={()=>p.deleteEditorZone(z.id)}>×</button></div>)}</div>
          <button type="button" className={styles.wide} disabled={d.sel.length<2} onClick={p.mergeEditorZones}>Объединить выбранные ({d.sel.length})</button>

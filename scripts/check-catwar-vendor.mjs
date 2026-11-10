@@ -3,7 +3,7 @@
  * Гейт vendor-копии движка окрасов CatWar (#84 волна 3).
  *
  * public/catwar/ — байт-в-байт копия рантайм-тонировщика из репо kns
- * (kns.miew.ru): tint.js (движок: серые маски → кот по коду окраса),
+ * (kns.phainonsmilk.ru): tint.js (движок: серые маски → кот по коду окраса),
  * catwar-manifest.js (24 палитры живого дампа), gray/{norm,thin,chub}/
  * {key}_{layer}.png + tint_meta.json (156 масок на билд, 13 ключей кадров).
  *

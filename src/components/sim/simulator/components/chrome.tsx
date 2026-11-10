@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, useState, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
+import { Dropdown } from '@/components/ui';
 import { RoomPicker, type RoomRow } from '../../room-picker';
 import { SettingsPanel } from '../../settings-panel';
 import { fmtSec } from '../sim-model';
@@ -147,17 +148,12 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     <>
       {!testField ? <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
         тема
-        <select
+        <Dropdown
           value={theme}
-          onChange={(ev) => changeTheme(ev.target.value as ThemeId)}
-          className="h-8 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-input-bg)] px-1.5 text-xs text-[var(--sim-text)] outline-none"
-        >
-          {THEMES.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => changeTheme(v as ThemeId)}
+          options={THEMES.map((t) => ({ value: t.id, label: t.label }))}
+          className="w-auto"
+        />
       </label> : null}
       {fieldFormat === 'test' && role === 'admin' ? (
         <Button
