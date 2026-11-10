@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
+import { PawCursor } from "@/components/ui";
 import "./globals.css";
 
 const interSans = Inter({
@@ -34,6 +35,9 @@ export default function RootLayout({
               "try{var t=localStorage.getItem('catwar-battle-sim-theme');if(t!=='light'&&t!=='beer')t='night';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','night');}",
           }}
         />
+        {/* Лапка-курсор поворачивается по направлению движения мыши
+            (глобальный эффект, рендерит null — только слушатель). */}
+        <PawCursor />
         {children}
       </body>
     </html>
