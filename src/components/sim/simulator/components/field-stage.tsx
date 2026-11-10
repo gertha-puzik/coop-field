@@ -76,7 +76,7 @@ export function FieldStage(props: FieldStageProps) {
             ref={fieldFrameRef}
             role="region"
             aria-label="Игровое поле"
-            className={`${styles.frame} relative overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2 lg:absolute lg:inset-0`}
+            className={`${styles.frame} absolute inset-0 overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2`}
           >
             <div
               className={
