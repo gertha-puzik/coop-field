@@ -12,6 +12,11 @@
  *     чужой id и перелив длин → 400 invalid; идентификационные ключи тела
  *     (login, accountId) → 400 unknown_keys; пустое тело → empty_patch;
  *     битый JSON → invalid_body; чужой Origin → 403 csrf;
+ *  4.5. birthday (день рождения): валидная «ГГГГ-ММ-ДД» пишется и читается
+ *     (в me и публичной карточке по id); вложенная profile.birthday — тот же
+ *     валидатор; невалиды («dfg34», «30123-45-678», «2026-13-01»,
+ *     «2026-02-30», «1899-12-31», будущая дата) → 400 invalid без изменения
+ *     профиля; null/пустая строка → сброс в null;
  *  5. GET /profiles/:id — публичный DTO по своему id; несуществующий id
  *     и скрытый аккаунт (строка без profile) → 404 unknown;
  *  6. GET /profiles — карточки: обе регистрированные записи, total согласован,
@@ -313,6 +318,59 @@ try {
     byIdHidden.status === 404 && byIdHidden.json?.reason === "unknown",
     "byId: скрытый аккаунт без profile → 404 unknown (без раскрытия)",
   );
+
+  /* ---------- 5.5. день рождения: birthday (PATCH + валидация) ---------- */
+  const bd = "2001-07-24";
+  const bd1 = await probe({ method: "PATCH", path: "/profiles/me", cookie, body: { birthday: bd } });
+  check(
+    bd1.status === 200 && bd1.json?.ok === true && bd1.json?.birthday === bd,
+    "birthday: валидная дата пишется и возвращается в ответе PATCH",
+  );
+  const bdMe = await probe({ path: "/profiles/me", cookie });
+  check(bdMe.status === 200 && bdMe.json?.birthday === bd, "birthday: свежий GET /profiles/me несёт ту же строку");
+  const bdCard = await probe({ path: `/profiles/${myAccount}` });
+  check(
+    bdCard.status === 200 && bdCard.json?.birthday === bd,
+    "birthday: публичная карточка по id несёт ту же строку",
+  );
+  // вложенная форма profile.birthday — тот же валидатор sanitizePatch
+  const bdNested = await probe({
+    method: "PATCH",
+    path: "/profiles/me",
+    cookie,
+    body: { profile: { birthday: "1990-01-01" } },
+  });
+  check(
+    bdNested.status === 200 && bdNested.json?.birthday === "1990-01-01",
+    "birthday: вложенная форма profile.birthday тоже работает",
+  );
+  // (c') невалиды: маска, реальность календаря и диапазон 01.01.1900 — сегодня
+  const dayAfter = new Date(Date.now() + 30 * 86_400_000);
+  const futureDate = `${dayAfter.getUTCFullYear()}-${String(dayAfter.getUTCMonth() + 1).padStart(2, "0")}-${String(dayAfter.getUTCDate()).padStart(2, "0")}`;
+  const badBirthday = ["dfg34", "30123-45-678", "2026-13-01", "2026-02-30", "1899-12-31", futureDate];
+  const birthdayRejects = [];
+  for (const bad of badBirthday) {
+    const r = await probe({ method: "PATCH", path: "/profiles/me", cookie, body: { birthday: bad } });
+    if (!(
+      r.status === 400 && r.json?.reason === "invalid" &&
+      Array.isArray(r.json?.invalid) && r.json.invalid.some((i) => i.key === "birthday")
+    )) {
+      birthdayRejects.push(bad);
+    }
+  }
+  check(birthdayRejects.length === 0, `birthday: невалиды (${badBirthday.join(", ")}) → 400 invalid`);
+  const bdUnchanged = await probe({ path: "/profiles/me", cookie });
+  check(
+    bdUnchanged.status === 200 && bdUnchanged.json?.birthday === "1990-01-01",
+    "birthday: после отклонённых правок профиль не изменился",
+  );
+  // (b) сброс: null и пустая строка → birthday null
+  const bdNull = await probe({ method: "PATCH", path: "/profiles/me", cookie, body: { birthday: null } });
+  check(bdNull.status === 200 && bdNull.json?.birthday === null, "birthday: PATCH null → 200 и birthday null");
+  const bdEmpty = await probe({ method: "PATCH", path: "/profiles/me", cookie, body: { birthday: "" } });
+  check(bdEmpty.status === 200 && bdEmpty.json?.birthday === null, "birthday: пустая строка → сброс (null)");
+  const bdAfterReset = await probe({ path: `/profiles/${myAccount}` });
+  check(bdAfterReset.json?.birthday === null, "birthday: сброс виден и в публичной карточке");
 
   /* ---------- 6. каталог ---------- */
   const reg2 = await probe({

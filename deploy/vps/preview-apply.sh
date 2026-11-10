@@ -370,6 +370,27 @@ ${https_jump}
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
+    # Аватарки профилей (server/avatars.js): сессионные POST/DELETE
+    # /avatars/mine — зона как /sprites/mine (Cookie обязателен: без прокси
+    # изолированный билд отдал бы try_files→index.html и молча деградировал).
+    location /avatars/mine {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    # Публичные файлы аватарок GET /avatars/file/<id>.<ext> — точно
+    # локацией-префиксом, как /sprites/file (только реальные API-пути:
+    # широкого «location /avatars» в конфиге нет).
+    location /avatars/file {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
     location /ws {
         proxy_pass http://127.0.0.1:$port;
         proxy_http_version 1.1;

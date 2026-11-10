@@ -43,6 +43,13 @@ import { handleSpritesHttp } from "./sprites.js";
 // apiZone ниже держит CORS-надзор и unsafe-cookie Origin-щит; сессия и
 // перепроверка CSRF — в самом домене, как у profiles.js).
 import { handleMineSpritesHttp } from "./my-sprites.js";
+// Аватарки профилей (server/avatars.js): сессионные POST/DELETE /avatars/mine
+// (host-гейт ниже прячет зону на публичном классе, apiZone ниже держит
+// CORS-надзор и unsafe-cookie Origin-щит; сессия и перепроверка CSRF — в
+// самом домене, как у profiles/my-sprites) и публичный GET /avatars/file/*
+// (префикс, как /sprites/file: не спрятан и в apiZone не числится —
+// безопасный метод без сессии, читается обоим сайтам).
+import { handleAvatarsHttp } from "./avatars.js";
 import { handleProfilesHttp } from "./profiles.js";
 
 function onMessage(ws, raw) {
@@ -209,6 +216,10 @@ export function startServer() {
         // #83: личные окрасы — сессионная зона Элизии, на гроттах её нет.
         p === "/sprites/mine" ||
         p.startsWith("/sprites/mine/") ||
+        // Аватарка профиля: та же сессионная зона Элизии (файл /avatars/file
+        // ниже НЕ прячем — он публичен обоим классам, как /sprites/file).
+        p === "/avatars/mine" ||
+        p.startsWith("/avatars/mine/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
@@ -245,7 +256,11 @@ export function startServer() {
       // Личные окрасы (#83): POST/DELETE несут cookie-сессию — тот же
       // unsafe-cookie Origin-щит и CORS-надзор (GET /sprites/mine безопасен,
       // но пусть зона вся живёт под одной политикой, как /profiles).
-      p === "/sprites/mine" || p.startsWith("/sprites/mine/");
+      p === "/sprites/mine" || p.startsWith("/sprites/mine/") ||
+      // Аватарки: POST/DELETE /avatars/mine несут cookie-сессию — тот же
+      // unsafe-cookie Origin-щит и CORS-надзор (GET /avatars/file —
+      // безопасный метод, в зоне не нуждается, как /sprites/file).
+      p === "/avatars/mine" || p.startsWith("/avatars/mine/");
     if (apiZone) {
       if (originHeader) res.setHeader("Vary", "Origin");
       if (originAllowed) {
@@ -306,13 +321,19 @@ export function startServer() {
             // маршруты /sprites/mine* строже и не пересекаются с каталогом.
             return Promise.resolve(handleMineSpritesHttp(req, res)).then((mineHit) => {
               if (mineHit) return;
-              // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
-              // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
-              // в handler не попадают (маршруты длиннее и точнее), файловые 404
-              // отдаёт сам домен.
-              return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
-                if (spritesHit) return;
-                serveStatic(req, res, url);
+              // Аватарки профилей: сессионные POST/DELETE /avatars/mine и
+              // публичный GET /avatars/file/* — до статики, иначе файл
+              // уходит в файловый 404 (тот же порядок, что у /sprites/*).
+              return Promise.resolve(handleAvatarsHttp(req, res)).then((avatarsHit) => {
+                if (avatarsHit) return;
+                // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites/*
+                // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
+                // в handler не попадают (маршруты длиннее и точнее), файловые 404
+                // отдаёт сам домен.
+                return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+                  if (spritesHit) return;
+                  serveStatic(req, res, url);
+                });
               });
             });
           });
