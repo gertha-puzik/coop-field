@@ -1,11 +1,4 @@
 .workspace {
-  --ed-bg:#1c1b27;
-  --ed-panel:#252331;
-  --ed-inset:#181820;
-  --ed-line:#454052;
-  --ed-ink:#f1ecdf;
-  --ed-muted:#aaa4b5;
-  --ed-gold:#edc485;
   position:absolute;inset:0;z-index:30;pointer-events:none;
   color:var(--ed-ink);font-size:12px;
 }

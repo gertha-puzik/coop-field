@@ -3,7 +3,7 @@
  */
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
-import { Button, Dropdown } from '@/components/ui';
+import { Button, Dropdown, EditorShell } from '@/components/ui';
 import type { EditorDraft, EditorPlace, EditorTool } from '@/lib/sim/editor-model';
 import { PAINT_MATS } from '@/lib/sim/paint';
 import { clampBrush, isElevationTool } from '@/lib/sim/terrain-editor';
@@ -142,7 +142,7 @@ export function EditorOverlay(p:EditorOverlayProps){
  const mats=PAINT_MATS.filter(m=>m.id!=='erase').filter(m=>filter==='all'||(filter==='stone'?/stone|rock|плит|кам|скал|кирп|пес/i.test(m.id+' '+m.label):!/stone|rock|плит|кам|скал|кирп|пес/i.test(m.id+' '+m.label)));
  const q=query.trim().toLowerCase();
  const searchResults=[...tools.map(t=>({id:t.id,label:t.label,kind:'Инструмент',run:()=>choose(t.id)})),...PAINT_MATS.map(m=>({id:'mat-'+m.id,label:m.label,kind:'Материал',run:()=>material(m.id,m.label)})),...PLANT_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Растение',run:()=>{choose('plant');p.patchEditorPlace({kind:'plant',spr:o.id,pickId:null,anchored:false});}})),...TREE_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('tree');p.patchEditorPlace({kind:'tree',spr:o.id,pickId:null,anchored:false});}})),...ROCK_SPRITE_OPTS.map(o=>({id:o.id,label:o.label,kind:'Объект',run:()=>{choose('stone');p.patchEditorPlace({kind:'stone',spr:o.id,pickId:null,anchored:false});}}))].filter(r=>r.label.toLowerCase().includes(q));
- return <div className={styles.workspace} data-collapsed={collapsed} aria-label="Редактор локации">
+ return <EditorShell label="Редактор локации" className={styles.workspace} collapsed={collapsed}>
    <header className={styles.header}>
      <div className={styles.brand}><img className={styles.paw} src="/lapka.svg" alt=""/><strong>Редактор локации</strong><span className={styles.dimensions}>{d.cols} × {d.rows}</span><span className={styles.editorWeather} title="Ясный свет для строительства; погода комнаты сохраняется">☀ Солнечно</span></div>
      <div className={styles.headerActions}>
@@ -237,5 +237,5 @@ export function EditorOverlay(p:EditorOverlayProps){
      <div className={styles.selection}><small>ВЫБРАНО</small>{d.sel.length?d.zones.filter(z=>d.sel.includes(z.id)).slice(0,3).map(z=><button type="button" key={z.id} onClick={()=>{setSection('zones');setCollapsed(false);}}><i data-kind={z.kind}/>{z.name}</button>):<span>{current?.label??'Кисть'}{d.tool==='paint'?` · ${PAINT_MATS.find(m=>m.id===d.pmat)?.label??''}`:''}</span>}</div>
      <div className={styles.saveArea}><div role="status" className={styles.saveStatus}>{p.editorSave?<><span className={styles.spinner}/>{p.editorSave.phase==='encode'?'Подготовка рисунка':p.editorSave.phase==='send'?'Отправка':'Ожидание сервера'} · {elapsed} с</>:p.editorMsg??(d.dirty?'Изменения не сохранены':'Карта сохранена на сервере')}</div><Button className={styles.primary} disabled={!!p.editorSave} onClick={p.saveEditorMap}><Icon name="save"/>Сохранить локацию</Button></div>
    </footer>
- </div>;
+ </EditorShell>;
 }

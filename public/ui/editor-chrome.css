@@ -1,0 +1,151 @@
+/* Хром редактора локации. Один файл на два места: класс .uk-editor
+   в игре (переменные --ed-*) и body.uk-editor-page в KNS Paint
+   (мост подключает этот же файл, копию редактора не красит). */
+
+.uk-editor,
+body.uk-editor-page {
+  --ed-bg: #1c1b27;
+  --ed-panel: #252331;
+  --ed-inset: #181820;
+  --ed-line: #454052;
+  --ed-ink: #f1ecdf;
+  --ed-muted: #aaa4b5;
+  --ed-gold: #edc485;
+}
+
+body.uk-editor-page {
+  background: var(--ed-bg, #1c1b27);
+  color: var(--ed-ink, #f1ecdf);
+  font-family: Inter, "Segoe UI", sans-serif;
+  cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
+}
+
+body.uk-editor-page .app {
+  max-width: none;
+  gap: 0;
+}
+
+body.uk-editor-page .top {
+  height: 56px;
+  align-items: center;
+  margin: 0 -14px;
+  padding: 0 16px;
+  background: linear-gradient(110deg, #322b3c, #1c1b27);
+  border-bottom: 1px solid #454052;
+}
+
+body.uk-editor-page .brand {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.35px;
+  color: #f1ecdf;
+}
+
+body.uk-editor-page .tagline,
+body.uk-editor-page .top .keys,
+body.uk-editor-page .cap,
+body.uk-editor-page .sgrp .lab {
+  color: #aaa4b5;
+}
+
+body.uk-editor-page .main {
+  gap: 0;
+  align-items: stretch;
+}
+
+body.uk-editor-page .dock {
+  flex-basis: 74px;
+  width: 74px;
+  gap: 7px;
+  padding: 14px 5px;
+  border-radius: 0;
+  border: 0;
+  border-right: 1px solid #454052;
+  background: linear-gradient(180deg, #1c1b27, #292330);
+}
+
+body.uk-editor-page .side,
+body.uk-editor-page .brushbar {
+  border-color: #454052;
+  border-radius: 0;
+  background: linear-gradient(135deg, #252331, #1e1d28);
+  color: #f1ecdf;
+}
+
+body.uk-editor-page .tbtn,
+body.uk-editor-page .dbtn,
+body.uk-editor-page .bbtn,
+body.uk-editor-page .abtn,
+body.uk-editor-page .gbtn,
+body.uk-editor-page .lybtn {
+  border: 1px solid #454052;
+  border-radius: 8px;
+  background: #252331;
+  color: #f1ecdf;
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
+}
+
+body.uk-editor-page .tbtn:hover,
+body.uk-editor-page .dbtn:hover:not(:disabled),
+body.uk-editor-page .bbtn:hover,
+body.uk-editor-page .abtn:hover:not(:disabled) {
+  background: #383242;
+  border-color: #77647a;
+  color: #f1ecdf;
+}
+
+body.uk-editor-page .tbtn.active,
+body.uk-editor-page .bbtn.active,
+body.uk-editor-page .tbtn[aria-pressed='true'] {
+  background: linear-gradient(145deg, #65513b, #3b322d);
+  border-color: #edc485;
+  color: #ffe6be;
+}
+
+body.uk-editor-page .gbtn,
+body.uk-editor-page #paint-bridge .pb-btn {
+  background: linear-gradient(120deg, #f0cc90, #d4a467);
+  color: #2b2119;
+  border: 1px solid #f6d298;
+  font-weight: 600;
+}
+
+body.uk-editor-page .gbtn:hover,
+body.uk-editor-page #paint-bridge .pb-btn:hover {
+  filter: none;
+  background: linear-gradient(120deg, #ffe1ac, #e4b77c);
+}
+
+body.uk-editor-page .stage {
+  border-color: #454052;
+  box-shadow: none;
+}
+
+body.uk-editor-page #work {
+  cursor: var(--paw-cursor-aim, url('/lapka.svg') 16 22), crosshair;
+}
+
+body.uk-editor-page select,
+body.uk-editor-page option,
+body.uk-editor-page summary {
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
+}
+
+body.uk-editor-page select:disabled,
+body.uk-editor-page option:disabled,
+body.uk-editor-page button:disabled {
+  cursor: var(--paw-cursor, url('/lapka.svg') 16 22), not-allowed;
+}
+
+body.uk-editor-page #paint-bridge.pb input.pb-name {
+  color: #f1ecdf;
+  background: #181820;
+  border: 1px solid #454052;
+  border-radius: 7px;
+}
+
+body.uk-editor-page #paint-bridge.pb input.pb-name:focus {
+  border-color: #edc485;
+  outline: 2px solid #edc485;
+  outline-offset: 2px;
+}

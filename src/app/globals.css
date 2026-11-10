@@ -5,6 +5,9 @@
    computed-value resolution, so the theme switchers keep working untouched.
    Order note: pure custom-property declarations, safe next to other imports. */
 @import "../components/ui/tokens.css";
+/* Хром редактора локации: те же --ed-* и правила KNS Paint.
+   Файл публичный, мост paint-demo подключает его отдельно. */
+@import "../../public/ui/editor-chrome.css";
 
 @custom-variant dark (&:is(.dark *));
 

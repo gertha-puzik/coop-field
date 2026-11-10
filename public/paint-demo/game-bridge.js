@@ -450,7 +450,18 @@
 
   /* ---------- запуск ---------- */
 
+  function applyEditorChrome() {
+    document.body.classList.add('uk-editor-page');
+    if (document.getElementById('editor-chrome-css')) return;
+    var link = document.createElement('link');
+    link.id = 'editor-chrome-css';
+    link.rel = 'stylesheet';
+    link.href = '/ui/editor-chrome.css';
+    document.head.appendChild(link);
+  }
+
   function init() {
+    applyEditorChrome();
     loadSession().then(function () {
       var anchor = findAnchor();
       if (!anchor) return;
