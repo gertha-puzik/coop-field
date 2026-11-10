@@ -44,6 +44,13 @@ npm run check:variants       # A1 isolation gate after build:variants: grotto ze
 All of them must be green. If `arch:check` fails on a new file — do not grow the allowlist
 (it holds only legacy god-files; they are removed in waves W4/W5).
 
+Merge gate (server-side, not a local command): `main` branch protection requires the green
+`conflict-check` status check before any merge, `enforce_admins` ON. On every PR into `main`
+it test-merges `origin/main` into the PR branch (`.github/workflows/conflict-check.yml`,
+~6 s) — a conflicted PR can never merge: GitHub refuses conflicted PRs natively, and the gate
+makes the block a visible red ✗ in the PR checks. Old branches that predate the gate file
+report the check only after their first push/Update branch.
+
 ## Code map
 
 | Task leads to | File | What is inside |
