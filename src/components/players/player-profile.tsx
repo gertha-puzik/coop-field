@@ -21,6 +21,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
+import { Dropdown } from '@/components/ui';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
@@ -420,18 +421,15 @@ function OwnProfileEditor({
         </label>
         <label className={styles.edField}>
           <span className={styles.edLabel}>Аватар (персонаж)</span>
-          <select
-            className="mt-1 h-8 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
+          <Dropdown
+            className="mt-1"
             value={draftAvatar}
-            onChange={(e) => setDraftAvatar(e.target.value)}
-          >
-            <option value="">Без аватара</option>
-            {profile.characters.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setDraftAvatar(v)}
+            options={[
+              { value: '', label: 'Без аватара' },
+              ...profile.characters.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+          />
         </label>
       </div>
       <label className={styles.edField}>
