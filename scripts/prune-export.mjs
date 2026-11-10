@@ -16,8 +16,10 @@ import path from "node:path";
 
 // Каталоги маршрутов, которых в варианте НЕ БЫВАЕТ. players/ и admin/ (P3/P4)
 // в grotto уже перечислены заранее — обрезка переживёт их появление в out/.
+// catwar/ (#84/в3) — vendor-движок окраса по коду (tint.js + gray-маски):
+// зона «Свой окрас» профиля, она же на Элизии — гротам она не принадлежит.
 const EXCLUDE = {
-  grotto: ["elision", "players", "admin"], // «Пивные гроты»: всё публичное
+  grotto: ["elision", "players", "admin", "catwar"], // «Пивные гроты»: всё публичное
   elyria: ["combat", "hunger"], // Элизия: ни гротов, ни заглушки Hunger Games
 };
 

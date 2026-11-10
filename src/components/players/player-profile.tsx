@@ -220,11 +220,14 @@ function OwnProfileEditor({
   profile,
   onSaved,
   mineHighlight = null,
+  selfAccountId = null,
 }: {
   profile: ProfileMe;
   onSaved: (fresh: PublicProfile) => void;
   /** #84 ч.2: id свежего окраса из редактора — подсветить в «Свой окрас». */
   mineHighlight?: string | null;
+  /** #84/в3: свой accountId — deep-link после «Сохранить и надеть» по коду. */
+  selfAccountId?: string | null;
 }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
@@ -402,6 +405,7 @@ function OwnProfileEditor({
         wornSprite={originSprite}
         onPick={setDraftSprite}
         mineHighlight={mineHighlight}
+        selfAccountId={selfAccountId}
       />
       <label className={styles.edField}>
         <span className={styles.edLabel}>Рост ({draftScale}%)</span>
@@ -666,7 +670,12 @@ export default function PlayerProfile({
         </main>
         {mine && myProfile ? (
           <div style={{ marginTop: 20 }}>
-            <OwnProfileEditor profile={myProfile} onSaved={onSaved} mineHighlight={mineHighlight} />
+            <OwnProfileEditor
+              profile={myProfile}
+              onSaved={onSaved}
+              mineHighlight={mineHighlight}
+              selfAccountId={card.accountId}
+            />
           </div>
         ) : null}
         <p className={styles.footNote}>
