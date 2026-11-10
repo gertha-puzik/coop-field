@@ -20,6 +20,7 @@ import { deflateSync } from "node:zlib";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { WebSocket } from "ws";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "w4-module-smoke-"));
 
@@ -42,6 +43,7 @@ const auth = await import("../server/auth.js");
 const hunger = await import("../server/hunger.js");
 const runtimeConfig = await import("../server/runtime-config.js");
 const roomConfig = await import("../server/room-config.js");
+const cfgReg = await import("../server/cfg-registry.js");
 
 let failed = 0;
 let passed = 0;
@@ -373,6 +375,92 @@ function pngFixture(filter,bpp=4){
 for(let filter=0;filter<=4;filter++){
  eq(`PNG filter ${filter}: exact alpha`,[...world.decodePaintPng(pngFixture(filter)).mask],[0,1,1,0,1,1]);
  eq(`RGB filter ${filter}: opaque`,[...world.decodePaintPng(pngFixture(filter,3)).mask],[1,1,1,1,1,1]);
+}
+
+/* ---------- strike: урон считает сервер, клиентские 999 не применяются ----------
+ * Гость (нет profile.sp) — таблица уровня 0. Уровень из профиля проходит
+ * формулу maxStrikeDamage и режется потолком реестра. Сосед, зона и угол
+ * проверяются как раньше: диагональное горло с damage 999 не становится ударом. */
+{
+  const OPEN = WebSocket.OPEN;
+  function harness(damageLevel) {
+    const inbox = [];
+    const ws = {
+      readyState: OPEN,
+      send(raw) { inbox.push(JSON.parse(String(raw))); },
+    };
+    if (damageLevel !== undefined) ws.account = { profile: { sp: { damageLevel } } };
+    const atk = { id: 11, login: "Альфа", x: 5, y: 5, lastStrike: 0, armor: 0 };
+    const def = { id: 12, login: "Бета", x: 6, y: 5, blocking: false, armor: 0 };
+    ws.room = { cats: new Map([[atk.id, atk], [def.id, def]]), sockets: new Map([[ws, atk]]) };
+    return { ws, atk, def, inbox };
+  }
+  async function land(h, payload) {
+    h.atk.lastStrike = 0;
+    h.inbox.length = 0;
+    combat.strike(h.ws, { target: h.def.id, angle: 0, flightMs: 0, ...payload });
+    await new Promise((r) => setTimeout(r, 30));
+    return {
+      fight: h.inbox.find((m) => m[0] === "fight")?.[1] ?? null,
+      info: h.inbox.filter((m) => m[0] === "info").map((m) => String(m[1])),
+    };
+  }
+  const guest = harness();
+  const throat999 = await land(guest, { zone: "throat", damage: 999, pawsDamage: 999 });
+  eq(
+    "strike 999 гостя: горло = таблица уровня 0, не 999",
+    [throat999.fight?.zone, throat999.fight?.damage, throat999.fight?.damage === 999],
+    ["throat", cfgReg.maxStrikeDamage("throat", 0), false],
+  );
+  const throat10 = await land(guest, { zone: "throat", damage: 10 });
+  eq("strike damage 10 гостя тоже игнорируется", throat10.fight?.damage, cfgReg.maxStrikeDamage("throat", 0));
+  const lvl9 = harness(9);
+  const throatLvl = await land(lvl9, { zone: "throat", damage: 999 });
+  eq(
+    "strike 999 при profile.sp.damageLevel 9: горло по формуле уровня 9",
+    throatLvl.fight?.damage,
+    cfgReg.maxStrikeDamage("throat", 9),
+  );
+  const throatUnder = await land(lvl9, { zone: "throat", damage: 10, pawsDamage: 1 });
+  eq("strike damage 10 при уровне 9 не занижает таблицу", throatUnder.fight?.damage, cfgReg.maxStrikeDamage("throat", 9));
+  guest.def.blocking = true;
+  const blocked = await land(guest, { zone: "muzzle", damage: 999, pawsDamage: 999 });
+  eq(
+    "блок: pawsDamage 999 игнорируется, лапы = таблица уровня 0",
+    [blocked.fight?.zone, blocked.fight?.part, blocked.fight?.damage],
+    ["paws", "Лапы", cfgReg.maxStrikeDamage("paws", 0)],
+  );
+  guest.def.blocking = false;
+  guest.def.armor = 0.9;
+  const armored = await land(guest, { zone: "throat", damage: 999 });
+  eq(
+    "броня режет уже серверный урон, не 999",
+    armored.fight?.damage,
+    Math.round(cfgReg.maxStrikeDamage("throat", 0) * combat.armorMultiplier(0.9)),
+  );
+  guest.def.armor = 0;
+  guest.def.x = 6;
+  guest.def.y = 6;
+  const diag = await land(guest, { zone: "throat", angle: 45, damage: 999 });
+  eq("диагональное горло с damage 999 не применяется", [diag.fight, diag.info.some((t) => t.includes("диагонали"))], [null, true]);
+  const saved = runtimeConfig.defaults();
+  try {
+    runtimeConfig.saveConfig({
+      ...saved,
+      universes: {
+        ...saved.universes,
+        strikeDamage: { levels: [0, 1, 2], default: 0, playerSelectable: true },
+      },
+    });
+    const capped = await land(harness(9), { zone: "throat", damage: 999 });
+    eq(
+      "реестр режет уровень 9 до видимого потолка 2, не до 999",
+      capped.fight?.damage,
+      cfgReg.maxStrikeDamage("throat", 2),
+    );
+  } finally {
+    runtimeConfig.saveConfig(saved);
+  }
 }
 
 // ---------- отчёт ----------

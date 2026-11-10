@@ -62,16 +62,16 @@ const angle = (Math.atan2(dYou.y - aYou.y, dYou.x - aYou.x) * 180) / Math.PI;
 console.log(`server=${url} room=${room} atk=${aYou.x},${aYou.y} def=${dYou.x},${dYou.y} angle=${angle.toFixed(0)}`);
 await sleep(80);
 
-/** Бросок с уроном бьющего 42 (горло, лаповый 5) и чтение fight у цели. */
+/** Бросок. Клиентский урон 999 игнорируется: гость бьёт таблицей уровня 0. */
 async function hit(zone, extra = {}) {
   await sleep(120);
   atk.inbox.length = 0;
   def.inbox.length = 0;
-  atk.send(JSON.stringify(["strike", { target: dYou.id, zone, angle, damage: 42, pawsDamage: 5, ...extra }]));
+  atk.send(JSON.stringify(["strike", { target: dYou.id, zone, angle, damage: 999, pawsDamage: 999, ...extra }]));
   return (await waitFor(def, "fight"))[1];
 }
 
-// 1) Броня 0,9: горло 42 проходит как round(42·0,38275) = 16.
+// 1) Броня 0,9: таблица горла 42 проходит как round(42·0,38275) = 16. Клиентский 999 не применяется.
 def.send(JSON.stringify(["armor", { armor: 0.9 }]));
 await sleep(80);
 let r = await hit("throat");
@@ -89,16 +89,16 @@ await sleep(80);
 r = await hit("throat");
 expect(`3) броня 0,0: горло 42 → ${fmt(r)}`, r.zone === "throat" && r.damage === 42);
 
-// 4) Броня 0,9 + блок: морда переводится в «Лапы», лаповый урон 5 проходит как 2.
+// 4) Броня 0,9 + блок: морда переводится в «Лапы», таблица лап 6 проходит как 2.
 def.send(JSON.stringify(["armor", { armor: 0.9 }]));
 def.send(JSON.stringify(["block", { on: true }]));
 await waitFor(atk, "block");
 r = await hit("muzzle");
 expect(`4) броня 0,9 + блок: морда → ${fmt(r)}`, r.zone === "paws" && r.part === "Лапы" && r.damage === 2);
 
-// 5) Хвост по бронированному блокирующему: остаётся хвостом, урон режется (33 → 13).
-r = await hit("tail", { damage: 33 });
-expect(`5) броня 0,9 + блок, хвост 33 → ${fmt(r)}`, r.zone === "tail" && r.part === "Хвост" && r.damage === 13);
+// 5) Хвост по бронированному блокирующему: остаётся хвостом, таблица 2 × 0,9 → 1.
+r = await hit("tail");
+expect(`5) броня 0,9 + блок, хвост таблицы → ${fmt(r)}`, r.zone === "tail" && r.part === "Хвост" && r.damage === 1);
 def.send(JSON.stringify(["block", { on: false }]));
 await waitFor(atk, "block");
 
