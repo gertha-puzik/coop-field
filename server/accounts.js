@@ -248,7 +248,9 @@ function publicAccount(acc) {
  * сюда не попадает — экспонируем только если он есть в characters аккаунта).
  * Волна «день рождения + аватарка»: birthday — строка «ГГГГ-ММ-ДД» либо null
  * (мусор и отсутствие честно схлопываются в null — полную валидность значения
- * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор); avatar —
+ * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор). Это вид
+ * ВЛАДЕЛЬЦА (/profiles/me и ответ PATCH): чужая карточка в profiles.card
+ * подменяет birthday на «ММ-ДД» без года, не трогая стор. avatar —
  * строка-URL «/avatars/file/<accountId>.<png|jpg>?v=<avatarAt>» либо null
  * (строго из пары profile.avatarExt ∈ {png,jpg} и avatarAt > 0 — мусор в
  * полях не изворачивается в ссылку, файловый маршрут — server/avatars.js).

@@ -20,6 +20,7 @@ import { deflateSync } from "node:zlib";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { WebSocket } from "ws";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "w4-module-smoke-"));
 
@@ -42,6 +43,7 @@ const auth = await import("../server/auth.js");
 const hunger = await import("../server/hunger.js");
 const runtimeConfig = await import("../server/runtime-config.js");
 const roomConfig = await import("../server/room-config.js");
+const cfgReg = await import("../server/cfg-registry.js");
 
 let failed = 0;
 let passed = 0;
@@ -354,8 +356,8 @@ eq(
 
 // PNG scanline reconstruction is in-place to avoid a second full RGBA buffer.
 // Exercise every predictor, including alpha crossing the 127 threshold.
-function pngFixture(filter,bpp=4){
- const w=3,h=2,pixels=Buffer.from(Array.from({length:w*h*bpp},(_,i)=>bpp===4&&i%4===3?[0,128,255][Math.floor(i/4)%3]:(i*37)%256));
+function pngFixture(filter,bpp=4,w=600,h=450){
+ const pixels=Buffer.from(Array.from({length:w*h*bpp},(_,i)=>bpp===4&&i%4===3?[0,128,255][Math.floor(i/4)%3]:(i*37)%256));
  const stride=w*bpp,raw=Buffer.alloc((stride+1)*h);
  for(let y=0;y<h;y++){
   raw[y*(stride+1)]=filter;
@@ -370,9 +372,125 @@ function pngFixture(filter,bpp=4){
  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=bpp===4?6:2;
  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]).toString('base64');
 }
+function sampleMask(decoded){
+ return [0,1,2].map((x)=>decoded.mask[x]).concat([0,1,2].map((x)=>decoded.mask[decoded.w+x]));
+}
+eq("PNG 3×2 is not a map paint",world.decodePaintPng(pngFixture(0,4,3,2)),null);
 for(let filter=0;filter<=4;filter++){
- eq(`PNG filter ${filter}: exact alpha`,[...world.decodePaintPng(pngFixture(filter)).mask],[0,1,1,0,1,1]);
- eq(`RGB filter ${filter}: opaque`,[...world.decodePaintPng(pngFixture(filter,3)).mask],[1,1,1,1,1,1]);
+ const rgba=world.decodePaintPng(pngFixture(filter));
+ eq(`PNG filter ${filter}: map size`,rgba&&rgba.w===600&&rgba.h===450,true);
+ eq(`PNG filter ${filter}: exact alpha`,sampleMask(rgba),[0,1,1,0,1,1]);
+ const rgb=world.decodePaintPng(pngFixture(filter,3));
+ eq(`RGB filter ${filter}: opaque`,sampleMask(rgb),[1,1,1,1,1,1]);
+}
+{
+ const chunk=(type,data)=>{const b=Buffer.alloc(data.length+12);b.writeUInt32BE(data.length);b.write(type,4);data.copy(b,8);return b;};
+ const ihdrOf=(w,h)=>{const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=6;return ihdr;};
+ const png=(w,h,raw)=>Buffer.concat([Buffer.from("89504e470d0a1a0a","hex"),chunk("IHDR",ihdrOf(w,h)),chunk("IDAT",deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]).toString("base64");
+ const bomb=png(600,450,Buffer.alloc(8*1024*1024));
+ eq("PNG bomb: oversized IDAT refused",world.decodePaintPng(bomb),null);
+ eq("PNG bomb: huge IHDR refused before inflate",world.decodePaintPng(png(8_000_000,8_000_000,Buffer.alloc(64))),null);
+ eq("PNG bomb: decoder still answers",world.decodePaintPng(pngFixture(0))?.w,600);
+}
+
+{
+  const before = auth.hitsMapSize();
+  for (let i = 0; i < 100; i++) auth.rate("127.0.0.1", "login", 0, 0);
+  eq("hits: loopback не пишет карту адресов", auth.hitsMapSize(), before);
+  for (let i = 0; i < 10000; i++) {
+    auth.rate(`203.${(i >>> 16) & 255}.${(i >>> 8) & 255}.${i & 255}`, "login", 6000, 0);
+  }
+  eq("hits: 10k разных IP не раздувают карту", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
+  eq("hits: потолок держит бакеты", auth.hitsMapSize() > 0 && auth.hitsMapSize() <= 4096, true);
+  const again = auth.rate("203.9.9.9", "login", 6000, 0);
+  eq("hits: новый IP после потолка всё ещё обслуживается", typeof again, "boolean");
+  eq("hits: после ещё одного IP карта не выросла за потолок", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
+}
+
+/* ---------- strike: урон считает сервер, клиентские 999 не применяются ----------
+ * Гость (нет profile.sp) — таблица уровня 0. Уровень из профиля проходит
+ * формулу maxStrikeDamage и режется потолком реестра. Сосед, зона и угол
+ * проверяются как раньше: диагональное горло с damage 999 не становится ударом. */
+{
+  const OPEN = WebSocket.OPEN;
+  function harness(damageLevel) {
+    const inbox = [];
+    const ws = {
+      readyState: OPEN,
+      send(raw) { inbox.push(JSON.parse(String(raw))); },
+    };
+    if (damageLevel !== undefined) ws.account = { profile: { sp: { damageLevel } } };
+    const atk = { id: 11, login: "Альфа", x: 5, y: 5, lastStrike: 0, armor: 0 };
+    const def = { id: 12, login: "Бета", x: 6, y: 5, blocking: false, armor: 0 };
+    ws.room = { cats: new Map([[atk.id, atk], [def.id, def]]), sockets: new Map([[ws, atk]]) };
+    return { ws, atk, def, inbox };
+  }
+  async function land(h, payload) {
+    h.atk.lastStrike = 0;
+    h.inbox.length = 0;
+    combat.strike(h.ws, { target: h.def.id, angle: 0, flightMs: 0, ...payload });
+    await new Promise((r) => setTimeout(r, 30));
+    return {
+      fight: h.inbox.find((m) => m[0] === "fight")?.[1] ?? null,
+      info: h.inbox.filter((m) => m[0] === "info").map((m) => String(m[1])),
+    };
+  }
+  const guest = harness();
+  const throat999 = await land(guest, { zone: "throat", damage: 999, pawsDamage: 999 });
+  eq(
+    "strike 999 гостя: горло = таблица уровня 0, не 999",
+    [throat999.fight?.zone, throat999.fight?.damage, throat999.fight?.damage === 999],
+    ["throat", cfgReg.maxStrikeDamage("throat", 0), false],
+  );
+  const throat10 = await land(guest, { zone: "throat", damage: 10 });
+  eq("strike damage 10 гостя тоже игнорируется", throat10.fight?.damage, cfgReg.maxStrikeDamage("throat", 0));
+  const lvl9 = harness(9);
+  const throatLvl = await land(lvl9, { zone: "throat", damage: 999 });
+  eq(
+    "strike 999 при profile.sp.damageLevel 9: горло по формуле уровня 9",
+    throatLvl.fight?.damage,
+    cfgReg.maxStrikeDamage("throat", 9),
+  );
+  const throatUnder = await land(lvl9, { zone: "throat", damage: 10, pawsDamage: 1 });
+  eq("strike damage 10 при уровне 9 не занижает таблицу", throatUnder.fight?.damage, cfgReg.maxStrikeDamage("throat", 9));
+  guest.def.blocking = true;
+  const blocked = await land(guest, { zone: "muzzle", damage: 999, pawsDamage: 999 });
+  eq(
+    "блок: pawsDamage 999 игнорируется, лапы = таблица уровня 0",
+    [blocked.fight?.zone, blocked.fight?.part, blocked.fight?.damage],
+    ["paws", "Лапы", cfgReg.maxStrikeDamage("paws", 0)],
+  );
+  guest.def.blocking = false;
+  guest.def.armor = 0.9;
+  const armored = await land(guest, { zone: "throat", damage: 999 });
+  eq(
+    "броня режет уже серверный урон, не 999",
+    armored.fight?.damage,
+    Math.round(cfgReg.maxStrikeDamage("throat", 0) * combat.armorMultiplier(0.9)),
+  );
+  guest.def.armor = 0;
+  guest.def.x = 6;
+  guest.def.y = 6;
+  const diag = await land(guest, { zone: "throat", angle: 45, damage: 999 });
+  eq("диагональное горло с damage 999 не применяется", [diag.fight, diag.info.some((t) => t.includes("диагонали"))], [null, true]);
+  const saved = runtimeConfig.defaults();
+  try {
+    runtimeConfig.saveConfig({
+      ...saved,
+      universes: {
+        ...saved.universes,
+        strikeDamage: { levels: [0, 1, 2], default: 0, playerSelectable: true },
+      },
+    });
+    const capped = await land(harness(9), { zone: "throat", damage: 999 });
+    eq(
+      "реестр режет уровень 9 до видимого потолка 2, не до 999",
+      capped.fight?.damage,
+      cfgReg.maxStrikeDamage("throat", 2),
+    );
+  } finally {
+    runtimeConfig.saveConfig(saved);
+  }
 }
 
 // ---------- отчёт ----------

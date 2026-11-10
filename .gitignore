@@ -10,5 +10,9 @@ data/
 www-grotto/
 www-elyria/
 
+# Решение владелицы 2026-11-10: пак окрасов CatWar в репозитории не хранится.
+# Локальный остаток не должен вернуться коммитом.
+public/catwar/
+
 # graphify local knowledge graph (built per clone, never committed)
 graphify-out/

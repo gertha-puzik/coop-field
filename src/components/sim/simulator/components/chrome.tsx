@@ -17,6 +17,7 @@ import { fmtSec } from '../sim-model';
 import { damageLevelLabel, type SimSettings } from '@/lib/sim/settings';
 import { THEMES, type ThemeId } from '@/lib/sim/theme';
 import { roomTitle, type CoopRoomInfo } from '@/lib/net/coop';
+import { tabTitle } from '@/lib/net/modes';
 
 /**
  * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
@@ -118,6 +119,16 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     canSwitch = true,
     role,
   } = props;
+  // Вкладка называет комнату, в которую вошли (то же людское имя, что в выборе).
+  // Размонтирование — «Главное меню» или уход со страницы — возвращает заголовок маршрута.
+  useEffect(() => {
+    if (!roomCode) return;
+    const previous = document.title;
+    document.title = tabTitle(roomTitle(roomCode));
+    return () => {
+      document.title = previous;
+    };
+  }, [roomCode]);
   /** Мобильное меню игровой панели (<lg): вся правая группа кнопок шапки
    *  сворачивается в шестерёнку, раскрывается в вертикальный столбец тех же
    *  элементов. На lg+ меню не участвует в рендере — строка контролов прежняя. */

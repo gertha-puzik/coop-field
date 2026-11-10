@@ -45,7 +45,6 @@ import {
   activityOf,
   avatarOf,
   consumeCatalogDeepLink,
-  homeRoomTitle,
   moonsFromMs,
   moonsText,
   plural,
@@ -68,20 +67,19 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Unknown-значения не выезжают наверх реверсом: неизвестное остаётся
  * неизвестным внизу списка в любом направлении. */
 
-type SortKey = 'name' | 'status' | 'born' | 'seen' | 'home' | 'age' | 'act';
+type SortKey = 'name' | 'status' | 'born' | 'seen' | 'age' | 'act';
 
 const SORT_TITLE: Record<SortKey, string> = {
   name: 'Персонаж',
   status: 'Статус',
   born: 'Дата рождения',
   seen: 'Последний вход',
-  home: 'Дом',
   age: 'Возраст',
   act: 'Активность',
 };
 
 /** Стартовое направление при выборе колонки (как в каталоге-референсе). */
-const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, home: 1, age: -1, act: -1 };
+const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, age: -1, act: -1 };
 
 const RANK_STATUS: Record<StatusTone, number> = { online: 0, sleep: 1, recent: 2, away: 3, unknown: 4 };
 const RANK_ACT: Record<ActivityTone, number> = { shifting: 0, positive: 1, ideal: 2, unknown: 3 };
@@ -115,7 +113,6 @@ type RowModel = {
   bornTs: number | null;
   seenAgo: string;
   seenTs: number | null;
-  home: string | null;
   moons: string;
   moonsN: number | null;
   sprite: string | null;
@@ -133,7 +130,6 @@ function makeRow(card: ProfileCard, clock: number): RowModel {
     bornTs: card.createdAt > 0 ? card.createdAt : null,
     seenAgo: seen > 0 ? ruAgo(seen, clock) : 'неизвестно',
     seenTs: seen > 0 ? seen : null,
-    home: homeRoomTitle(card.lastSeenRoom),
     moons: moonsText(card.createdAt, clock),
     moonsN: moonsFromMs(card.createdAt, clock),
     sprite: spriteUrl(avatarOf(card)),
@@ -142,7 +138,7 @@ function makeRow(card: ProfileCard, clock: number): RowModel {
 
 function cmpModels(a: RowModel, b: RowModel, key: SortKey, dir: 1 | -1): number {
   // null-пары («нет данных») сравниваются ДО умножения на направление:
-  // неизвестная дата/дом/вход не поднимается реверсом вверх.
+  // неизвестная дата или вход не поднимается реверсом вверх.
   const nullsLast = (x: unknown, y: unknown): number => {
     if (x === null && y === null) return 0;
     if (x === null) return 1;
@@ -167,10 +163,6 @@ function cmpModels(a: RowModel, b: RowModel, key: SortKey, dir: 1 | -1): number 
     case 'age': {
       const n = nullsLast(a.moonsN, b.moonsN);
       return n !== 0 ? n : ((a.moonsN ?? 0) - (b.moonsN ?? 0)) * dir;
-    }
-    case 'home': {
-      const n = nullsLast(a.home, b.home);
-      return n !== 0 ? n : (a.home ?? '').localeCompare(b.home ?? '', 'ru') * dir;
     }
   }
   return 0;
@@ -279,9 +271,6 @@ function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
       >
         {m.seenAgo}
       </span>
-      <span className={`${styles.homeC} ${styles.cHome}`} title={m.home ? 'комната последней записи кота' : 'дом неизвестен — кота в поле не видели'}>
-        {m.home || '—'}
-      </span>
       <span className={`${styles.ageC} ${styles.cAge}`} title="возраст карточки в лунах (1 луна = 30 дней с регистрации)">
         {m.moons}
       </span>
@@ -322,7 +311,6 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
             <div>{SORT_TITLE.name}</div>
             <div className={styles.cBorn}>{SORT_TITLE.born}</div>
             <div className={styles.cSeen}>{SORT_TITLE.seen}</div>
-            <div className={styles.cHome}>{SORT_TITLE.home}</div>
             <div className={styles.cAge}>{SORT_TITLE.age}</div>
             <div className={styles.cAct}>{SORT_TITLE.act}</div>
             <div className={styles.cStatus}>{SORT_TITLE.status}</div>
@@ -337,7 +325,6 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
                 </span>
                 {strip('84%')}
                 {strip('96%')}
-                {strip('74%')}
                 {strip('58%')}
                 {strip('88%')}
                 {pill(78)}
@@ -381,7 +368,7 @@ function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
       <span className={`${styles.pill} ${STATUS_PILL[m.status]}`}>{STATUS_TEXT[m.status]}</span>
       <span className={styles.tAge}>
         <b>{m.moons}</b>
-        {` · ${m.home || 'дом неизвестен'}`}
+        {` · ${m.seenAgo}`}
       </span>
     </button>
   );
@@ -423,9 +410,8 @@ export default function PlayersCatalog() {
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
-  /** #84 ч.2: ?mine= — подсветка возврата из редактора; в3: ?coat= — автозаполнение кода KNS. */
+  /** #84 ч.2: ?mine= — подсветка возврата из редактора. */
   const [mineFlash, setMineFlash] = useState<string | null>(null);
-  const [coatLink, setCoatLink] = useState<string | null>(null);
   /** Момент последней успешной загрузки: от него считаются статусы и
    *  «обновлено …» — «сейчас» фиксируется, а не тикает на каждом рендере. */
   const [fetchedAt, setFetchedAt] = useState(0);
@@ -462,7 +448,6 @@ export default function PlayersCatalog() {
       deepLinkHoldRef.current = !!wantId;
       if (wantId) setProfileWait(true);
       setMineFlash(dl.mine); // null без параметра — подсветки нет
-      setCoatLink(dl.coat ?? null); // null без coat — автозаполнения нет
       const profileP = wantId ? httpProfileById(wantId) : null;
       const me = await httpMe();
       if (dead) return;
@@ -662,7 +647,6 @@ export default function PlayersCatalog() {
         onSaved={handleSaved}
         onClose={closeCard}
         mineHighlight={mineFlash}
-        coatLink={coatLink}
       />
     );
   }
@@ -839,14 +823,6 @@ export default function PlayersCatalog() {
                     active={sort.key === 'seen'}
                     dir={sort.dir}
                     onSort={() => applySort('seen')}
-                  />
-                  <SortHead
-                    label={SORT_TITLE.home}
-                    hint="комната последней записи кота"
-                    cellClass={styles.cHome}
-                    active={sort.key === 'home'}
-                    dir={sort.dir}
-                    onSort={() => applySort('home')}
                   />
                   <SortHead
                     label={SORT_TITLE.age}
