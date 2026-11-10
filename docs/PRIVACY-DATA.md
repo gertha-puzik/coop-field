@@ -22,7 +22,7 @@ per account:
 | `pass` | `{algo:"scrypt", N, r, p, keylen, salt, hash}` | Passwords never leave `accounts.js` as plaintext; scrypt (N=16384, r=8, p=1, 32-byte key), random 16-byte salt, `timingSafeEqual` verification. Minimum password length: 8 (`PASS_MIN`) |
 | `role` | `registered` \| `admin` | `admin` is granted ONLY by the owner's one-shot CLI `scripts/make-admin.mjs` (server stopped); `BOOTSTRAP_ADMIN` names no longer auto-promote (S1) |
 | `createdAt` | epoch ms | |
-| `profile` | `{displayName, bio?, avatarCharacterId?, sp?}` | the public card + the private part (`sp`, §3) |
+| `profile` | `{displayName, bio?, birthday?, avatarCharacterId?, sp?}` | `birthday` is stored as a full `YYYY-MM-DD` or null for the owner. Stranger catalog/card responses do not include the year (§3). `sp` stays private |
 | `characters` | `[{id, name, sprite, size}]` | sprite ids whitelist-checked against the live sprite catalogue; size clamped 60–100 |
 | `activeCharacterId` | character id | |
 
@@ -61,9 +61,9 @@ Who sees what (single DTO source: `accounts.publicProfile` / `accounts.publicAcc
 | Audience | Fields |
 | --- | --- |
 | Owner (WS `whoami`, `GET /auth/me`) | `accountId`, `login`, `role`, `profile.displayName`, `characters[]`, `activeCharacterId`, `character` (`publicAccount`) |
-| Everyone (catalog `GET /profiles`, card `GET /profiles/:id`) | `accountId`, `displayName`, `bio`, `avatarCharacterId`, `characters[{id,name,sprite,size}]`, `activeCharacterId`, `createdAt`, plus read-only `lastSeenAt` / `lastSeenRoom` (derived, §5) — **no login, no role, no password, no sp** |
+| Everyone (catalog `GET /profiles`, card `GET /profiles/:id`) | `accountId`, `displayName`, `bio`, `birthday` as `MM-DD` or null (month and day only — the stored year is not in the JSON), `avatar`, `avatarCharacterId`, `characters[{id,name,sprite,size}]`, `activeCharacterId`, `createdAt`, plus read-only `lastSeenAt` (derived, §5) — **no `lastSeenRoom`, no birth year, no login, no role, no password, no sp** |
 | Guest in a room | `publicCat` frames: id, login (character name), color, sprite, x/y, deg, size; `roomsinfo` occupancy (a guest sees a closed room's count but not its logins — the "ghost" rule); `chatlog` — the room's last ≤40 chat messages |
-| Owner only (`GET/PATCH /profiles/me`) | everything above **plus `sp`** (hidden per-player parameters `periodSec`/`damageLevel`/`armorLevel`, stored in `profile.sp`, partial-merged on PATCH — an untouched key survives) |
+| Owner only (`GET/PATCH /profiles/me`) | the owner DTO from `publicProfile` (full `birthday` `YYYY-MM-DD` so the date can be edited) **plus `sp`** (hidden per-player parameters `periodSec`/`damageLevel`/`armorLevel`, stored in `profile.sp`, partial-merged on PATCH — an untouched key survives). `GET /profiles/:id` of one's own id is still the stranger card: month-day birthday, no year |
 
 `sp` is the only profile block that is deliberately owner-private: it never
 enters the catalog, another player's card, `whoami` or `/auth/me` — and not
@@ -72,9 +72,13 @@ even the owner's own `/profiles/:id` card route. Pinned by
 An account row without a filled `profile` has **no** public card at all
 (404 by id, absent from the catalog and search).
 
-Known honest leak of the derivation source: "last seen" for a cat is keyed by
+`lastSeenRoom` is not part of the public DTO. Elysiae has a single field
+(Elision), so a "last room" would not tell another player anything; the
+catalog and profile UI do not render a room and do not substitute a placeholder.
+
+Known honest limit of the derivation source: `lastSeenAt` for a cat is keyed by
 the character NAME in the position book, so two same-named characters are
-indistinguishable there (documented limitation, displayed as-is).
+indistinguishable there. The timestamp is still published; the room is not.
 
 ## 4. Server logs (facts from `grep console\.\* server/*.js`)
 
