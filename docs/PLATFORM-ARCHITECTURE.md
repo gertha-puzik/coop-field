@@ -219,7 +219,9 @@ reset/restore с подтверждением.
   размера; клиент НЕ фильтрует сам.
 - `GET /profiles/:id` — карточка (`accountId` + publicProfile); нет карточки/легаси-строка →
   единый 404 `unknown` (существование скрытых аккаунтов не раскрывается).
-- `GET /profiles/me` — своя карточка по сессии; гость → 401 `auth_required`.
+  Чужим `birthday` — только `ММ-ДД` (год остаётся в сторе), `lastSeenAt` остаётся,
+  `lastSeenRoom` в JSON нет.
+- `GET /profiles/me` — своя карточка по сессии, с полной `birthday` `ГГГГ-ММ-ДД`; гость → 401 `auth_required`.
 - `PATCH /profiles/me` — правка ТОЛЬКО своей записи: плоские `displayName` (1–24 видимых
   символа), `bio` (≤280), `avatarCharacterId` (null или id из своих characters);
   идентификационные ключи (id/login/role/…) отбиваются `unknown_keys`; невидимые/bidi-символы

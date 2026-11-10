@@ -6,9 +6,10 @@
  * данных, капсулы-резюме, грид достижений и таблица статистики.
  *
  * ЧЕСТНОСТЬ ДАННЫХ: каждый вывод лежит на полях реального DTO карточки
- * (server/profiles.js): createdAt → дата рождения/возраст, lastSeenAt →
+ * (server/profiles.js): createdAt → дата регистрации/возраст, lastSeenAt →
  * статус/активность/«последний вход» (пороги в players-format.ts),
- * characters → аватар/персонажи/размер, lastSeenRoom → «дом» (Элизия).
+ * characters → аватар/персонажи/размер, birthday → день и месяц
+ * (год только на своей карточке). Комнату последней записи не показываем.
  * Чего в аккаунтах нет — того на странице нет: боевые счётчики («убито
  * мышей» и пр.) сервер не собирает, поэтому достижения и статистика —
  * только вычислимые факты карточки, без выдуманных чисел.
@@ -41,7 +42,6 @@ import {
   activityOf,
   avatarOf,
   daysSince,
-  homeRoomTitle,
   moonsText,
   plural,
   ruAgo,
@@ -133,7 +133,7 @@ const stroke = {
   strokeLinejoin: 'round' as const,
 };
 
-type InfoIcon = 'id' | 'calendar' | 'moon' | 'activity' | 'home' | 'paw' | 'feather';
+type InfoIcon = 'id' | 'calendar' | 'moon' | 'activity' | 'paw' | 'feather';
 
 const INFO_ICONS: Record<InfoIcon, ReactNode> = {
   id: (
@@ -160,13 +160,6 @@ const INFO_ICONS: Record<InfoIcon, ReactNode> = {
   activity: (
     <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
       <path d="M3 12.2h3.5l2.4-5.8 4 11.2 2.4-5.4H21" />
-    </svg>
-  ),
-  home: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <path d="M3.6 10.2 12 3.6l8.4 6.6" />
-      <path d="M5.6 9.6V20a1 1 0 0 0 1 1h10.8a1 1 0 0 0 1-1V9.6" />
-      <path d="M9.8 21v-6.2h4.4V21" />
     </svg>
   ),
   paw: (
@@ -612,7 +605,6 @@ const SKEL_INFO: { icon: InfoIcon; label: string; width: string }[] = [
   { icon: 'calendar', label: 'Дата рождения', width: 'min(40%, 150px)' },
   { icon: 'moon', label: 'Возраст (в лунах)', width: 'min(36%, 120px)' },
   { icon: 'activity', label: 'Последний вход', width: 'min(38%, 130px)' },
-  { icon: 'home', label: 'Дом', width: 'min(32%, 110px)' },
   { icon: 'paw', label: 'Персонажи', width: 'min(45%, 170px)' },
   { icon: 'feather', label: 'О себе', width: 'min(70%, 260px)' },
 ];
@@ -770,7 +762,6 @@ export default function PlayerProfile({
   const seen = card.lastSeenAt ?? 0;
   const status = statusOf(seen, now);
   const activity = activityOf(seen, now);
-  const home = homeRoomTitle(card.lastSeenRoom);
   const days = daysSince(card.createdAt, now);
   const char = avatarOf(card);
   const name = card.displayName || 'Безымянный кот';
@@ -779,9 +770,11 @@ export default function PlayerProfile({
   const birth = ruDate(card.createdAt);
   const birthNote =
     card.createdAt > 0 ? `дата регистрации аккаунта — ${ruDate(card.createdAt)}` : 'дата регистрации неизвестна';
-  /** День рождения владельца, если он указан: приоритетнее даты
-   *  регистрации; parse-слой уже обезвредил мусор в null. */
-  const ownBirthday = ruBirthday(shownCard.birthday);
+  /** День рождения, если он указан. Чужим — «5 марта» без года даже если
+   *  в строке случайно оказалась полная дата. Своя карточка (mine) может
+   *  показать год: его прислал /profiles/me, им же правят поле. Пусто →
+   *  строка даты регистрации, дату не выдумываем. */
+  const ownBirthday = ruBirthday(shownCard.birthday, mine);
   const seenAgo = seen > 0 ? ruAgo(seen, now) : UNKNOWN;
 
   // честная строка-резюме: только факты карточки в читаемом виде
@@ -798,7 +791,6 @@ export default function PlayerProfile({
       : { icon: 'calendar', label: 'Дата рождения', value: birth, title: birthNote },
     { icon: 'moon', label: 'Возраст (в лунах)', value: moonsLine },
     { icon: 'activity', label: 'Последний вход', value: seenAgo, title: seen > 0 ? ruDate(seen) : 'нет записей о входе' },
-    { icon: 'home', label: 'Дом', value: home || UNKNOWN, title: 'комната последней записи кота на поле' },
     {
       icon: 'paw',
       label: 'Персонажи',
@@ -815,7 +807,6 @@ export default function PlayerProfile({
 
   const badges: { text: string; gold: boolean }[] = [];
   if (activity !== 'unknown') badges.push({ text: `${ACTIVITY_TEXT[activity]} активность`, gold: activity === 'ideal' });
-  if (home) badges.push({ text: `дом: ${home}`, gold: false });
   if (card.createdAt > 0) badges.push({ text: `${moonsLine} с нами`, gold: false });
 
   return (

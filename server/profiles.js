@@ -29,12 +29,14 @@
  *                          пустой после чистки — без фильтра); total — дёшево:
  *                          длина уже собранного отфильтрованного набора
  *                          (legacy, НЕ контрактное поле — не полагаться).
- *                          Карточка каталога несёт lastSeenAt/lastSeenRoom
- *                          (P5-редизайн: время последнего появления и комната
- *                          последней записи кота; оба — честные read-only
- *                          источники: сессии auth.js + книга позиций persist.js).
+ *                          Карточка каталога несёт lastSeenAt (время
+ *                          последнего появления: сессии auth.js + книга
+ *                          позиций persist.js). lastSeenRoom не отдаётся:
+ *                          на Элизии одна локация, комнату не выдумываем.
+ *                          birthday чужим — «ММ-ДД» без года; полная
+ *                          «ГГГГ-ММ-ДД» остаётся в сторе и в /profiles/me.
  *   GET    /profiles/:id   200 { ok, accountId, ...publicProfile,
- *                          lastSeenAt, lastSeenRoom } | 404 unknown
+ *                          birthday «ММ-ДД»|null, lastSeenAt } | 404 unknown
  *   прочие суб-пути/методы 404 not_found — статике ничего не проваливается.
  *
  * Идентичность строго из серверной сессии (auth.sessionFromRequest): ни один
@@ -152,14 +154,20 @@ function cleanText(raw) {
   return { text, len: Array.from(text).length };
 }
 
+/** День рождения для чужой карточки: «ММ-ДД», без года. Полная «ГГГГ-ММ-ДД»
+ *  остаётся в accounts.json и в ответе владельцу (/profiles/me, PATCH).
+ *  Мусор и пустота уже схлопнуты publicProfile в null — здесь не выдумываем дату. */
+function publicBirthday(full) {
+  return typeof full === "string" && /^\d{4}-\d{2}-\d{2}$/.test(full) ? full.slice(5) : null;
+}
+
 /** Карточка каталога/страницы: accountId + публичный DTO без login/role/пароля.
- *  P5-редизайн (аддитивно, только elyria-поверхность): lastSeenAt — время
- *  последнего появления (максимум из свежайшей живой сессии аккаунта и
- *  последней записи позиции кота в книге «теста»; 0 = данных нет — клиент
- *  рисует «неизвестно», а не выдумывает), lastSeenRoom — комната последней
- *  записи кота ("test"/Элизия; null = кота в поле не видели). Оба поля
- *  только читают существующие источники: сессии (auth.js) и книгу позиций
- *  (persist.js); никто ничего не дописывает. Книга позиций ключуется ИМЕНЕМ
+ *  lastSeenAt — время последнего появления (максимум из свежайшей живой
+ *  сессии аккаунта и последней записи позиции кота в книге «теста»; 0 = данных
+ *  нет — клиент рисует «неизвестно», а не выдумывает). Комнату последней
+ *  записи (lastSeenRoom) не отдаём: на Элизии одна локация, поле бессмысленно,
+ *  и пустоту не подменяем выдуманной комнатой. Источники только читаются:
+ *  сессии (auth.js) и книга позиций (persist.js). Книга ключуется ИМЕНЕМ
  *  персонажа — одноимённые коты неразличимы, это честно отражает источник. */
 function card(acc, sessionSeen) {
   const chars = Array.isArray(acc.characters) ? acc.characters : [];
@@ -170,11 +178,12 @@ function card(acc, sessionSeen) {
     if (ts > catTs) catTs = ts;
   }
   const seen = Math.max(catTs, sessionSeen.get(String(acc.id || "")) || 0);
+  const pub = publicProfile(acc);
   return {
     accountId: String(acc.id || ""),
-    ...publicProfile(acc),
+    ...pub,
+    birthday: publicBirthday(pub && pub.birthday),
     lastSeenAt: seen,
-    lastSeenRoom: catTs > 0 ? "test" : null,
   };
 }
 

@@ -2,7 +2,7 @@
  * Чистые хелперы представления для страниц игроков (P5-редизайн каталога):
  * даты и «луны», статусы и активность из lastSeenAt, аватар/спрайт карточки.
  * Всё детерминировано и без внешних источников: любой вывод ЛЕЖИТ на данных
- * DTO карточки (createdAt/lastSeenAt/lastSeenRoom) — отсутствующие данные
+ * DTO карточки (createdAt/lastSeenAt/birthday) — отсутствующие данные
  * оформляются честным «неизвестно»/«—», а не выдуманным значением.
  *
  * Пороги статуса/активности — сознательное решение редизайна: сервер не
@@ -11,7 +11,6 @@
  * Формулировки согласованы с референсом лучших профилей жанра.
  */
 
-import { namedRoom } from '@/lib/net/modes';
 import type { ProfileCharacter } from '@/lib/net/http-profiles';
 
 /** Луна = 30 дней (жанровый «месяц» котёнка). */
@@ -58,17 +57,34 @@ export function ruDate(ts: number): string {
   }
 }
 
-/** «8 ноября 2011» из строки-маски ГГГГ-ММ-ДД (день рождения профиля);
- *  мусор или пусто → '' — карточка останется на честных данных DTO. */
-export function ruBirthday(raw: string | null | undefined): string {
-  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return '';
-  const year = Number(raw.slice(0, 4));
-  const month = Number(raw.slice(5, 7));
-  const day = Number(raw.slice(8, 10));
-  // только реальная дата календаря: «30 февраля» — мусор, а не день рождения
-  const probe = new Date(year, month - 1, day);
-  if (probe.getDate() !== day || probe.getMonth() !== month - 1 || probe.getFullYear() !== year) return '';
-  return `${day} ${MONTHS_GEN[month - 1]} ${year}`;
+/** «5 марта» из публичной «ММ-ДД» или полной «ГГГГ-ММ-ДД».
+ *  Год печатается только при withYear (своя карточка, где /profiles/me
+ *  вернул полную дату). Чужая карточка год не показывает. Мусор или
+ *  пусто → '' — отсутствие остаётся пустым, дату не выдумываем.
+ *  «ММ-ДД» проверяется на календаре високосного 2000 года, чтобы
+ *  29 февраля прошло, а 30 февраля — нет. */
+export function ruBirthday(raw: string | null | undefined, withYear = false): string {
+  if (!raw) return '';
+  const full = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const monthDay = /^(\d{2})-(\d{2})$/.exec(raw);
+  let year: number | null = null;
+  let month = 0;
+  let day = 0;
+  if (full) {
+    year = Number(full[1]);
+    month = Number(full[2]);
+    day = Number(full[3]);
+  } else if (monthDay) {
+    month = Number(monthDay[1]);
+    day = Number(monthDay[2]);
+  } else {
+    return '';
+  }
+  const probeYear = year ?? 2000;
+  const probe = new Date(probeYear, month - 1, day);
+  if (probe.getDate() !== day || probe.getMonth() !== month - 1 || probe.getFullYear() !== probeYear) return '';
+  const label = `${day} ${MONTHS_GEN[month - 1]}`;
+  return withYear && year !== null ? `${label} ${year}` : label;
 }
 
 /** «8 ноября, 14:32» — момент последней успешной загрузки каталога. */
@@ -197,15 +213,6 @@ export function avatarOf(card: CardLike): ProfileCharacter | null {
 /** URL спрайта персонажа (общий whitelist сервера; пустой спрайт → null). */
 export function spriteUrl(char: ProfileCharacter | null): string | null {
   return char && char.sprite ? `/sprites/${char.sprite}.png` : null;
-}
-
-/** Человеческое название комнаты «дома»: канон каталога комнат, иначе честный
- *  код комнаты (без выдуманных названий — в каталоге этого варианта комнаты
- *  может не оказаться, тогда показываем ровно то, что есть в данных). */
-export function homeRoomTitle(room: string | null | undefined): string | null {
-  if (!room) return null;
-  const hit = namedRoom(room);
-  return hit ? hit.title : room;
 }
 
 /* ---------------------- deep-link параметры каталога ---------------------- */

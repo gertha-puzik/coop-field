@@ -12,8 +12,10 @@
  *     чужой id и перелив длин → 400 invalid; идентификационные ключи тела
  *     (login, accountId) → 400 unknown_keys; пустое тело → empty_patch;
  *     битый JSON → invalid_body; чужой Origin → 403 csrf;
- *  4.5. birthday (день рождения): валидная «ГГГГ-ММ-ДД» пишется и читается
- *     (в me и публичной карточке по id); вложенная profile.birthday — тот же
+ *  4.5. birthday (день рождения): валидная «ГГГГ-ММ-ДД» пишется в стор и
+ *     читается целиком из /profiles/me и ответа PATCH; чужая карточка и
+ *     каталог отдают только «ММ-ДД» (года в теле нет) и не несут
+ *     lastSeenRoom; lastSeenAt на карточке остаётся числом; вложенная profile.birthday — тот же
  *     валидатор; невалиды («dfg34», «30123-45-678», «2026-13-01»,
  *     «2026-02-30», «1899-12-31», будущая дата) → 400 invalid без изменения
  *     профиля; null/пустая строка → сброс в null;
@@ -40,7 +42,7 @@
  * DATA чистится при выходе.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
@@ -117,6 +119,9 @@ const cardsArePublic = (items) =>
       !("role" in it) &&
       !("pass" in it) &&
       !("password" in it) &&
+      !("lastSeenRoom" in it) &&
+      (it.birthday == null || /^\d{2}-\d{2}$/.test(it.birthday)) &&
+      typeof it.lastSeenAt === "number" &&
       typeof it.accountId === "string" &&
       typeof it.displayName === "string" &&
       typeof it.bio === "string" &&
@@ -329,9 +334,34 @@ try {
   const bdMe = await probe({ path: "/profiles/me", cookie });
   check(bdMe.status === 200 && bdMe.json?.birthday === bd, "birthday: свежий GET /profiles/me несёт ту же строку");
   const bdCard = await probe({ path: `/profiles/${myAccount}` });
+  const bdCardText = bdCard.text || "";
   check(
-    bdCard.status === 200 && bdCard.json?.birthday === bd,
-    "birthday: публичная карточка по id несёт ту же строку",
+    bdCard.status === 200 &&
+      bdCard.json?.birthday === "07-24" &&
+      !bdCardText.includes(bd) &&
+      !bdCardText.includes("lastSeenRoom"),
+    "birthday: чужая карточка — день и месяц без года и без lastSeenRoom",
+  );
+  check(
+    typeof bdCard.json?.lastSeenAt === "number" && bdCard.json.lastSeenAt > 0 && bdCard.json.lastSeenAt <= Date.now(),
+    "lastSeenAt: чужая карточка по-прежнему несёт время последнего появления",
+  );
+  const bdList = await probe({ path: "/profiles" });
+  const bdItem = (bdList.json?.items || []).find((it) => it.accountId === myAccount);
+  const bdListText = bdList.text || "";
+  check(
+    bdItem &&
+      bdItem.birthday === "07-24" &&
+      !bdListText.includes(bd) &&
+      !bdListText.includes("lastSeenRoom") &&
+      typeof bdItem.lastSeenAt === "number" &&
+      bdItem.lastSeenAt > 0,
+    "birthday: каталог — ММ-ДД, без года и без lastSeenRoom, lastSeenAt на месте",
+  );
+  const disk = JSON.parse(readFileSync(path.join(DATA, "accounts.json"), "utf8"));
+  check(
+    disk.accounts?.[myAccount]?.profile?.birthday === bd,
+    "birthday: в accounts.json у владельца остаётся полная ГГГГ-ММ-ДД",
   );
   // вложенная форма profile.birthday — тот же валидатор sanitizePatch
   const bdNested = await probe({
@@ -343,6 +373,11 @@ try {
   check(
     bdNested.status === 200 && bdNested.json?.birthday === "1990-01-01",
     "birthday: вложенная форма profile.birthday тоже работает",
+  );
+  const bdNestedCard = await probe({ path: `/profiles/${myAccount}` });
+  check(
+    bdNestedCard.json?.birthday === "01-01" && !(bdNestedCard.text || "").includes("1990-01-01"),
+    "birthday: после вложенной правки чужая карточка снова без года",
   );
   // (c') невалиды: маска, реальность календаря и диапазон 01.01.1900 — сегодня
   const dayAfter = new Date(Date.now() + 30 * 86_400_000);
