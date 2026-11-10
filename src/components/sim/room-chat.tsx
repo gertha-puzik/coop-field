@@ -25,11 +25,13 @@ export function RoomChat({
   meId,
   canSend,
   onSend,
+  onClose,
 }: {
   lines: CoopChatMessage[];
   meId: number | null;
   canSend: boolean;
   onSend: (text: string) => boolean;
+  onClose?: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [stuck, setStuck] = useState(true);
@@ -57,7 +59,21 @@ export function RoomChat({
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--sim-line)] px-3 py-2">
         <h2 className="text-sm font-bold tracking-wide text-[var(--sim-text)]">Чат</h2>
-        <p className="text-[11px] text-[var(--sim-text-faint)]">Enter — написать · Esc — на поле</p>
+        <div className="flex min-w-0 items-center gap-2">
+          {/* Подсказку про клавиатуру показываем только на широких экранах (lg+) */}
+          <p className="hidden text-[11px] text-[var(--sim-text-faint)] lg:block">Enter — написать · Esc — на поле</p>
+          {/* Мобильная раскрытая панель закрывается крестиком; на lg+ кнопки нет */}
+          {onClose ? (
+            <button
+              type="button"
+              aria-label="Закрыть чат"
+              onClick={onClose}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[var(--sim-line-strong)] text-xs leading-none text-[var(--sim-text-muted)] hover:border-[var(--sim-line-hover)] hover:text-[var(--sim-text)] lg:hidden"
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
       </div>
       {/* ввод сверху: не нужно тянуться вниз, чтобы написать в комнату */}
       <form onSubmit={submit} className="flex items-center gap-2 border-b border-[var(--sim-line)] p-2">

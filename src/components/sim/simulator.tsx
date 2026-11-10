@@ -4628,6 +4628,23 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     return rows;
   })();
 
+  // Мобильная вёрстка (<lg, тач-экраны): чат и лог по умолчанию свёрнуты в тонкие
+  // плашки ~36px; тап по плашке раскрывает панель на ~55vh, повторный тап или «✕»
+  // в шапке панели закрывает. На lg+ плашки скрыты (lg:hidden) — вид и поведение
+  // десктопных колонок не меняются.
+  const [mobilePanel, setMobilePanel] = useState<'chat' | 'log' | null>(null);
+  // Сколько строк пользователь уже видел в раскрытой панели: badge «новых» = всего − просмотрено.
+  const chatSeenRef = useRef(0);
+  const logSeenRef = useRef(0);
+  useEffect(() => {
+    if (mobilePanel === 'chat') chatSeenRef.current = chatLines.length;
+  }, [mobilePanel, chatLines.length]);
+  useEffect(() => {
+    if (mobilePanel === 'log') logSeenRef.current = combat.log.length;
+  }, [mobilePanel, combat.log.length]);
+  const chatUnread = Math.max(0, chatLines.length - chatSeenRef.current);
+  const logUnread = Math.max(0, combat.log.length - logSeenRef.current);
+
   if (stage === 'entry') {
     return (
       <div className="app-bg relative h-dvh text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
@@ -4713,8 +4730,35 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         className="relative z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
         style={{ '--chat-w': `${layout.chatW}px`, '--log-w': `${layout.logW}px` } as CSSProperties}
       >
-        <div className={editorOpen?'hidden':"flex h-56 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)]"}>
-          <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} />
+        <div className={editorOpen?'hidden':"flex w-full shrink-0 flex-col gap-1 lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)] lg:gap-0"}>
+          {/* <lg: тонкая плашка-тумблер; номер — сколько новых строк пришло в свёрнутый чат */}
+          <button
+            type="button"
+            id="mobileChatTab"
+            aria-expanded={mobilePanel === 'chat'}
+            aria-controls="mobileChatPanel"
+            onClick={() => setMobilePanel((p) => (p === 'chat' ? null : 'chat'))}
+            className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--sim-panel)] px-3 text-sm font-bold tracking-wide text-[var(--sim-text)] lg:hidden"
+          >
+            <span className="flex items-center gap-2">
+              Чат
+              {mobilePanel !== 'chat' && chatUnread > 0 ? (
+                <span className="min-w-4 rounded-full bg-[var(--sim-accent)] px-1 text-center text-[10px] font-normal leading-4 text-[var(--sim-deep)]">
+                  {chatUnread > 99 ? '99+' : chatUnread}
+                </span>
+              ) : null}
+            </span>
+            <span className="text-[11px] font-normal text-[var(--sim-text-faint)]">
+              {mobilePanel === 'chat' ? 'свернуть' : 'раскрыть'}
+            </span>
+          </button>
+          {/* Панель: на <lg появляется по тапу (~55vh); на lg — колонка на всю высоту ряда */}
+          <div
+            id="mobileChatPanel"
+            className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} h-[55vh] w-full shrink-0 flex-col lg:flex lg:h-full lg:min-h-0`}
+          >
+            <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} onClose={mobilePanel === 'chat' ? () => setMobilePanel(null) : undefined} />
+          </div>
         </div>
         {!editorOpen ? <ColResize
           onDrag={(dx) => setLayout((p) => ({ ...p, chatW: clampLayout({ ...p, chatW: p.chatW + dx }).chatW }))}
@@ -4780,11 +4824,38 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               onDrag={(dx) => setLayout((p) => ({ ...p, logW: clampLayout({ ...p, logW: p.logW - dx }).logW }))}
               onEnd={() => saveLayout(layoutRef.current)}
             />
-            <div className="flex h-44 w-full shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[var(--log-w)]">
-              <FightLog
-              lines={combat.log.map(formatLogLine)}
-              onClear={() => setCombat((c) => ({ ...c, log: [] }))}
-            />
+            <div className="flex w-full shrink-0 flex-col gap-1 lg:h-auto lg:min-h-0 lg:w-[var(--log-w)] lg:gap-0">
+              {/* <lg: плашка-тумблер лога — по образцу чата (бейдж = новые строки) */}
+              <button
+                type="button"
+                id="mobileLogTab"
+                aria-expanded={mobilePanel === 'log'}
+                aria-controls="mobileLogPanel"
+                onClick={() => setMobilePanel((p) => (p === 'log' ? null : 'log'))}
+                className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--sim-panel)] px-3 text-sm font-bold tracking-wide text-[var(--sim-text)] lg:hidden"
+              >
+                <span className="flex items-center gap-2">
+                  Лог
+                  {mobilePanel !== 'log' && logUnread > 0 ? (
+                    <span className="min-w-4 rounded-full bg-[var(--sim-accent)] px-1 text-center text-[10px] font-normal leading-4 text-[var(--sim-deep)]">
+                      {logUnread > 99 ? '99+' : logUnread}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-[11px] font-normal text-[var(--sim-text-faint)]">
+                  {mobilePanel === 'log' ? 'свернуть' : 'раскрыть'}
+                </span>
+              </button>
+              <div
+                id="mobileLogPanel"
+                className={`${mobilePanel === 'log' ? 'flex' : 'hidden'} h-[55vh] w-full shrink-0 flex-col lg:flex lg:h-full lg:min-h-0`}
+              >
+                <FightLog
+                lines={combat.log.map(formatLogLine)}
+                onClear={() => setCombat((c) => ({ ...c, log: [] }))}
+                onClose={mobilePanel === 'log' ? () => setMobilePanel(null) : undefined}
+              />
+              </div>
             </div>
           </>
         ) : null}
