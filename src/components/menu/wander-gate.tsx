@@ -9,8 +9,8 @@ import { playersLabel } from '@/components/sim/room-picker';
 // классы wander-star/wander-spark, появление после гидрации.
 import { StarBackdrop } from '@/components/menu/star-backdrop';
 // Пересводка W2 (2026-11-08): навигацию аккаунтов главной несёт общая шапка
-// сайта. Монтируется внутри IS_ELYRIA-ветки — grotto не получает ни шапки,
-// ни её графа (DCE вырезает ветку вместе с импортом; спека §2A/§10.4).
+// сайта, на главной — ghost без фона (владелица 2026-11-10). Монтируется
+// внутри IS_ELYRIA-ветки — grotto не получает ни шапки, ни её графа (DCE).
 import { SiteHeader } from '@/components/site/site-header';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
@@ -319,7 +319,7 @@ export function WanderMenu() {
           </a>
         ) : null}
       </div>
-      {IS_ELYRIA ? <SiteHeader /> : null}
+      {IS_ELYRIA ? <SiteHeader ghost /> : null}
     </NightSky>
   );
 }
