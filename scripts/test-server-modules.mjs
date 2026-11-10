@@ -354,8 +354,8 @@ eq(
 
 // PNG scanline reconstruction is in-place to avoid a second full RGBA buffer.
 // Exercise every predictor, including alpha crossing the 127 threshold.
-function pngFixture(filter,bpp=4){
- const w=3,h=2,pixels=Buffer.from(Array.from({length:w*h*bpp},(_,i)=>bpp===4&&i%4===3?[0,128,255][Math.floor(i/4)%3]:(i*37)%256));
+function pngFixture(filter,bpp=4,w=600,h=450){
+ const pixels=Buffer.from(Array.from({length:w*h*bpp},(_,i)=>bpp===4&&i%4===3?[0,128,255][Math.floor(i/4)%3]:(i*37)%256));
  const stride=w*bpp,raw=Buffer.alloc((stride+1)*h);
  for(let y=0;y<h;y++){
   raw[y*(stride+1)]=filter;
@@ -370,9 +370,39 @@ function pngFixture(filter,bpp=4){
  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=bpp===4?6:2;
  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]).toString('base64');
 }
+function sampleMask(decoded){
+ return [0,1,2].map((x)=>decoded.mask[x]).concat([0,1,2].map((x)=>decoded.mask[decoded.w+x]));
+}
+eq("PNG 3×2 is not a map paint",world.decodePaintPng(pngFixture(0,4,3,2)),null);
 for(let filter=0;filter<=4;filter++){
- eq(`PNG filter ${filter}: exact alpha`,[...world.decodePaintPng(pngFixture(filter)).mask],[0,1,1,0,1,1]);
- eq(`RGB filter ${filter}: opaque`,[...world.decodePaintPng(pngFixture(filter,3)).mask],[1,1,1,1,1,1]);
+ const rgba=world.decodePaintPng(pngFixture(filter));
+ eq(`PNG filter ${filter}: map size`,rgba&&rgba.w===600&&rgba.h===450,true);
+ eq(`PNG filter ${filter}: exact alpha`,sampleMask(rgba),[0,1,1,0,1,1]);
+ const rgb=world.decodePaintPng(pngFixture(filter,3));
+ eq(`RGB filter ${filter}: opaque`,sampleMask(rgb),[1,1,1,1,1,1]);
+}
+{
+ const chunk=(type,data)=>{const b=Buffer.alloc(data.length+12);b.writeUInt32BE(data.length);b.write(type,4);data.copy(b,8);return b;};
+ const ihdrOf=(w,h)=>{const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=6;return ihdr;};
+ const png=(w,h,raw)=>Buffer.concat([Buffer.from("89504e470d0a1a0a","hex"),chunk("IHDR",ihdrOf(w,h)),chunk("IDAT",deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]).toString("base64");
+ const bomb=png(600,450,Buffer.alloc(8*1024*1024));
+ eq("PNG bomb: oversized IDAT refused",world.decodePaintPng(bomb),null);
+ eq("PNG bomb: huge IHDR refused before inflate",world.decodePaintPng(png(8_000_000,8_000_000,Buffer.alloc(64))),null);
+ eq("PNG bomb: decoder still answers",world.decodePaintPng(pngFixture(0))?.w,600);
+}
+
+{
+  const before = auth.hitsMapSize();
+  for (let i = 0; i < 100; i++) auth.rate("127.0.0.1", "login", 0, 0);
+  eq("hits: loopback не пишет карту адресов", auth.hitsMapSize(), before);
+  for (let i = 0; i < 10000; i++) {
+    auth.rate(`203.${(i >>> 16) & 255}.${(i >>> 8) & 255}.${i & 255}`, "login", 6000, 0);
+  }
+  eq("hits: 10k разных IP не раздувают карту", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
+  eq("hits: потолок держит бакеты", auth.hitsMapSize() > 0 && auth.hitsMapSize() <= 4096, true);
+  const again = auth.rate("203.9.9.9", "login", 6000, 0);
+  eq("hits: новый IP после потолка всё ещё обслуживается", typeof again, "boolean");
+  eq("hits: после ещё одного IP карта не выросла за потолок", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
 }
 
 // ---------- отчёт ----------
