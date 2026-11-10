@@ -245,6 +245,20 @@ reset/restore с подтверждением.
   — владелец или админ, «одет» → 409 `worn` (сначала переодеться).
   Перекопированный редактор KNS Paint — публичная статика `/paint-demo/` на обоих сайтах
   (#84 ч.1, синхронизация версий — байт-в-байт shasum-сверкой из репо kns).
+  Мост редактор↔игра (#84 ч.2, только Элизия): кнопка «Нарисовать окрас» в профиле →
+  `/paint-demo/?back=profile` (allowlist значения back — анти-open-redirect) → «Сохранить и надеть»
+  одним действием (POST /sprites/mine + PATCH /profiles/me {sprite}) → возврат deep-linkом
+  `/players/?id&mine=<id>#settings` с подсветкой плитки. Мост — третий файл
+  `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
+  гейт check:paint-seam); из www-grotto вырезан.
+  Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
+  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.miew.ru → клиентский конвейер
+  `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
+  дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
+  Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы
+  хвоста и пр.) на паре M2 в KNS ещё не отрисованы — честная подпись в UI. Движок грузится
+  динамическим import() только в зоне профиля; www-grotto без /catwar (prune EXCLUDE).
+  Отказы человеческие: bad_syntax / no_coat_zones / engine_unavailable.
 
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 
