@@ -9,6 +9,7 @@ import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { DATA_DIR, SPRITES } from "./config.js";
+import { writeFileAtomic } from "./atomic-file.js";
 // Динамический каталог спрайтов (менеджер спрайтов): attachSprite принимает
 // id из манифеста sprites.js — и загруженные, и базовые. Цикл импортов
 // accounts.js ↔ sprites.js здесь осознанный: spriteIdAllowed вызывается
@@ -34,12 +35,6 @@ function sanitizeLogin(raw, fallback) {
     LOGIN_MAX,
   );
   return text || fallback;
-}
-
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
 }
 
 const scryptAsync = promisify(scrypt);
@@ -248,7 +243,9 @@ function publicAccount(acc) {
  * сюда не попадает — экспонируем только если он есть в characters аккаунта).
  * Волна «день рождения + аватарка»: birthday — строка «ГГГГ-ММ-ДД» либо null
  * (мусор и отсутствие честно схлопываются в null — полную валидность значения
- * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор); avatar —
+ * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор). Это вид
+ * ВЛАДЕЛЬЦА (/profiles/me и ответ PATCH): чужая карточка в profiles.card
+ * подменяет birthday на «ММ-ДД» без года, не трогая стор. avatar —
  * строка-URL «/avatars/file/<accountId>.<png|jpg>?v=<avatarAt>» либо null
  * (строго из пары profile.avatarExt ∈ {png,jpg} и avatarAt > 0 — мусор в
  * полях не изворачивается в ссылку, файловый маршрут — server/avatars.js).

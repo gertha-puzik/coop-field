@@ -7,14 +7,23 @@
 // переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
 // с тем же значением).
 import { WebSocket } from "ws";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { sendJoin } from "./ws-auth.mjs";
 
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || "1946";
 
+// Аккаунт-редактор: мутации карт (кадр setmap) теперь за админ-гейтом
+// (server/testmap.js, гейт как у adminGate в sprites.js), поэтому загрузчик
+// карты заходит под админом. Аккаунт создаётся в DATA_DIR ДО старта сервера
+// через scripts/make-admin.mjs (лестница S1, см. test-admin-reset).
+const ADMIN_LOGIN = "mapboss";
+const ADMIN_PASS = "password1";
+
+const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 4033 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 // тестовая локация живёт только в TEST_ROOM («test»)
@@ -22,16 +31,24 @@ const room = "test";
 const rnd = Date.now().toString(36);
 
 // Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
+// стартом — аккаунт-админ для setmap-загрузок теста.
+const DATA = mkdtempSync(path.join(tmpdir(), "coop-terrain-"));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: "utf8",
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ["server.js"], {
-      cwd: path.resolve(new URL("..", import.meta.url).pathname),
+      cwd: ROOT,
       env: {
         ...process.env,
         PORT: String(PORT),
         HOST: "127.0.0.1",
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), "coop-terrain-")),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -64,10 +81,18 @@ function client(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.inbox = [];
-    ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
+    ws.on("message", (raw) => {
+      try {
+        ws.inbox.push(JSON.parse(String(raw)));
+      } catch {
+        /* мусорный кадр — не наш случай */
+      }
+    });
     ws.on("error", reject);
-    ws.on("open", () => {
-      ws.send(JSON.stringify(["join", { room, login: name }]));
+    // Комната «test» закрыта (requiresAccount): сначала register/login
+    // (ws-auth.mjs), затем join. setmap-загрузчик — админ (см. ADMIN_LOGIN).
+    ws.once("open", () => {
+      sendJoin(ws, { room, login: name });
       resolve(ws);
     });
   });
@@ -109,13 +134,16 @@ const map = {
   elev: { "8,1": 2, "9,1": 3, "10,1": 1, "10,2": 8 },
 };
 
-const admin = await client(`Админ-${rnd}`);
+const admin = await client(ADMIN_LOGIN);
 await waitFor(admin, "field");
+clear(admin); // выкидываем info «Это имя уже занято» от register в sendJoin (нужен был fallback-логин) — иначе err-check ниже ложно сработает
 admin.send(JSON.stringify(["setmap", { pass: PASS, map }])); // первый setmap-кадр сокета — троттлинг не мешает
 await new Promise((r) => setTimeout(r, 300));
-const err = admin.inbox.find((m) => m[0] === "info");
-if (err) throw new Error(`setmap отклонён: ${err[1]}`);
 const mapEcho = admin.inbox.find((m) => m[0] === "map");
+// «Редактор: сохранено.» — малый ack автору ДО broadcast-кадра map; игнорируем его в err-скане
+const err = admin.inbox.find((m) => m[0] === "info" && m[1] !== "Редактор: сохранено.");
+if (err) throw new Error(`setmap отклонён: ${err[1]}`);
+if (!mapEcho) throw new Error("setmap не дал кадра map");
 const echoElev = mapEcho && mapEcho[1] && mapEcho[1].elev;
 console.log("map echo elev kept:", JSON.stringify(echoElev));
 if (!echoElev || echoElev["8,1"] !== 2 || echoElev["9,1"] !== 3) {
@@ -123,7 +151,8 @@ if (!echoElev || echoElev["8,1"] !== 2 || echoElev["9,1"] !== 3) {
 }
 
 // Игрок на боевой клетке (7,2) — ровная земля рядом с обрывом.
-const p1 = await client(`Кот-${rnd}-1`);
+// Логины регаются (register v2 — только латиница), потому латинские.
+const p1 = await client(`walker-${rnd}-1`);
 const you1 = await waitFor(p1, "you");
 console.log("p1 spawn:", you1[1].x, you1[1].y);
 p1.send(JSON.stringify(["cellsync", { x: 8, y: 3 }]));
@@ -209,7 +238,7 @@ console.log("out-of-world jump rejected:", !outJ);
 if (outJ) throw new Error("прыжок за мир принят");
 
 // Второй клиент: field несёт elev новичку (снапшот для поздних подключений).
-const p2 = await client(`Кот-${rnd}-2`);
+const p2 = await client(`walker-${rnd}-2`);
 const field2 = await waitFor(p2, "field");
 const elev2 = field2[1].map && field2[1].map.elev;
 console.log("field.map elev for newcomer:", JSON.stringify(elev2));

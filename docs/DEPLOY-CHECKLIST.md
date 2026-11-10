@@ -129,6 +129,24 @@ all client `wsUrlBase`/origin branches, preview pipelines, cert scans, checks
 and tests follow the map above; the grotto→Elysiae bridge card now points to
 `https://phainonsmilk.ru/`.
 
+## Grotto TLS sample (repository only, not installed)
+
+`deploy/vps/nginx-grotto-tls.sample.conf` is a sample the owner can apply by
+hand. Merging it does not change nginx on the VPS: nothing in CI copies this
+file into a live `sites-enabled`, and this checklist does not mark HTTPS as
+done. The file is not installed.
+
+It lists the grotto front names `abnocw.89-232-184-77.sslip.io` and
+`abnocw.phainonsmilk.ru`, a `listen 443 ssl` block, and the headers HSTS,
+CSP, `X-Content-Type-Options`, `X-Frame-Options`, plus CSP `frame-ancestors`.
+Certificate paths are Let's Encrypt placeholders. There is no key material
+in the repo. Do not replace the current port-80 `nginx-www.conf` until a
+certificate for those names exists; until then HTTP would stop serving the site.
+
+Acceptance, when the owner chooses to install it: `curl -sI` on the live grotto
+name shows 443 and those headers. The room unit `coop-field.service` is not
+part of this step.
+
 Rollback note: until the DNS records exist, pr-previews of this branch resolve
 by the OLD names (pr-<N>.abnocw.miew.ru) — those hosts are NOT served by the
 new preview nginx anymore. After the records are in, previews come back under

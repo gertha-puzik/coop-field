@@ -13,17 +13,34 @@
  * случайном порту с временным DATA_DIR. Внешний сервер: WS_URL=ws://…
  * Коды выхода: 0 — зелёный; 1 — отказ.
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 
-// Пароль намеренно отсутствует: редактор открыт обычным игрокам.
+// Мутации карт (кадр setmap) — за админ-гейтом (server/testmap.js, гейт как у
+// adminGate в sprites.js): сохранение локации доступно только админам, пароля
+// редактора больше не существует. setmap-загрузчики теста логинятся админом;
+// аккаунт создаётся в DATA_DIR ДО старта сервера через scripts/make-admin.mjs
+// (лестница S1, см. test-admin-reset). Негатив-гейт (не-админ) — outsider ниже.
+const ADMIN_LOGIN = 'mapboss';
+const ADMIN_PASS = 'password1';
+
 const PORT = 3981 + Math.floor(Math.random() * 20);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
 const DATA = mkdtempSync(path.join(tmpdir(), 'coop-stone-platform-'));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [
+    path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
+    ADMIN_LOGIN,
+    ADMIN_PASS,
+  ], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: 'utf8',
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ['server.js'], {
@@ -68,13 +85,18 @@ function makeSock() {
   return { ws, next, wait, send, open, state };
 }
 
-async function joinTest(prefix) {
+/** Сокет в «тест»: register/login + join. asAdmin=true — вход подготовленным
+ *  админом (setmap-загрузчики: мутации карт за админ-гейтом), иначе свежий
+ *  зарегистрированный аккаунт. */
+async function joinTest(prefix, asAdmin = false) {
   const s = makeSock();
   await s.open();
   await s.wait(); // handshake whoami
-  s.send('auth', { action: 'register', login: `${prefix}${Math.random().toString(36).slice(2, 8)}`, pass: 'parol12345' });
+  s.send('auth', asAdmin
+    ? { action: 'login', login: ADMIN_LOGIN, pass: ADMIN_PASS }
+    : { action: 'register', login: `${prefix}${Math.random().toString(36).slice(2, 8)}`, pass: 'parol12345' });
   const reg = await s.wait();
-  if (!reg[1]?.ok) throw new Error(`register: ${JSON.stringify(reg)}`);
+  if (!reg[1]?.ok) throw new Error(`auth: ${JSON.stringify(reg)}`);
   s.send('join', { room: 'test' });
   let field = null;
   for (let i = 0; i < 8 && !field; i++) {
@@ -99,10 +121,10 @@ const outsider = makeSock();
 await outsider.open();
 await outsider.wait();
 outsider.send('setmap', {map:{}});
-check('сокет вне локации не может менять карту', (await outsider.wait())[1]?.includes('сначала войдите в локацию'));
+check('не-админ не может менять карту (админ-гейт)', (await outsider.wait())[1]?.includes('доступно только администраторам'));
 outsider.ws.close();
-const first = await joinTest('a');
-check('редактор доступен обычному аккаунту', first.role === 'registered');
+const first = await joinTest('a', true);
+check('карту правит только админ (роль аккаунта-редактора)', first.role === 'admin');
 const map0 = first.field[1].map;
 const edited = {
   ...map0,
@@ -125,7 +147,7 @@ first.s.send('setmap', {map:edited});
 let limited;
 do { limited=await first.s.wait(); } while(limited[0]!=='info');
 check('повторное сохранение ограничено троттлингом', limited[1].includes('слишком часто'));
-const invalid=await joinTest('b');
+const invalid=await joinTest('b', true);
 invalid.s.send('setmap',{map:{v:2}});
 const invalidReply=await invalid.s.wait();
 check('невалидная карта по-прежнему отвергается',invalidReply[0]==='info'&&invalidReply[1].startsWith('Редактор:'));

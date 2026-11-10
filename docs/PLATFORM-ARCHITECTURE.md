@@ -70,9 +70,9 @@ createdAt                             позиция в Элизии — по na
 
 | Класс | HTTP-API | WS auth-кадры | Токены |
 | --- | --- | --- | --- |
-| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | `?t=` принимается переходно (старые клиенты) + cookie |
-| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен из тела HTTP-ответа не выдаётся |
-| `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в телах — на нём стоят test-auth/test-флои |
+| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | `?t=` принимается переходно (старые клиенты) + cookie; кадр `whoami` токен не возвращает. `hello` с `payload.token` требует Origin своего класса |
+| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен не выдаётся ни в теле HTTP, ни в кадре `whoami`. `hello` с `payload.token` требует Origin своего класса (`originOk`) |
+| `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в HTTP-телах и в кадре `whoami` — на нём стоят test-auth/test-флои; `hello` с токеном без Origin по-прежнему жив |
 
 Cookie `coop_session`: `HttpOnly; Path=/; Max-Age=14д`, **host-only** — атрибута Domain
 намеренно нет (B1): кука привязана к точному хосту, соседний сайт её не увидит. На https —
@@ -96,7 +96,7 @@ S4: `loopback` на прод-классе хоста = темп-лимиты aut
 | --- | --- | --- |
 | `guest` | нет сессии | гроты, demo, голодные игре, справочник. **Не** Элизия (join-отказ `auth_required`, даже прямым WS) |
 | `registered` | регистрация | + Элизия, свой профиль (PATCH /profiles/me), страницы /players |
-| `admin` | только одноразовый CLI владелицы: `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет). Env `BOOTSTRAP_ADMIN` отныне МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin. `setmap` доступен всем игрокам комнаты test без пароля; админ-роль для редактирования карты не нужна |
+| `admin` | только одноразовый CLI владелицы: `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет). Env `BOOTSTRAP_ADMIN` отныне МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin. `setmap` принимает только role=admin в комнате test; пароль не проверяется |
 
 Права проверяет **сервер** (сессия), UI только рендерит по `whoami.role`. Клиентский
 «пароль вкладок» снят (P3): вкладки `admin:true` в settings-panel рендерятся только при
@@ -219,7 +219,9 @@ reset/restore с подтверждением.
   размера; клиент НЕ фильтрует сам.
 - `GET /profiles/:id` — карточка (`accountId` + publicProfile); нет карточки/легаси-строка →
   единый 404 `unknown` (существование скрытых аккаунтов не раскрывается).
-- `GET /profiles/me` — своя карточка по сессии; гость → 401 `auth_required`.
+  Чужим `birthday` — только `ММ-ДД` (год остаётся в сторе), `lastSeenAt` остаётся,
+  `lastSeenRoom` в JSON нет.
+- `GET /profiles/me` — своя карточка по сессии, с полной `birthday` `ГГГГ-ММ-ДД`; гость → 401 `auth_required`.
 - `PATCH /profiles/me` — правка ТОЛЬКО своей записи: плоские `displayName` (1–24 видимых
   символа), `bio` (≤280), `avatarCharacterId` (null или id из своих characters);
   идентификационные ключи (id/login/role/…) отбиваются `unknown_keys`; невидимые/bidi-символы
@@ -251,14 +253,8 @@ reset/restore с подтверждением.
   `/players/?id&mine=<id>#settings` с подсветкой плитки. Мост — третий файл
   `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
   гейт check:paint-seam); из www-grotto вырезан.
-  Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
-  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.phainonsmilk.ru → клиентский конвейер
-  `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
-  дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
-  Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы
-  хвоста и пр.) на паре M2 в KNS ещё не отрисованы — честная подпись в UI. Движок грузится
-  динамическим import() только в зоне профиля; www-grotto без /catwar (prune EXCLUDE).
-  Отказы человеческие: bad_syntax / no_coat_zones / engine_unavailable.
+  Решение владелицы 2026-11-10: окрасы CatWar в игре не используются, пак изображений
+  в этом репозитории не лежит. Личная загрузка PNG и редактор KNS Paint остаются.
 
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 

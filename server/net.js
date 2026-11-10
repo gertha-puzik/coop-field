@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
+import { allowBroadcastFrame, isFrameLimited } from "./frame-limit.js";
 import {
   PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
   REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest, WS_MAX_PER_IP,
@@ -69,6 +70,8 @@ function onMessage(ws, raw) {
   // исключение: ради рисунка локации (PNG base64 до 3,5 МБ) ему оставлен
   // высокий транспортный потолок MAX_PAYLOAD.
   if (bytes > FRAME_LIMIT && event !== EV.SETMAP) return;
+  // Общий потолок block/space/atmo/atmoset/dummy/rab: молча, без нового события.
+  if (isFrameLimited(event) && !allowBroadcastFrame(ws)) return;
   const payload = Array.isArray(msg) ? msg[1] : msg;
   if (event === EV.JOIN) join(ws, payload || {});
   else if (event === EV.MOVE) move(ws, payload || {});

@@ -8,14 +8,22 @@
 // (совпадает с серверным legacy-дефолтом); переопределение — env MAP_PASS
 // (спавненному серверу передаётся ADMIN_PASS с тем же значением).
 import { WebSocket } from "ws";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { sendJoin } from "./ws-auth.mjs";
 
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || "1946";
 
+// Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
+// все setmap-загрузчики теста логинятся админом. Аккаунт создаётся в DATA_DIR
+// ДО старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
+const ADMIN_LOGIN = "mapboss";
+const ADMIN_PASS = "password1";
+
+const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 4013 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 // тестовая локация живёт только в TEST_ROOM («test»)
@@ -26,16 +34,24 @@ const room = "test";
 const rnd = Date.now().toString(36);
 
 // Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
+// стартом — аккаунт-админ для setmap-загрузок теста.
+const DATA = mkdtempSync(path.join(tmpdir(), "coop-spawn-cells-"));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: "utf8",
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ["server.js"], {
-      cwd: path.resolve(new URL("..", import.meta.url).pathname),
+      cwd: ROOT,
       env: {
         ...process.env,
         PORT: String(PORT),
         HOST: "127.0.0.1",
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), "coop-spawn-cells-")),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -68,10 +84,20 @@ function client(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.inbox = [];
-    ws.on("open", () => ws.send(JSON.stringify(["join", { room, login: name }])));
-    ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
+    ws.on("message", (raw) => {
+      try {
+        ws.inbox.push(JSON.parse(String(raw)));
+      } catch {
+        /* мусорный кадр — не наш случай */
+      }
+    });
     ws.on("error", reject);
-    ws.once("open", () => resolve(ws));
+    // Комната «test» закрыта (requiresAccount): register/login через ws-auth.mjs,
+    // затем join. setmap-загрузчики — админ (ADMIN_LOGIN).
+    ws.once("open", () => {
+      sendJoin(ws, { room, login: name });
+      resolve(ws);
+    });
   });
 }
 const waitFor = (ws, event, ms = 2000) =>
@@ -107,26 +133,31 @@ const map = {
 };
 
 // Установка локации — setmap с нового сокета; админа закрываем ДО прихода
-// гостей, чтобы его кот не занял клетку спавна.
-const admin = await client(`Админ-${rnd}`);
+// гостей, чтобы его кот не занял клетку спавна. setmap — мутация за
+// админ-гейтом: сокет логинится подготовленным админом (ADMIN_LOGIN).
+const admin = await client(ADMIN_LOGIN);
 await waitFor(admin, "field");
+admin.inbox.length = 0; // регистрация админа уходит в fallback-логин (имя занято) — её info «имя занято» не должна попадать в err-скан ниже
 admin.send(JSON.stringify(["setmap", { pass: PASS, map }])); // первый setmap-кадр сокета — троттлинг не мешает
 await new Promise((r) => setTimeout(r, 300));
-const err = admin.inbox.find((m) => m[0] === "info");
-if (err) throw new Error(`setmap отклонён: ${err[1]}`);
 const mapEcho = admin.inbox.find((m) => m[0] === "map");
+// ack «Редактор: сохранено.» уходит автору ДО broadcast-кадра map — не считаем его ошибкой
+const err = admin.inbox.find((m) => m[0] === "info" && m[1] !== "Редактор: сохранено.");
+if (err) throw new Error(`setmap отклонён: ${err[1]}`);
+if (!mapEcho) throw new Error("setmap не дал кадра map");
 console.log("map echo keys:", mapEcho ? Object.keys(mapEcho[1] || {}) : "no echo");
 console.log("map echo spawns:", JSON.stringify(mapEcho && mapEcho[1] && mapEcho[1].spawns));
 admin.close();
 await sleep(200); // дать серверу отработать close — кот админа освобождает клетку
 
 // 4 новичка (по числу клеток спавна): каждый должен попасть на клетку спавна
-// (x-1,y-1) ∈ spawns, не занятую предыдущими. Сокеты держим открытыми до конца —
-// иначе ушедший кот освобождает клетку и doubles не проверить.
+// (x-1,y-1) ∈ spawns, не занятую предыдущим. Сокеты держим открытыми до конца —
+// иначе ушедший кот освобождает клетку и doubles не проверить. Логины —
+// латиница (register v2 не принимает кириллицу).
 const opened = [];
 const spots = new Set();
 for (let i = 0; i < 4; i++) {
-  const c = await client(`Гость-${rnd}-${i}`);
+  const c = await client(`guest-${rnd}-${i}`);
   opened.push(c);
   const you = await waitFor(c, "you");
   const x = you[1].x, y = you[1].y;
@@ -141,8 +172,9 @@ if (spots.size !== map.spawns.length) throw new Error("не все клетки 
 console.log("all spawn cells from the list, no doubles");
 
 // Спавн на боевой клетке сервер должен отклонить.
-// setmap с НОВОГО сокета (троттлинг 10 с — на сокет, см. шапку).
-const bad1 = await client(`Админ2-${rnd}`);
+// setmap с НОВОГО сокета (троттлинг 10 с — на сокет, см. шапку), сокет — админ:
+// негатив здесь про санитайзер карты, а не про админ-гейт.
+const bad1 = await client(ADMIN_LOGIN);
 await waitFor(bad1, "field");
 bad1.send(JSON.stringify(["setmap", { pass: PASS, map: { ...map, spawns: [{ c: 7, r: 1 }] } }]));
 await new Promise((r) => setTimeout(r, 300));
@@ -150,8 +182,9 @@ const info = bad1.inbox.filter((m) => m[0] === "info").pop();
 console.log("battle-cell spawn rejected:", !!(info && String(info[1]).includes("спавна ставится на траве")));
 bad1.close();
 
-// Спавн вне зелёной зоны тоже отклонён (клетка вне острова).
-const bad2 = await client(`Админ3-${rnd}`);
+// Спавн вне зелёной зоны тоже отклонён (клетка вне острова). Сокет — тоже
+// подготовленный админ: проверяем санитайзер, а не гейт.
+const bad2 = await client(ADMIN_LOGIN);
 await waitFor(bad2, "field");
 bad2.send(JSON.stringify(["setmap", { pass: PASS, map: { ...map, spawns: [{ c: 11, r: 7 }] } }]));
 await new Promise((r) => setTimeout(r, 300));
@@ -159,8 +192,8 @@ const info2 = bad2.inbox.filter((m) => m[0] === "info").pop();
 console.log("off-grass spawn rejected:", !!(info2 && String(info2[1]).includes("спавна ставится на траве")));
 bad2.close();
 
-// field для новичка несёт spawны в конфиге (клиентский санитайзер их переживёт).
-const late = await client(`Позже-${rnd}`);
+// field для новичка несёт спавны в конфиге (клиентский санитайзер их переживёт).
+const late = await client(`late-${rnd}`);
 const field = await waitFor(late, "field");
 const cfg = field[1].map;
 console.log("field.map spawns kept:", Array.isArray(cfg?.spawns) && cfg.spawns.length === 4);

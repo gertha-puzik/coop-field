@@ -12,6 +12,7 @@
     "build:variants": "node scripts/build-variants.mjs",
     "start": "node server.js",
     "test:ws": "node scripts/test-ws.mjs",
+    "test:frame-limit": "node scripts/test-frame-limit.mjs",
     "test:queue": "node scripts/test-move-queue.mjs",
     "test:auth": "node scripts/test-auth.mjs",
     "test:cross-origin": "node scripts/test-cross-origin.mjs",
@@ -36,8 +37,6 @@
     "check:landmarks": "node scripts/check-doc-landmarks.mjs",
     "check:variants": "node scripts/check-variants.mjs",
     "check:paint-seam": "node scripts/check-paint-seam.mjs",
-    "check:catwar-vendor": "node scripts/check-catwar-vendor.mjs",
-    "test:catwar-coat": "node scripts/test-catwar-coat.mjs",
     "arch:check": "node scripts/check-architecture.mjs",
     "typecheck": "tsc --noEmit",
     "map:restore": "node scripts/set-local-map.mjs backups/prod-elysia-map-2026-11-06.json",
@@ -48,7 +47,8 @@
     "test:prod-switch": "node scripts/test-prod-switch.mjs",
     "test:sp-privacy": "node scripts/test-sp-privacy.mjs",
     "test:stone": "node scripts/test-stone-platform.mjs",
-    "test:editor-save": "node scripts/test-editor-save.mjs"
+    "test:editor-save": "node scripts/test-editor-save.mjs",
+    "test:atomic-file": "node scripts/test-atomic-file.mjs"
   },
   "engines": {
     "node": ">=18"

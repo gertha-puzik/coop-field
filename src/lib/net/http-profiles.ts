@@ -42,17 +42,16 @@ function profilesCatalogRoute(qs: string): string {
 export type ProfileCharacter = { id: string; name: string; sprite: string; size: number };
 
 /** Публичный DTO (accounts.publicProfile): без login, role и пароля.
- *  P5-редизайн (аддитивно): lastSeenAt — время последнего появления
- *  (максимум свежайшей сессии и последней записи кота; 0 = неизвестно,
- *  честное «неизвестно» вместо выдумки), lastSeenRoom — комната последней
- *  записи кота ("test" = Элизия; null = кота в поле не видели). Сервер
- *  может не прислать поля (старый бэкенд) — поэтому необязательные. */
+ *  lastSeenAt — время последнего появления (максимум свежайшей сессии и
+ *  последней записи кота; 0 = неизвестно, честное «неизвестно» вместо
+ *  выдумки). Комнаты последней записи в DTO нет. Сервер может не прислать
+ *  lastSeenAt (свой /profiles/me его не несёт) — поэтому поле необязательное. */
 export type PublicProfile = {
   displayName: string;
   bio: string;
-  /** День рождения (строка-маска ГГГГ-ММ-ДД) или null — владелец задал
-   *  его в настройках карточки; null → карточка честно показывает
-   *  дату регистрации. */
+  /** День рождения. Свой /profiles/me — полная «ГГГГ-ММ-ДД» (чтобы править).
+   *  Чужая карточка и каталог — «ММ-ДД» без года. null — владелец не указал
+   *  дату; карточка не выдумывает её. */
   birthday: string | null;
   /** Своя загруженная картинка: URL файла аватара или null — портрет
    *  карточки рисует её вместо спрайта персонажа. */
@@ -62,7 +61,6 @@ export type PublicProfile = {
   activeCharacterId: string | null;
   createdAt: number;
   lastSeenAt?: number;
-  lastSeenRoom?: string | null;
 };
 
 /** Карточка каталога: DTO + accountId (для deep-link /players?id=). */
@@ -98,13 +96,14 @@ export type ProfilePatch = {
 
 export type ProfileResult = { ok: boolean; reason?: string; details?: string; profile?: ProfileMe };
 
-/** Маска дня рождения (input type=date): ГГГГ-ММ-ДД — 4 цифры, дефис,
- *  2 цифры, дефис, 2 цифры; прочий мусор DTO сворачивается в null. */
-const BIRTHDAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Маски дня рождения: полная «ГГГГ-ММ-ДД» (свой /profiles/me) и публичная
+ *  «ММ-ДД» без года. Прочий мусор DTO сворачивается в null. */
+const BIRTHDAY_FULL_RE = /^\d{4}-\d{2}-\d{2}$/;
+const BIRTHDAY_MONTH_DAY_RE = /^\d{2}-\d{2}$/;
 
-/** День рождения DTO: строка с маской остаётся строкой, мусор → null. */
+/** День рождения DTO: полная дата или месяц-день остаются строкой, мусор → null. */
 function asBirthday(v: unknown): string | null {
-  return typeof v === "string" && BIRTHDAY_RE.test(v) ? v : null;
+  return typeof v === "string" && (BIRTHDAY_FULL_RE.test(v) || BIRTHDAY_MONTH_DAY_RE.test(v)) ? v : null;
 }
 
 function parseCharacters(raw: unknown): ProfileCharacter[] {
@@ -152,7 +151,6 @@ function parseProfile(row: ApiRow): ProfileMe {
     // P5: только конечные числа и строки/NULL — мусор схлопывается в
     // «неизвестно» (0/null), чтобы UI не рисовал выдуманное время.
     lastSeenAt: Number.isFinite(Number(row.lastSeenAt)) ? Number(row.lastSeenAt) : 0,
-    lastSeenRoom: typeof row.lastSeenRoom === "string" && row.lastSeenRoom ? row.lastSeenRoom : null,
     // СП — только из ответа своего /profiles/me (владелец).
     sp: parseSp(row.sp),
   };
@@ -242,4 +240,32 @@ export async function httpMyProfile(): Promise<ProfileResult> {
 export async function httpPatchProfile(patch: ProfilePatch): Promise<ProfileResult> {
   const { status, row, text } = await apiFetch(profilesRoute("me"), { method: "PATCH", body: patch });
   return toProfileResult(status, row, text);
+}
+
+/** Самоудаление: текущий пароль обязателен. Сервер гасит куку в ответе. */
+export async function httpDeleteAccount(
+  password: string,
+): Promise<{ ok: true; message: string } | { ok: false; reason: string; message: string }> {
+  const { status, row } = await apiFetch(profilesRoute("me"), {
+    method: "DELETE",
+    body: { password },
+  });
+  if (status === 200 && row?.ok === true) {
+    return {
+      ok: true,
+      message: typeof row.message === "string" && row.message ? row.message : "Аккаунт удалён.",
+    };
+  }
+  const reason = typeof row?.reason === "string" && row.reason ? row.reason : status === 0 ? "offline" : "error";
+  const message =
+    typeof row?.message === "string" && row.message
+      ? row.message
+      : reason === "bad_password"
+        ? "Неверный пароль. Аккаунт не удалён."
+        : reason === "password_required"
+          ? "Введите текущий пароль."
+          : reason === "csrf" || reason === "csrf_origin_required" || reason === "csrf_origin_mismatch"
+            ? "Запрос отклонён защитой сайта."
+            : "Не удалось удалить аккаунт.";
+  return { ok: false, reason, message };
 }

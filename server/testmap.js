@@ -15,6 +15,7 @@ import {
   OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
 } from "./config.js";
 import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./protocol.js";
+import { writeFileAtomic } from "./atomic-file.js";
 import {
   decodePaintPng, paintPxMask, paintCellCoverageMask,
   buildIsland, buildCells, obstacleBlockedCells, obstacleBodiesOf,
@@ -550,14 +551,6 @@ function loadTestMap() {
   return defaultTestMap();
 }
 
-/** Запись атомарная (tmp + rename): обрыв не оставляет на диске полудохлый JSON —
- *  именно недописанный файл при загрузке превращается в «карта слетела на старую». */
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
-}
-
 /** Прошлая версия карты — в data/backups (последние 8): неудачную правку редактора
  *  или потерю файла можно откатить, а не собирать локацию заново. */
 function backupTestMap() {
@@ -583,15 +576,25 @@ function saveTestMap() {
 rebuildTestGeometry();
 
 /**
- * Редактор локации: клиент → ["setmap", { map }]. Любой игрок может сохранить
- * корректный конфиг локации в data/test-map.json, геометрия
- * перестраивается, всем в комнате уходит ["map", map] и свежий field (коты,
- * оставшиеся за пределами новой локации, переезжают на ближайшую клетку).
+ * Редактор локации: клиент → ["setmap", { map }]. Сохранить корректный конфиг
+ * локации в data/test-map.json может только админ — роль берётся с WS-сессии
+ * сокета (bindAccount в auth.js), контракт тот же, что у adminGate в
+ * sprites.js (не админ — молчаливый отказ с info). Не-админам редактор и
+ * кнопка закрыты клиентом (chrome.tsx), этот гейт — защита глубины от
+ * самодельных кадров. Чтение карты (кадры map/field при входе) гейтом не
+ * затрагивается: обычные игроки продолжают играть на опубликованной локации.
+ * После сохранения геометрия перестраивается, всем в комнате уходит
+ * ["map", map] и свежий field (коты, оставшиеся за пределами новой
+ * локации, переезжают на ближайшую клетку).
  */
 const SETMAP_MIN_GAP_MS = 10000;
 
 function setMap(ws, payload = {}) {
-  // Сохранять может любой игрок локации, без роли admin и без пароля.
+  // Сохраняет локацию только админ (лечит «Сохранять может любой игрок»).
+  if (ws.account?.role !== "admin") {
+    send(ws, EV.INFO, 'Редактор: сохранение локации доступно только администраторам.');
+    return;
+  }
   if (ws.room?.code !== TEST_ROOM || !ws.room.sockets.has(ws)) {
     send(ws, EV.INFO, 'Редактор: сначала войдите в локацию.');
     return;
@@ -660,5 +663,4 @@ function setMap(ws, payload = {}) {
 
 export {
   MAP_FILE, rebuildTestGeometry, defaultTestMap, sanitizeTestMap, saveTestMap, setMap, loadTestMap,
-  writeFileAtomic,
 };

@@ -14,7 +14,7 @@
  * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
  * переопределение — env MAP_PASS — передаётся спавненному серверу как ADMIN_PASS.
  */
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { WebSocket } from "ws";
 import { sendJoin } from "./ws-auth.mjs";
 import fs from "node:fs";
@@ -23,11 +23,25 @@ import path from "node:path";
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || "1946";
 
+// Аккаунт-редактор: мутации карт (кадр setmap) за админ-гейтом (server/testmap.js),
+// загрузчик карты «map-setter» — админ; аккаунт создаётся в data/ ДО старта
+// сервера через scripts/make-admin.mjs (лестница S1, см. test-admin-reset).
+const ADMIN_LOGIN = "map-setter";
+const ADMIN_PASS = "password1";
+
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = path.join(ROOT, "data");
 const PORT = 3893 + Math.floor(Math.random() * 50);
 const WS_ADDR = `ws://127.0.0.1:${PORT}`;
 const LOGIN = `persist-cat-${Math.floor(Math.random() * 1e6)}`;
+
+// data/ может отсутствовать в свежем worktree — тест пишет туда базовую карту
+// и аккаунт-админа до старта сервера.
+fs.mkdirSync(DATA, { recursive: true });
+execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+  env: { ...process.env, DATA_DIR: DATA },
+  encoding: "utf8",
+});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -139,8 +153,10 @@ try {
   check(!(me && me.fx === 0 && me.fy === 0), "не на спавне (0,0)");
   ws2.close();
 
-  // 3. setmap пишет карту атомарно и оставляет бэкап
-  const ws3 = await client("map-setter");
+  // 3. setmap пишет карту атомарно и оставляет бэкап. Загрузчик — админ:
+  // мутации карт за админ-гейтом (server/testmap.js), аккаунт-редактор
+  // подготовлен выше через scripts/make-admin.mjs.
+  const ws3 = await client(ADMIN_LOGIN);
   await waitFor(ws3, ([ev]) => ev === "field");
   const smallMap = {
     v: 2,

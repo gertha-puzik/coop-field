@@ -22,15 +22,39 @@ per account:
 | `pass` | `{algo:"scrypt", N, r, p, keylen, salt, hash}` | Passwords never leave `accounts.js` as plaintext; scrypt (N=16384, r=8, p=1, 32-byte key), random 16-byte salt, `timingSafeEqual` verification. Minimum password length: 8 (`PASS_MIN`) |
 | `role` | `registered` \| `admin` | `admin` is granted ONLY by the owner's one-shot CLI `scripts/make-admin.mjs` (server stopped); `BOOTSTRAP_ADMIN` names no longer auto-promote (S1) |
 | `createdAt` | epoch ms | |
-| `profile` | `{displayName, bio?, avatarCharacterId?, sp?}` | the public card + the private part (`sp`, §3) |
+| `profile` | `{displayName, bio?, birthday?, avatarCharacterId?, sp?}` | `birthday` is stored as a full `YYYY-MM-DD` or null for the owner. Stranger catalog/card responses do not include the year (§3). `sp` stays private |
 | `characters` | `[{id, name, sprite, size}]` | sprite ids whitelist-checked against the live sprite catalogue; size clamped 60–100 |
 | `activeCharacterId` | character id | |
 
 There are **no** email/phone/payment fields anywhere in the store — the code
 simply does not collect them. Account count is capped (`MAX_ACCOUNTS`,
 default 500). Unknown file versions migrate without dropping rows
-(`migrateStore`). There is **no account-deletion route**; only the position
-book forgets a cat (`forgetCat`, admin reset).
+(`migrateStore`).
+
+Self-service deletion is `DELETE /profiles/me` (same Origin/CSRF and host
+gate as `PATCH /profiles/me`; the public host class still answers 404). The
+body must include the current password; a wrong or empty password changes
+nothing. On success the **row stays** in `accounts.json` and is anonymized
+rather than removed: `login` becomes `x` plus the account id (the old login
+is no longer a credential), `pass` is replaced with a scrypt hash of a
+random secret so the old password cannot log in, `profile.birthday`,
+`bio`, `sp` and the avatar fields are cleared, `profile.displayName`
+becomes `Удалён <id>`, and `profile.deletedAt` is set. `deletedAt` keeps
+the row out of the public catalog and out of `GET /profiles/:id`. Character
+names on the row are left unchanged. Every session of that `accountId` is
+removed from `sessions.json`, and the response clears the `coop_session`
+cookie. Files removed are only this account's: `avatars/<id>.png` and
+`avatars/<id>.jpg`, plus sprite-manifest rows whose `ownerAccountId` equals
+this id (builtin rows and any other owner's files stay). An already-open
+WebSocket is not closed by this HTTP handler; the dead cookie and the
+revoked session store make the next HTTP call and a fresh socket bind fail.
+
+The position book is **not** part of that cleanup. `test-cats.json` rows
+are keyed only by character name (`{login, fm, fx, fy, x, y, ts}` — no
+`accountId`). The same name can belong to another player or to a guest, so
+deletion does not call `forgetCat` and does not remove any row, even one
+whose name matches this account's character. Admin reset remains the only
+path that forgets a cat, and it is still name-keyed.
 
 ## 2. Sessions (server/auth.js)
 
@@ -44,9 +68,11 @@ book forgets a cat (`forgetCat`, admin reset).
   `Domain` attribute — B1). On https: `Secure` + `SameSite=Lax` (legacy
   `SameSite=None` only behind `COOKIE_LOOSE=1`). The token is never put in
   `localStorage`; on the elyria host class it is cookie-only (`?t=` acceptance
-  off unless `AUTH_LEGACY_TOKEN=1`); on `local` the token also appears in HTTP
-  response bodies (tests/dev rely on it); on `public` old clients' `?t=` still
-  works transitively.
+  off unless `AUTH_LEGACY_TOKEN=1`) and the WS `whoami` frame does not echo it;
+  on `local` the token also appears in HTTP response bodies and in `whoami`
+  (tests/dev rely on it); on `public` old clients' `?t=` still works transitively,
+  but `whoami` does not echo the token. `hello` carrying `payload.token` on
+  public/elyria requires a class-matching Origin.
 - Rate limiting (anti-guessing) — **memory-only, never persisted**: per-IP buckets
   (`hits` map, register 60s/5h prod, login 6s gap) and the per-LOGIN failure lock
   (`AUTH_LOGIN_FAIL_MAX`, default 20 failures / 15 min window, success resets).
@@ -61,9 +87,9 @@ Who sees what (single DTO source: `accounts.publicProfile` / `accounts.publicAcc
 | Audience | Fields |
 | --- | --- |
 | Owner (WS `whoami`, `GET /auth/me`) | `accountId`, `login`, `role`, `profile.displayName`, `characters[]`, `activeCharacterId`, `character` (`publicAccount`) |
-| Everyone (catalog `GET /profiles`, card `GET /profiles/:id`) | `accountId`, `displayName`, `bio`, `avatarCharacterId`, `characters[{id,name,sprite,size}]`, `activeCharacterId`, `createdAt`, plus read-only `lastSeenAt` / `lastSeenRoom` (derived, §5) — **no login, no role, no password, no sp** |
+| Everyone (catalog `GET /profiles`, card `GET /profiles/:id`) | `accountId`, `displayName`, `bio`, `birthday` as `MM-DD` or null (month and day only — the stored year is not in the JSON), `avatar`, `avatarCharacterId`, `characters[{id,name,sprite,size}]`, `activeCharacterId`, `createdAt`, plus read-only `lastSeenAt` (derived, §5) — **no `lastSeenRoom`, no birth year, no login, no role, no password, no sp** |
 | Guest in a room | `publicCat` frames: id, login (character name), color, sprite, x/y, deg, size; `roomsinfo` occupancy (a guest sees a closed room's count but not its logins — the "ghost" rule); `chatlog` — the room's last ≤40 chat messages |
-| Owner only (`GET/PATCH /profiles/me`) | everything above **plus `sp`** (hidden per-player parameters `periodSec`/`damageLevel`/`armorLevel`, stored in `profile.sp`, partial-merged on PATCH — an untouched key survives) |
+| Owner only (`GET/PATCH /profiles/me`) | the owner DTO from `publicProfile` (full `birthday` `YYYY-MM-DD` so the date can be edited) **plus `sp`** (hidden per-player parameters `periodSec`/`damageLevel`/`armorLevel`, stored in `profile.sp`, partial-merged on PATCH — an untouched key survives). `GET /profiles/:id` of one's own id is still the stranger card: month-day birthday, no year |
 
 `sp` is the only profile block that is deliberately owner-private: it never
 enters the catalog, another player's card, `whoami` or `/auth/me` — and not
@@ -72,9 +98,13 @@ even the owner's own `/profiles/:id` card route. Pinned by
 An account row without a filled `profile` has **no** public card at all
 (404 by id, absent from the catalog and search).
 
-Known honest leak of the derivation source: "last seen" for a cat is keyed by
+`lastSeenRoom` is not part of the public DTO. Elysiae has a single field
+(Elision), so a "last room" would not tell another player anything; the
+catalog and profile UI do not render a room and do not substitute a placeholder.
+
+Known honest limit of the derivation source: `lastSeenAt` for a cat is keyed by
 the character NAME in the position book, so two same-named characters are
-indistinguishable there (documented limitation, displayed as-is).
+indistinguishable there. The timestamp is still published; the room is not.
 
 ## 4. Server logs (facts from `grep console\.\* server/*.js`)
 
@@ -103,13 +133,14 @@ default `<repo>/data`, overridable per environment):
 
 | File / dir | Content | Retention |
 | --- | --- | --- |
-| `accounts.json` | §1 | until manually removed (no TTL, no delete route) |
-| `sessions.json` | §2 | 14-day TTL, pruned on save |
+| `accounts.json` | §1 | row kept after self-delete, anonymized in place (no TTL) |
+| `sessions.json` | §2 | 14-day TTL, pruned on save; self-delete drops every token of that accountId immediately |
 | `test-cats.json` | cat position book ("test" room only): `{login(name, lower), fm, fx, fy, x, y, ts}` per character | 30-day TTL, throttled atomic flush |
 | `runtime-config.json` | registry values only (no secrets) | until changed; last 8 backups in `cfg-backups/` |
 | `room-configs.json` | per-room overrides + named backup history | rolling backups |
 | `test-map.json` | location layout (no personal data) | last 8 backups in `backups/`; invalid files quarantined as `test-map.invalid-*.json` |
-| `sprites/` | admin-uploaded sprite files + manifest | admin-managed |
+| `avatars/` | one png/jpg per account id | removed on self-delete for that id only |
+| `sprites/` | admin-uploaded and personal sprite files + manifest | a deleted account's rows (`ownerAccountId`) are unlinked; other owners and builtins stay |
 
 Where that root lives per environment:
 
