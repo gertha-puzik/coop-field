@@ -243,3 +243,31 @@ export async function httpPatchProfile(patch: ProfilePatch): Promise<ProfileResu
   const { status, row, text } = await apiFetch(profilesRoute("me"), { method: "PATCH", body: patch });
   return toProfileResult(status, row, text);
 }
+
+/** Самоудаление: текущий пароль обязателен. Сервер гасит куку в ответе. */
+export async function httpDeleteAccount(
+  password: string,
+): Promise<{ ok: true; message: string } | { ok: false; reason: string; message: string }> {
+  const { status, row } = await apiFetch(profilesRoute("me"), {
+    method: "DELETE",
+    body: { password },
+  });
+  if (status === 200 && row?.ok === true) {
+    return {
+      ok: true,
+      message: typeof row.message === "string" && row.message ? row.message : "Аккаунт удалён.",
+    };
+  }
+  const reason = typeof row?.reason === "string" && row.reason ? row.reason : status === 0 ? "offline" : "error";
+  const message =
+    typeof row?.message === "string" && row.message
+      ? row.message
+      : reason === "bad_password"
+        ? "Неверный пароль. Аккаунт не удалён."
+        : reason === "password_required"
+          ? "Введите текущий пароль."
+          : reason === "csrf" || reason === "csrf_origin_required" || reason === "csrf_origin_mismatch"
+            ? "Запрос отклонён защитой сайта."
+            : "Не удалось удалить аккаунт.";
+  return { ok: false, reason, message };
+}

@@ -25,7 +25,8 @@ import { Dropdown } from '@/components/ui';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
-import { httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
+import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
+import { httpLogout } from '@/lib/net/http-auth';
 import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
 import {
   DAMAGE_LEVELS,
@@ -262,6 +263,9 @@ function OwnProfileEditor({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
+  const [deletePass, setDeletePass] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteFail, setDeleteFail] = useState<string | null>(null);
 
   useEffect(() => {
     setDraftName(profile.displayName);
@@ -398,8 +402,26 @@ function OwnProfileEditor({
     armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
+  const removeAccount = async () => {
+    if (!deletePass) {
+      setDeleteFail('Введите текущий пароль.');
+      return;
+    }
+    setDeleteBusy(true);
+    setDeleteFail(null);
+    const res = await httpDeleteAccount(deletePass);
+    if (!res.ok) {
+      setDeleteBusy(false);
+      setDeleteFail(res.message);
+      return;
+    }
+    await httpLogout();
+    window.location.assign('/');
+  };
+
   return (
-    // id="settings" — якорь ссылок «Настройки» в шапке сайта: /players/?id=…#settings
+    <>
+    {/* id="settings" — якорь ссылок «Настройки» в шапке сайта: /players/?id=…#settings */}
     <form
       id="settings"
       className={styles.edBox}
@@ -608,6 +630,36 @@ function OwnProfileEditor({
         </div>
       ) : null}
     </form>
+    <form
+      className={`${styles.edBox} ${styles.edDanger}`}
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        void removeAccount();
+      }}
+    >
+      <span className={styles.edLabel}>Удаление аккаунта</span>
+      <p className={styles.edWarn}>
+        Аккаунт пропадёт из каталога, а войти с прежним паролем будет нельзя.
+        Введите текущий пароль и подтвердите кнопкой.
+      </p>
+      <label className={styles.edField}>
+        <span className={styles.edLabel}>Текущий пароль</span>
+        <Input
+          type="password"
+          autoComplete="current-password"
+          value={deletePass}
+          onChange={(ev) => setDeletePass(ev.target.value)}
+          disabled={deleteBusy}
+        />
+      </label>
+      <div className={styles.edActions}>
+        <Button type="submit" size="sm" variant="destructive" disabled={deleteBusy || deletePass.length === 0}>
+          {deleteBusy ? 'Удаляем…' : 'Удалить аккаунт'}
+        </Button>
+        {deleteFail ? <span className={styles.edWarn}>{deleteFail}</span> : null}
+      </div>
+    </form>
+    </>
   );
 }
 

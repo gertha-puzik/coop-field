@@ -124,6 +124,27 @@ function destroySession(token) {
   }
 }
 
+/** Гасит все живые сессии одного аккаунта (самоудаление). Чужие accountId
+ *  не затрагиваются. */
+function revokeAccountSessions(accountId) {
+  const id = String(accountId || "");
+  if (!id) return 0;
+  let n = 0;
+  for (const [token, rec] of Object.entries(sessions)) {
+    if (rec && String(rec.accountId) === id) {
+      delete sessions[token];
+      n += 1;
+    }
+  }
+  if (n) saveSessions();
+  return n;
+}
+
+/** Та же гасящая кука, что у POST /auth/logout. */
+function clearedSessionCookie(secure) {
+  return `${cookieHeader("deleted", secure)}; Max-Age=0`;
+}
+
 /**
  * P5-редизайн каталога (read-only вью): аккаунт → время свежайшей ЖИВОЙ
  * сессии (createdAt последней сессии в пределах TTL). Единственный честный
@@ -580,6 +601,8 @@ export {
   tokenFromRequest,
   sessionFromRequest,
   lastSeenByAccount,
+  revokeAccountSessions,
+  clearedSessionCookie,
   flushAuth,
   registerLimits,
   COOKIE,

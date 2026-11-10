@@ -39,8 +39,9 @@
  * DATA_DIR (песочница), как test-auth.mjs; сервер убивается в finally; каталог
  * DATA чистится при выходе.
  */
+import http from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
@@ -148,9 +149,16 @@ writeFileSync(
   ),
 );
 
+// Книга позиций без accountId: обе строки должны пережить самоудаление.
+const nowTs = Date.now();
+writeFileSync(path.join(DATA, "test-cats.json"), JSON.stringify({ v: 1, savedAt: nowTs, cats: {
+  delcat: { login: "Delcat", x: 2, y: 2, ts: nowTs },
+  stranger: { login: "Stranger", x: 3, y: 2, ts: nowTs },
+}}));
+
 const server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA },
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, AUTH_LOGIN_GAP_MS: "0" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stderr.on("data", (d) => process.stderr.write(d));
@@ -645,6 +653,83 @@ try {
     qaUnion.size === 5 && (qaAll.json?.items || []).every((it) => qaUnion.has(it.accountId)),
     "search+pages: объединение страниц = весь результат запроса",
   );
+
+  /* ---------- 9. DELETE /profiles/me ---------- */
+  const regOne = async (login, name) => {
+    const row = await probe({ method: "POST", path: "/auth/register", body: { login, pass: "password1", name } });
+    return { status: row.status, cookie: sessionCookie(row.setCookie), id: row.json?.accountId };
+  };
+  const vic = await regOne("del_q", "Delcat");
+  const again = await probe({ method: "POST", path: "/auth/login", body: { login: "del_q", pass: "password1" } });
+  const secondCookie = sessionCookie(again.setCookie);
+  const keep = await regOne("keep_q", "Keeper");
+  const png = readFileSync(path.join(ROOT, "public/sprites/anya1.png"));
+  const upload = async (cookie, name) => {
+    const b = "----coopdel";
+    const body = Buffer.concat([
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${name}\r\n--${b}\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`),
+      png,
+      Buffer.from(`\r\n--${b}--\r\n`),
+    ]);
+    const res = await fetch(`${HTTP}/sprites/mine`, {
+      method: "POST",
+      headers: { cookie, "content-type": `multipart/form-data; boundary=${b}` },
+      body,
+    });
+    const json = await res.json().catch(() => null);
+    return { status: res.status, id: json?.sprite?.id, reason: json?.reason || "" };
+  };
+  const mineV = await upload(vic.cookie, "Delcoat");
+  const mineK = await upload(keep.cookie, "Keepcoat");
+  mkdirSync(path.join(DATA, "avatars"), { recursive: true });
+  const vAvatar = path.join(DATA, "avatars", `${vic.id}.png`);
+  const kAvatar = path.join(DATA, "avatars", `${keep.id}.png`);
+  writeFileSync(vAvatar, "v");
+  writeFileSync(kAvatar, "k");
+  const del = (cookie, password, origin) =>
+    probe({ method: "DELETE", path: "/profiles/me", cookie, origin, body: { password } });
+  const pub = await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ password: "password1" });
+    const req = http.request({
+      host: HOST, port: PORT, method: "DELETE", path: "/profiles/me",
+      headers: { host: "stranger.example", cookie: vic.cookie, "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+    }, (res) => {
+      let raw = "";
+      res.on("data", (c) => { raw += c; });
+      res.on("end", () => resolve({ status: res.statusCode, text: raw }));
+    });
+    req.on("error", reject);
+    req.end(payload);
+  });
+  const evil = await del(vic.cookie, "password1", "https://evil.example");
+  const wrong = await del(vic.cookie, "wrong-pass");
+  const listed = await probe({ path: "/profiles" });
+  const gone = await del(vic.cookie, "password1");
+  const catalog = await probe({ path: "/profiles" });
+  const hiddenCard = await probe({ path: `/profiles/${vic.id}` });
+  const dead1 = await probe({ path: "/profiles/me", cookie: vic.cookie });
+  const dead2 = await probe({ path: "/profiles/me", cookie: secondCookie });
+  const who = await probe({ path: "/auth/me", cookie: secondCookie });
+  const relog = await probe({ method: "POST", path: "/auth/login", body: { login: "del_q", pass: "password1" } });
+  await sleep(2500);
+  const book = JSON.parse(readFileSync(path.join(DATA, "test-cats.json"), "utf8"));
+  const has = (rows, id) => (rows?.items || []).some((it) => it.accountId === id);
+  check(vic.status === 200 && keep.status === 200 && !!secondCookie && secondCookie !== vic.cookie, "delete: две сессии и чужой аккаунт");
+  check(mineV.status === 201 && mineK.status === 201 && !!mineV.id && mineV.id !== mineK.id, `delete: окрасы ${mineV.status}/${mineK.status} ${mineV.reason} ${mineK.reason}`);
+  check(pub.status === 404 && pub.text.includes("not_found"), "delete: публичный Host → 404");
+  check(evil.status === 403 && evil.json?.ok === false, "delete: чужой Origin → 403");
+  check(wrong.status === 403 && wrong.json?.reason === "bad_password" && has(listed.json, vic.id), "delete: неверный пароль не удаляет");
+  check(
+    gone.status === 200 && String(gone.json?.message || "").includes("Аккаунт удалён") &&
+      !has(catalog.json, vic.id) && hiddenCard.status === 404 &&
+      dead1.status === 401 && dead2.status === 401 && who.json?.role === "guest" && relog.status === 401 &&
+      !existsSync(vAvatar) && existsSync(kAvatar) &&
+      !existsSync(path.join(DATA, "sprites", `${mineV.id}.png`)) &&
+      existsSync(path.join(DATA, "sprites", `${mineK.id}.png`)) &&
+      book.cats?.delcat?.login === "Delcat" && book.cats?.stranger?.login === "Stranger",
+    "delete: каталог пуст, сессии и пароль мертвы, чужие файлы целы, книга позиций на месте",
+  );
+
 } catch (e) {
   failures += 1;
   console.error("FAIL exception", e);
