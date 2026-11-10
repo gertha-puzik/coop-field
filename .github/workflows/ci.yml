@@ -132,6 +132,35 @@ jobs:
       # строго по cookie-сессии.
       - name: HTTP-профили
         run: npm run test:profiles
+      # Скрипты сами поднимают песочницу (свой порт и DATA_DIR).
+      - name: Приватность СП профиля
+        run: npm run test:sp-privacy
+      - name: Личные окрасы
+        run: npm run test:my-sprites
+      - name: Аватарки профиля
+        run: npm run test:avatars
+      # test:ws сам сервер не поднимает: ждёт WS_URL. Джоб слушает песочницу.
+      # Скрипт не закрывает часть сокетов и заводит много комнат с одного
+      # loopback. Прод-потолки WS_MAX_PER_IP=8 и ROOMS_MAX=32 здесь выше
+      # только у этого процесса.
+      - name: Контракт комнаты (ws)
+        run: |
+          set -euo pipefail
+          data=$(mktemp -d)
+          port=3780
+          DATA_DIR="$data" PORT="$port" HOST=127.0.0.1 WS_MAX_PER_IP=128 ROOMS_MAX=128 node server.js &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for _ in $(seq 1 50); do
+            if curl -sf "http://127.0.0.1:${port}/health" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.2
+          done
+          test "$ready" = 1
+          WS_URL="ws://127.0.0.1:${port}" npm run test:ws
       - name: Preview slug
         run: npm run test:preview-slug
       - name: Preview apply/destroy guards
