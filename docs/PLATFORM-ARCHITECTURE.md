@@ -332,7 +332,7 @@ main; репо-часть конвейера в этой ветке — толь
 | `src/lib/net/cfg-live.ts` | 122 | universes из GET /cfg: кэш на вкладку, дефолты при сбое, снап к дефолту |
 | `src/lib/cfg-registry.ts` | 139 | зеркало реестра для клиента (паритет — parity-гейт) |
 | `src/components/sim/auth-panel.tsx` | 189 | форма входа/регистрации (только elyria): reason→человекочитаемые тексты, локальная валидация, автофокус, сброс пароля после выхода (B6) |
-| `src/components/sim/settings-panel.tsx` | 1240 | ролевой рендер вкладок (role из whoami; паролей нет) |
+| `src/components/sim/settings-panel.tsx` | 1222 | ролевой рендер вкладок (role из whoami; паролей нет) |
 | `src/components/players/players-catalog.tsx` | 628 | каталог игроков /players (поиск ?q, пагинация nextCursor, deep-link, правка своей) |
 | `src/components/admin/cfg-dashboard.tsx` | 736 | админ-дашборд /admin: реестр/списки разрешённых значений (B2)/restore/export/import, диф-предпросмотр |
 | `src/app/*/page.tsx` | 11–13 | оболочки Simulator: `/` hub, `/combat/` beer, `/game/` elision (+ `/elision/` — redirect-стаб), `/hunger/` каркас, `/players/`, `/admin/` |
