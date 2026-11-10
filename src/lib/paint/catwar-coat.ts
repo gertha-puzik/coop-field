@@ -2,7 +2,7 @@
  * Окрас по коду CatWar (#84 волна 3): клиентский конвейер «код → котик → PNG»
  * для зоны «Свой окрас» профиля (∂ src/lib/paint — как paint-механика симулятора).
  *
- * Игрок вставляет текстовый код окраса из конструктора KNS (kns.miew.ru) —
+ * Игрок вставляет текстовый код окраса из конструктора KNS (kns.phainonsmilk.ru) —
  * тот самый, что работает на catwar.su. Движок рендера — vendor-копия
  * public/catwar/tint.js (IIFE-глобал window.Tint, байт-в-байт из репо kns;
  * канон и sha-гейт — scripts/check-catwar-vendor.mjs), маски — public/catwar/gray/.

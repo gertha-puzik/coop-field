@@ -36,14 +36,15 @@
   font-size: 15px;
   line-height: 1.5;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  /* --paw-cursor подменяет PawCursor: лапка поворачивается по движению мыши. */
+  /* --paw-cursor/--paw-cursor-hover подменяет PawCursor: нейтраль и
+     наведение (коготки) крутятся по движению мыши. */
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
 
 .sky a,
 .sky button,
 .sky [role='button'] {
-  cursor: var(--paw-cursor, url('/lapka.svg') 16 22), pointer;
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
 }
 
 .star {

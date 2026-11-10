@@ -390,13 +390,29 @@
   }
 }
 
-/* Курсор-лапка, поворачивающаяся по направлению движения мыши: PawCursor
-   (src/components/ui/paw-cursor.tsx) подменяет --paw-cursor повёрнутыми
-   вариантами lapka.svg; до инициализации, без JS и при prefers-reduced-motion
-   действует статичный фолбэк. Тело страницы несёт ту же лапку — включая поле
-   и все места, где курсор не перекрыт явно. */
+/* Курсор-лапка: PawCursor (src/components/ui/paw-cursor.tsx) подменяет
+   --paw-cursor (нейтраль) и --paw-cursor-hover (коготки) повёрнутыми
+   вариантами lapka.svg, статичные стейты — --paw-cursor-grab/grabbing/aim.
+   До инициализации, без JS и при prefers-reduced-motion действует
+   статичный фолбэк. Список курсора обязан завершаться generic-keyword
+   (Chrome отвергает списки из одних url()). */
 body {
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
+}
+
+/* Стейты лапки поверх tailwind-классов (unlayered правила выше
+   @layer utilities): прицел на игровом поле, захват/перетаскивание
+   в каруселях. Tailwind-класс в разметке остаётся фолбэком до JS. */
+.cursor-crosshair {
+  cursor: var(--paw-cursor-aim), crosshair;
+}
+
+.cursor-grab {
+  cursor: var(--paw-cursor-grab), grab;
+}
+
+.active\:cursor-grabbing:active {
+  cursor: var(--paw-cursor-grabbing), grabbing;
 }
 
 /* Главное меню Wanderpaws: ночь, плывущий градиент, трава, следы лап. */
@@ -411,7 +427,7 @@ body {
 
 .wander-sky a,
 .wander-sky button {
-  cursor: var(--paw-cursor, url('/lapka.svg') 16 22), pointer;
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
 }
 
 .wander-drift {
