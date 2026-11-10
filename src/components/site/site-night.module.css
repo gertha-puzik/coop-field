@@ -6,3 +6,15 @@
   background: #070b18;
   color: #f4f0ff;
 }
+
+/* Админские списки и кнопки внутри ночной страницы: UA и cursor-pointer
+   иначе возвращают системную стрелку. Портал выпадающего списка живёт
+   на body — его закрывает общее правило в globals.css. */
+.pageNight a,
+.pageNight button:not(:disabled),
+.pageNight select:not(:disabled),
+.pageNight summary,
+.pageNight [role='button']:not([aria-disabled='true']),
+.pageNight li button:not(:disabled) {
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
+}

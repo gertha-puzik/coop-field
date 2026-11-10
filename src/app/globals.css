@@ -400,6 +400,27 @@ body {
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
 
+/* Нативные select/option и списки (role=listbox, в том числе портал Dropdown
+   на document.body) сбрасывают курсор на системную стрелку. Правило вне
+   @layer, чтобы оно побеждало и UA-стиль, и tailwind cursor-*. Выключенные
+   пункты остаются с нейтральной лапкой и not-allowed — список по-прежнему
+   открывается и выбирается клавиатурой. */
+select,
+option,
+summary,
+[role='listbox'],
+[role='option']:not([aria-disabled='true']),
+[role='combobox']:not([aria-disabled='true']) {
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
+}
+
+select:disabled,
+option:disabled,
+[role='option'][aria-disabled='true'],
+[role='combobox'][aria-disabled='true'] {
+  cursor: var(--paw-cursor, url('/lapka.svg') 16 22), not-allowed;
+}
+
 /* Стейты лапки поверх tailwind-классов (unlayered правила выше
    @layer utilities): прицел на игровом поле, захват/перетаскивание
    в каруселях. Tailwind-класс в разметке остаётся фолбэком до JS. */
