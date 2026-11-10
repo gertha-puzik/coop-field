@@ -252,7 +252,7 @@ reset/restore с подтверждением.
   `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
   гейт check:paint-seam); из www-grotto вырезан.
   Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
-  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.miew.ru → клиентский конвейер
+  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.phainonsmilk.ru → клиентский конвейер
   `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
   дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
   Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы

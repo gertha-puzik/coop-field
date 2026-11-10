@@ -260,7 +260,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         }
         e.hover = { c, r };
         const cvE = canvasRef.current;
-        if (cvE) cvE.style.cursor = 'crosshair';
+        if (cvE) cvE.style.cursor = 'var(--paw-cursor-aim), crosshair';
         return;
       }
       // Прицел прыжка: курсор в мире с поправкой на подъём земли — клик по
@@ -312,7 +312,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     }
     const hov = hitTargetAt(s, mx, my);
     const hovT = hitDummyObjAt(s, mx, my);
-    if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'grab' : '';
+    if (cv) cv.style.cursor = hovT || (hov && hov.id !== s.controlled) ? 'var(--paw-cursor-grab), grab' : '';
   };
 
   const onLeave = () => {
@@ -351,7 +351,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       }
       if(ed.tool==='pan'||ed.spacePan||ev.button===1){
         ed.panDrag={sx:ev.clientX,sy:ev.clientY,x:ed.pan?.x??0,y:ed.pan?.y??0};
-        ev.currentTarget.setPointerCapture(ev.pointerId);ev.currentTarget.style.cursor='grabbing';ev.preventDefault();return;
+        ev.currentTarget.setPointerCapture(ev.pointerId);ev.currentTarget.style.cursor='var(--paw-cursor-grabbing), grabbing';ev.preventDefault();return;
       }
       const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x; my = ground.y;
@@ -375,7 +375,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         toggleEditorSpawn(c, r);
         dirtPaintingRef.current = true;
         ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
+        ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();
         return;
       }
@@ -404,7 +404,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         if (ed.pcv) setPaintOverride(ed.pcv, false);
         ed.dirty = true;
         ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
+        ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();
         return;
       }
@@ -413,7 +413,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         dirtPaintingRef.current = true;
         paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
         ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
+        ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();
         return;
       }
@@ -423,7 +423,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         beginElevStroke(ed.tool, c, r);
         if(ed.elevFree){endElevStroke();dirtPaintingRef.current=false;}
         ev.currentTarget.setPointerCapture(ev.pointerId);
-        ev.currentTarget.style.cursor = 'crosshair';
+        ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();
         return;
       }
@@ -443,7 +443,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       }
       ed.drag = { c0: c, r0: r, c1: c, r1: r, erase: ev.button === 2 };
       ev.currentTarget.setPointerCapture(ev.pointerId);
-      ev.currentTarget.style.cursor = 'crosshair';
+      ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
       ev.preventDefault();
       return;
     }
@@ -471,7 +471,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const net = netRef.current;
       if (net?.ready) net.emit('dummyGrab');
       ev.currentTarget.setPointerCapture(ev.pointerId);
-      ev.currentTarget.style.cursor = 'grabbing';
+      ev.currentTarget.style.cursor = 'var(--paw-cursor-grabbing), grabbing';
       ev.preventDefault();
       return;
     }
@@ -497,7 +497,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     };
     // захват указателя: move/up продолжают приходить даже за пределами канваса
     ev.currentTarget.setPointerCapture(ev.pointerId);
-    ev.currentTarget.style.cursor = 'grabbing';
+    ev.currentTarget.style.cursor = 'var(--paw-cursor-grabbing), grabbing';
     ev.preventDefault();
   };
 
@@ -581,7 +581,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       commitEditorDrag();
       syncEditorView();
       const cvE = canvasRef.current;
-      if (cvE) cvE.style.cursor = 'crosshair';
+      if (cvE) cvE.style.cursor = 'var(--paw-cursor-aim), crosshair';
       return;
     }
     if (!dragRef.current) return;

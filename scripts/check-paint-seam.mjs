@@ -9,7 +9,7 @@
  *
  * Проверяет, что текущий index.html == канонический исходник KNS +
  * ровно этот шов: исходник восстанавливается вырезанием шва, его
- * sha1 сверяется с эталоном (прод kns.miew.ru/paint-demo/, PR#87).
+ * sha1 сверяется с эталоном (прод kns.phainonsmilk.ru/paint-demo/, PR#87).
  * Провал = копию отредактировали сверх шва (или изменили сам шов) —
  * обнови эталон ТОЛЬКО при осознанном релизе KNS Paint (новый PR:
  * копия + таблица sha1, как в PR #87).
@@ -25,7 +25,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGE = path.join(ROOT, "public", "paint-demo", "index.html");
 const BRIDGE = path.join(ROOT, "public", "paint-demo", "game-bridge.js");
 
-/** Эталон исходника KNS Paint v8.1.2 (sha1 == прод kns.miew.ru/paint-demo/,
+/** Эталон исходника KNS Paint v8.1.2 (sha1 == прод kns.phainonsmilk.ru/paint-demo/,
  *  зафиксирован в PR #87: 114412 B). Меняется ТОЛЬКО при релизе KNS Paint. */
 const SOURCE_SHA1 = "b326a88bce32f6a4e7eb6c11f4500af277e03c71";
 
