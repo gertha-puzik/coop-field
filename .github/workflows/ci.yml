@@ -86,6 +86,9 @@ jobs:
       # (каждый ход получает ответ, гонки за клетку, переполнение очереди).
       - name: Очередь шагов на сервере
         run: node scripts/test-move-queue.mjs
+      # Общий потолок block/space/atmo/dummy/rab. Скрипт сам поднимает песочницу.
+      - name: Потолок кадров block/space/atmo/dummy
+        run: npm run test:frame-limit
       - name: Аккаунты и закрытая Элизия
         run: npm run test:auth
       # B1: ~44 живых пробы кросс-доменной изоляции — сам поднимает

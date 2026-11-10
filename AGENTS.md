@@ -138,15 +138,15 @@ Invariants (violating one = a bug):
 | `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); client `damage` and `pawsDamage` are accepted and ignored — fight damage is the server zone table × attacker profile.sp.damageLevel, capped by maxStrikeDamage; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
 | `chat` | `{text}` | ≤200 chars after sanitize, 450 ms; success → `chat` to all |
 | `sprite` | `{sprite}` | whitelist of 32; broadcast `update cat` |
-| `dummy` | `{on, sprite?}` | non-test rooms only; → `dummyState` to all |
-| `dummyMove` | `{x, y}` — fractions | clamp 0..9/0..5; → `dummyMove` to others |
-| `dummyGrab` / `dummyDrop` | `{}` | one holder at a time; released on socket close |
-| `rab` | `{on}` | non-test rooms only; → `rabState` to all |
-| `rabHit` | `{zone, part, damage}` | → `rabHit` to others |
-| `block` | `{on}` | → `block` to others; block counts at the moment of impact |
-| `space` | `{on, hold?, cancel?}` | hold 0–4000; crouch-"jelly"; → `space` to others |
-| `atmo` | `{dp, w}` | phases morning/day/evening/night; weather sun/cloud/rain; ANY player; → `atmo` to ALL (echo = ack) |
-| `atmoset` | `{pl, wl}` minutes | pl 1–120, wl 2–240; → `atmo` anchor |
+| `dummy` | `{on, sprite?}` | non-test rooms only; → `dummyState` to all; shared socket cap 50 ms, burst 2, silent drop |
+| `dummyMove` | `{x, y}` — fractions | clamp 0..9/0..5; → `dummyMove` to others; shared socket cap 50 ms, burst 2, silent drop |
+| `dummyGrab` / `dummyDrop` | `{}` | one holder at a time; released on socket close; shared socket cap 50 ms, burst 2, silent drop |
+| `rab` | `{on}` | non-test rooms only; → `rabState` to all; shared socket cap 50 ms, burst 2, silent drop |
+| `rabHit` | `{zone, part, damage}` | → `rabHit` to others; shared socket cap 50 ms, burst 2, silent drop |
+| `block` | `{on}` | → `block` to others; block counts at the moment of impact; shared socket cap 50 ms, burst 2, silent drop |
+| `space` | `{on, hold?, cancel?}` | hold 0–4000; crouch-"jelly"; → `space` to others; shared socket cap 50 ms, burst 2, silent drop |
+| `atmo` | `{dp, w}` | phases morning/day/evening/night; weather sun/cloud/rain; ANY player; → `atmo` to ALL (echo = ack); shared socket cap 50 ms, burst 2, silent drop |
+| `atmoset` | `{pl, wl}` minutes | pl 1–120, wl 2–240; → `atmo` anchor; shared socket cap 50 ms, burst 2, silent drop |
 | `armor` | `{armor}` 0–0.9 | NOT broadcast: neighbors see the cut damage in `fight` |
 | `freemove` | `{x, y, sp?, jp?, stop?, foot?:{dx,dy,rx?,ry?}}` | `test` room only; cell fractions; ≤1/50 ms; point-in-polygon check |
 | `cellsync` | `{x, y}` 1-based | `test` only; enter battle mode: cell must be walkable/entry, occupied → ring search ≤6; → `update cat` to ALL |
