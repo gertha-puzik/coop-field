@@ -10,8 +10,10 @@
  * операции — POST multipart (upload PNG), PATCH (имя/категория инлайн),
  * DELETE (только загруженные и только свободные; отказ «одет» показывает
  * ники — кого переодеть сначала). Список перечитывается после каждой
- * операции; категории — свободные строки с datalist подсказкой из уже
- * существующих (жёсткого списка нет).
+ * операции; категории — свободные строки, выбор существующих — дропдаун
+ * CategoryField. Нативный datalist убран: Chrome 154–156 ломал свой пикер
+ * (crbug 566683388 и соседние) — отчёт владелицы 2026-11-10 «стрелочка есть,
+ * выпадающего списка нет»; свой попап живёт в DOM и не зависит от браузера.
  *
  * Каталог публичный ОБЕИМ сайтам (карусель входа тянет /sprites/catalog),
  * но сама вкладка — только панель Elysium: модуль в бандле страницы /admin
@@ -83,6 +85,96 @@ function addedLabel(item: AdminSpriteItem): string {
   return `загружен ${new Date(item.addedAt).toLocaleDateString('ru-RU')}`;
 }
 
+/**
+ * Поле категории со встроенной стрелкой-дропдауном существующих категорий
+ * (замена нативному datalist, см. шапку файла). Попап живёт в DOM: клик по
+ * стрелке открывает список независимо от браузерного пикера; клик мимо и
+ * Escape закрывают; панель ровно по ширине поля; текущее значение подсвечено.
+ * Пустой список категорий — стрелка не рендерится вовсе (нет мёртвого
+ * индикатора, дразнящего пустым списком). Ввод остаётся свободной строкой.
+ */
+function CategoryField({
+  categories,
+  value,
+  onChange,
+  placeholder,
+  inputClassName,
+}: {
+  categories: string[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  /** Классы собственно инпута: размеры/фон мест вставки (форма/строка). */
+  inputClassName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const arrow = categories.length > 0 ? (
+    <button
+      type="button"
+      aria-label="Существующие категории"
+      title="Существующие категории"
+      onClick={() => setOpen((v) => !v)}
+      className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-sm font-bold leading-none text-[var(--sim-text)] hover:bg-black/40"
+    >
+      ▾
+    </button>
+  ) : null;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        maxLength={32}
+        className={`${inputClassName} pl-2 pr-7`}
+      />
+      {arrow}
+      {open ? (
+        <ul className="absolute right-0 top-full z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] py-1 shadow-lg">
+          {categories.map((c) => (
+            <li key={c}>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(c);
+                  setOpen(false);
+                }}
+                className={`block w-full px-2 py-1 text-left text-xs ${
+                  c === value
+                    ? 'bg-black/40 font-semibold text-[var(--sim-text)]'
+                    : 'text-[var(--sim-text)] hover:bg-black/40'
+                }`}
+              >
+                {c}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function SpritesTab() {
   const [items, setItems] = useState<AdminSpriteItem[] | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -126,7 +218,8 @@ export function SpritesTab() {
     };
   }, [reload]);
 
-  /** Существующие категории — datalist-подсказка формы (свободный ввод). */
+  /** Существующие категории — пункты дропдауна у инпутов (свободный ввод
+   *  сохраняется: категория — не жёсткий список). */
   const categories = useMemo(() => {
     const seen: string[] = [];
     for (const it of items || []) {
@@ -262,7 +355,7 @@ export function SpritesTab() {
         </div>
       ) : null}
 
-      {/* Загрузка нового скина: PNG + имя + категория (datalist существующих). */}
+      {/* Загрузка нового скина: PNG + имя + категория (дропдаун существующих). */}
       <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
         <p className="text-sm font-bold text-[var(--sim-text)]">Загрузить спрайт</p>
         <p className="mt-1 text-[11px] text-[var(--sim-text-faint)]">
@@ -284,20 +377,13 @@ export function SpritesTab() {
             maxLength={24}
             className="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
           />
-          <input
-            type="text"
+          <CategoryField
+            categories={categories}
             value={upCategory}
-            onChange={(e) => setUpCategory(e.target.value)}
+            onChange={setUpCategory}
             placeholder="Категория (1–32)"
-            maxLength={32}
-            list="sprites-categories"
-            className="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
+            inputClassName="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-black/20 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
           />
-          <datalist id="sprites-categories">
-            {categories.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
           <Button
             type="button"
             size="sm"
@@ -345,14 +431,12 @@ export function SpritesTab() {
                         placeholder="Имя"
                         className="h-7 w-40 rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)]"
                       />
-                      <input
-                        type="text"
+                      <CategoryField
+                        categories={categories}
                         value={editCategory}
-                        onChange={(e) => setEditCategory(e.target.value)}
-                        maxLength={32}
-                        list="sprites-categories"
+                        onChange={setEditCategory}
                         placeholder="Категория"
-                        className="h-7 w-36 rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)]"
+                        inputClassName="h-7 w-36 rounded-md border border-[var(--sim-line)] bg-black/30 text-sm text-[var(--sim-text)]"
                       />
                       <Button
                         type="button"
