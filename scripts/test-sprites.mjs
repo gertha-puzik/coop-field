@@ -36,9 +36,9 @@ import { createHash } from "node:crypto";
  *     из файлового API — никогда);
  *   - /sprites/file/<неизвестный id>.png → 404.
  *
- * Освобождение занятого скина разыгрывается БЕЗ правки аккаунта админом:
- * повторный join того же аккаунта с другим спрайтом перезаписывает одетость
- * (attachSprite вызывается на каждом join) — после чего DELETE проходит.
+ * Освобождение занятого скина: PATCH /profiles/me {sprite} переодевает
+ * персонажа. Повторный join со старым id окрас не снимает — надетый спрайт
+ * профиля важнее payload. После PATCH DELETE проходит.
  *
  * Запуск: node scripts/test-sprites.mjs
  */
@@ -446,13 +446,21 @@ try {
   check(typeof delWorn.json?.message === "string" && delWorn.json.message.includes("snezhinka_q"),
     "отказ «одет» несёт человекочитаемое message с ником");
 
-  /* Освобождение: повторный join с ДРУГИМ спрайтом перезаписывает одетость
-   * (attachSprite на каждом join) — админ никого не переодевает руками. */
+  /* Освобождение: профиль переодевает. Повторный join со старым id не
+   * затирает надетый окрас (иначе карусель входа снимала личный PNG). */
   ws.close();
   await sleep(300);
-  const ws2 = await wsJoinWithSprite("snezhinka_q", "chis");
+  const relog = await httpJson("/auth/login", { method: "POST", body: { login: "snezhinka_q", pass: "password1" } });
+  const unworn = await httpJson("/profiles/me", {
+    method: "PATCH",
+    body: { sprite: "chis" },
+    token: relog.json?.token,
+    origin: ORIGIN,
+  });
+  check(unworn.status === 200 && unworn.json?.ok === true, "переодеть через профиль, не повторным join");
+  const ws2 = await wsJoinWithSprite("snezhinka_q", "testovyy-kot");
   const you2 = await waitFor(ws2, ([ev]) => ev === "you");
-  check(you2[1]?.sprite === "chis", "повторный join с иным спрайтом: аккаунт переодет во «chis»");
+  check(you2[1]?.sprite === "chis", "повторный join со старым id не снимает окрас профиля");
   ws2.close();
   await sleep(300);
 

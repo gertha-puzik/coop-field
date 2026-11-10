@@ -12,6 +12,8 @@
  */
 
 import type { ProfileCharacter } from '@/lib/net/http-profiles';
+import { SPRITES } from '@/lib/sim/settings';
+import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 
 /** Луна = 30 дней (жанровый «месяц» котёнка). */
 export const MOON_DAYS = 30;
@@ -210,9 +212,12 @@ export function avatarOf(card: CardLike): ProfileCharacter | null {
   return card.characters.find((c) => c.id === card.activeCharacterId) || card.characters[0] || null;
 }
 
-/** URL спрайта персонажа (общий whitelist сервера; пустой спрайт → null). */
+/** URL спрайта персонажа (общий whitelist сервера; пустой спрайт → null).
+ *  Личный окрас живёт на /sprites/file/, не рядом с базовыми PNG. */
 export function spriteUrl(char: ProfileCharacter | null): string | null {
-  return char && char.sprite ? `/sprites/${char.sprite}.png` : null;
+  if (!char?.sprite) return null;
+  const known = SPRITES.find((sp) => sp.id === char.sprite)?.src;
+  return spriteAssetUrl(known || `/sprites/file/${char.sprite}.png`);
 }
 
 /* ---------------------- deep-link параметры каталога ---------------------- */

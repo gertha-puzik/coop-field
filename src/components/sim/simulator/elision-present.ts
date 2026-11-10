@@ -9,6 +9,7 @@ import type { EditorPlace } from '@/lib/sim/editor-model';
  */
 import type { DummyConfig, SpriteId } from '@/lib/sim/settings';
 import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
+import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
@@ -76,7 +77,10 @@ export type ElisionPresentInput = {
 
 function spriteUrl(id: string): string {
   if (id === RAB_SPRITE.id) return RAB_SPRITE.src;
-  return SPRITES.find((s) => s.id === id)?.src ?? SPRITES[0]?.src ?? '';
+  const known = SPRITES.find((s) => s.id === id)?.src;
+  if (known) return spriteAssetUrl(known);
+  if (/^[a-z0-9-]{1,64}$/.test(id)) return spriteAssetUrl(`/sprites/file/${id}.png`);
+  return SPRITES[0]?.src ?? '';
 }
 
 function aspectOf(img: SpriteImg | undefined): number {

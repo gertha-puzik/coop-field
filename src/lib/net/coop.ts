@@ -223,8 +223,12 @@ export function httpOrigin(): string {
 }
 
 export function spriteOf(cat: { id?: number; sprite?: string; login?: string }): SpriteId {
-  const hit = SPRITES.find((sp) => sp.id === cat.sprite);
+  const raw = typeof cat.sprite === "string" ? cat.sprite.trim() : "";
+  const hit = SPRITES.find((sp) => sp.id === raw);
   if (hit) return hit.id;
+  // Личный id сервер уже проверил вайтлистом. Подмена на базовый спрайт
+  // рисовала чужой окрас, пока каталог клиента ещё не доехал.
+  if (/^[a-z0-9-]{1,64}$/.test(raw)) return raw;
   const n = Number(cat.id) || 0;
   return SPRITES[Math.abs(n) % SPRITES.length].id;
 }

@@ -33,6 +33,7 @@ import {
 } from "./settings";
 import { SPRITE_CATALOG_CACHE_KEY } from "./engine-consts";
 import { httpSpriteCatalog, type SpriteCatalogItem } from "@/lib/net/http-sprites";
+import { isSpriteSlug, spriteAssetUrl } from "./sprite-asset";
 
 /** Длина рукотворных групп (хвост после неё — категории каталога). */
 const BASE_GROUPS_COUNT = SPRITE_GROUPS.length;
@@ -91,7 +92,7 @@ export function applySpriteCatalog(items: SpriteCatalogItem[]): void {
   const rows: SpriteMeta[] = items.map((it) => ({
     id: it.id,
     name: it.name || it.id,
-    src: BUILTIN_SOURCES.get(it.id) || it.src || `/sprites/${it.id}.png`,
+    src: spriteAssetUrl(BUILTIN_SOURCES.get(it.id) || it.src || `/sprites/${it.id}.png`),
     category: it.category,
   }));
   // каталог целиком: уходит и переименованный builtin (имена/категории
@@ -119,6 +120,35 @@ export function applySpriteCatalog(items: SpriteCatalogItem[]): void {
   }
   SPRITE_GROUPS.splice(BASE_GROUPS_COUNT, SPRITE_GROUPS.length - BASE_GROUPS_COUNT, ...tail);
   notify();
+}
+
+/** Личный окрас, которого ещё нет в статичном списке: вставить строку,
+ *  чтобы поле и WebGL взяли /sprites/file/, а не первый базовый PNG. */
+export function ensureFieldSprite(id: string): void {
+  if (!isSpriteSlug(id)) return;
+  let changed = false;
+  const known = SPRITES.find((sp) => sp.id === id);
+  const src = spriteAssetUrl(known?.src || `/sprites/file/${id}.png`);
+  if (!known) {
+    SPRITES.push({ id, name: id, src, category: "Мои окрасы" });
+    changed = true;
+  } else if (known.src !== src) {
+    known.src = src;
+    changed = true;
+  }
+  const field = FIELD_SPRITES.find((sp) => sp.id === id);
+  if (!field) {
+    const rabAt = FIELD_SPRITES.length - 1;
+    const rab = FIELD_SPRITES[rabAt];
+    const row = { id, name: known?.name || id, src };
+    if (rab && rab.id === "rab") FIELD_SPRITES.splice(rabAt, 0, row);
+    else FIELD_SPRITES.push(row);
+    changed = true;
+  } else if (field.src !== src) {
+    field.src = src;
+    changed = true;
+  }
+  if (changed) notify();
 }
 
 /** Базовые id из статичного набора (подсветка builtin в UI и разделитель

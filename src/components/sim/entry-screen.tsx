@@ -307,9 +307,9 @@ export function EntryScreen({
     };
   };
 
-  /** Профиль «всё выбрано» (Элизия): у персонажа скин (непустой и из базового
-   *  каталога движка — так честно решает появление на поле) и ник. Скрытые
-   *  параметры в критерий не входят: у них всегда есть значения. */
+  /** Профиль «всё выбрано» (Элизия): у персонажа непустой скин-слаг и ник.
+   *  Вайтлист проверяет сервер на join. Клиентский каталог может ещё не
+   *  содержать личный окрас — это не повод оставлять игрока на карусели. */
   const meChar = meProfile
     ? meProfile.characters.find((c) => c.id === meProfile.activeCharacterId) ?? meProfile.characters[0] ?? null
     : null;
@@ -317,7 +317,7 @@ export function EntryScreen({
     meProfile &&
     meChar &&
     meChar.sprite &&
-    SPRITES.some((s) => s.id === meChar.sprite) &&
+    (SPRITES.some((s) => s.id === meChar.sprite) || /^[a-z0-9-]{1,64}$/.test(meChar.sprite)) &&
     (meProfile.displayName.trim() || meChar.name.trim())
   );
 

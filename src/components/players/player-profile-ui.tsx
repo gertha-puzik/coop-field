@@ -32,6 +32,7 @@ import {
   SPRITES,
   SPRITE_GROUPS,
 } from '@/lib/sim/settings';
+import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { avatarOf, moonsFromMs, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
 
@@ -326,6 +327,7 @@ export function MineSpritesSection({
   draftSprite,
   wornSprite,
   onPick,
+  onWear,
   mineHighlight = null,
 }: {
   /** Ник карточки — для префилла имени окраса («Окрас от <ник> <дата>»). */
@@ -336,6 +338,8 @@ export function MineSpritesSection({
   wornSprite: string;
   /** Черновой выбор скина активного персонажа (тот же state редактора). */
   onPick: (id: string) => void;
+  /** Надеть сразу: PATCH /profiles/me {sprite}. Без этого клик остаётся черновиком. */
+  onWear?: (id: string) => Promise<void> | void;
   /** #84 ч.2: id свежего окраса из редактора (?back=profile возврат) —
    *  плитка подсвечивается, тост успеха; одноразовый. */
   mineHighlight?: string | null;
@@ -558,7 +562,7 @@ export function MineSpritesSection({
                         : 'border-transparent hover:border-[var(--sim-line-hover)]'
                   }`}
                 >
-                  <img src={it.src} alt={it.name} className="h-10 w-auto object-contain" draggable={false} />
+                  <img src={spriteAssetUrl(it.src)} alt={it.name} className="h-10 w-auto object-contain" draggable={false} />
                   <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
                     {it.name}
                   </span>
@@ -575,13 +579,20 @@ export function MineSpritesSection({
                   <div className="mt-1 flex items-center gap-1">
                     <button
                       type="button"
-                      aria-pressed={picked}
+                      aria-pressed={picked || worn}
                       disabled={worn || busyId === it.id}
-                      title={worn ? 'Окрас уже надет' : 'Выбрать окрас для активного персонажа'}
-                      onClick={() => onPick(it.id)}
+                      title={worn ? 'Окрас уже надет' : 'Надеть окрас на персонажа'}
+                      onClick={() => {
+                        if (onWear) {
+                          setBusyId(it.id);
+                          void Promise.resolve(onWear(it.id)).finally(() => setBusyId((cur) => (cur === it.id ? null : cur)));
+                          return;
+                        }
+                        onPick(it.id);
+                      }}
                       className="rounded border border-[var(--sim-line)] px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)] disabled:opacity-50"
                     >
-                      {worn ? 'Надет' : picked ? 'Выбран' : 'Надеть'}
+                      {worn ? 'Надет' : busyId === it.id ? 'Надеваем…' : 'Надеть'}
                     </button>
                     <button
                       type="button"

@@ -163,6 +163,14 @@ function pickSprite(payload, slot) {
   return SPRITES[slot % SPRITES.length];
 }
 
+/** Надетый окрас профиля, если он ещё в живом вайтлисте. Чужой и снятый id
+ *  сюда не попадают: клиентский sprite в join их не воскрешает. */
+function wornSprite(account) {
+  const ch = account ? activeCharacter(account) : null;
+  const saved = typeof ch?.sprite === "string" ? ch.sprite.trim() : "";
+  return saved && SPRITES.includes(saved) ? saved : "";
+}
+
 function publicCat(cat, room) {
   const base = {
     id: cat.id,
@@ -323,7 +331,11 @@ function join(ws, payload = {}) {
   }
   const slot = room.cats.size;
   const fromAccount = ws.account ? activeCharacter(ws.account) : null;
-  if (fromAccount) attachSprite(ws.account, payload.sprite, payload.size);
+  // Надетый окрас — источник истины. Карусель входа и localStorage иначе
+  // присылают базовый id и attachSprite затирает личный PNG в аккаунте.
+  // Нет сохранённого (первый вход) — по-прежнему payload, если он в вайтлисте.
+  const savedSprite = wornSprite(ws.account);
+  if (fromAccount) attachSprite(ws.account, savedSprite || payload.sprite, payload.size);
   const wantedName = fromAccount ? fromAccount.name : payload.login;
   const login = uniqueLogin(room, sanitizeLogin(wantedName, NAMES[slot] || `Кот ${slot + 1}`));
   // Рост модельки, выбранный при спавне: клиент шлёт проценты (60–100).
@@ -334,7 +346,7 @@ function join(ws, payload = {}) {
     id: nextId++,
     login,
     color: PALETTE[slot % PALETTE.length],
-    sprite: pickSprite(payload, slot),
+    sprite: savedSprite || pickSprite(payload, slot),
     x: cell[0],
     y: cell[1],
     deg: 0,

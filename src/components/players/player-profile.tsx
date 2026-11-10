@@ -388,6 +388,26 @@ function OwnProfileEditor({
     armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
+  /** «Надеть» — сразу в профиль, без отдельного «Сохранить»: иначе игрок
+   *  уходит в комнату с черновиком, а кот остаётся в прежнем окрасе. */
+  const wearSprite = async (id: string) => {
+    setDraftSprite(id);
+    setFail(null);
+    const res = await httpPatchProfile({ sprite: id });
+    if (!res.ok) {
+      setFail({ title: humanEditError(res.reason), details: res.details || undefined });
+      return;
+    }
+    const fresh = await httpMyProfile();
+    if (fresh.ok && fresh.profile) {
+      onSaved(fresh.profile);
+      setNote('Окрас надет.');
+      window.setTimeout(() => setNote(null), 2500);
+      return;
+    }
+    setFail({ title: 'Окрас сохранился, но свежий профиль не прочитался — обновите страницу.' });
+  };
+
   const removeAccount = async () => {
     if (!deletePass) {
       setDeleteFail('Введите текущий пароль.');
@@ -521,6 +541,7 @@ function OwnProfileEditor({
         draftSprite={draftSprite}
         wornSprite={originSprite}
         onPick={setDraftSprite}
+        onWear={wearSprite}
         mineHighlight={mineHighlight}
       />
       <label className={styles.edField}>
