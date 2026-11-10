@@ -611,6 +611,142 @@ function OwnProfileEditor({
   );
 }
 
+/* ——— скелетоны: deep-link-загрузка на месте, без прыжка страницы ——— */
+
+/** Инфостроки: иконки и лейблы статичны (не грузятся) — скелет повторяет
+ *  их один в один, полоса стоит только на месте ЗНАЧЕНИЯ. Ширины полос —
+ *  порядок настоящего контента; высота 1em = строка текста. */
+const SKEL_INFO: { icon: InfoIcon; label: string; width: string }[] = [
+  { icon: 'id', label: 'ID профиля', width: 'min(46%, 180px)' },
+  { icon: 'calendar', label: 'Дата рождения', width: 'min(40%, 150px)' },
+  { icon: 'moon', label: 'Возраст (в лунах)', width: 'min(36%, 120px)' },
+  { icon: 'activity', label: 'Последний вход', width: 'min(38%, 130px)' },
+  { icon: 'home', label: 'Дом', width: 'min(32%, 110px)' },
+  { icon: 'paw', label: 'Персонажи', width: 'min(45%, 170px)' },
+  { icon: 'feather', label: 'О себе', width: 'min(70%, 260px)' },
+];
+
+/** Лейблы статистики тоже известны заранее — полоса только на значении. */
+const SKEL_STATS = ['Дней в стае', 'Персонажей в аккаунте', 'Активный персонаж'];
+
+/** Каркас страницы профиля той же геометрии (deep-link ?id=): шапка/панель/
+ *  разметка/заголовки секций — настоящие, контентные места — полосы .skel.
+ *  Приход карточки меняет полосы на значения, верстка не перестраивается. */
+export function ProfileSkeleton() {
+  return (
+    <div className={styles.sky} role="status" aria-label="Загружаем профиль">
+      <Starscape />
+      <SiteHeader />
+      <div className={styles.page}>
+        <BrandRow />
+        <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
+          <div className={styles.head}>
+            <figure className={styles.avatar}>
+              <span className={`${styles.avatarArt} ${styles.skel}`} />
+              <figcaption className={styles.avatarCap}>
+                <span className={styles.skel} style={{ width: '82%', height: '1em' }} />
+              </figcaption>
+            </figure>
+            <div className={styles.headMain}>
+              <h1 className={styles.catNameBig}>
+                <span className={styles.skel} style={{ width: 'min(58%, 300px)', height: '1.05em' }} />
+              </h1>
+              <p className={styles.sub}>
+                <span className={styles.skel} style={{ width: 'min(72%, 400px)', height: '1em' }} />
+              </p>
+              <ul className={styles.info}>
+                {SKEL_INFO.map((row) => (
+                  <li key={row.label}>
+                    <span className={styles.iIco}>{INFO_ICONS[row.icon]}</span>
+                    <span className={styles.iLabel}>{row.label}</span>
+                    <span className={styles.skel} style={{ width: row.width, height: '1em', alignSelf: 'center' }} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className={styles.badges}>
+            {[0, 1, 2].map((i) => (
+              <span key={i} className={`${styles.skel} ${styles.skelPill}`} style={{ width: 138 - i * 26, height: 25 }} />
+            ))}
+          </div>
+
+          <section className={styles.section}>
+            <h2 className={styles.secTitle}>Достижения</h2>
+            <div className={styles.ach}>
+              {SKEL_INFO.map((_, i) => (
+                <span key={i} className={styles.achItem}>
+                  <span className={`${styles.skel} ${styles.skelTile}`} style={{ width: 72, height: 72 }} />
+                  <span className={styles.skel} style={{ width: 76, height: 10 }} />
+                </span>
+              ))}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <h2 className={styles.secTitle}>Статистика</h2>
+            <table className={styles.stats}>
+              <tbody>
+                {SKEL_STATS.map((k, i) => (
+                  <tr key={k}>
+                    <td className={styles.statsK}>{k}</td>
+                    <td className={styles.statsV}>
+                      <span className={styles.skel} style={{ width: 96 + i * 26, height: '1em' }} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
+          <footer className={styles.panelFoot}>
+            <span className={styles.skel} style={{ width: 172, height: 14 }} />
+            <span className={styles.skel} style={{ width: 92, height: 12, borderRadius: 7 }} />
+          </footer>
+        </main>
+        <p className={styles.footNote}>
+          <a className={styles.backLink} href="/">
+            ← Главное меню
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Каркас блока «Правка своей карточки» на время полёта /profiles/me:
+ *  панель .edBox той же природы (заголовок статичен, поля — полосы), чтобы
+ *  собственный профиль не «выезжал» вторым этажом после карточки. */
+function OwnEditorSkeleton() {
+  const field = (w: number) => (
+    <label className={styles.edField}>
+      <span className={styles.edLabel}>
+        <span className={styles.skel} style={{ width: w, height: 10, borderRadius: 5 }} />
+      </span>
+      <span className={styles.skel} style={{ width: '100%', height: 32, marginTop: 4 }} />
+    </label>
+  );
+  return (
+    <div style={{ marginTop: 20 }} role="status" aria-label="Загружаем настройки профиля">
+      <form className={styles.edBox}>
+        <h3 className={styles.edTitle}>Правка своей карточки</h3>
+        <div className={styles.edRow}>
+          {field(120)}
+          {field(150)}
+          {field(110)}
+        </div>
+        <div className={styles.edRow} style={{ marginTop: 14 }}>
+          {field(140)}
+          {field(160)}
+        </div>
+        <span className={styles.skel} style={{ width: 128, height: 34, marginTop: 14, borderRadius: 99 }} />
+      </form>
+    </div>
+  );
+}
+
+
 /* ——— страница профиля ——— */
 
 export default function PlayerProfile({
@@ -801,6 +937,10 @@ export default function PlayerProfile({
               coatLink={coatLink}
             />
           </div>
+        ) : mine ? (
+          // свой профиль, /profiles/me ещё в пути: место редактора занято
+          // каркасом той же природы — блок не «выезжает» после прилёта данных
+          <OwnEditorSkeleton />
         ) : null}
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">

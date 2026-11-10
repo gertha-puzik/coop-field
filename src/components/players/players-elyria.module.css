@@ -980,6 +980,64 @@
   opacity: 0.55;
 }
 
+/* ——— скелетоны профиля (deep-link ?id=): каркас той же геометрии ———
+ *  Правило волн: полоса .skel занимает РОВНО место будущего контента,
+ *  высоты заданы инлайн под реальную строку текста; к приходу карточки
+ *  меняются только полосы на значения — страница не прыгает. Пульс
+ *  гасится prefers-reduced-motion (как onlineDot каталога). */
+.skel {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 7px;
+  background: rgba(226, 220, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(226, 220, 255, 0.16), transparent);
+  animation: skel-sweep 1.15s ease-in-out infinite;
+}
+
+@keyframes skel-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after {
+    animation: none;
+  }
+}
+
+/* скелетный портрет: рамка .avatarArt уже даёт квадрат 1:1 и границы —
+ *  заливаем её полосой (.skel на span без контента = пустой квадрат) */
+.avatarArt.skel::after {
+  border-radius: 0;
+}
+
+/* скелетная мини-арена в строках/плитках каталога: фон-сцена уже на месте,
+ *  ::after наследует бегущий блик .skel (скругление внутренней рамки убираем) */
+.miniArena.skel::after {
+  border-radius: 0;
+}
+
+/* скелет плашек-бейджей и плиток достижений — формы настоящего контента */
+.skelPill {
+  border-radius: 99px;
+  padding: 0 13px;
+}
+
+.skelTile {
+  border-radius: 15px;
+  border: 1px solid rgba(226, 220, 255, 0.22);
+}
+
 /* статистика */
 .stats {
   width: 100%;

@@ -38,7 +38,7 @@ import {
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import PlayerProfile, { BrandRow, Starscape, displayFont } from './player-profile';
+import PlayerProfile, { BrandRow, ProfileSkeleton, Starscape, displayFont } from './player-profile';
 import {
   ACTIVITY_TEXT,
   STATUS_TEXT,
@@ -295,6 +295,80 @@ function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
   );
 }
 
+/** Каркас каталога на время первого fetch: панель .listPanel той же сетки --
+ *  заголовки колонок настоящие (они не грузятся), строки/плитки -- полосы .skel
+ *  ровно на местах значений. Приход списка меняет полосы на контент, верстка
+ *  не перестраивается -- страница не дёргается (аналог ProfileSkeleton, #111). */
+const SKEL_ROWS = 14;
+
+function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
+  const strip = (w: string, h = 12) => (
+    <span className={styles.skel} style={{ width: w, height: h }} />
+  );
+  const pill = (w: number) => (
+    <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: w, height: 24 }} />
+  );
+  const idx = Array.from({ length: SKEL_ROWS }, (_, i) => i);
+  if (viewMode === 'table') {
+    return (
+      <section
+        className={`${styles.panel} ${styles.listPanel}`}
+        role="status"
+        aria-label="Загружаем каталог"
+      >
+        <div className={styles.tableWrap}>
+          <div className={styles.thead} aria-hidden>
+            <div />
+            <div>{SORT_TITLE.name}</div>
+            <div className={styles.cBorn}>{SORT_TITLE.born}</div>
+            <div className={styles.cSeen}>{SORT_TITLE.seen}</div>
+            <div className={styles.cHome}>{SORT_TITLE.home}</div>
+            <div className={styles.cAge}>{SORT_TITLE.age}</div>
+            <div className={styles.cAct}>{SORT_TITLE.act}</div>
+            <div className={styles.cStatus}>{SORT_TITLE.status}</div>
+          </div>
+          <div className={styles.tbody} aria-hidden>
+            {idx.map((i) => (
+              <div className={styles.row} key={i}>
+                <span className={`${styles.miniArena} ${styles.skel}`} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {strip('62%', 14)}
+                  {strip('44%', 10)}
+                </span>
+                {strip('84%')}
+                {strip('96%')}
+                {strip('74%')}
+                {strip('58%')}
+                {strip('88%')}
+                {pill(78)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section
+      className={`${styles.panel} ${styles.listPanel}`}
+      role="status"
+      aria-label="Загружаем каталог"
+    >
+      <div className={styles.tiles} aria-hidden>
+        {idx.map((i) => (
+          <div className={styles.tile} key={i}>
+            <span className={`${styles.miniArena} ${styles.tileArena} ${styles.skel}`} />
+            {strip('68%', 15)}
+            {strip('46%', 10)}
+            {pill(74)}
+            {strip('72%')}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Плитка плиточного вида: те же честные данные, компактнее. */
 function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
   return (
@@ -331,7 +405,21 @@ export default function PlayersCatalog() {
   const [query, setQuery] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'status', dir: 1 });
-  const [viewMode, setViewMode] = useState<'table' | 'tiles'>('table');
+  /** Вид каталога персистится между визитами (паттерн elyria-admin-tab, W2-δ3):
+   *  так скелетон первой загрузки сразу рисует правильный режим — и ветка
+   *  tiles-каркаса достижима на возвратных заходах, а не только в теории. */
+  const [viewMode, setViewMode] = useState<'table' | 'tiles'>(() => {
+    if (typeof window === 'undefined') return 'table';
+    return window.localStorage.getItem('elyria-players-view') === 'tiles' ? 'tiles' : 'table';
+  });
+  const pickView = useCallback((mode: 'table' | 'tiles') => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem('elyria-players-view', mode);
+    } catch {
+      /* приватный режим/квота — вид просто не переживёт перезагрузку */
+    }
+  }, []);
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
   const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
@@ -579,27 +667,12 @@ export default function PlayersCatalog() {
     );
   }
 
-  // Deep-link-заход (?id=), карточка в пути: список не грузится и не
-  // рисуется — вместо него экран ожидания в той же ночной оболочке
-  // (PR #93-паттерн: sky → Starscape → SiteHeader), без мигания каталога.
+  // Deep-link-заход (?id=), карточка в пути: каталог не грузится и не
+  // рисуется. Вместо текстовой заглушки — каркас будущего профиля той же
+  // геометрии (заголовки/лейблы настоящие, контентные места — полосы):
+  // страница стоит на месте, приход карточки не перестраивает верстку.
   if (profileWait) {
-    return (
-      <div className={styles.sky}>
-        <Starscape />
-        <SiteHeader />
-        <div className={styles.page}>
-          <BrandRow />
-          <div className={`${styles.panel} ${styles.empty}`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4.5 4.5" />
-            </svg>
-            <div className={styles.eTitle}>Загружаем профиль…</div>
-            <p>Открываем карточку игрока по ссылке.</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <ProfileSkeleton />;
   }
 
   const onlineNow = rows.filter((r) => r.status === 'online').length;
@@ -670,7 +743,7 @@ export default function PlayersCatalog() {
               type="button"
               className={`${styles.segBtn} ${viewMode === 'table' ? styles.segOn : ''}`}
               aria-pressed={viewMode === 'table'}
-              onClick={() => setViewMode('table')}
+              onClick={() => pickView('table')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <rect x="4" y="5" width="16" height="14" rx="2.5" />
@@ -683,7 +756,7 @@ export default function PlayersCatalog() {
               type="button"
               className={`${styles.segBtn} ${viewMode === 'tiles' ? styles.segOn : ''}`}
               aria-pressed={viewMode === 'tiles'}
-              onClick={() => setViewMode('tiles')}
+              onClick={() => pickView('tiles')}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
                 <rect x="4" y="4" width="7" height="7" rx="1.5" />
@@ -713,16 +786,7 @@ export default function PlayersCatalog() {
           </div>
         ) : null}
 
-        {loadingFirst && !cards ? (
-          <div className={`${styles.panel} ${styles.empty}`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4.5 4.5" />
-            </svg>
-            <div className={styles.eTitle}>Загружаем каталог…</div>
-            <p>Запрашиваем публичные карточки у сервера.</p>
-          </div>
-        ) : null}
+        {loadingFirst && !cards ? <CatalogSkeleton viewMode={viewMode} /> : null}
 
         {!loadingFirst && cards && cards.length === 0 ? (
           <div className={`${styles.panel} ${styles.empty}`}>
