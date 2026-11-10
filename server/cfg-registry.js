@@ -80,14 +80,14 @@ export const REGISTRY = deepFreeze({
     key: "atmo.phaseMin",
     label: "Длина части суток",
     description:
-      "Сколько минут длится одна часть суток (утро/день/вечер/ночь) в НОВЫХ комнатах. Живую комнату крутит ползунок «Сутки» (кадр atmoset) — реестр задаёт только стартовые длины.",
+      "Сколько минут длится одна часть суток (утро/день/вечер/ночь) в новых комнатах.",
     unit: "мин",
     kind: "range",
     values: range(minutes(ATMO_PHASE_MS_MIN), minutes(ATMO_PHASE_MS_MAX)),
     default: minutes(ATMO_PHASE_MS_DEF),
     engineCap: range(minutes(ATMO_PHASE_MS_MIN), minutes(ATMO_PHASE_MS_MAX)),
     applyPolicy: "new-room",
-    applyHint: "Применимо к новым комнатам; уже открытая комната едет на своём цикле.",
+    applyHint: "Вступает в новых комнатах; уже идущие едут на своём цикле.",
     visibility: "public",
     scope: "global",
   }),
@@ -95,14 +95,14 @@ export const REGISTRY = deepFreeze({
     key: "atmo.weatherMin",
     label: "Интервал смены погоды",
     description:
-      "Раз в сколько минут погода в НОВОЙ комнате меняется сама. Живую комнату переносит тот же ползунок (кадр atmoset).",
+      "Раз в сколько минут погода в новой комнате меняется сама.",
     unit: "мин",
     kind: "range",
     values: range(minutes(ATMO_WEATHER_MS_MIN), minutes(ATMO_WEATHER_MS_MAX)),
     default: minutes(ATMO_WEATHER_MS_DEF),
     engineCap: range(minutes(ATMO_WEATHER_MS_MIN), minutes(ATMO_WEATHER_MS_MAX)),
     applyPolicy: "new-room",
-    applyHint: "Применимо к новым комнатам; уже открытая комната едет на своём цикле.",
+    applyHint: "Вступает в новых комнатах; уже идущие едут на своём цикле.",
     visibility: "public",
     scope: "global",
   }),
@@ -115,14 +115,14 @@ export const REGISTRY = deepFreeze({
     key: "atmo.playerControl",
     label: "Игроки крутят атмосферу — общий выключатель",
     description:
-      "Разрешает игрокам во всех комнатах перематывать части суток и менять погоду (кнопки панели и слайдер «Сутки»). «Запрещено» выключает управление сразу везде — настройки отдельных комнат это не переопределяют. «Разрешено» возвращает комнатам их собственные настройки.",
+      "Разрешает игрокам во всех комнатах менять погоду и части суток. «Запрещено» выключает управление сразу везде; «разрешено» возвращает комнатам их настройки.",
     unit: "вкл/выкл",
     kind: "bool",
     values: null,
     default: true,
     engineCap: null,
     applyPolicy: "live-gate",
-    applyHint: "Действует сразу на все комнаты: при «запрещено» сервер молча отбрасывает смену суток/погоды от игроков; ход времени и погоды не перезапускается.",
+    applyHint: "Действует сразу; ход времени и погоды не перезапускается.",
     visibility: "admin-only",
     scope: "global",
   }),
@@ -135,14 +135,14 @@ export const REGISTRY = deepFreeze({
     key: "atmo.allowPlayerAtmosphereControl",
     label: "Игроки крутят атмосферу",
     description:
-      "Разрешает игрокам комнаты перематывать части суток и погоду (кнопки панели и слайдер «Сутки»). Тонкая настройка отдельной комнаты: без переопределения — разрешено, как сейчас. Общий выключатель на все комнаты сразу — ключ «Игроки крутят атмосферу — общий выключатель» выше в этой секции.",
+      "Разрешает игрокам комнаты менять погоду и части суток. Без переопределения — разрешено.",
     unit: "вкл/выкл",
     kind: "bool",
     values: null,
     default: true,
     engineCap: null,
     applyPolicy: "live-gate",
-    applyHint: "Действует сразу на живую комнату: при «выкл» сервер молча игнорирует попытки игроков сменить сутки или погоду; ход времени и погоды не перезапускается.",
+    applyHint: "Действует сразу; ход времени и погоды не перезапускается.",
     visibility: "admin-only",
     scope: "room",
   }),
@@ -150,14 +150,14 @@ export const REGISTRY = deepFreeze({
     key: "universes.strikeDamage",
     label: "Удары: уровни урона",
     description:
-      "Какие уровни урона (0,0–0,9) игрок может выбрать на экране входа. Сервер дополнительно ограничивает каждый входящий удар сверху формулой зон (горло: база зоны + 3,67 за уровень) по максимальному разрешённому уровню.",
+      "Какие уровни урона игрок может выбрать на экране входа.",
     unit: "уровень (0,0–0,9)",
     kind: "levels",
     values: DAMAGE_LEVELS_ALL,
     default: 0,
     engineCap: DAMAGE_LEVELS_ALL,
     applyPolicy: "on-next-event",
-    applyHint: "Действует на следующие удары: событие удара клэмпится по верхней границе.",
+    applyHint: "Действует на следующие удары.",
     visibility: "public",
     scope: "global",
   }),
@@ -165,14 +165,14 @@ export const REGISTRY = deepFreeze({
     key: "universes.armor",
     label: "Броня: уровни защиты",
     description:
-      "Какие десятые брони (0,0–0,9) игрок может выбрать. Входящее значение снапится к ближайшей разрешённой НИЖНЕЙ десятой; ниже наименьшей разрешённой — без брони.",
+      "Какие уровни брони (0,0–0,9) игрок может выбрать.",
     unit: "уровень (0,0–0,9)",
     kind: "tenths",
     values: TENTHS_ALL,
     default: 0,
     engineCap: TENTHS_ALL,
     applyPolicy: "on-next-event",
-    applyHint: "Действует на следующий кадр брони: значение снапится к разрешённому списку.",
+    applyHint: "Действует на следующий кадр брони.",
     visibility: "public",
     scope: "global",
   }),
@@ -180,14 +180,19 @@ export const REGISTRY = deepFreeze({
     key: "universes.arrowSpeed",
     label: "Стрела: периоды оборота",
     description:
-      "Какие периоды оборота стрелы (существующие пресеты 1,8–5 сек) игроку показывают на экране входа. Оборот стрелы — чисто клиентский: сервер только публикует список, серверного клэмпа нет и не надо.",
+      "Какие периоды оборота стрелы игрок видит на экране входа. Свои значения — от 0,5 до 15 сек с шагом 0,1.",
     unit: "сек",
     kind: "periods",
     values: ARROW_PERIODS_ALL,
+    // Мандат владелицы 2026-11-08 («добавляй свои значения»): оборот стрелы —
+    // чисто клиентский, сервер публикует список; custom — границы для своих
+    // значений ВНЕ пресетов (levels/tenths таких границ не имеют: их юнисы
+    // и есть полный движковый диапазон).
+    custom: { min: 0.5, max: 15 },
     default: 5,
     engineCap: ARROW_PERIODS_ALL,
     applyPolicy: "new-session",
-    applyHint: "Игрок увидит новый список в следующей сессии (экран входа), поле на ходу не меняется.",
+    applyHint: "Игроки увидят в новой сессии.",
     visibility: "public",
     scope: "global",
   }),
@@ -199,7 +204,7 @@ export const REGISTRY = deepFreeze({
     key: "combat.armorCurve",
     label: "Броня: кривая защиты",
     description:
-      "Как броня (0,0–0,9) режет входящий урон: пары «броня → проходящий урон %» от эталонного удара. Между точками — линейная интерполяция, после последней — экстраполяция по её наклону до 0,9. Первая точка — масштаб кривой: её урон% считается за 100%.",
+      "Как броня (0,0–0,9) режет входящий урон: точки «броня → урон %», между ними — линейная интерполяция.",
     unit: "точек",
     kind: "points",
     values: range(2, 16),
@@ -207,7 +212,7 @@ export const REGISTRY = deepFreeze({
     engineCap: range(2, 16),
     points: { xMin: 0, xMax: 0.9, xStep: 0.01, yMin: 5, yMax: 60 },
     applyPolicy: "on-next-event",
-    applyHint: "Действует на следующий удар: урон по бронированной цели сразу считается по новой кривой (и игроки видят прогноз по ней).",
+    applyHint: "Действует на следующий удар.",
     visibility: "public",
     scope: "global",
   }),
@@ -275,11 +280,19 @@ function sanitizeList(def, raw, stored) {
   if (!Array.isArray(arr) || arr.length === 0) return { error: `список ${def.kind} пуст или не массив` };
   const canon = def.kind === "levels" ? asInt : tenth;
   const universe = new Set(def.values.map(canon));
+  // Custom-границы (мандат владелицы 2026-11-08): у periods список может
+  // выходить за пресеты — в пределах {min,max}; у levels/tenths поля custom
+  // нет, юниверс остаётся полным движковым диапазоном.
+  const cb = def.custom;
+  const customLo = cb && Number.isFinite(cb.min) ? cb.min : Infinity;
+  const customHi = cb && Number.isFinite(cb.max) ? cb.max : -Infinity;
   const seen = new Set();
   for (const item of arr) {
     if (!Number.isFinite(Number(item))) return { error: `значение не число: ${String(item)}` };
     const n = canon(item);
-    if (!universe.has(n)) return { error: `значение вне движкового юниверса: ${String(item)}` };
+    if (!universe.has(n) && !(n >= customLo && n <= customHi)) {
+      return { error: `значение вне разрешённых границ: ${String(item)}` };
+    }
     seen.add(n);
   }
   const dvRaw = raw.default;
