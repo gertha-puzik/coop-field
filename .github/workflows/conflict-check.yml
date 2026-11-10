@@ -1,0 +1,39 @@
+# Гейт: PR с конфликтами против main не вливаются.
+# Становится required status check (ruleset no-merge-conflicts на main).
+# GitHub и сам не даёт вмержить конфликтный PR (кнопка Merge гаснет, API 405) —
+# гейт делает правило явным: конфликт виден красным ✗ в чеках, а не молчанием
+# Actions на dirty merge-ref (известный паттерн репо: раны не стартуют вообще).
+name: conflict-check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conflict-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conflict-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Try merging origin/main into PR branch
+        run: |
+          set -euo pipefail
+          git config user.name conflict-check
+          git config user.email conflict-check@users.noreply.github.com
+          if git merge --no-commit --no-ff origin/main; then
+            echo "RESULT: чисто — конфликтов с main нет"
+          else
+            echo "RESULT: КОНФЛИКТ с main — PR не вливается, пока не разрешены конфликты" >&2
+            exit 1
+          fi
