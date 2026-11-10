@@ -170,7 +170,7 @@ export const CFG_REGISTRY: Record<string, CfgFieldDef> = {
     // пресетов (levels/tenths таких границ не имеют: их юнисы — полный диапазон).
     custom: { min: 0.5, max: 15 },
     default: 5,
-    engineCap: [1.8, 2.5, 3.5, 4, 4.5, 5],
+    engineCap: { min: 0.5, max: 15, step: 0.1 },
     applyPolicy: 'new-session',
     applyHint: 'Игроки увидят в новой сессии.',
     visibility: 'public',
