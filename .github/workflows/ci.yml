@@ -54,11 +54,6 @@ jobs:
       # game-bridge.js; копия без шва обязана сходиться с эталоном kns.
       - name: Шов paint-demo (копия KNS + мост)
         run: npm run check:paint-seam
-      # Гейт vendor-копии движка окрасов CatWar (#84 волна 3): public/catwar
-      # (tint.js + манифест палитр + gray-маски) == канон репо kns байт-в-байт
-      # (sha256-эталоны в самом скрипте; CI клона kns не имеет).
-      - name: Окрас CatWar — vendor-копия (sha256)
-        run: npm run check:catwar-vendor
       # C W1 build проверяет типы сам (next.config.ts больше не глушит ошибки),
       # но typecheck остаётся быстрой отдельной проверкой и главным гейтом CI.
       - name: Проверка типов
@@ -114,12 +109,6 @@ jobs:
       # двустороннее зеркало config.SPRITES для pickSprite/setSprite.
       - name: Менеджер спрайтов (admin)
         run: npm run test:sprites
-      # Окрас по коду CatWar (#84 волна 3): конвейер «код → котик → PNG» —
-      # грамматика vendor tint.js (живой код 24 блока: parse/roundtrip),
-      # битые коды отказываются без падения, рендер детерминирован байт-в-байт,
-      # vendor-shas сходятся (spawn check:catwar-vendor).
-      - name: Окрас по коду CatWar (воркер #84/в3)
-        run: npm run test:catwar-coat
       # Реестр конфига (P2→F2): whitelist из 6 ключей, клэмпы урона/брони,
       # админ-роуты /cfg (restore с path-guard, export/import), §4 playerSelectable.
       - name: Реестр конфига

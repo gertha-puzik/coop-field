@@ -225,18 +225,11 @@ function OwnProfileEditor({
   profile,
   onSaved,
   mineHighlight = null,
-  selfAccountId = null,
-  coatLink = null,
 }: {
   profile: ProfileMe;
   onSaved: (fresh: PublicProfile) => void;
   /** #84 ч.2: id свежего окраса из редактора — подсветить в «Свой окрас». */
   mineHighlight?: string | null;
-  /** #84/в3: свой accountId — deep-link после «Сохранить и надеть» по коду. */
-  selfAccountId?: string | null;
-  /** #84/в3: код CatWar из ссылки ?coat= (конструктор KNS) — автозаполнить
-   *  поле кода и собрать превью; сохранение — только кнопкой. */
-  coatLink?: string | null;
 }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
@@ -514,8 +507,6 @@ function OwnProfileEditor({
         wornSprite={originSprite}
         onPick={setDraftSprite}
         mineHighlight={mineHighlight}
-        selfAccountId={selfAccountId}
-        coatLink={coatLink}
       />
       <label className={styles.edField}>
         <span className={styles.edLabel}>Рост ({draftScale}%)</span>
@@ -756,7 +747,6 @@ export default function PlayerProfile({
   onSaved,
   onClose,
   mineHighlight = null,
-  coatLink = null,
 }: {
   card: ProfileCard;
   mine: boolean;
@@ -766,9 +756,6 @@ export default function PlayerProfile({
   /** #84 ч.2: id свежего окраса из редактора (возврат ?back=profile) —
    *  своя карточка подсвечивает его в блоке «Свой окрас». */
   mineHighlight?: string | null;
-  /** #84/в3: код CatWar из ссылки ?coat= (конструктор KNS) — автозаполнение
-   *  поля кода и превью в «Свой окрас»; без сохранения (только кнопка). */
-  coatLink?: string | null;
 }) {
   // Компонент живёт только на клиенте: в пререндере каталога focused=null,
   // карточка приходит после fetch — поэтому «сейчас» можно взять один раз
@@ -933,8 +920,6 @@ export default function PlayerProfile({
               profile={myProfile}
               onSaved={onSaved}
               mineHighlight={mineHighlight}
-              selfAccountId={card.accountId}
-              coatLink={coatLink}
             />
           </div>
         ) : mine ? (
