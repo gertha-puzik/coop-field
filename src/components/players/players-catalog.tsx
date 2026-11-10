@@ -342,6 +342,14 @@ export default function PlayersCatalog() {
   const [fetchedAt, setFetchedAt] = useState(0);
   /** Счётчик ходов за списком: ответ с устаревшим номером молча отбрасывается. */
   const seqRef = useRef(0);
+  /** Deep-link ?id=<accountId> при заходе по ссылке: пока он не разрешён
+   *  (страница ждёт карточку по GET /profiles/:id), каталог не запрашивается
+   *  и не рисуется — по ссылке ?id= не мигает список перед профилем.
+   *  deepLinkHoldRef читает каталог-эффект СИНХРОННО в том же mount-flush
+   *  (ref, а не state, — замыкание эффекта не отстаёт от первого рендера),
+   *  profileWait включает экран «Загружаем профиль…» со стороны рендера. */
+  const [profileWait, setProfileWait] = useState(false);
+  const deepLinkHoldRef = useRef(false);
 
   /** Поиск: debounce 300 мс; применённый запрос живёт отдельно от поля. */
   useEffect(() => {
@@ -349,10 +357,55 @@ export default function PlayersCatalog() {
     return () => window.clearTimeout(t);
   }, [searchInput]);
 
-  /** Первая страница каталога: монтирование, смена запроса, повтор. Никакой
-   *  клиентской фильтрации — фильтрует сервер (q), и он же режет страницы. */
+  /** Сессия + своя карточка + deep-link ?id= — поток ОТДЕЛЬНЫЙ от пагинации:
+   *  карточка открывается по GET /profiles/:id, даже если списка ещё нет.
+   *  Запрос карточки стартует ПЕРВЫМ, параллельно /auth/me (сессия нужна
+   *  только бейджу «своя карточка», не самому профилю); каталог-эффект ниже
+   *  по коду видит deepLinkHoldRef и не грузит список, пока ссылка не
+   *  разрешена. Порядок объявления важен: эффекты одного mount-flush идут
+   *  сверху вниз, hold ставится до запуска каталог-эффекта. */
   useEffect(() => {
     if (!IS_ELYRIA) return;
+    let dead = false;
+    (async () => {
+      const dl = consumeCatalogDeepLink();
+      const wantId = dl.id;
+      deepLinkHoldRef.current = !!wantId;
+      if (wantId) setProfileWait(true);
+      setMineFlash(dl.mine); // null без параметра — подсветки нет
+      const profileP = wantId ? httpProfileById(wantId) : null;
+      const me = await httpMe();
+      if (dead) return;
+      setSession(me);
+      const mineP = me.ok && me.accountId ? httpMyProfile() : null;
+      const mine = mineP ? await mineP : null;
+      const one = profileP ? await profileP : null;
+      if (dead) return;
+      if (mine?.ok && mine.profile) setMyProfile(mine.profile);
+      if (one && wantId) {
+        if (one.ok && one.card) setFocused(one.card);
+        else {
+          // Карточка по ссылке не открылась: честная ошибка поверх каталога —
+          // hold снимаем и сами запускаем загрузку списка (он в паузе).
+          deepLinkHoldRef.current = false;
+          setProfileWait(false);
+          setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
+          setReloadTick((t) => t + 1);
+        }
+      }
+    })();
+    return () => {
+      dead = true;
+    };
+  }, []);
+
+  /** Первая страница каталога: монтирование, смена запроса, повтор. Никакой
+   *  клиентской фильтрации — фильтрует сервер (q), и он же режет страницы.
+   *  Deep-link ?id= держит список на паузе: пока hold не снят (карточка
+   *  получена/ошибка/профиль закрыли), запрос каталога не стартует вовсе. */
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    if (deepLinkHoldRef.current) return;
     let dead = false;
     const seq = ++seqRef.current;
     setLoadingFirst(true);
@@ -379,35 +432,6 @@ export default function PlayersCatalog() {
       dead = true;
     };
   }, [query, reloadTick]);
-
-  /** Сессия + своя карточка + deep-link ?id= — поток ОТДЕЛЬНЫЙ от пагинации:
-   *  карточка открывается по GET /profiles/:id, даже если списка ещё нет. */
-  useEffect(() => {
-    if (!IS_ELYRIA) return;
-    let dead = false;
-    (async () => {
-      const dl = consumeCatalogDeepLink();
-      const wantId = dl.id;
-      setMineFlash(dl.mine); // null без параметра — подсветки нет
-      const me = await httpMe();
-      if (dead) return;
-      setSession(me);
-      if (me.ok && me.accountId) {
-        const mine = await httpMyProfile();
-        if (dead) return;
-        if (mine.ok && mine.profile) setMyProfile(mine.profile);
-      }
-      if (wantId) {
-        const one = await httpProfileById(wantId);
-        if (dead) return;
-        if (one.ok && one.card) setFocused(one.card);
-        else setFocusMissing(humanError(one.reason, 'Игрок не найден.'));
-      }
-    })();
-    return () => {
-      dead = true;
-    };
-  }, []);
 
   /** Следующая страница по nextCursor: append к уже показанным, дубликаты
    *  по accountId отбрасываются (страховка от гонки с правками профилей). */
@@ -481,6 +505,14 @@ export default function PlayersCatalog() {
   const closeCard = useCallback(() => {
     setFocused(null);
     setFocusMissing(null);
+    // Закрыли профиль, открытый по deep-link-ссылке: список так и не грузился
+    // (hold) — снимаем паузу и дёргаем загрузку сами. Из обычного захода
+    // (клик по строке) каталог уже на месте, тик не нужен.
+    if (deepLinkHoldRef.current) {
+      deepLinkHoldRef.current = false;
+      setProfileWait(false);
+      setReloadTick((t) => t + 1);
+    }
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete('id');
@@ -541,6 +573,29 @@ export default function PlayersCatalog() {
         onClose={closeCard}
         mineHighlight={mineFlash}
       />
+    );
+  }
+
+  // Deep-link-заход (?id=), карточка в пути: список не грузится и не
+  // рисуется — вместо него экран ожидания в той же ночной оболочке
+  // (PR #93-паттерн: sky → Starscape → SiteHeader), без мигания каталога.
+  if (profileWait) {
+    return (
+      <div className={styles.sky}>
+        <Starscape />
+        <SiteHeader />
+        <div className={styles.page}>
+          <BrandRow />
+          <div className={`${styles.panel} ${styles.empty}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
+            <div className={styles.eTitle}>Загружаем профиль…</div>
+            <p>Открываем карточку игрока по ссылке.</p>
+          </div>
+        </div>
+      </div>
     );
   }
 
