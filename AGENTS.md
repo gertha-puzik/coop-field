@@ -179,7 +179,7 @@ Invariants (violating one = a bug):
 | `atmo` | anchor `{t, cs, pl, wl, w, ws, dp}` | to ALL on atmo/atmoset + 5 s ticker on dp/w change; on rejoin it rides inside `field` |
 | `freemove` | `{id, x, y, cx, cy, sp, jp}` | to others, ≤1/50 ms |
 | `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s; у закрытой комнаты гость видит count, но не logins |
-| `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}` |
+| `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}`; `token` is present only for hostClass `local` (elyria/public stay cookie-only — the frame is readable by page JS) |
 
 ## Server env
 
@@ -214,7 +214,9 @@ One room server serves BOTH sites and separates them by the `Host` header (`host
   `?t=` is still accepted transitively on this class.
 - **elyria:** the whole API; sessions ride the HttpOnly cookie `coop_session` (Secure+SameSite=Lax on
   https) — **cookie-only**: `?t=` is off (env `AUTH_LEGACY_TOKEN=1` returns it for the transition period),
-  the token is not exposed in HTTP response bodies.
+  the token is not exposed in HTTP response bodies or in the WS `whoami` frame
+  (`token` there is hostClass `local` only; `hello` with `payload.token` on
+  public/elyria requires `originOk`).
 - **local:** permissive legacy mode (`?t=` works, token in bodies) — the auth/cfg/profiles tests stand on it.
 
 The front is built twice (`npm run build:variants`, `NEXT_PUBLIC_SITE` + `scripts/prune-export.mjs`):

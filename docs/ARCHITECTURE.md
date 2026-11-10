@@ -170,8 +170,10 @@ POST /cfg | /cfg/restore | /cfg/import   → admin, CSRF Origin-щит (B1: per-
 ```
 
 Куки `HttpOnly`, host-only — атрибута Domain нет (B1); на https — `Secure + SameSite=Lax`
-(`COOKIE_LOOSE=1` возвращает легаси `None`). Токен из тела ответа на Элизии не выдаётся
-(cookie-only); класс local держит токены в телах — на нём стоят тесты. На public-хостах
+(`COOKIE_LOOSE=1` возвращает легаси `None`). Токен из тела ответа и из кадра `whoami`
+на Элизии не выдаётся (cookie-only; на public кадр тоже молчит); класс local держит
+токены в телах и в `whoami` — на нём стоят тесты. `hello` с токеном в payload на
+public/elyria требует Origin своего класса. На public-хостах
 все эти маршруты — 404 (host-гейт) до обработчиков.
 
 ### Move (шаг клетки) — предикт/эхо/refuse
