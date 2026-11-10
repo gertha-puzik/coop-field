@@ -330,6 +330,7 @@ export function MineSpritesSection({
   onPick,
   mineHighlight = null,
   selfAccountId = null,
+  coatLink = null,
 }: {
   /** Ник карточки — для префилла имени окраса («Окрас от <ник> <дата>»). */
   accountName: string;
@@ -345,6 +346,9 @@ export function MineSpritesSection({
   /** #84/в3: accountId своей карточки — deep-link «?id&mine=#settings» после
    *  «Сохранить и надеть» по коду CatWar (подсветка/тост — механизм ч.2). */
   selfAccountId?: string | null;
+  /** #84/в3: код CatWar из ссылки ?coat= (конструктор KNS) — второй вход
+   *  заполняет поле кода и сам собирает превью; стора нет. */
+  coatLink?: string | null;
 }) {
   const [items, setItems] = useState<MineSprite[]>([]);
   const [limit, setLimit] = useState(3);
@@ -506,6 +510,14 @@ export function MineSpritesSection({
     [flashStatus, reload],
   );
 
+  /** #84/в3: окрас из ссылки конструктора (?coat=) отрисован в превью —
+   *  человеческий тост и лёгкий подскролл к блоку «Свой окрас» (механизм
+   *  тот же, что у подсветки возврата из редактора). Никаких сохранений. */
+  const linkCoatApplied = useCallback(() => {
+    flashStatus({ kind: 'ok', text: 'Окрас из конструктора KNS загружен — посмотрите и сохраните.' });
+    document.getElementById('settings')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [flashStatus]);
+
   return (
     <div className={styles.edField}>
       <span className={styles.edLabel}>
@@ -562,8 +574,15 @@ export function MineSpritesSection({
           </Button>
         </div>
         {/* #84/в3: второй вход зоны — окрас по КОДУ CatWar (без загрузки
-            картинки): рендер движком из конструктора kns.miew.ru. */}
-        <CatwarCodeEntry selfAccountId={selfAccountId} onSaved={markFreshCoat} onFail={flashFail} />
+            картинки): рендер движком из конструктора kns.miew.ru; код может
+            прийти из одноразовой ссылки ?coat= (поле+превью сами, без POST). */}
+        <CatwarCodeEntry
+          selfAccountId={selfAccountId}
+          onSaved={markFreshCoat}
+          onFail={flashFail}
+          coatLink={coatLink}
+          onLinkApplied={linkCoatApplied}
+        />
         {loaded && items.length === 0 ? (
           <p className="mt-2 text-[11px] text-[var(--sim-text-soft)]">
             Своих окрасов пока нет — загрузите PNG из редактора окрасов.
@@ -666,11 +685,17 @@ const PREVIEW_H = 170;
  * подсветку/тост после возврата даёт существующий механизм (#84 ч.2).
  * Рендер-модуль подтягивается ДИНАМИЧЕСКИ (import по клику) — движок
  * tint.js и маски не живут в общих бандлах других страниц (§10.4).
+ * #84/в3+: код может прийти из одноразовой ссылки ?coat= (конструктор KNS
+ * на kns.miew.ru): поле заполняется и превью собирается САМО тем же
+ * конвейером, что кнопка «Создать окрас», — но сохранение остаётся
+ * только кнопкой: открытие ссылки не тратит лимит загрузок (5/час).
  */
 export function CatwarCodeEntry({
   selfAccountId,
   onSaved,
   onFail,
+  coatLink = null,
+  onLinkApplied,
 }: {
   /** Свой accountId (deep-link «надеть») — null только у вырожденного случая. */
   selfAccountId: string | null;
@@ -678,6 +703,11 @@ export function CatwarCodeEntry({
   onSaved: (id: string, okText: string) => void;
   /** Ошибки поля тем же тостом зоны «Свой окрас». */
   onFail: (text: string, details?: string) => void;
+  /** #84/в3: код CatWar из ссылки ?coat= — автозаполнение + автопревью
+   *  (одноразово; битый код даёт тост ручной вставки). */
+  coatLink?: string | null;
+  /** Превью по коду из ссылки собралось — тост зоны + подскролл (родитель). */
+  onLinkApplied?: () => void;
 }) {
   const [code, setCode] = useState('');
   /** Префилл имени тот же стиль, что у файлового входа (влезает в лимит 24). */
@@ -691,6 +721,53 @@ export function CatwarCodeEntry({
   const [payload, setPayload] = useState<{ w: number; h: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Подсветка блока «по коду» после ?coat=-ссылки (гаснет сама, как у плиток). */
+  const [linkFlash, setLinkFlash] = useState(false);
+  const linkFlashTimer = useRef<number | null>(null);
+  /** Одноразовость ?coat=: ре-раны эффекта (StrictMode) не пересобирают. */
+  const linkAppliedRef = useRef(false);
+
+  // подсветка ссылки гаснет сама — таймер чистим на выходе
+  useEffect(
+    () => () => {
+      if (linkFlashTimer.current) window.clearTimeout(linkFlashTimer.current);
+    },
+    [],
+  );
+
+  /** #84/в3: код из одноразовой ссылки ?coat= (конструктор KNS): поле
+   *  заполняется, превью собирается САМО тем же конвейером, что и кнопка
+   *  «Создать окрас» (валидация — движком parseCatwarCode после ленивой
+   *  загрузки; до неё ничего не рисуем). Битый код → тост как при ручной
+   *  вставке. Сохранения НЕТ: только кнопка — лимит 5/час не выжигается
+   *  фактом открытия ссылки. Ссылка одноразовая: адрес вычищен раньше. */
+  useEffect(() => {
+    if (!coatLink || linkAppliedRef.current) return;
+    linkAppliedRef.current = true;
+    (async () => {
+      setCode(coatLink);
+      setRendering(true);
+      try {
+        const mod = await import('@/lib/paint/catwar-coat');
+        const cv = canvasRef.current;
+        if (!cv) throw new Error('engine_unavailable');
+        const res = await mod.drawCatwarPreview(cv, coatLink);
+        if (!res.ok) {
+          onFail(catwarFailText(res.reason));
+          return;
+        }
+        setPayload({ w: res.width, h: res.height });
+        onLinkApplied?.();
+        setLinkFlash(true);
+        if (linkFlashTimer.current) window.clearTimeout(linkFlashTimer.current);
+        linkFlashTimer.current = window.setTimeout(() => setLinkFlash(false), 6000);
+      } catch {
+        onFail(catwarFailText('engine_unavailable'));
+      } finally {
+        setRendering(false);
+      }
+    })();
+  }, [coatLink, onFail, onLinkApplied]);
 
   /** Превью устаревает при любой правке кода — собираем заново по кнопке. */
   const onCodeChange = useCallback((next: string) => {
@@ -776,7 +853,15 @@ export function CatwarCodeEntry({
   );
 
   return (
-    <div className="mt-3 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+    // ?coat=-ссылка на несколько секунд подсвечивает весь блок «по коду» —
+    // тем же акцентом, что плитка свежего окраса (видно, куда смотреть)
+    <div
+      className={`mt-3 rounded-md border bg-[var(--sim-inset-strong)] p-2 transition-shadow ${
+        linkFlash
+          ? 'border-[var(--sim-accent-hover)] shadow-[0_0_0_2px_var(--sim-accent)]'
+          : 'border-[var(--sim-line-strong)]'
+      }`}
+    >
       <p className="text-[11px] font-semibold text-[var(--sim-text-soft)]">Или собрать окрас по коду CatWar</p>
       <p className="mt-0.5 text-[10px] text-[var(--sim-text-faint)]">
         Скопируйте код окраса из конструктора на kns.miew.ru — покрасятся основные зоны окраса (шёрстка, хвост, уши).
