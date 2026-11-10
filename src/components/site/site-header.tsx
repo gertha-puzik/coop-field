@@ -4,7 +4,7 @@
  * Общая шапка закрытого сайта (пересводка волны W2, мандат владелицы
  * 2026-11-08): тонкая стеклянная ночная полоса (52px, кант/стекло/цвета
  * существующих сессий-панелей auth-gate) — единая для страниц Элизии
- * (/, /game/, /players/, /admin/).
+ * (/, /game/, /players/, /admin/); на главной — ghost без стекла (2026-11-10).
  *
  * Слева — навигация: Главная, Игровая комната, Игроки, Мой профиль (пункт
  * «Настройки» упразднён решением владелицы 2026-11-10: он вёл на ту же
@@ -41,7 +41,7 @@ const NAV_LINK =
  */
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
-export function SiteHeader() {
+export function SiteHeader({ ghost = false }: { ghost?: boolean }) {
   const headerRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const header = headerRef.current;
@@ -67,7 +67,7 @@ export function SiteHeader() {
   }, []);
 
   return (
-    <header ref={headerRef} className="sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]">
+    <header ref={headerRef} className={ghost ? 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 px-4' : 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]'}>
       <nav aria-label="Разделы сайта" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
         <a className={NAV_LINK} href="/">
           Главная
