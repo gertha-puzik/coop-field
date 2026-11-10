@@ -158,6 +158,17 @@
   --sim-accent-glow-strong: rgba(52, 211, 153, 0.85);
   --sim-danger: #f87171;
   color-scheme: dark;
+  /* шадсн-переменные, чтобы outline-кнопки (bg-background) не оставались
+     белыми с белым текстом: ночные значения по образцу light/beer-веток */
+  --background: #14161a;
+  --foreground: #f4f4f5;
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #059669;
+  --accent: #26262b;
+  --accent-foreground: #f4f4f5;
+  --primary: #059669;
+  --primary-foreground: #f4f4f5;
 }
 
 [data-theme='light'] {

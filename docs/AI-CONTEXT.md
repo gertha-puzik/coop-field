@@ -27,7 +27,7 @@ chat, day/night + weather, a drawn location with an in-game editor). One GitHub 
   rooms and a `/hunger/` placeholder. No accounts, no Elision traces in UI, bundle or server
   answers (the API zones are 404 on that host class).
 - **Elysiae / Elision** (elyria site, `phainonsmilk.ru`) — registration/login (HttpOnly
-  cookie), the closed drawn location `/elision/`, player catalog `/players`, admin dashboard
+  cookie), the closed drawn location `/game/` (a client stub still redirects old `/elision/` links), player catalog `/players`, admin dashboard
   `/admin`. Preview PRs get BOTH: `pr-<N>.abnocw.phainonsmilk.ru` + `pr-<N>.elysiae.phainonsmilk.ru`.
 
 The two loops share **no code**. The only link is the wire protocol: JSON frames `[event, payload]`.
@@ -39,7 +39,7 @@ owner's VPS behind nginx.
 ## Stack
 
 - Frontend: Next.js 16 (static export), React 19, TypeScript, Tailwind 4, pixi.js 8 (weather
-  overlay, lazy); Babylon WebGL view only for the `/elision/` page (dynamic import).
+  overlay, lazy); Babylon WebGL view only for the `/game/` page (dynamic import).
 - Room server: Node ESM JavaScript, no build step; `ws@8`; data in `data/*.json`.
 - Protocol: 23 client→server + 23 server→client events, mirrored by hand in
   `server/protocol.js` and `src/lib/net/protocol.ts` (constants like ARMOR_CURVE are
@@ -79,7 +79,7 @@ Deploy of a PR serves both hosts `pr-<N>.abnocw.phainonsmilk.ru` (grottoes) and
 | `src/lib/sim/settings.ts` | 1131 | Combat model: ARMOR_CURVE (:567), DAMAGE_LEVELS (:522), strike zones, sprites (31), slowdown |
 | `src/lib/sim/test-map.ts` | 736 | Location config v1/v2 + client-side editor limits (mirror of server sanitize) |
 | `src/lib/sim/test-field.ts` | 2155 | The drawn «Elision» field: walkability, routes, edge render, paint mask. Mutable singletons — ONE Simulator mount per process |
-| `src/lib/sim/elision-babylon.ts` (+ elision-scene.ts 156) | 307 | WebGL view of `/elision/` only: dynamic Babylon import; `worldPxToScene` — the single px→scene step |
+| `src/lib/sim/elision-babylon.ts` (+ elision-scene.ts 156) | 307 | WebGL view of `/game/` only: dynamic Babylon import; `worldPxToScene` — the single px→scene step |
 | `src/lib/site.ts` | 28 | Site variant canon: `NEXT_PUBLIC_SITE=grotto\|elyria`, default grotto (fail-safe). Variant-dependent modules check env INLINE (`const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria'`) — imports from site.ts do NOT fold, inline checks do |
 | `src/lib/net/coop.ts` | 582 | Transport: socket choice by host (elisium → same-origin `/ws` via an INLINE env check inside `wsUrlBase` :193 — the dead branch dies at build in the grotto artifact, together with the elisium hostnames; preview → own `/ws`, legacy → room socket, localhost → :3780), `httpOrigin()` :208 for the HTTP flows, reconnect backoff, inbound dispatcher. No `?t=` in URLs |
 | `src/lib/net/protocol.ts` | 367 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
@@ -196,7 +196,7 @@ npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www
 - Browser checks: start the room (`npm start`, port 3780) + `npm run dev`
   (http://localhost:3000; the plain dev build is the GROTTO variant — the Elision UI needs
   `NEXT_PUBLIC_SITE=elyria npm run dev`). Grotto rooms live on `/combat/`,
-  Elision on `/elision/` (register/login first — the room refuses guests), the catalog on
+  Elision on `/game/` (register/login first — the room refuses guests), the catalog on
   `/players/`, the admin dashboard on `/admin/` (only with an admin session). If a change
   is visually verifiable — give her the exact click path instead of trusting it "looks right".
 - A task that needs MANY files changed at once is usually a job for a repo agent WITH

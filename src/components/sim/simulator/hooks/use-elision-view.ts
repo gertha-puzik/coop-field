@@ -1,6 +1,6 @@
 /**
  * Elision-only Babylon view. The module is imported with import() when the
- * field stage of /elision/ is on screen, the same way useAtmosphereLayer
+ * field stage of /game/ is on screen, the same way useAtmosphereLayer
  * loads Pixi. Beer grottos never pass enabled=true, so they do not download
  * Babylon and do not create a second canvas. If WebGL is missing or the
  * module fails, the canvas is removed and the existing 2D painter stays.

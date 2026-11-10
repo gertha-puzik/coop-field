@@ -115,7 +115,7 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
         const meta = registry[key];
         setStatus({
           kind: 'ok',
-          text: `${meta ? meta.label : key}: настройка комнаты применена (${typeof value === 'boolean' ? (value ? 'вкл' : 'выкл') : `${fmtNum(value)}`}). Действует для НОВЫХ комнат этой локации.`,
+          text: `${meta ? meta.label : key}: настройка комнаты применена (${typeof value === 'boolean' ? (value ? 'вкл' : 'выкл') : `${fmtNum(value)}`}); действует для новых комнат.`,
         });
       } else {
         setStatus({ kind: 'err', text: 'Сервер отклонил изменение.', details: res.details });

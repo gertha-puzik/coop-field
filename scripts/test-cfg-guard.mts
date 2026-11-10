@@ -66,7 +66,10 @@ assert(
 for (const [key, fieldBody] of [
   ["universes.strikeDamage", { levels: [0, 27], default: 0 }],
   ["universes.armor", { tenths: [0, 1.5], default: 0 }],
-  ["universes.arrowSpeed", { periods: [1.8, 9], default: 1.8 }],
+  // 17 сек — вне движкового потолка периодов (engineCap 0,5–15, мандат
+  // своих значений 2026-11-08); значения ВНЕ пресетов, но ВНУТРИ потолка,
+  // принимаются — их границы пинит npm run test:cfg.
+  ["universes.arrowSpeed", { periods: [1.8, 17], default: 1.8 }],
 ]) {
   const [sec, field] = key.split(".");
   const res = srv.sanitizeValues({ [sec]: { [field]: fieldBody } });
@@ -104,7 +107,7 @@ const clamped = srv.sanitizeValues({ atmo: { phaseMin: 999, weatherMin: -5 } }).
 assert(clamped?.atmo.phaseMin === 120 && clamped.atmo.weatherMin === 2, "numeric ranges clamp to the engineCap bounds (999→120, -5→2)");
 assert(srv.sanitizeValues({ atmo: { phaseMin: "мусор" } }).error?.reason === "invalid", "range: non-number garbage → invalid, not clamped");
 
-/* ---------- engineCap vs values: caps coincide with the universes ---------- */
+/* ---------- engineCap vs values: caps coincide (custom-keys: with the custom bounds) ---------- */
 
 for (const key of srv.KEYS) {
   const def = srv.REGISTRY[key];
@@ -112,7 +115,13 @@ for (const key of srv.KEYS) {
     assert(def.values === null && def.engineCap === null, `${key}: bool has no value universe`);
     continue;
   }
-  eq(def.engineCap, def.values, `${key}: engineCap coincides with the values universe`);
+  if (def.custom) {
+    // Свои значения (мандат 2026-11-08): движковый потолок == custom-границам,
+    // values/пресеты — лишь стартовый набор внутри потолка.
+    eq(def.engineCap, { min: def.custom.min, max: def.custom.max, step: 0.1 }, `${key}: engineCap == the custom bounds`);
+  } else {
+    eq(def.engineCap, def.values, `${key}: engineCap coincides with the values universe`);
+  }
   if (LIST_KINDS.includes(key)) {
     const kind = def.kind;
     const canon = canonOf(kind, def.default);

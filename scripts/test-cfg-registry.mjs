@@ -63,6 +63,21 @@ check(masterBadStr.error?.reason === "invalid", "unit: мастер-гейт atm
 const masterBadNum = reg.sanitizeValues({ atmo: { playerControl: 1 } });
 check(masterBadNum.error?.reason === "invalid", "unit: мастер-гейт atmoset — число 1 → invalid (нужен явный true/false, не 1/0)");
 check(defs.universes.arrowSpeed.periods.length === 6 && defs.universes.arrowSpeed.default === 5, "unit: пресеты стрелы 6 шт, дефолт 5");
+// Свои значения periods (мандат владелицы 2026-11-08): canon к десятой секунде,
+// границы custom 0,5–15 сек (вне пресетов), прочие kinds границ не имеют.
+const customOk = reg.sanitizeValues({ universes: { arrowSpeed: { periods: [3, 5, 6.21], default: 5 } } }).values;
+check(
+  JSON.stringify(customOk?.universes?.arrowSpeed?.periods) === "[3,5,6.2]",
+  "unit: свой период 3 сек и 6,21→6,2 внутри custom-границ (0,5–15) приняты",
+);
+const customLow = reg.sanitizeValues({ universes: { arrowSpeed: { periods: [0.2, 5], default: 5 } } });
+check(customLow.error?.reason === "invalid", "unit: период 0,2 сек ниже custom-границы → invalid");
+const customHigh = reg.sanitizeValues({ universes: { arrowSpeed: { periods: [5, 17], default: 5 } } });
+check(customHigh.error?.reason === "invalid", "unit: период 17 сек выше custom-границы → invalid");
+const customTopOk = reg.sanitizeValues({ universes: { arrowSpeed: { periods: [5, 15.04], default: 5 } } }).values;
+check(JSON.stringify(customTopOk?.universes?.arrowSpeed?.periods) === "[5,15]", "unit: период 15,04→15 на верхней границе принят (canon к десятой)");
+const customTopHigh = reg.sanitizeValues({ universes: { arrowSpeed: { periods: [5, 15.06], default: 5 } } });
+check(customTopHigh.error?.reason === "invalid", "unit: период 15,06→15,1 выше custom-границы → invalid");
 const clamped = reg.sanitizeValues({ atmo: { phaseMin: 999, weatherMin: 0 } }).values;
 check(clamped.atmo.phaseMin === 120 && clamped.atmo.weatherMin === 2, "unit: диапазон клэмпится 999→120, 0→2 (толерантность прежняя)");
 const unknown = reg.sanitizeValues({ marja: 1, atmo: { marja: 2, phaseMin: 8 } });

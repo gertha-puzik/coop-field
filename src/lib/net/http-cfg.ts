@@ -23,6 +23,9 @@ export type CfgFieldMeta = {
   kind: string;
   /** null — у bool-ключа (гейт atmoset F2 §3.4) юниверса значений нет. */
   values: number[] | { min: number; max: number; step: number } | null;
+  /** Границы своих значений ВНЕ пресетов (только universes.periods — оборот
+   *  стрелы; у levels/tenths юниверс и есть полный движковый диапазон). */
+  custom?: { min: number; max: number };
   /** Число; у гейта atmoset — 1/0; у kind points — defaultValue-кривая
    *  (канон W3 для combat.armorCurve, мандат владелицы 2026-11-08). */
   default: number | number[][];
@@ -121,6 +124,10 @@ const metaOf = (raw: unknown): CfgFieldMeta | null => {
     applyHint: asText(row.applyHint),
     visibility: asText(row.visibility),
     scope: asText(row.scope),
+    custom:
+      row.custom && typeof row.custom === "object" && Number.isFinite(Number((row.custom as ApiRow).min)) && Number.isFinite(Number((row.custom as ApiRow).max))
+        ? { min: Number((row.custom as ApiRow).min), max: Number((row.custom as ApiRow).max) }
+        : undefined,
   };
 };
 
@@ -322,9 +329,9 @@ export function cfgPatchFromDraft(draft: CfgDraft, snap: CfgAdminSnapshot) {
   return combat && Object.keys(combat).length ? { atmo, universes, combat } : { atmo, universes };
 }
 
-/** Канонизация значения по kind-у (levels → int, tenths → десятые, периоды — как есть). */
+/** Канонизация значения по kind-у (levels → int, tenths/periods → десятые). */
 export const canonByKind = (kind: string, v: number): number =>
-  kind === 'levels' ? Math.round(v) : kind === 'tenths' ? Math.round(v * 10) / 10 : v;
+  kind === 'levels' ? Math.round(v) : kind === 'tenths' || kind === 'periods' ? Math.round(v * 10) / 10 : v;
 
 /** Человекочитаемое число: 0.3 → «0,3» (подписи реестра используют запятые). */
 export const fmtNum = (v: number): string => String(v).replace('.', ',');
@@ -359,6 +366,28 @@ export function listIssue(list: number[], defaultValue: number): string | null {
   if (!list.length) return 'Список пуст — оставьте хотя бы одно значение.';
   if (!list.includes(defaultValue))
     return 'Дефолт обязан входить в список — выберите дефолт из оставшихся значений.';
+  return null;
+}
+
+/** Валидация СВОЕГО значения списка перед добавлением (мандат владелицы
+ *  2026-11-08): запятая — десятичный разделитель; значение канонизируется
+ *  по kind-у и обязано попадать в юнис ∪ custom-границы (зеркало серверного
+ *  sanitizeList). currentList нужен для дубликатов. null = можно добавлять. */
+export function customValueIssue(def: CfgFieldMeta, raw: string, currentList: number[]): string | null {
+  const s = raw.trim().replace(',', '.');
+  if (!s) return 'Введите число.';
+  const parsed = Number(s);
+  if (!Number.isFinite(parsed)) return `Не поняла число: «${raw.trim()}».`;
+  const v = canonByKind(def.kind, parsed);
+  const universe = Array.isArray(def.values) ? def.values.map((x) => canonByKind(def.kind, x)) : [];
+  const custom = def.custom && Number.isFinite(def.custom.min) && Number.isFinite(def.custom.max) ? def.custom : null;
+  const ok = universe.includes(v) || (custom !== null && v >= custom.min && v <= custom.max);
+  if (!ok) {
+    const lo = custom ? Math.min(custom.min, universe[0] ?? Infinity) : universe[0];
+    const hi = custom ? Math.max(custom.max, universe[universe.length - 1] ?? -Infinity) : universe[universe.length - 1];
+    return `Значение вне границ (${fmtNum(lo)}–${fmtNum(hi)} ${def.unit}): ${fmtNum(v)}.`;
+  }
+  if (currentList.includes(v)) return `${fmtNum(v)} уже есть в списке.`;
   return null;
 }
 

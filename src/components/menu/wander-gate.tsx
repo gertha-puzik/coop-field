@@ -65,7 +65,7 @@ const GROTTO_WORLDS: readonly WorldCard[] = [
 /** Элизия: меню — мир Элизии. Карточки гротов сюда не показываем. */
 const ELYRIA_WORLDS: readonly WorldCard[] = [
   {
-    href: '/elision/',
+    href: '/game/',
     name: 'Wanderpaws: Elysiae',
     blurb: 'Твой путь начинается здесь',
     italic: true,
@@ -100,7 +100,7 @@ function legacyRoomHref(): string | null {
   if (IS_ELYRIA) {
     // Только комната Элизии; чужие коды в этом варианте каталожным мирам
     // не соответствуют — остаёмся на меню, без редиректа в 404.
-    return room === 'test' ? `/elision/${q}` : null;
+    return room === 'test' ? `/game/${q}` : null;
   }
   if (room === 'test') return null; // закрытая комната в grotto не открывается
   if (room === 'hunger') return `/hunger/${q}`;

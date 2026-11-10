@@ -89,7 +89,7 @@ export const NAMED_ROOMS: readonly NamedRoom[] = IS_ELYRIA
         title: "Элизия Эйдес",
         mode: "elision" as const,
         access: "registered" as const,
-        href: "/elision",
+        href: "/game",
         emoji: "🌿",
         blurb: "Рисованная локация, мирная ходьба, редактор. Только со входом.",
       },
