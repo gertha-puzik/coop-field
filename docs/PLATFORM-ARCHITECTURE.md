@@ -70,9 +70,9 @@ createdAt                             позиция в Элизии — по na
 
 | Класс | HTTP-API | WS auth-кадры | Токены |
 | --- | --- | --- | --- |
-| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | `?t=` принимается переходно (старые клиенты) + cookie |
-| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен из тела HTTP-ответа не выдаётся |
-| `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в телах — на нём стоят test-auth/test-флои |
+| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | `?t=` принимается переходно (старые клиенты) + cookie; кадр `whoami` токен не возвращает. `hello` с `payload.token` требует Origin своего класса |
+| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен не выдаётся ни в теле HTTP, ни в кадре `whoami`. `hello` с `payload.token` требует Origin своего класса (`originOk`) |
+| `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в HTTP-телах и в кадре `whoami` — на нём стоят test-auth/test-флои; `hello` с токеном без Origin по-прежнему жив |
 
 Cookie `coop_session`: `HttpOnly; Path=/; Max-Age=14д`, **host-only** — атрибута Domain
 намеренно нет (B1): кука привязана к точному хосту, соседний сайт её не увидит. На https —
@@ -253,14 +253,8 @@ reset/restore с подтверждением.
   `/players/?id&mine=<id>#settings` с подсветкой плитки. Мост — третий файл
   `public/paint-demo/game-bridge.js` (копия редактора не тронута, один шов перед </body>,
   гейт check:paint-seam); из www-grotto вырезан.
-  Окрас по КОДУ CatWar (#84 в3, без загрузки картинки): второй вход зоны «Свой окрас» —
-  CatwarCodeEntry: игрок вставляет код окраса из конструктора kns.phainonsmilk.ru → клиентский конвейер
-  `src/lib/paint/catwar-coat.ts` рендерит котика vendor-движком public/catwar (tint.js + 24 палитры
-  дампа + серые маски M2; sha-гейт check:catwar-vendor) → PNG → существующий POST /sprites/mine.
-  Красятся мех-зоны слотов 0/15/17 (основа/хвост/уши); полноцветные CatWar-элементы (полосы
-  хвоста и пр.) на паре M2 в KNS ещё не отрисованы — честная подпись в UI. Движок грузится
-  динамическим import() только в зоне профиля; www-grotto без /catwar (prune EXCLUDE).
-  Отказы человеческие: bad_syntax / no_coat_zones / engine_unavailable.
+  Решение владелицы 2026-11-10: окрасы CatWar в игре не используются, пак изображений
+  в этом репозитории не лежит. Личная загрузка PNG и редактор KNS Paint остаются.
 
 ## 8. Хранение (`DATA_DIR`, деплой его не затирает)
 

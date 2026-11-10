@@ -161,8 +161,8 @@ b.inbox.length = 0;
 c.inbox.length = 0;
 
 const aim = (Math.atan2(youB.y - youA.y, youB.x - youA.x) * 180) / Math.PI;
-// damage — урон бьюшего (пресет «Урон игрока»): сервер обязан раздавать его как есть.
-a.send(JSON.stringify(["strike", { target: youB.id, zone: "throat", angle: aim, damage: 60 }]));
+// damage клиента игнорируется: гость без профиля получает таблицу уровня 0 (горло 42).
+a.send(JSON.stringify(["strike", { target: youB.id, zone: "throat", angle: aim, damage: 999 }]));
 const fightA = await waitFor(a, "fight");
 const fightB = await waitFor(b, "fight");
 const fightC = await waitFor(c, "fight");
@@ -184,7 +184,7 @@ if (fightA[1].isAttacking !== true) throw new Error("attacker isAttacking");
 if (fightB[1].isAttacking !== false) throw new Error("victim isAttacking");
 if (fightC[1].isAttacking !== false) throw new Error("spectator isAttacking");
 for (const [who, msg] of [["A", fightA], ["B", fightB], ["C", fightC]]) {
-  if (msg[1].damage !== 60) throw new Error(`${who} fight damage ${JSON.stringify(msg[1].damage)}`);
+  if (msg[1].damage !== 42) throw new Error(`${who} fight damage ${JSON.stringify(msg[1].damage)}`);
 }
 console.log("ok: strike", fightA[1].attacker, "→", fightA[1].name, fightA[1].part, "damage", fightA[1].damage);
 
@@ -263,8 +263,8 @@ if (!blockerInField || blockerInField.blocking !== true) {
 }
 left.inbox.length = 0;
 right.inbox.length = 0;
-// Диагональное «горло» по блокирующему проходит — но как «Лапы» (урон бьющего 6).
-left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "throat", angle: diagAngle, damage: 6 }]));
+// Диагональное «горло» по блокирующему проходит — но как «Лапы» (таблица уровня 0 = 6, не 999).
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "throat", angle: diagAngle, damage: 999, pawsDamage: 999 }]));
 const blockedHit = await waitFor(right, "fight");
 if (blockedHit[1].zone !== "paws" || blockedHit[1].part !== "Лапы") {
   throw new Error(`blocked strike zone ${JSON.stringify(blockedHit[1])}`);
@@ -287,41 +287,39 @@ if (!String(diagReject2[1]).includes("диагонали")) {
 }
 console.log("ok: block", "→ relay on/off, any strike lands in paws");
 
-// Удар «в полёте»: блок, вставший после броска, ловит удар в «Лапы»
-// с лаповым уроном пресета бьющего (pawsDamage), а не с уроном исходной зоны.
+// Удар «в полёте»: блок, вставший после броска, ловит удар в «Лапы».
+// pawsDamage клиента игнорируется — лапы берутся из таблицы уровня 0 (6).
 left.inbox.length = 0;
 right.inbox.length = 0;
 await sleep(40); // кулдаун удара после отклонённого удара предыдущего теста
-left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 20, pawsDamage: 7, flightMs: 150 }]));
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 999, pawsDamage: 999, flightMs: 150 }]));
 right.send(JSON.stringify(["block", { on: true }]));
 const flightCatch = await waitFor(right, "fight");
 if (flightCatch[1].zone !== "paws" || flightCatch[1].part !== "Лапы") {
   throw new Error(`flight catch zone ${JSON.stringify(flightCatch[1])}`);
 }
-if (flightCatch[1].damage !== 7) throw new Error(`flight catch damage ${JSON.stringify(flightCatch[1].damage)}`);
+if (flightCatch[1].damage !== 6) throw new Error(`flight catch damage ${JSON.stringify(flightCatch[1].damage)}`);
 right.send(JSON.stringify(["block", { on: false }]));
 await sleep(60);
 console.log("ok: block catches a strike in flight → paws, paws damage");
 
-// Блок успел встать и снялся до касания — удар летит как брошенный (морда, 20).
+// Блок успел встать и снялся до касания — удар летит как брошенный (морда, таблица 18).
 left.inbox.length = 0;
 right.inbox.length = 0;
 await sleep(40);
-left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 20, pawsDamage: 7, flightMs: 150 }]));
+left.send(JSON.stringify(["strike", { target: rightYou.id, zone: "muzzle", angle: diagAngle, damage: 999, pawsDamage: 999, flightMs: 150 }]));
 right.send(JSON.stringify(["block", { on: true }]));
 right.send(JSON.stringify(["block", { on: false }]));
 const flightMiss = await waitFor(right, "fight");
-if (flightMiss[1].zone !== "muzzle" || flightMiss[1].part !== "Морда" || flightMiss[1].damage !== 20) {
+if (flightMiss[1].zone !== "muzzle" || flightMiss[1].part !== "Морда" || flightMiss[1].damage !== 18) {
   throw new Error(`flight miss ${JSON.stringify(flightMiss[1])}`);
 }
 console.log("ok: block dropped before impact → strike lands as thrown");
 
 // Хвост и блок: хвост — ЕДИНСТВЕННОЕ исключение из блока. Блок проводит любой удар
 // в «Лапы», но удар в хвост не переносит: он остаётся хвостом и по логу, и по урону.
-// 1) Блок уже стоит — удар в хвост проходит хвостом с уроном бьющего (33 клэмпится реестром P2 до 4).
-// 2) Блока нет — то же самое: хвост проходит хвостом (33→4).
-// 3) Блок встал, пока удар летит — хвост всё равно проходит хвостом (исключение, 33→4).
-// 4) Контраст: удар в морду по стоящему блоку — «Лапы» с лаповым уроном бьющего.
+// Гость без профиля: хвост = таблица уровня 0 (2), клиентские 33/999 игнорируются.
+// 4) Контраст: удар в морду по стоящему блоку — «Лапы» таблицы уровня 0 (6).
 const tailRoom = `t${Date.now().toString(36)}tail`;
 const tAtk = await client("Хвостобой", tailRoom);
 const tDef = await client("Хвостостой", tailRoom);
@@ -333,49 +331,49 @@ tDef.send(JSON.stringify(["block", { on: true }]));
 await waitFor(tAtk, "block");
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
-tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5 }]));
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 999, pawsDamage: 999 }]));
 const tailBlocked = await waitFor(tDef, "fight");
-if (tailBlocked[1].zone !== "tail" || tailBlocked[1].part !== "Хвост" || tailBlocked[1].damage !== 4) {
+if (tailBlocked[1].zone !== "tail" || tailBlocked[1].part !== "Хвост" || tailBlocked[1].damage !== 2) {
   throw new Error(`tail vs block ${JSON.stringify(tailBlocked[1])}`);
 }
-console.log("ok: tail strike vs standing block → tail, damage clamped by registry (33→4)");
+console.log("ok: tail strike vs standing block → tail, server table 2, not 999");
 tDef.send(JSON.stringify(["block", { on: false }]));
 await waitFor(tAtk, "block");
 await sleep(80);
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
-tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33 }]));
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 999 }]));
 const tailFree = await waitFor(tDef, "fight");
-if (tailFree[1].zone !== "tail" || tailFree[1].part !== "Хвост" || tailFree[1].damage !== 4) {
+if (tailFree[1].zone !== "tail" || tailFree[1].part !== "Хвост" || tailFree[1].damage !== 2) {
   throw new Error(`tail without block ${JSON.stringify(tailFree[1])}`);
 }
-console.log("ok: tail strike without block → tail (registry 33→4)");
+console.log("ok: tail strike without block → tail, server table 2");
 await sleep(80);
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
-tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 33, pawsDamage: 5, flightMs: 150 }]));
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 999, pawsDamage: 999, flightMs: 150 }]));
 tDef.send(JSON.stringify(["block", { on: true }]));
 const tailFlight = await waitFor(tDef, "fight");
-if (tailFlight[1].zone !== "tail" || tailFlight[1].part !== "Хвост" || tailFlight[1].damage !== 4) {
+if (tailFlight[1].zone !== "tail" || tailFlight[1].part !== "Хвост" || tailFlight[1].damage !== 2) {
   throw new Error(`tail flight exception ${JSON.stringify(tailFlight[1])}`);
 }
-console.log("ok: tail strike vs block risen in flight → tail (exception, registry 33→4)");
-// P2: клэмп урона реестром — запредельный удар 999 по хвосту не проходит выше уровневого капа.
+console.log("ok: tail strike vs block risen in flight → tail (exception, server table 2)");
+// Запредельный удар 999 по хвосту — таблица уровня 0, не число клиента и не потолок уровня 9.
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
 tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "tail", angle: tailAngle, damage: 999 }]));
 const tailOverkill = await waitFor(tDef, "fight");
-if (tailOverkill[1].zone !== "tail" || tailOverkill[1].part !== "Хвост" || tailOverkill[1].damage !== 4) {
+if (tailOverkill[1].zone !== "tail" || tailOverkill[1].part !== "Хвост" || tailOverkill[1].damage !== 2) {
   throw new Error(`tail overkill clamp ${JSON.stringify(tailOverkill[1])}`);
 }
-console.log("ok: tail strike 999 → registry clamp 4");
+console.log("ok: tail strike 999 → server table 2, not 999");
 // Контраст: не-хвостовая зона по стоящему блоку по-прежнему ловится в «Лапы».
 await sleep(80);
 tAtk.inbox.length = 0;
 tDef.inbox.length = 0;
-tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "muzzle", angle: tailAngle, damage: 33, pawsDamage: 5 }]));
+tAtk.send(JSON.stringify(["strike", { target: tDefYou.id, zone: "muzzle", angle: tailAngle, damage: 999, pawsDamage: 999 }]));
 const muzzleBlocked = await waitFor(tDef, "fight");
-if (muzzleBlocked[1].zone !== "paws" || muzzleBlocked[1].part !== "Лапы" || muzzleBlocked[1].damage !== 5) {
+if (muzzleBlocked[1].zone !== "paws" || muzzleBlocked[1].part !== "Лапы" || muzzleBlocked[1].damage !== 6) {
   throw new Error(`muzzle vs block ${JSON.stringify(muzzleBlocked[1])}`);
 }
 tDef.send(JSON.stringify(["block", { on: false }]));
@@ -383,14 +381,14 @@ tAtk.close();
 tDef.close();
 console.log("ok: non-tail strike vs standing block → paws, paws damage");
 
-// Броня: пресет цели режет получаемый урон по кривой замеров владельца
+// Броня: пресет цели режет уже серверный урон по кривой замеров владельца
 // (множитель = урон(броня) / урон(0,0): 0,9 ≈ 0,38275, 0,5 ≈ 0,72917).
-// Броня режет любой входящий удар — включая хвост: блок хвост не ловит, а броня режет.
+// Гость: горло таблицы = 42, лапы = 6, хвост = 2. Клиентские числа игнорируются.
 // 1) броня 0,9 — горло 42 проходит как round(42·0,38275) = 16;
 // 2) броня 0,5 — горло 42 проходит как 31;
-// 3) броня 0,0 — урон проходит целиком;
-// 4) броня 0,9 + блок — морда переводится в «Лапы», лаповый урон 5 проходит как 2;
-// 5) хвост по бронированному блокирующему — остаётся хвостом; реестр сначала клэмпит 33→4, кривая брони 0,9 режет до 2;
+// 3) броня 0,0 — таблица проходит целиком;
+// 4) броня 0,9 + блок — морда переводится в «Лапы», таблица 6 проходит как 2;
+// 5) хвост по бронированному блокирующему — остаётся хвостом; таблица 2, кривая 0,9 режет до 1;
 // 6) зажим: armor 5 ведёт себя как 0,9.
 const armRoom = `t${Date.now().toString(36)}arm`;
 const aAtk = await client("Пробойник", armRoom);
@@ -403,7 +401,7 @@ aDef.send(JSON.stringify(["armor", { armor: 0.9 }]));
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 999 }]));
 const arm09 = await waitFor(aDef, "fight");
 if (arm09[1].zone !== "throat" || arm09[1].damage !== 16) {
   throw new Error(`armor 0.9 damage ${JSON.stringify(arm09[1])}`);
@@ -413,7 +411,7 @@ aDef.send(JSON.stringify(["armor", { armor: 0.5 }]));
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 999 }]));
 const arm05 = await waitFor(aDef, "fight");
 if (arm05[1].damage !== 31) throw new Error(`armor 0.5 damage ${JSON.stringify(arm05[1])}`);
 console.log("ok: armor 0.5 → throat 42 lands as 31");
@@ -421,7 +419,7 @@ aDef.send(JSON.stringify(["armor", { armor: 0 }]));
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 999 }]));
 const arm00 = await waitFor(aDef, "fight");
 if (arm00[1].damage !== 42) throw new Error(`armor 0 damage ${JSON.stringify(arm00[1])}`);
 console.log("ok: armor 0.0 → damage passes fully");
@@ -431,29 +429,29 @@ await waitFor(aAtk, "block");
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "muzzle", angle: armAngle, damage: 42, pawsDamage: 5 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "muzzle", angle: armAngle, damage: 999, pawsDamage: 999 }]));
 const armBlock = await waitFor(aDef, "fight");
 if (armBlock[1].zone !== "paws" || armBlock[1].part !== "Лапы" || armBlock[1].damage !== 2) {
   throw new Error(`armor + block ${JSON.stringify(armBlock[1])}`);
 }
-console.log("ok: armor 0.9 + block → paws damage 5 lands as 2");
+console.log("ok: armor 0.9 + block → paws table 6 lands as 2");
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "tail", angle: armAngle, damage: 33 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "tail", angle: armAngle, damage: 999 }]));
 const armTail = await waitFor(aDef, "fight");
-if (armTail[1].zone !== "tail" || armTail[1].part !== "Хвост" || armTail[1].damage !== 2) {
+if (armTail[1].zone !== "tail" || armTail[1].part !== "Хвост" || armTail[1].damage !== 1) {
   throw new Error(`armor tail ${JSON.stringify(armTail[1])}`);
 }
 aDef.send(JSON.stringify(["block", { on: false }]));
 await waitFor(aAtk, "block");
-console.log("ok: armored tail vs block → tail, registry 33→4 then armor 0.9 → 2");
+console.log("ok: armored tail vs block → tail, table 2 then armor 0.9 → 1");
 await sleep(60);
 aDef.send(JSON.stringify(["armor", { armor: 5 }]));
 await sleep(60);
 aAtk.inbox.length = 0;
 aDef.inbox.length = 0;
-aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 42 }]));
+aAtk.send(JSON.stringify(["strike", { target: aDefYou.id, zone: "throat", angle: armAngle, damage: 999 }]));
 const armClamp = await waitFor(aDef, "fight");
 if (armClamp[1].damage !== 16) throw new Error(`armor clamp ${JSON.stringify(armClamp[1])}`);
 aAtk.close();

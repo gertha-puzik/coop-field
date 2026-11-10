@@ -19,6 +19,7 @@ import {
   JUMP_MAX_DROP,
   JUMP_MAX_UP,
   TERRAIN_MAX_LEVEL,
+  TEST_MAP_LIMITS,
 } from "./protocol.js";
 /* ---------- пиксельная отрисовка: PNG-декод и маска земли ---------- */
 
@@ -26,11 +27,37 @@ import {
  *  из test-field.ts): рисунок хранится в px мира cols*100 x rows*150. */
 const PAINT_CELL_W = 100;
 const PAINT_CELL_H = 150;
+/** Запас сверх честного RGBA-кадра: легальный IDAT равен (stride+1)*h, бомба — нет. */
+const PAINT_INFLATE_MARGIN = 64;
+
+/** Ширина/высота — ровно сетка локации внутри TEST_MAP_LIMITS (cols×100, rows×150). */
+function paintDimsOk(w, h) {
+  if (!Number.isInteger(w) || !Number.isInteger(h)) return false;
+  if (w % PAINT_CELL_W !== 0 || h % PAINT_CELL_H !== 0) return false;
+  const cols = w / PAINT_CELL_W;
+  const rows = h / PAINT_CELL_H;
+  return (
+    cols >= TEST_MAP_LIMITS.colsMin &&
+    cols <= TEST_MAP_LIMITS.colsMax &&
+    rows >= TEST_MAP_LIMITS.rowsMin &&
+    rows <= TEST_MAP_LIMITS.rowsMax
+  );
+}
+
+/** Потолок inflate: самый большой легальный RGBA-кадр (60×40 клеток) плюс запас. */
+function maxPaintInflate() {
+  const w = TEST_MAP_LIMITS.colsMax * PAINT_CELL_W;
+  const h = TEST_MAP_LIMITS.rowsMax * PAINT_CELL_H;
+  return (w * 4 + 1) * h + PAINT_INFLATE_MARGIN;
+}
 
 /**
  * Минимальный PNG-декодер (альфа-маска): браузерный canvas.toDataURL даёт
  * 8-бит RGBA/RGB без interlace, фильтры строк 0–4 — этого достаточно. Возвращает
  * { w, h, mask } (mask[i] = альфа > 127) или null — битый/чужой формат.
+ * IHDR сверяется с легальным размером рисунка локации ДО inflate: чужая
+ * ширина/высота не доходит до распаковки. maxOutputLength режет IDAT, который
+ * заявляет легальный IHDR, но разжимается больше честного RGBA-кадра.
  */
 function decodePaintPng(b64) {
   try {
@@ -46,9 +73,11 @@ function decodePaintPng(b64) {
     const idat = [];
     while (off + 12 <= buf.length) {
       const len = buf.readUInt32BE(off);
+      if (len > buf.length) return null;
       const type = buf.toString("ascii", off + 4, off + 8);
       const data = buf.subarray(off + 8, off + 8 + len);
       if (type === "IHDR") {
+        if (data.length < 13) return null;
         w = data.readUInt32BE(0);
         h = data.readUInt32BE(4);
         bitDepth = data[8];
@@ -61,10 +90,16 @@ function decodePaintPng(b64) {
       }
       off += 12 + len;
     }
-    if (!w || !h || bitDepth !== 8 || interlace !== 0) return null;
+    if (bitDepth !== 8 || interlace !== 0) return null;
     if (colorType !== 6 && colorType !== 2) return null;
-    const raw = zlib.inflateSync(Buffer.concat(idat));
+    if (!paintDimsOk(w, h)) return null;
     const bpp = colorType === 6 ? 4 : 3;
+    const expected = (w * bpp + 1) * h;
+    const ceiling = maxPaintInflate();
+    if (expected > ceiling) return null;
+    const raw = zlib.inflateSync(Buffer.concat(idat), {
+      maxOutputLength: Math.min(expected + PAINT_INFLATE_MARGIN, ceiling),
+    });
     const stride = w * bpp;
     if (raw.length < (stride + 1) * h) return null;
     const mask = new Uint8Array(w * h);
