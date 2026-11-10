@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import { PawCursor } from "@/components/ui";
+import { PUBLIC_NAME } from "@/lib/net/modes";
 import "./globals.css";
 
 const interSans = Inter({
@@ -13,10 +14,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const description = "Общее поле на WebSocket: до 30 котов в одной комнате.";
+
 export const metadata: Metadata = {
-  title: "abnocw",
-  description:
-    "Canvas-поле abnocw на общем WebSocket: до 30 котов в одной комнате.",
+  title: { absolute: PUBLIC_NAME },
+  description,
+  openGraph: { title: PUBLIC_NAME, description },
 };
 
 export default function RootLayout({

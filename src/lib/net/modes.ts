@@ -150,6 +150,21 @@ export const MODE_COPY: Record<PlayMode, { title: string; lead: string }> = IS_E
       // полноты — время исполнения туда не попасть, проверять нечего.
     } as Record<PlayMode, { title: string; lead: string }>);
 
+/**
+ * Публичное имя вкладки и превью ссылки. Латиница — как написала владелица
+ * (2026-11-10). Кодовое «abnocw» в заголовок не ставится.
+ */
+export const PUBLIC_NAME = "wanderpaws";
+
+/**
+ * Заголовок вкладки и og:title. Имя — уже существующее людское имя лобби
+ * или комнаты (MODE_COPY / NamedRoom.title). Без имени остаётся wanderpaws.
+ */
+export function tabTitle(name?: string | null): string {
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  return trimmed ? `${trimmed} — ${PUBLIC_NAME}` : PUBLIC_NAME;
+}
+
 export function namedRoom(id: string): NamedRoom | undefined {
   return NAMED_ROOMS.find((r) => r.id === id);
 }

@@ -229,6 +229,8 @@ npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www
   `server/auth.js` (sessions; cookie `coop_session` HttpOnly host-only (no Domain
   attribute), SameSite=Lax (+Secure on https; `COOKIE_LOOSE=1` → legacy None); token
   matrix per host class — elyria is cookie-only, `AUTH_LEGACY_TOKEN=1` brings back `?t=`;
+  WS `whoami.token` is hostClass `local` only, and `hello` with a payload token
+  on public/elyria requires `originOk`;
   rate envs `AUTH_REGISTER_GAP_MS`, `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`,
   `AUTH_LOGIN_FAIL_MAX`, `AUTH_LOGIN_FAIL_WINDOW_MS`; XFF trusted only from the last hop
   behind our own nginx),
