@@ -15,6 +15,7 @@ import {
   OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
 } from "./config.js";
 import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./protocol.js";
+import { writeFileAtomic } from "./atomic-file.js";
 import {
   decodePaintPng, paintPxMask, paintCellCoverageMask,
   buildIsland, buildCells, obstacleBlockedCells, obstacleBodiesOf,
@@ -550,14 +551,6 @@ function loadTestMap() {
   return defaultTestMap();
 }
 
-/** Запись атомарная (tmp + rename): обрыв не оставляет на диске полудохлый JSON —
- *  именно недописанный файл при загрузке превращается в «карта слетела на старую». */
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
-}
-
 /** Прошлая версия карты — в data/backups (последние 8): неудачную правку редактора
  *  или потерю файла можно откатить, а не собирать локацию заново. */
 function backupTestMap() {
@@ -670,5 +663,4 @@ function setMap(ws, payload = {}) {
 
 export {
   MAP_FILE, rebuildTestGeometry, defaultTestMap, sanitizeTestMap, saveTestMap, setMap, loadTestMap,
-  writeFileAtomic,
 };

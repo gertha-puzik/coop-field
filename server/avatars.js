@@ -40,6 +40,7 @@ import { sessionFromRequest } from "./auth.js";
 import { json, setCors } from "./runtime-config.js";
 import { flushAccounts, avatarUrlOf } from "./accounts.js";
 import { readBody, parseMultipart, PNG_MAGIC } from "./sprites.js";
+import { writeFileAtomic } from "./atomic-file.js";
 
 const DIR = path.join(DATA_DIR, "avatars");
 /** Каталог аватарок создаётся при старте (импорт модуля = старт сервера). */
@@ -70,14 +71,6 @@ const RATE_INTERVAL_MS = 10_000;
  *  [A-Za-z0-9_-]{1,64} + расширение (набор зашит в regex маршрута отдачи):
  *  пути из URL в файловую систему не передаются. */
 const fileOf = (accountId, ext) => path.join(DIR, `${accountId}.${ext}`);
-
-/** Атомарная запись — та же пара tmp+rename, что в sprites.js/accounts.js:
- *  читатель никогда не видит наполовину записанный файл. */
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
-}
 
 /* ---------- разбор картинок: PNG по IHDR, JPEG по SOF-кадру ---------- */
 

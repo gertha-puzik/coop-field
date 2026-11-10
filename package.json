@@ -46,7 +46,8 @@
     "test:prod-switch": "node scripts/test-prod-switch.mjs",
     "test:sp-privacy": "node scripts/test-sp-privacy.mjs",
     "test:stone": "node scripts/test-stone-platform.mjs",
-    "test:editor-save": "node scripts/test-editor-save.mjs"
+    "test:editor-save": "node scripts/test-editor-save.mjs",
+    "test:atomic-file": "node scripts/test-atomic-file.mjs"
   },
   "engines": {
     "node": ">=18"

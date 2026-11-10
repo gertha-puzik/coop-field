@@ -14,7 +14,7 @@ import {
 import { TEST_OBST_BODIES } from "./testmap.js";
 import { nearestTestCell, testPointInIsland, testWalkable } from "./world.js";
 import { occupied } from "./room.js";
-import { writeFileAtomic } from "./testmap.js";
+import { writeFileAtomic } from "./atomic-file.js";
 
 /* ---------- позиции котов между запусками сервера.
    Рестарт (деплой) раньше выбрасывал всех на спавн — включая АФК-котов, которые

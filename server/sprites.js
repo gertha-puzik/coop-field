@@ -60,6 +60,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, SPRITES } from "./config.js";
+import { writeFileAtomic } from "./atomic-file.js";
 import { sessionFromRequest } from "./auth.js";
 import { json, readJson, setCors } from "./runtime-config.js";
 import { spriteWearers, findById as findAccountById } from "./accounts.js";
@@ -113,12 +114,6 @@ const BASE_NAMES = {
   test1: "test1",
   "test1-png": "test1 PNG 600",
 };
-
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
-}
 
 function manifestRowOk(row) {
   if (

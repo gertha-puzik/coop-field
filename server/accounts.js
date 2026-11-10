@@ -9,6 +9,7 @@ import path from "node:path";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { DATA_DIR, SPRITES } from "./config.js";
+import { writeFileAtomic } from "./atomic-file.js";
 // Динамический каталог спрайтов (менеджер спрайтов): attachSprite принимает
 // id из манифеста sprites.js — и загруженные, и базовые. Цикл импортов
 // accounts.js ↔ sprites.js здесь осознанный: spriteIdAllowed вызывается
@@ -34,12 +35,6 @@ function sanitizeLogin(raw, fallback) {
     LOGIN_MAX,
   );
   return text || fallback;
-}
-
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
 }
 
 const scryptAsync = promisify(scrypt);
