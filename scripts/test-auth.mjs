@@ -903,7 +903,8 @@ try {
   );
 
   // (P1-3) WS-кадры: на public-хосте register/login — отказ без деталей;
-  // hello/logout прежние. На elyria-хосте вход работает и выдаёт токен кадром.
+  // hello/logout прежние. На elyria вход кадром работает, но токен в whoami
+  // не отдаётся (только hostClass local) — страница не читает HttpOnly.
   const client3 = (headers) =>
     new Promise((resolve, reject) => {
       const ws = new WebSocket(WS3, { headers: headers || {} });
@@ -949,7 +950,29 @@ try {
   elyWs.send(JSON.stringify(["auth", { action: "register", login: "WsEly", pass: "password1" }]));
   const elyFrame = await waitForIdx(elyWs, (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId, elyMark);
   check(!!elyFrame, "ws-gate: register кадром на elyria-хосте по-прежнему работает");
-  check(!!elyFrame[1]?.token, "token-matrix: WS-кадр на elyria выдаёт токен whoami (матрица — про HTTP-тела)");
+  check(elyFrame[1]?.token === undefined, "token-matrix: WS whoami на elyria не отдаёт токен (только hostClass local)");
+  const elyHello = await client3({ host: "ely.example" });
+  const helloMark = elyHello.inbox.length;
+  elyHello.send(JSON.stringify(["auth", { action: "hello", token: elyTok }]));
+  const helloDenied = await waitForIdx(elyHello, (m) => m[0] === "whoami" && m[1]?.ok === false, helloMark);
+  check(
+    helloDenied[1]?.reason === "error" && !helloDenied[1]?.accountId,
+    "token-matrix: hello с токеном на elyria без Origin не поднимает сессию",
+  );
+  elyHello.close();
+  const elyHelloOk = await client3({ host: "ely.example", origin: "https://ely.example" });
+  const helloOkMark = elyHelloOk.inbox.length;
+  elyHelloOk.send(JSON.stringify(["auth", { action: "hello", token: elyTok }]));
+  const helloBound = await waitForIdx(
+    elyHelloOk,
+    (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId,
+    helloOkMark,
+  );
+  check(
+    helloBound[1]?.login === "ElyHost" && helloBound[1]?.token === undefined,
+    "token-matrix: hello с токеном и своим Origin на elyria поднимает сессию без токена в кадре",
+  );
+  elyHelloOk.close();
   elyWs.close();
 } catch (e) {
   failures += 1;

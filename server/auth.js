@@ -344,9 +344,19 @@ function bindToken(ws, token) {
 }
 
 function whoamiBody(ws, extra = {}) {
+  const { token: extraToken, ...rest } = extra || {};
   const acc = ws.account;
-  if (!acc) return { ok: true, role: "guest", ...extra };
-  return { ok: true, ...publicAccount(acc), token: extra.token || ws.sessionToken || undefined, ...extra };
+  // Токен в кадре whoami — только hostClass local (тесты и dev). На public и
+  // elyria кадр читает JS страницы: отдача sessionToken сняла бы HttpOnly.
+  const token = ws.hostClass === "local" ? extraToken || ws.sessionToken || undefined : undefined;
+  if (!acc) {
+    const body = { ok: true, role: "guest", ...rest };
+    if (token) body.token = token;
+    return body;
+  }
+  const body = { ok: true, ...publicAccount(acc), ...rest };
+  if (token) body.token = token;
+  return body;
 }
 
 function reasonText(code) {
@@ -442,7 +452,15 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     return;
   }
   if (action === "hello") {
-    const token = String(payload.token || ws.sessionToken || "");
+    const fromPayload = String(payload.token || "");
+    // Токен в теле hello на public/elyria — только со своим Origin. Пустой
+    // или чужой Origin не поднимает сессию по украденной строке. local
+    // остаётся прежним: скрипты и dev шлют hello без Origin.
+    if (fromPayload && ws.hostClass !== "local" && !ws.originOk) {
+      sendWhoami(ws, { ok: false, reason: "error" });
+      return;
+    }
+    const token = fromPayload || String(ws.sessionToken || "");
     if (token) bindToken(ws, token);
     sendWhoami(ws, whoamiBody(ws));
     return;
