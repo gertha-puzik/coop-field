@@ -8,9 +8,13 @@ import styles from './editor-workspace.module.css';
  * imperatively by useAtmosphereLayer (fresh canvas + WebGL context on every
  * mount, removed on unmount). Contract: refs for the world/HUD canvases, the
  * atmosphere slot div and the frame div arrive via props (same ref objects as
- * before), pointer handlers keep their original identities, and
+ * pointer handlers keep their original identities, and
  * `editorOverlay` is a ReactNode slot rendered exactly where the inline
  * `{editorOpen && editorView ? <EditorOverlay ... /> : null}` used to be.
+ * `touchControls` is the sibling ReactNode slot for the mobile joystick/jump
+ * controls: rendered INSIDE the scene div above the HUD canvas (z-50);
+ * mounting/gating (touch device, editor hidden) belongs to the slot owner
+ * in simulator.tsx — FieldStage only provides the geometric anchor.
  */
 import type { MouseEvent, PointerEvent, RefObject, ReactNode } from 'react';
 
@@ -35,6 +39,11 @@ export interface FieldStageProps {
   battleHint: string | null;
   mapLoading: boolean;
   editorOverlay: ReactNode;
+  /** Сенсорное управление (джойстик + «прыжок»): слот рисуется поверх HUD
+   *  канваса внутри игровой сцены; монтировать/прятать его решает владелец
+   *  слота в simulator.tsx (тач-устройство, редактор), FieldStage — только
+   *  геометрическая точка, как у editorOverlay. */
+  touchControls?: ReactNode;
 }
 
 export function FieldStage(props: FieldStageProps) {
@@ -58,6 +67,7 @@ export function FieldStage(props: FieldStageProps) {
     battleHint,
     mapLoading,
     editorOverlay,
+    touchControls,
   } = props;
   return (
       <section className={`flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1 ${editorOverlay?'h-full min-h-[480px] flex-1':''}`}>
@@ -124,6 +134,11 @@ export function FieldStage(props: FieldStageProps) {
                 aria-hidden
                 className="pointer-events-none absolute inset-0 z-20 block h-full w-full rounded-lg"
               />
+              {/* Сенсорное управление (мобильный UX): джойстик слева-снизу и
+                  «прыжок» справа-снизу поверх HUD (z-50); события ловят
+                  только круги, поля кругами не перехватываются. Слот пуст
+                  на десктопе или при спрятанных контролах. */}
+              {touchControls}
             </div>
             {battleHint ? (
               <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
