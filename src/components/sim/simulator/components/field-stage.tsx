@@ -70,7 +70,7 @@ export function FieldStage(props: FieldStageProps) {
     touchControls,
   } = props;
   return (
-      <section className={`flex w-full min-w-0 flex-col gap-2 lg:h-full lg:min-h-0 lg:flex-1 ${editorOverlay?'h-full min-h-[480px] flex-1':''}`}>
+      <section className={`flex w-full min-w-0 flex-1 flex-col gap-2 min-h-0 lg:h-full lg:min-h-0 lg:flex-1 ${editorOverlay?'h-full min-h-[480px] flex-1':''}`}>
         <div className="relative w-full min-w-0 flex-1 lg:min-h-0">
           <div
             ref={fieldFrameRef}
