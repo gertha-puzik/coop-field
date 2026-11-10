@@ -246,6 +246,12 @@ function publicAccount(acc) {
  * полей. P4-слоты: bio (строка, пустая по умолчанию) и avatarCharacterId
  * (id персонажа-аватара ИЗ СВОЕГО списка characters либо null; сторонний id
  * сюда не попадает — экспонируем только если он есть в characters аккаунта).
+ * Волна «день рождения + аватарка»: birthday — строка «ГГГГ-ММ-ДД» либо null
+ * (мусор и отсутствие честно схлопываются в null — полную валидность значения
+ * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор); avatar —
+ * строка-URL «/avatars/file/<accountId>.<png|jpg>?v=<avatarAt>» либо null
+ * (строго из пары profile.avatarExt ∈ {png,jpg} и avatarAt > 0 — мусор в
+ * полях не изворачивается в ссылку, файловый маршрут — server/avatars.js).
  */
 function publicProfile(acc) {
   if (!acc) return null;
@@ -256,7 +262,9 @@ function publicProfile(acc) {
   return {
     displayName: acc.profile?.displayName || acc.login,
     bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
+    birthday: birthdayOf(acc),
     avatarCharacterId: avatar,
+    avatar: avatarUrlOf(acc),
     characters: chars.map((c) => ({
       id: c.id,
       name: c.name,
@@ -266,6 +274,27 @@ function publicProfile(acc) {
     activeCharacterId: acc.activeCharacterId,
     createdAt: Number(acc.createdAt) || 0,
   };
+}
+
+/** День рождения профиля: строка «ГГГГ-ММ-ДД» проходит маску формата →
+ *  отдаём как есть; мусор/отсутствие → null (честный DTO, как у bio-соседей:
+ *  реальность даты проверяет profiles.js на входе, повторно не парсим). */
+function birthdayOf(acc) {
+  const b = acc?.profile?.birthday;
+  return typeof b === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b) ? b : null;
+}
+
+/** URL аватарки из PROFILE-полей: avatarExt строго 'png' | 'jpg' и avatarAt —
+ *  число > 0 (unix-ms, оно же кэш-бастер «?v=» при каждой замене); иное
+ *  (в т.ч. мусор или ноль) → null. Ид файла — id аккаунта: маршрут
+ *  /avatars/file/<id>.<ext> никогда не строится из клиентских строк. */
+function avatarUrlOf(acc) {
+  const p = acc?.profile;
+  const ext = p?.avatarExt;
+  const at = p?.avatarAt;
+  if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return null;
+  if (ext !== "png" && ext !== "jpg") return null;
+  return `/avatars/file/${acc.id}.${ext}?v=${at}`;
 }
 
 function activeCharacter(acc) {
@@ -465,6 +494,7 @@ export {
   findById,
   publicAccount,
   publicProfile,
+  avatarUrlOf,
   activeCharacter,
   createAccount,
   promoteToAdmin,

@@ -6,7 +6,11 @@
  *                          только своей записи; правятся profile.displayName
  *                          (он же — «ник на поле», синхронизируется в имя
  *                          активного персонажа), profile.bio, avatarCharacterId,
- *                          sprite/scale (скин и рост активного персонажа —
+ *                          profile.birthday (день рождения: строго дата
+ *                          «ГГГГ-ММ-ДД» реального календаря, не раньше
+ *                          01.01.1900 и не позже сегодня, либо null/пустая
+ *                          строка — сброс), sprite/scale (скин и рост
+ *                          активного персонажа —
  *                          канонический сеттер accounts.applyProfileAppearance)
  *                          и sp (скрытые параметры: periodSec/damageLevel/
  *                          armorLevel — partial, отсутствие поля не трогает
@@ -272,7 +276,36 @@ function parseQuery(raw) {
  * (accounts.applyProfileAppearance — канонический сеттер вне room-join).
  * Спрайт — только id из живого каталога (whitelist, как attachSprite);
  * размер — проценты роста 60–100, зажим и округление как в room-join. */
-const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId", "sprite", "scale"];
+const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId", "birthday", "sprite", "scale"];
+
+/* Birthday: формат хранения — строка «ГГГГ-ММ-ДД» либо null (не заполнено).
+ * Диапазон: от 01.01.1900 до сегодняшнего дня по UTC включительно. */
+const BIRTHDAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const BIRTHDAY_MIN_MS = Date.UTC(1900, 0, 1);
+
+/** Полночь текущих UTC-суток: правая граница «до сегодня включительно». */
+function todayUtcStartMs() {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+}
+
+/** Дата существует в реальном календаре и лежит в допустимом диапазоне:
+ *  компоненты созданной UTC-даты обязаны совпасть с исходной строкой — так
+ *  «2026-02-30» (V8 честно скатывает его в 2 марта) и «2026-13-01»
+ *  (Invalid Date) отбиваются по фактическому мусору, а 29 февраля
+ *  проходит ровно в високосные годы. */
+function birthdayOk(raw) {
+  const d = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  if (
+    d.getUTCFullYear() !== Number(raw.slice(0, 4)) ||
+    d.getUTCMonth() !== Number(raw.slice(5, 7)) - 1 ||
+    d.getUTCDate() !== Number(raw.slice(8, 10))
+  ) {
+    return false;
+  }
+  return d.getTime() >= BIRTHDAY_MIN_MS && d.getTime() <= todayUtcStartMs();
+}
 
 /** СП профиля для владельца — читанье из стора (только честные значения:
  *  мусор молча прячется, битые поля не отдаются). None → ключа нет вовсе. */
@@ -292,7 +325,7 @@ function spView(acc) {
 
 /**
  * Разбор тела PATCH. Принимает плоские поля (displayName, bio,
- * avatarCharacterId), вложенный объект sp {periodSec?, damageLevel?,
+ * avatarCharacterId, birthday), вложенный объект sp {periodSec?, damageLevel?,
  * armorLevel?} (и то же под profile.sp — ради терминологии /auth/me) и
  * вложенные profile.{displayName,bio,avatarCharacterId}. Идентификационные
  * ключи (id, accountId, login, role, characters...) не входят в белый
@@ -380,6 +413,21 @@ function sanitizePatch(body, account) {
         return;
       }
       values.avatarCharacterId = raw;
+      return;
+    }
+    if (key === "birthday") {
+      // Формат хранения: null/пустая строка — сброс, иначе строго «ГГГГ-ММ-ДД»
+      // реального дня из диапазона 01.01.1900 — сегодня (см. birthdayOk):
+      // выход за диапазон или ложная дата — видимая 400-ошибка, НЕ зажим.
+      if (raw === null || raw === "") {
+        values.birthday = null;
+        return;
+      }
+      if (typeof raw === "string" && BIRTHDAY_RE.test(raw) && birthdayOk(raw)) {
+        values.birthday = raw;
+        return;
+      }
+      invalid.push({ key, error: "дата ГГГГ-ММ-ДД, не раньше 01.01.1900 и не позже сегодня" });
       return;
     }
     if (key === "sprite") {
@@ -505,6 +553,9 @@ export async function handleProfilesHttp(req, res) {
       if (values.displayName !== undefined) acc.profile.displayName = values.displayName;
       if (values.bio !== undefined) acc.profile.bio = values.bio;
       if (values.avatarCharacterId !== undefined) acc.profile.avatarCharacterId = values.avatarCharacterId;
+      // Birthday — partial-merge как у соседей: поля нет — сохранённое не
+      // трогаем; null — сброс в null (пустая дата = дня рождения нет).
+      if (values.birthday !== undefined) acc.profile.birthday = values.birthday;
       // СП — partial-merge: в PATCH нет поля → сохранённое не трогаем.
       if (values.sp) {
         const cur =

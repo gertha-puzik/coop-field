@@ -58,6 +58,19 @@ export function ruDate(ts: number): string {
   }
 }
 
+/** «8 ноября 2011» из строки-маски ГГГГ-ММ-ДД (день рождения профиля);
+ *  мусор или пусто → '' — карточка останется на честных данных DTO. */
+export function ruBirthday(raw: string | null | undefined): string {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return '';
+  const year = Number(raw.slice(0, 4));
+  const month = Number(raw.slice(5, 7));
+  const day = Number(raw.slice(8, 10));
+  // только реальная дата календаря: «30 февраля» — мусор, а не день рождения
+  const probe = new Date(year, month - 1, day);
+  if (probe.getDate() !== day || probe.getMonth() !== month - 1 || probe.getFullYear() !== year) return '';
+  return `${day} ${MONTHS_GEN[month - 1]} ${year}`;
+}
+
 /** «8 ноября, 14:32» — момент последней успешной загрузки каталога. */
 export function ruStamp(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return '';
