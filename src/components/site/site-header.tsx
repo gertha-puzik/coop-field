@@ -6,9 +6,10 @@
  * существующих сессий-панелей auth-gate) — единая для страниц Элизии
  * (/, /game/, /players/, /admin/).
  *
- * Слева — навигация: Главная, Игровая комната, Игроки, Настройки (якорь
- * #settings своей карточки — контракт с волной W1), Мой профиль; «Панель» —
- * только при role==='admin'. Справа — сессия: «Вы вошли как …» (гость:
+ * Слева — навигация: Главная, Игровая комната, Игроки, Мой профиль (пункт
+ * «Настройки» упразднён решением владелицы 2026-11-10: он вёл на ту же
+ * страницу профиля, что и «Мой профиль»; якорь #settings формы правки живёт
+ * в deep-link); «Админка» — только при role==='admin'. Справа — сессия: «Вы вошли как …» (гость:
  * бейджа и админ-пункта нет — он видит окно входа гейта), «Выйти» (POST
  * /auth/logout через httpLogout — он же сбрасывает общий me-кэш вкладки
  * и рассылает ME_EVENT) и возврат на главную, плюс селект темы (существующий
@@ -54,17 +55,6 @@ export function SiteHeader() {
   const inAccount = meHasAccount(me);
   const isAdmin = inAccount && me?.role === 'admin';
 
-  /** Своя карточка с якорем (гость — каталог без id): настроек и профиля
-   *  общий предикат: без аккаунта ведём в каталог, там гейт сам спросит вход. */
-  const profileHref = (hash: `#${string}` | '' = ''): string =>
-    inAccount && me?.accountId
-      ? IS_ELYRIA
-        ? `/players/?id=${encodeURIComponent(me.accountId)}${hash}`
-        : '/'
-      : IS_ELYRIA
-        ? '/players/'
-        : '/';
-
   /** Выход: httpLogout гасит куку и me-кэш вкладки (бейджи слушают ME_EVENT),
    *  дальше — главная. Сбой сети не блокирует выход: уходим всё равно. */
   const logout = useCallback(async () => {
@@ -88,15 +78,12 @@ export function SiteHeader() {
         <a className={NAV_LINK} href={IS_ELYRIA ? '/players/' : '/'}>
           Игроки
         </a>
-        <a className={NAV_LINK} href={profileHref('#settings')}>
-          Настройки
-        </a>
         <a className={NAV_LINK} href={myProfileHref(me)}>
           Мой профиль
         </a>
         {isAdmin ? (
           <a className={NAV_LINK} href={IS_ELYRIA ? '/admin/' : '/'}>
-            Панель
+            Админка
           </a>
         ) : null}
       </nav>
