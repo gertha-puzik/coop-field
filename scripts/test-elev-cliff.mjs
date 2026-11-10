@@ -21,6 +21,12 @@
  *
  * Использование: node scripts/test-elev-cliff.mjs [wsUrl]
  *   по умолчанию ws://127.0.0.1:3780 (локальный сервер; прод не трогаем).
+ *   Мутации карт — за админ-гейтом (server/testmap.js): на целевом сервере
+ *   ДО прогона нужен аккаунт-админ mapboss (пароль password1); одиночный
+ *   локальный прогон поднимает его сам:
+ *     DATA_DIR=<dir> node scripts/make-admin.mjs mapboss password1
+ *     DATA_DIR=<dir> PORT=<порт> HOST=127.0.0.1 node server.js &
+ *     node scripts/test-elev-cliff.mjs ws://127.0.0.1:<порт>
  * Коды выхода: 0 — все проверки зелёные; 1 — отказ.
  */
 import { WebSocket } from 'ws';
@@ -28,6 +34,10 @@ import { readFileSync } from 'node:fs';
 import { sendJoin } from './ws-auth.mjs';
 
 const url = process.argv[2] || process.env.WS_URL || 'ws://127.0.0.1:3780';
+
+// Аккаунт-редактор: setmap (мутация карты) сервер пропускает только от админа
+// (server/testmap.js, гейт по ws.account.role); загрузчик карты — этот логин.
+const ADMIN_LOGIN = process.env.MAP_ADMIN || 'mapboss';
 
 /** Клиент с копилкой сообщений: события складываются, тесты их фильтруют.
  *  Комната «test» закрыта (requiresAccount) — вход через sendJoin из
@@ -104,7 +114,7 @@ function mapWithPlateau() {
 
 /** setmap от отдельного сокета (лимит — раз в 10 с НА сокет). */
 async function uploadMap(map) {
-  const admin = await client(`mapprobe${Date.now() % 10000}`);
+  const admin = await client(ADMIN_LOGIN);
   await waitFor(admin, 'you');
   admin.send(JSON.stringify(['setmap', { pass: process.env.MAP_PASS || '1946', map }]));
   await waitFor(admin, 'map');

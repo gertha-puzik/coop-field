@@ -1,9 +1,9 @@
 /**
  * Проверка редактора локации на уровне протокола:
  *  1. join в «тест» → field несёт map (конфиг локации).
- *  2. setmap с неверным паролем → info с ошибкой, map не меняется.
- *  3. setmap с верным паролем и несоединённым конфигом → info с причиной.
- *  4. setmap с верным паролем и валидным конфигом → map всем + field; файл сохранён.
+ *  2. setmap от обычного игрока (не админа) → отказ админ-гейта, map не меняется.
+ *  3. setmap админа с несоединённым конфигом → info с причиной.
+ *  4. setmap админа с валидным конфигом → map всем + field; файл сохранён.
  *  5. cellsync в зелёную зону отвергается.
  *  6. Возврат к раскладке по умолчанию (восстановление после теста).
  *
@@ -18,20 +18,40 @@
  * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
  * с тем же значением — клиент и сервер теста всегда сходимся).
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { sendJoin } from './ws-auth.mjs';
 
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || '1946';
+
+// Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
+// setmap-загрузчики теста логинятся админом; негатив-гейт — обычным игроком.
+// Аккаунт создаётся в DATA_DIR ДО старта сервера через scripts/make-admin.mjs
+// (лестница S1, см. test-admin-reset).
+const ADMIN_LOGIN = 'mapboss';
+const ADMIN_PASS = 'password1';
 
 const PORT = 3953 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
 // Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
+// стартом — аккаунт-админ для setmap-загрузок теста.
+const DATA = mkdtempSync(path.join(tmpdir(), 'coop-editor-map-'));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [
+    path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
+    ADMIN_LOGIN,
+    ADMIN_PASS,
+  ], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: 'utf8',
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ['server.js'], {
@@ -40,7 +60,7 @@ const srv = process.env.WS_URL
         ...process.env,
         PORT: String(PORT),
         HOST: '127.0.0.1',
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), 'coop-editor-map-')),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -121,10 +141,16 @@ async function waitServer() {
 
 /** setmap-кадр с нового сокета (троттлинг 10 с — на сокет, см. шапку).
  *  Ответ ждём на сокете самого отправителя: отказ приходит только ему,
- *  а рассылка map/field — всей комнате, включая его. */
-const setmapOnce = async (map, pass, pred, label) => {
+ *  а рассылка map/field — всей комнате, включая его. Комната «test» закрыта
+ *  (requiresAccount): register/login через ws-auth.mjs. По умолчанию загрузчик
+ *  — подготовленный админ; admin=false разыгрывает негатив админ-гейта
+ *  (server/testmap.js: карта мутирует только sessions.role === "admin"). */
+const setmapOnce = async (map, pass, pred, label, admin = true) => {
   const sock = await connect();
-  send(sock.ws, 'join', { room: 'test', login: `MapAdmin-${Date.now().toString(36)}` });
+  sendJoin(sock.ws, {
+    room: 'test',
+    login: admin ? ADMIN_LOGIN : `peasant-${Date.now().toString(36)}`,
+  });
   await wait(sock.state, (m) => m[0] === 'field', 'field админа');
   send(sock.ws, 'setmap', { pass, map });
   const reply = await wait(sock.state, pred, label);
@@ -135,16 +161,28 @@ const setmapOnce = async (map, pass, pred, label) => {
 const main = async () => {
   await waitServer();
   const { ws, state } = await connect();
-  send(ws, 'join', { room: 'test', login: 'MapTester' });
+  // Комната «test» закрыта (requiresAccount): register/login через ws-auth.mjs.
+  const testerLogin = `MapTester-${Date.now().toString(36)}`;
+  sendJoin(ws, { room: 'test', login: testerLogin });
   const field = await wait(state, (m) => m[0] === 'field', 'field');
   const f = field[1];
   console.log('1. field: format=%s size=%sx%s map=%s', f.format, f.width, f.height, f.map ? `zones=${f.map.zones.length}` : 'НЕТ');
   if (!f.map) throw new Error('field.map отсутствует');
   console.log('   зоны:', f.map.zones.map((z) => `${z.name}[${z.kind}] ${z.c0},${z.r0}-${z.c1},${z.r1}`).join(' | '));
 
-  // неверный пароль
-  const badPass = await setmapOnce(f.map, '0000', (m) => m[0] === 'info', 'info (bad pass)');
-  console.log('2. неверный пароль →', badPass[1]);
+  // негатив админ-гейта: валидный конфиг от обычного зарегистрированного
+  // игрока (pass сервером игнорируется) — отказ, map не меняется.
+  const badPass = await setmapOnce(
+    f.map,
+    PASS,
+    (m) => m[0] === 'info',
+    'info (non-admin)',
+    false,
+  );
+  console.log('2. setmap от не-админа →', badPass[1]);
+  if (!String(badPass[1]).includes('только администраторам')) {
+    throw new Error(`ожидали отказ админ-гейта, получили: ${badPass[1]}`);
+  }
 
   // несоединённый конфиг
   const broken = JSON.parse(JSON.stringify(f.map));
@@ -167,7 +205,7 @@ const main = async () => {
   const mapMsg = await setmapOnce(good, PASS, (m) => m[0] === 'map', 'map event');
   console.log('4. map event: %sx%s, зоны=%d', mapMsg[1].cols, mapMsg[1].rows, mapMsg[1].zones.length);
   const field2 = await wait(state, (m) => m[0] === 'field' && m[1].map?.rows === 9, 'field (resync)');
-  const me = field2[1].cats.find((c) => c.login === 'MapTester');
+  const me = field2[1].cats.find((c) => c.login === testerLogin);
   console.log('   field2: size=%sx%s map=%s, мой кот на %s,%s', field2[1].width, field2[1].height, !!field2[1].map, me?.x, me?.y);
 
   // ходьба в клетку зелёной зоны не проходит как клеточная (сервер отвергает)

@@ -12,8 +12,10 @@
  *     чужой id и перелив длин → 400 invalid; идентификационные ключи тела
  *     (login, accountId) → 400 unknown_keys; пустое тело → empty_patch;
  *     битый JSON → invalid_body; чужой Origin → 403 csrf;
- *  4.5. birthday (день рождения): валидная «ГГГГ-ММ-ДД» пишется и читается
- *     (в me и публичной карточке по id); вложенная profile.birthday — тот же
+ *  4.5. birthday (день рождения): валидная «ГГГГ-ММ-ДД» пишется в стор и
+ *     читается целиком из /profiles/me и ответа PATCH; чужая карточка и
+ *     каталог отдают только «ММ-ДД» (года в теле нет) и не несут
+ *     lastSeenRoom; lastSeenAt на карточке остаётся числом; вложенная profile.birthday — тот же
  *     валидатор; невалиды («dfg34», «30123-45-678», «2026-13-01»,
  *     «2026-02-30», «1899-12-31», будущая дата) → 400 invalid без изменения
  *     профиля; null/пустая строка → сброс в null;
@@ -39,8 +41,9 @@
  * DATA_DIR (песочница), как test-auth.mjs; сервер убивается в finally; каталог
  * DATA чистится при выходе.
  */
+import http from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
@@ -117,6 +120,9 @@ const cardsArePublic = (items) =>
       !("role" in it) &&
       !("pass" in it) &&
       !("password" in it) &&
+      !("lastSeenRoom" in it) &&
+      (it.birthday == null || /^\d{2}-\d{2}$/.test(it.birthday)) &&
+      typeof it.lastSeenAt === "number" &&
       typeof it.accountId === "string" &&
       typeof it.displayName === "string" &&
       typeof it.bio === "string" &&
@@ -148,9 +154,16 @@ writeFileSync(
   ),
 );
 
+// Книга позиций без accountId: обе строки должны пережить самоудаление.
+const nowTs = Date.now();
+writeFileSync(path.join(DATA, "test-cats.json"), JSON.stringify({ v: 1, savedAt: nowTs, cats: {
+  delcat: { login: "Delcat", x: 2, y: 2, ts: nowTs },
+  stranger: { login: "Stranger", x: 3, y: 2, ts: nowTs },
+}}));
+
 const server = spawn(process.execPath, ["server.js"], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA },
+  env: { ...process.env, PORT: String(PORT), HOST, DATA_DIR: DATA, AUTH_LOGIN_GAP_MS: "0" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stderr.on("data", (d) => process.stderr.write(d));
@@ -329,9 +342,34 @@ try {
   const bdMe = await probe({ path: "/profiles/me", cookie });
   check(bdMe.status === 200 && bdMe.json?.birthday === bd, "birthday: свежий GET /profiles/me несёт ту же строку");
   const bdCard = await probe({ path: `/profiles/${myAccount}` });
+  const bdCardText = bdCard.text || "";
   check(
-    bdCard.status === 200 && bdCard.json?.birthday === bd,
-    "birthday: публичная карточка по id несёт ту же строку",
+    bdCard.status === 200 &&
+      bdCard.json?.birthday === "07-24" &&
+      !bdCardText.includes(bd) &&
+      !bdCardText.includes("lastSeenRoom"),
+    "birthday: чужая карточка — день и месяц без года и без lastSeenRoom",
+  );
+  check(
+    typeof bdCard.json?.lastSeenAt === "number" && bdCard.json.lastSeenAt > 0 && bdCard.json.lastSeenAt <= Date.now(),
+    "lastSeenAt: чужая карточка по-прежнему несёт время последнего появления",
+  );
+  const bdList = await probe({ path: "/profiles" });
+  const bdItem = (bdList.json?.items || []).find((it) => it.accountId === myAccount);
+  const bdListText = bdList.text || "";
+  check(
+    bdItem &&
+      bdItem.birthday === "07-24" &&
+      !bdListText.includes(bd) &&
+      !bdListText.includes("lastSeenRoom") &&
+      typeof bdItem.lastSeenAt === "number" &&
+      bdItem.lastSeenAt > 0,
+    "birthday: каталог — ММ-ДД, без года и без lastSeenRoom, lastSeenAt на месте",
+  );
+  const disk = JSON.parse(readFileSync(path.join(DATA, "accounts.json"), "utf8"));
+  check(
+    disk.accounts?.[myAccount]?.profile?.birthday === bd,
+    "birthday: в accounts.json у владельца остаётся полная ГГГГ-ММ-ДД",
   );
   // вложенная форма profile.birthday — тот же валидатор sanitizePatch
   const bdNested = await probe({
@@ -343,6 +381,11 @@ try {
   check(
     bdNested.status === 200 && bdNested.json?.birthday === "1990-01-01",
     "birthday: вложенная форма profile.birthday тоже работает",
+  );
+  const bdNestedCard = await probe({ path: `/profiles/${myAccount}` });
+  check(
+    bdNestedCard.json?.birthday === "01-01" && !(bdNestedCard.text || "").includes("1990-01-01"),
+    "birthday: после вложенной правки чужая карточка снова без года",
   );
   // (c') невалиды: маска, реальность календаря и диапазон 01.01.1900 — сегодня
   const dayAfter = new Date(Date.now() + 30 * 86_400_000);
@@ -644,6 +687,82 @@ try {
   check(
     qaUnion.size === 5 && (qaAll.json?.items || []).every((it) => qaUnion.has(it.accountId)),
     "search+pages: объединение страниц = весь результат запроса",
+  );
+
+  /* ---------- 9. DELETE /profiles/me ---------- */
+  const regOne = async (login, name) => {
+    const row = await probe({ method: "POST", path: "/auth/register", body: { login, pass: "password1", name } });
+    return { status: row.status, cookie: sessionCookie(row.setCookie), id: row.json?.accountId };
+  };
+  const vic = await regOne("del_q", "Delcat");
+  const again = await probe({ method: "POST", path: "/auth/login", body: { login: "del_q", pass: "password1" } });
+  const secondCookie = sessionCookie(again.setCookie);
+  const keep = await regOne("keep_q", "Keeper");
+  const png = readFileSync(path.join(ROOT, "public/sprites/anya1.png"));
+  const upload = async (cookie, name) => {
+    const b = "----coopdel";
+    const body = Buffer.concat([
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${name}\r\n--${b}\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`),
+      png,
+      Buffer.from(`\r\n--${b}--\r\n`),
+    ]);
+    const res = await fetch(`${HTTP}/sprites/mine`, {
+      method: "POST",
+      headers: { cookie, "content-type": `multipart/form-data; boundary=${b}` },
+      body,
+    });
+    const json = await res.json().catch(() => null);
+    return { status: res.status, id: json?.sprite?.id, reason: json?.reason || "" };
+  };
+  const mineV = await upload(vic.cookie, "Delcoat");
+  const mineK = await upload(keep.cookie, "Keepcoat");
+  mkdirSync(path.join(DATA, "avatars"), { recursive: true });
+  const vAvatar = path.join(DATA, "avatars", `${vic.id}.png`);
+  const kAvatar = path.join(DATA, "avatars", `${keep.id}.png`);
+  writeFileSync(vAvatar, "v");
+  writeFileSync(kAvatar, "k");
+  const del = (cookie, password, origin) =>
+    probe({ method: "DELETE", path: "/profiles/me", cookie, origin, body: { password } });
+  const pub = await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ password: "password1" });
+    const req = http.request({
+      host: HOST, port: PORT, method: "DELETE", path: "/profiles/me",
+      headers: { host: "stranger.example", cookie: vic.cookie, "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+    }, (res) => {
+      let raw = "";
+      res.on("data", (c) => { raw += c; });
+      res.on("end", () => resolve({ status: res.statusCode, text: raw }));
+    });
+    req.on("error", reject);
+    req.end(payload);
+  });
+  const evil = await del(vic.cookie, "password1", "https://evil.example");
+  const wrong = await del(vic.cookie, "wrong-pass");
+  const listed = await probe({ path: "/profiles" });
+  const gone = await del(vic.cookie, "password1");
+  const catalog = await probe({ path: "/profiles" });
+  const hiddenCard = await probe({ path: `/profiles/${vic.id}` });
+  const dead1 = await probe({ path: "/profiles/me", cookie: vic.cookie });
+  const dead2 = await probe({ path: "/profiles/me", cookie: secondCookie });
+  const who = await probe({ path: "/auth/me", cookie: secondCookie });
+  const relog = await probe({ method: "POST", path: "/auth/login", body: { login: "del_q", pass: "password1" } });
+  await sleep(2500);
+  const book = JSON.parse(readFileSync(path.join(DATA, "test-cats.json"), "utf8"));
+  const has = (rows, id) => (rows?.items || []).some((it) => it.accountId === id);
+  check(vic.status === 200 && keep.status === 200 && !!secondCookie && secondCookie !== vic.cookie, "delete: две сессии и чужой аккаунт");
+  check(mineV.status === 201 && mineK.status === 201 && !!mineV.id && mineV.id !== mineK.id, `delete: окрасы ${mineV.status}/${mineK.status} ${mineV.reason} ${mineK.reason}`);
+  check(pub.status === 404 && pub.text.includes("not_found"), "delete: публичный Host → 404");
+  check(evil.status === 403 && evil.json?.ok === false, "delete: чужой Origin → 403");
+  check(wrong.status === 403 && wrong.json?.reason === "bad_password" && has(listed.json, vic.id), "delete: неверный пароль не удаляет");
+  check(
+    gone.status === 200 && String(gone.json?.message || "").includes("Аккаунт удалён") &&
+      !has(catalog.json, vic.id) && hiddenCard.status === 404 &&
+      dead1.status === 401 && dead2.status === 401 && who.json?.role === "guest" && relog.status === 401 &&
+      !existsSync(vAvatar) && existsSync(kAvatar) &&
+      !existsSync(path.join(DATA, "sprites", `${mineV.id}.png`)) &&
+      existsSync(path.join(DATA, "sprites", `${mineK.id}.png`)) &&
+      book.cats?.delcat?.login === "Delcat" && book.cats?.stranger?.login === "Stranger",
+    "delete: каталог пуст, сессии и пароль мертвы, чужие файлы целы, книга позиций на месте",
   );
 } catch (e) {
   failures += 1;

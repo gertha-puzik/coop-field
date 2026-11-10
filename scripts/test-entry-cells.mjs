@@ -19,21 +19,40 @@
  * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
  * с тем же значением — клиент и сервер теста всегда сходимся).
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { sendJoin } from './ws-auth.mjs';
 
 // пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
 const PASS = process.env.MAP_PASS || '1946';
 const ROOM = 'test';
 
+// Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
+// setmap-загрузчик теста логинится админом. Аккаунт создаётся в DATA_DIR ДО
+// старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
+const ADMIN_LOGIN = 'mapboss';
+const ADMIN_PASS = 'password1';
+
 const PORT = 3973 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
 // Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»).
+// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
+// стартом — аккаунт-админ для setmap-загрузок теста.
+const DATA = mkdtempSync(path.join(tmpdir(), 'coop-entry-cells-'));
+if (!process.env.WS_URL) {
+  execFileSync(process.execPath, [
+    path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
+    ADMIN_LOGIN,
+    ADMIN_PASS,
+  ], {
+    env: { ...process.env, DATA_DIR: DATA },
+    encoding: 'utf8',
+  });
+}
 const srv = process.env.WS_URL
   ? null
   : spawn(process.execPath, ['server.js'], {
@@ -42,7 +61,7 @@ const srv = process.env.WS_URL
         ...process.env,
         PORT: String(PORT),
         HOST: '127.0.0.1',
-        DATA_DIR: mkdtempSync(path.join(tmpdir(), 'coop-entry-cells-')),
+        DATA_DIR: DATA,
         ADMIN_PASS: PASS,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -113,19 +132,28 @@ async function waitServer() {
   throw new Error('сервер не поднялся');
 }
 
-const join = async (sock, name) => {
-  sock.ws.send(JSON.stringify(['join', { room: ROOM, login: name }]));
+// Комната «test» закрыта (requiresAccount): register/login через ws-auth.mjs,
+// затем join — так заходят и игроки, и setmap-загрузчик (админ).
+const join = async (sock, name, login) => {
+  sendJoin(sock.ws, { room: ROOM, login: login || name });
   await wait(sock.state, ([e]) => e === 'you', `you ${name}`);
   await wait(sock.state, ([e]) => e === 'field', `field ${name}`);
 };
 
 // setmap-кадр с нового сокета (троттлинг 10 с — на сокет, см. шапку):
 // отказ приходит только отправителю, а рассылка map — всей комнате.
+// Загрузчик — подготовленный админ: мутации карт за админ-гейтом
+// (server/testmap.js); негативы ниже — про санитайзер, не про гейт.
 const setmap = async (map, expectOk) => {
   const sock = await connect();
-  await join(sock, `MapAdmin-${Date.now().toString(36)}`);
+  await join(sock, 'uploader', ADMIN_LOGIN);
   sock.ws.send(JSON.stringify(['setmap', { pass: PASS, map }]));
-  const info = await wait(sock.state, ([e]) => e === 'info' || e === 'map', 'setmap ответ');
+  const first = await wait(sock.state, ([e]) => e === 'info' || e === 'map', 'setmap ответ');
+  // При успехе сервер сначала шлёт автору малый ack «Редактор: сохранено.»,
+  // и только затем широковещательный кадр map — дожидаемся его.
+  const info = expectOk && first[0] === 'info'
+    ? await wait(sock.state, ([e]) => e === 'map', 'map после ack сохранено')
+    : first;
   const [ev] = info;
   sock.ws.close();
   if (expectOk) {

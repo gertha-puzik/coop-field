@@ -28,6 +28,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, isAllowedOrigin } from "./config.js";
+import { writeFileAtomic } from "./atomic-file.js";
 import {
   REGISTRY, KEYS, defaultsFor, sanitizeValues, universesForPublic, mutationsForAdmin,
   armorCurveFor,
@@ -37,12 +38,6 @@ import { findById } from "./accounts.js";
 const FILE = path.join(DATA_DIR, "runtime-config.json");
 const BACKUP_DIR = path.join(DATA_DIR, "cfg-backups");
 const BACKUP_KEEP = 8;
-
-function writeFileAtomic(file, data) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, file);
-}
 
 /** Дефолты — из реестра (единственный источник). Легаси-алиас для смоука. */
 const defaults = defaultsFor;

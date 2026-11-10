@@ -991,7 +991,8 @@ function handshake(origin) {
 
 // ----- комната «тест»: трава с боевым полигоном — режим по области поля -----
 {
-  const ta = await client("Тестер", "test");
+  // Учётка комнаты test — латиница: кириллический логин регистрации даёт badlogin.
+  const ta = await client("tester", "test");
   const tYou = (await waitFor(ta, "you"))[1];
   const tField = (await waitFor(ta, "field"))[1];
   if (tField.format !== "test") throw new Error(`field.format=${tField.format}`);
@@ -1012,7 +1013,7 @@ function handshake(origin) {
   if (!grassMove) throw new Error("cell move on grass must be refused with edge");
   console.log("ok: test room cell move refused on grass");
   // свободная ходьба: freemove релеится соседу с логической клеткой, темп и stop
-  const tb = await client("Сосед", "test");
+  const tb = await client("sosed", "test");
   await waitFor(tb, "field");
   await sleep(50);
   tb.inbox.length = 0;

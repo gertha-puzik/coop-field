@@ -75,7 +75,7 @@ const serverMap=await import('../server/testmap.js');
 const previousMap=serverMap.testMap;
 fs.mkdirSync(process.env.DATA_DIR+'/test-map.json'); // force atomic rename to fail
 const replies=[];
-const ws={readyState:1,lastSetmap:0,send:data=>replies.push(JSON.parse(data))};
+const ws={readyState:1,lastSetmap:0,account:{role:'admin'},send:data=>replies.push(JSON.parse(data))};
 ws.room={code:'test',sockets:new Map([[ws,{}]])};
 serverMap.setMap(ws,{map:{...previousMap,elev:{'2,2,1,1':1}}});
 assert.equal(serverMap.testMap,previousMap,'failed save restores previous live map');
@@ -152,7 +152,7 @@ console.log('free terrain placement, optional snapping and height filter: OK');
 
 // A successful disk write has a small direct acknowledgement even without a broadcast room.
 const okReplies=[];
-const okWs={readyState:1,lastSetmap:0,send:data=>okReplies.push(JSON.parse(data))};
+const okWs={readyState:1,lastSetmap:0,account:{role:'admin'},send:data=>okReplies.push(JSON.parse(data))};
 okWs.room={code:'test',sockets:new Map([[okWs,{}]])};
 const oldIsland=serverMap.TEST_ISLAND,oldCells=serverMap.TEST_CELLS;
 serverMap.setMap(okWs,{map:{...previousMap,elev:{'2,2,1,1':6.7}}});
@@ -161,6 +161,19 @@ assert.equal(serverMap.TEST_CELLS,oldCells,'height-only saves reuse the battle m
 assert(okReplies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'));
 assert(!replies.some(([event,text])=>event==='info'&&text==='Редактор: сохранено.'),'disk failure never acknowledges success');
 console.log('explicit save acknowledgement follows durable write: OK');
+
+// Admin gate (ux/admin-gate, server/testmap.js): a non-admin socket — even a
+// registered player inside the room — must NOT mutate the map: refusal info,
+// live map unchanged, no broadcast.
+const gatedReplies=[];
+const gatedWs={readyState:1,lastSetmap:0,account:{role:'registered'},send:data=>gatedReplies.push(JSON.parse(data))};
+gatedWs.room={code:'test',sockets:new Map([[gatedWs,{}]])};
+const liveBeforeGate=serverMap.testMap;
+serverMap.setMap(gatedWs,{map:{...previousMap,elev:{'4,4,1,1':5}}});
+assert(gatedReplies.some(([event,text])=>event==='info'&&String(text).includes('доступно только администраторам')),'non-admin setmap is refused by the admin gate');
+assert.equal(serverMap.testMap,liveBeforeGate,'refused setmap never replaces the live map');
+assert(!gatedReplies.some(([event])=>event==='map'||event==='field'),'refused setmap never broadcasts');
+console.log('admin gate: non-admin setmap refused, live map intact: OK');
 
 const historyRef={current:{...structuredClone(original),tool:'height',undo:[],redo:[],dirty:false,pcv:null,sel:[]}};
 const historyOps=exports.buildEditorOps({...params,editorRef:historyRef,editorSelRef:{current:null},patchField:()=>{},setPaintOverride:()=>{}});
