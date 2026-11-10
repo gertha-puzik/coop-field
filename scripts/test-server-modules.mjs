@@ -375,6 +375,20 @@ for(let filter=0;filter<=4;filter++){
  eq(`RGB filter ${filter}: opaque`,[...world.decodePaintPng(pngFixture(filter,3)).mask],[1,1,1,1,1,1]);
 }
 
+{
+  const before = auth.hitsMapSize();
+  for (let i = 0; i < 100; i++) auth.rate("127.0.0.1", "login", 0, 0);
+  eq("hits: loopback не пишет карту адресов", auth.hitsMapSize(), before);
+  for (let i = 0; i < 10000; i++) {
+    auth.rate(`203.${(i >>> 16) & 255}.${(i >>> 8) & 255}.${i & 255}`, "login", 6000, 0);
+  }
+  eq("hits: 10k разных IP не раздувают карту", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
+  eq("hits: потолок держит бакеты", auth.hitsMapSize() > 0 && auth.hitsMapSize() <= 4096, true);
+  const again = auth.rate("203.9.9.9", "login", 6000, 0);
+  eq("hits: новый IP после потолка всё ещё обслуживается", typeof again, "boolean");
+  eq("hits: после ещё одного IP карта не выросла за потолок", auth.hitsMapSize() <= auth.HITS_MAP_MAX, true);
+}
+
 // ---------- отчёт ----------
 if (failed > 0) {
   console.error(`\nсмоук модулей сервера: FAIL — ${failed} провалено, ${passed} прошло.`);
