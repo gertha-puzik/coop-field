@@ -5,8 +5,11 @@
  * target part; parity is pinned by CI) — diagonal forcing, block re-check at
  * the moment of impact, and armor that cuts incoming damage along ARMOR_CURVE
  * (single source per side: ./protocol.js mirrors settings.ts; the client
- * mirror is NOT touched by W4). Damage stays client-authoritative (accepted
- * debt): the server only normalizes and cuts it.
+ * mirror is NOT touched by W4). Strike damage is server-authoritative
+ * (2026-11-10, no flag): `fight` uses the zone table times the attacker's
+ * profile.sp.damageLevel, capped by maxStrikeDamage. Client damage and
+ * pawsDamage are accepted and ignored; the server still cuts the result
+ * by the target's armor.
  */
 import { EV, STRIKE_ZONES, STRIKE_CATCH_MS, STRIKE_CATCH_MAX_MS, AIM_MIN_GAP_MS } from "./protocol.js";
 import { maxStrikeDamage, snapArmorToUniverse } from "./cfg-registry.js";
@@ -157,13 +160,24 @@ function armor(ws, payload = {}) {
 }
 
 /**
- * Удар. Клиент → ["strike", { target, zone, angle, damage }].
+ * Удар. Клиент → ["strike", { target, zone, angle, damage?, pawsDamage?, flightMs? }].
  * Комнате → ["fight", { attackerId, attacker, targetId, name, part, zone, weapon, damage, isAttacking }].
  * name / part / weapon / isAttacking — поля боевого лога. isAttacking свой у каждого сокета.
- * damage — урон бьющего (его пресет «Урон игрока»); сервер нормализует число 0..100,
- * а без числа берёт урон зоны из серверной таблицы. Оружие пустое: когти и зубы
- * в этот обмен не входят, нокаута нет.
+ * damage и pawsDamage принимаются, чтобы старый клиент не ломал кадр, и не
+ * читаются. Урон считает сервер сразу: таблица зоны × profile.sp.damageLevel
+ * бьющего, не выше потолка реестра (maxStrikeDamage). Нет профиля или битый
+ * уровень — 0. Оружие пустое: когти и зубы в этот обмен не входят, нокаута нет.
  */
+
+/** Уровень урона бьющего из профиля. Гость, пустой sp и нецелое значение — 0.
+ *  Потолок — максимальный уровень, который реестр сейчас показывает игроку. */
+function attackerDamageLevel(ws) {
+  const raw = ws.account?.profile?.sp?.damageLevel;
+  const cap = combatCaps().maxDamageLevel;
+  if (!Number.isInteger(raw) || raw < 0 || !Number.isFinite(cap)) return 0;
+  return Math.min(raw, cap);
+}
+
 function strike(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
@@ -172,6 +186,8 @@ function strike(ws, payload = {}) {
     return;
   }
   const now = Date.now();
+  // 25 мс — единственный гейт частоты. Поминутного потолка нет: своей нормы
+  // в репо нет, а отдельный отказ был бы новым сигналом протокола.
   if (now - cat.lastStrike < STRIKE_COOLDOWN_MS) return;
 
   const targetId = Number(payload.target ?? payload.id);
@@ -216,23 +232,12 @@ function strike(ws, payload = {}) {
       return;
     }
   }
-  // Урон присылает бьющий (его пресет «Урон игрока», проценты энергии 0..100).
-  // Число округляем и зажимаем; нет числа — фолбэк на серверную таблицу зон.
-  // Whitelist P2: сверху режет формула зон из реестра по максимальному
-  // РАЗРЕШЁННОМУ уровню (server/cfg-registry.js, maxStrikeDamage) — легальный
-  // уровень игрока проходит без урезания, всё выше потолка срезается.
-  const caps = combatCaps();
-  const zoneCap = maxStrikeDamage(zoneId, caps.maxDamageLevel);
-  const dmgRaw = Number(payload.damage);
-  let damage = Number.isFinite(dmgRaw) ? Math.min(100, Math.max(0, Math.round(dmgRaw))) : zone.damage;
-  damage = Math.min(damage, zoneCap);
-  // Лаповый урон из пресета бьющего: если на моменте касания удар переводится
-  // в «Лапы», списываем именно лаповый урон, а не урон исходной зоны.
-  const pawsCap = maxStrikeDamage("paws", caps.maxDamageLevel);
-  const pawsRaw = Number(payload.pawsDamage);
-  const pawsDamage = Number.isFinite(pawsRaw)
-    ? Math.min(pawsCap, Math.min(100, Math.max(0, Math.round(pawsRaw))))
-    : null;
+  // Урон — таблица зоны и уровень бьющего, посчитанные сразу. payload.damage
+  // и payload.pawsDamage не читаются. Если блок переведёт удар в «Лапы» уже
+  // в полёте, списывается лаповый урон того же уровня, не число клиента.
+  const level = attackerDamageLevel(ws);
+  const damage = maxStrikeDamage(zoneId, level);
+  const pawsDamage = maxStrikeDamage("paws", level);
   // Окно полёта: блок, вставший после нажатия бьющего, но до касания, ловит удар.
   const flightRaw = Number(payload.flightMs);
   const flightMs = Number.isFinite(flightRaw)
@@ -260,8 +265,7 @@ function strike(ws, payload = {}) {
     if (target.blocking && zoneId0 !== "tail") {
       finalZoneId = "paws";
       part = STRIKE_ZONES.paws.part;
-      if (pawsDamage !== null) finalDamage = pawsDamage;
-      else if (zoneId0 !== "paws") finalDamage = STRIKE_ZONES.paws.damage;
+      finalDamage = pawsDamage;
     }
     // Броня цели режет любой входящий урон — и переведённый блоком в «Лапы»,
     // и хвост (блок хвост не ловит, а броня режет его как любой другой).

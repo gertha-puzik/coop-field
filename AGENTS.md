@@ -128,7 +128,7 @@ Invariants (violating one = a bug):
 - `move` FROM THE SERVER is overloaded (canon since W3: the dual MEANING stays, the NAME lives in `server/protocol.js` `EV.MOVE` + client `src/lib/net/protocol.ts`): `publicCat` of a joiner OR `{id, x:0, y:0}` = leave marker — the client dispatches both through one `isCoopCat` guard, and the consumer (`simulator.tsx`) treats `x===0` as the leave marker.
 - The EFFECTIVE terrain level of a cell = its `elev` entry + a stone on that cell (STONE_LEVEL=1, mirrored test-map.ts ↔ server/world.js): a stone is a walkable level-1 platform (step up = delta 1), a tree is the only impassable obstacle. Both sides must compute levels by the same rule.
 - Clients advance on LOCAL clocks from the `atmo.t` anchor; the server ticker (5 s) resends the anchor only on phase change.
-- Damage is client-authoritative (an accepted debt of this sandbox): the server cuts it by target armor and ships it in `fight`.
+- Strike damage in `fight` is server-authoritative (2026-11-10, no flag): the server computes it from the zone table, the attacker's `profile.sp.damageLevel` and the registry cap (`maxStrikeDamage`); client `damage` and `pawsDamage` are accepted and ignored, then the server cuts the result by target armor.
 
 ### Client → server (23)
 
@@ -137,7 +137,7 @@ Invariants (violating one = a bug):
 | `join` | `{room?, login?, sprite?, size?}` | 1/s; login ≤24 codepoints, unique; size 60–100; session uses character name (client login is not identity); room `test` needs a session else refuse/noplace auth_required; success → `you`+`field`+`chatlog`, `move` to others; failure → `info`/`noplace` |
 | `move` | `{x, y}` — step −1..1 | cooldown 80 ms, queue ≤3; response: echo or `refuse {code}` |
 | `aim` | `{deg}` | coalesced ≥20 ms; the angle is broadcast via `update cat` |
-| `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); damage 0–100; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
+| `strike` | `{target, zone, angle, damage?, pawsDamage?, flightMs?}` | cooldown 25 ms (silent); client `damage` and `pawsDamage` are accepted and ignored — fight damage is the server zone table × attacker profile.sp.damageLevel, capped by maxStrikeDamage; flightMs 0–600 (def. 170); errors come as `info` text; after flightMs → `fight` to the room |
 | `chat` | `{text}` | ≤200 chars after sanitize, 450 ms; success → `chat` to all |
 | `sprite` | `{sprite}` | whitelist of 32; broadcast `update cat` |
 | `dummy` | `{on, sprite?}` | non-test rooms only; → `dummyState` to all |
@@ -179,7 +179,7 @@ Invariants (violating one = a bug):
 | `atmo` | anchor `{t, cs, pl, wl, w, ws, dp}` | to ALL on atmo/atmoset + 5 s ticker on dp/w change; on rejoin it rides inside `field` |
 | `freemove` | `{id, x, y, cx, cy, sp, jp}` | to others, ≤1/50 ms |
 | `roomsinfo` | `[{id, count, logins}]` ≤32 | reply to `rooms`, ≤4 req/s; у закрытой комнаты гость видит count, но не logins |
-| `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}` |
+| `whoami` | `{ok, role, login, accountId, token?, characters?, reason?}` | reply to `auth` and after handshake bind; guest has `ok:false` only on error, hello without token → `{ok:true, role:"guest"}`; `token` is present only for hostClass `local` (elyria/public stay cookie-only — the frame is readable by page JS) |
 
 ## Server env
 
@@ -214,7 +214,9 @@ One room server serves BOTH sites and separates them by the `Host` header (`host
   `?t=` is still accepted transitively on this class.
 - **elyria:** the whole API; sessions ride the HttpOnly cookie `coop_session` (Secure+SameSite=Lax on
   https) — **cookie-only**: `?t=` is off (env `AUTH_LEGACY_TOKEN=1` returns it for the transition period),
-  the token is not exposed in HTTP response bodies.
+  the token is not exposed in HTTP response bodies or in the WS `whoami` frame
+  (`token` there is hostClass `local` only; `hello` with `payload.token` on
+  public/elyria requires `originOk`).
 - **local:** permissive legacy mode (`?t=` works, token in bodies) — the auth/cfg/profiles tests stand on it.
 
 The front is built twice (`npm run build:variants`, `NEXT_PUBLIC_SITE` + `scripts/prune-export.mjs`):
