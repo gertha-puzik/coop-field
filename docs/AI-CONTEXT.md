@@ -62,6 +62,12 @@ A push to `main` IS a production deploy (merge only by PR; branch protection is 
 3. **«Сервер комнаты на VPS»** (`deploy-backend.yml`) — rsync of `server/` + restart of the
    systemd unit `coop-field` (port 8787 behind nginx) with a health check.
 
+Merging into `main` additionally requires the green `conflict-check` required status check
+(branch protection, `enforce_admins` ON): on every PR it test-merges `origin/main` into the
+PR branch, so a conflicted PR can never be merged — GitHub blocks conflicted PRs natively,
+the gate makes the block a visible red ✗. Branches cut before 2026-11-10 (no workflow file
+in their tree yet) get the check only after their first push/Update branch.
+
 PR preview (same VPS, `/opt/coop-field-preview/`) is TWO more workflows: `preview-build.yml`
 (on `pull_request`, no secrets, artifact carries both `www-grotto/` and `www-elyria/`) and
 `preview-deploy.yml` (on `workflow_run`, executed from `main`, holds `PREVIEW_SSH_KEY`).
