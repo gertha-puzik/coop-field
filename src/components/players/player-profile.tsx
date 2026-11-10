@@ -407,7 +407,7 @@ function OwnProfileEditor({
 
   return (
     <>
-    {/* id="settings" — якорь ссылок «Настройки» в шапке сайта: /players/?id=…#settings */}
+    {/* id="settings" — якорь /players/?id&mine=#settings: кнопка в карточке и мост Paint */}
     <form
       id="settings"
       className={styles.edBox}
@@ -806,6 +806,31 @@ export default function PlayerProfile({
   // при появлении карточки; статусы/«сколько назад» не дребезжат между
   // перерисовками и не расходятся с пререндером.
   const [now] = useState(() => Date.now());
+  /** Подстраница настроек: с карточки её не видно. #settings и возврат из
+   *  редактора окрасов (?mine=#settings) открывают её сразу. */
+  const [settingsView, setSettingsView] = useState(
+    () => typeof window !== 'undefined' && window.location.hash === '#settings',
+  );
+  useEffect(() => {
+    const sync = () => setSettingsView(window.location.hash === '#settings');
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+  const openSettings = () => {
+    const next = `${window.location.pathname}${window.location.search}#settings`;
+    window.history.pushState(null, '', next);
+    setSettingsView(true);
+  };
+  const closeSettings = () => {
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.history.pushState(null, '', next);
+    setSettingsView(false);
+  };
+  const showSettings = mine && settingsView;
 
   // Своя карточка: myProfile (/profiles/me) после правок свежее deep-link-
   // карточки каталога (его обновляет onSaved), поэтому день рождения и свою
@@ -871,6 +896,25 @@ export default function PlayerProfile({
       <div className={styles.page}>
         <BrandRow />
         <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
+          {showSettings ? (
+            <div className={styles.settingsView}>
+              <div className={styles.settingsHead}>
+                <button type="button" className={styles.backLink} onClick={closeSettings}>
+                  ← К карточке
+                </button>
+                <h1 className={styles.catNameBig}>Настройки</h1>
+              </div>
+              <p className={styles.sub}>
+                {name}: внешность, день рождения, аватар и игровые параметры. На карточке этого блока нет.
+              </p>
+              {myProfile ? (
+                <OwnProfileEditor profile={myProfile} onSaved={onSaved} mineHighlight={mineHighlight} />
+              ) : (
+                <OwnEditorSkeleton />
+              )}
+            </div>
+          ) : (
+          <>
           <div className={styles.head}>
             <Portrait card={shownCard} name={name} />
             <div className={styles.headMain}>
@@ -952,24 +996,18 @@ export default function PlayerProfile({
             <button type="button" className={styles.backLink} onClick={onClose}>
               ← Вернуться в каталог
             </button>
+            {mine ? (
+              <button type="button" className={styles.settingsBtn} onClick={openSettings}>
+                Настройки
+              </button>
+            ) : null}
             <span className={styles.footNum} title={card.accountId}>
               Профиль {shortId}
             </span>
           </footer>
+          </>
+          )}
         </main>
-        {mine && myProfile ? (
-          <div style={{ marginTop: 20 }}>
-            <OwnProfileEditor
-              profile={myProfile}
-              onSaved={onSaved}
-              mineHighlight={mineHighlight}
-            />
-          </div>
-        ) : mine ? (
-          // свой профиль, /profiles/me ещё в пути: место редактора занято
-          // каркасом той же природы — блок не «выезжает» после прилёта данных
-          <OwnEditorSkeleton />
-        ) : null}
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">
             ← Главное меню

@@ -1118,6 +1118,43 @@
   letter-spacing: 0.04em;
 }
 
+/* Подстраница настроек своей карточки: та же стеклянная панель, редактор
+   не висит под публичной карточкой. Кнопка живёт в подвале профиля. */
+.settingsView {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settingsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settingsBtn {
+  border: 1px solid rgba(246, 215, 162, 0.5);
+  background: rgba(246, 215, 162, 0.16);
+  color: var(--gold);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: 600 13.5px/1.2 inherit;
+  cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
+}
+
+.settingsBtn:hover,
+.settingsBtn:focus-visible {
+  border-color: rgba(246, 215, 162, 0.85);
+  background: rgba(246, 215, 162, 0.24);
+}
+
+.settingsBtn:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 3px;
+}
+
 /* ————— правка своей карточки ————— */
 
 .edBox {
