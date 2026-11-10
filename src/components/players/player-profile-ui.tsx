@@ -7,13 +7,16 @@
  * скинов, активный персонаж и человеческие тексты ошибок сохранения.
  * #83: + зона «Свой окрас» (MineSpritesSection) — загрузка/удаление личных
  * PNG через /sprites/mine, счётчик лимита, подтверждение вторым кликом.
+ * #84/в3: + второй вход той же зоны (CatwarCodeEntry) — окрас по КОДУ
+ * CatWar (конструктор kns.miew.ru): клиентский рендер M2-котика без
+ * загрузки картинки, сохранение тем же POST /sprites/mine.
  */
 
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button, Chip, Input } from '@/components/ui';
-import type { ProfileCard, ProfileMe, PublicProfile } from '@/lib/net/http-profiles';
+import { httpPatchProfile, type ProfileCard, type ProfileMe, type PublicProfile } from '@/lib/net/http-profiles';
 import {
   httpDeleteMineSprite,
   httpMineSprites,
@@ -22,6 +25,7 @@ import {
   type MineError,
   type MineSprite,
 } from '@/lib/net/http-my-sprites';
+import type { CatwarFailReason } from '@/lib/paint/catwar-coat';
 import {
   MALYSHOCHKI_SET,
   SPRITES,
@@ -233,6 +237,7 @@ export function MineSpritesSection({
   wornSprite,
   onPick,
   mineHighlight = null,
+  selfAccountId = null,
 }: {
   /** Ник карточки — для префилла имени окраса («Окрас от <ник> <дата>»). */
   accountName: string;
@@ -245,6 +250,9 @@ export function MineSpritesSection({
   /** #84 ч.2: id свежего окраса из редактора (?back=profile возврат) —
    *  плитка подсвечивается, тост успеха; одноразовый. */
   mineHighlight?: string | null;
+  /** #84/в3: accountId своей карточки — deep-link «?id&mine=#settings» после
+   *  «Сохранить и надеть» по коду CatWar (подсветка/тост — механизм ч.2). */
+  selfAccountId?: string | null;
 }) {
   const [items, setItems] = useState<MineSprite[]>([]);
   const [limit, setLimit] = useState(3);
@@ -294,7 +302,7 @@ export function MineSpritesSection({
     flashDoneRef.current = true;
     setFlashId(mineHighlight);
     flashTimer.current = window.setTimeout(() => setFlashId(null), 6000);
-    flashStatus({ kind: 'ok', text: 'Окрас из редактора сохранён — он в «Мои окрасы».' });
+    flashStatus({ kind: 'ok', text: 'Новый окрас сохранён — он в «Мои окрасы».' });
     // легкий подскролл к блоку «Свой окрас» без дёргания страницы
     document.getElementById('settings')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [mineHighlight, loaded, items, flashStatus]);
@@ -387,6 +395,25 @@ export function MineSpritesSection({
     armTimer.current = window.setTimeout(() => setArmedId(null), 5000);
   }, []);
 
+  /** Ошибки второго входа (по коду CatWar) — тем же тостом зоны. */
+  const flashFail = useCallback(
+    (text: string, details?: string) => flashStatus({ kind: 'err', text, details }),
+    [flashStatus],
+  );
+
+  /** #84/в3: второй вход зоны сохранил окрас по коду CatWar — подсветить
+   *  новую плитку тем же механизмом, что возврат из редактора, и обновить список. */
+  const markFreshCoat = useCallback(
+    (id: string, text: string) => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+      setFlashId(id);
+      flashTimer.current = window.setTimeout(() => setFlashId(null), 6000);
+      flashStatus({ kind: 'ok', text });
+      void reload();
+    },
+    [flashStatus, reload],
+  );
+
   return (
     <div className={styles.edField}>
       <span className={styles.edLabel}>
@@ -442,6 +469,9 @@ export function MineSpritesSection({
             {uploading ? 'Загружаем…' : 'Загрузить'}
           </Button>
         </div>
+        {/* #84/в3: второй вход зоны — окрас по КОДУ CatWar (без загрузки
+            картинки): рендер движком из конструктора kns.miew.ru. */}
+        <CatwarCodeEntry selfAccountId={selfAccountId} onSaved={markFreshCoat} onFail={flashFail} />
         {loaded && items.length === 0 ? (
           <p className="mt-2 text-[11px] text-[var(--sim-text-soft)]">
             Своих окрасов пока нет — загрузите PNG из редактора окрасов.
@@ -510,6 +540,217 @@ export function MineSpritesSection({
             })}
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ——— второй вход «Свой окрас» (#84/в3): окрас по КОДУ CatWar ——— */
+
+/** Живой код окраса (конструктор kns.miew.ru, 24 блока грамматики CatWar) —
+ *  поле: так выглядит настоящий окрас для копирования. */
+const CATWAR_EXAMPLE = '1/18 17|5-16 14/2-8/18-9/2|4-13/14 18/15-8/18-9/2|4-13/14 31/18-41/14|2-19/18 31/12|6-64/1|2-51/12|1-42/2|0-45/17|7-38/2 9/2|9-4/12|7-13/14 2/11|0 2/12|0 9/2|7 1/12-2/12 0 3/2|5 33/17-34/2|5-39/18-15/2-20/14 37/18-17/2|5-22/14 6/18 3/18 3/17 3/18 16|0 11/16|0-3/18-6/12|0 2/2 3/1 0';
+
+/** Отказы конвейера кода → человеческий русский без жаргона. */
+function catwarFailText(reason: CatwarFailReason): string {
+  switch (reason) {
+    case 'bad_syntax':
+      return 'Код не похож на окрас CatWar — проверьте, что скопировали целиком.';
+    case 'no_coat_zones':
+      return 'В коде не нашлось основных зон окраса — проверьте, что скопировали код целиком.';
+    default:
+      return 'Не получилось собрать окрас из кода — обновите страницу и попробуйте ещё раз.';
+  }
+}
+
+/** Размер превью-канвы: котик 1:1 (кроп до ~100–150 px) с воздухом вокруг. */
+const PREVIEW_W = 220;
+const PREVIEW_H = 170;
+
+/**
+ * Поле «код окраса CatWar» + живое превью + сохранение в существующий
+ * /sprites/mine (тот же лимит/дедуп/rate). «Сохранить и надеть» дополнительно
+ * шлёт PATCH /profiles/me и уходит deep-link'ом ?id&mine=#settings —
+ * подсветку/тост после возврата даёт существующий механизм (#84 ч.2).
+ * Рендер-модуль подтягивается ДИНАМИЧЕСКИ (import по клику) — движок
+ * tint.js и маски не живут в общих бандлах других страниц (§10.4).
+ */
+export function CatwarCodeEntry({
+  selfAccountId,
+  onSaved,
+  onFail,
+}: {
+  /** Свой accountId (deep-link «надеть») — null только у вырожденного случая. */
+  selfAccountId: string | null;
+  /** Успех сохранения: подсветка новой плитки + тост (текст здесь же). */
+  onSaved: (id: string, okText: string) => void;
+  /** Ошибки поля тем же тостом зоны «Свой окрас». */
+  onFail: (text: string, details?: string) => void;
+}) {
+  const [code, setCode] = useState('');
+  /** Префилл имени тот же стиль, что у файлового входа (влезает в лимит 24). */
+  const [coatName, setCoatName] = useState(() => {
+    const d = new Date();
+    const two = (x: number) => (x < 10 ? `0${x}` : `${x}`);
+    const base = `CatWar-окрас ${two(d.getDate())}.${two(d.getMonth() + 1)}.${String(d.getFullYear()).slice(-2)}`;
+    return base.length > 24 ? base.slice(0, 24) : base;
+  });
+  const [rendering, setRendering] = useState(false);
+  const [payload, setPayload] = useState<{ w: number; h: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  /** Превью устаревает при любой правке кода — собираем заново по кнопке. */
+  const onCodeChange = useCallback((next: string) => {
+    setCode(next);
+    setPayload(null);
+  }, []);
+
+  /** «Создать окрас»: код → движок → канва-превью (якорь низ-центр). */
+  const makeCoat = useCallback(async () => {
+    if (rendering || busy) return;
+    if (!code.trim()) return;
+    setRendering(true);
+    try {
+      const mod = await import('@/lib/paint/catwar-coat');
+      const cv = canvasRef.current;
+      if (!cv) throw new Error('engine_unavailable');
+      const res = await mod.drawCatwarPreview(cv, code);
+      if (!res.ok) {
+        onFail(catwarFailText(res.reason));
+        return;
+      }
+      setPayload({ w: res.width, h: res.height });
+    } catch {
+      onFail(catwarFailText('engine_unavailable'));
+    } finally {
+      setRendering(false);
+    }
+  }, [code, rendering, busy, onFail]);
+
+  /** Сохранение: тот же POST /sprites/mine (серверные лимиты не дублируем);
+   *  «надеть» — плюс PATCH /profiles/me и переход по deep-link. */
+  const save = useCallback(
+    async (mode: 'mine' | 'wear') => {
+      if (!payload || busy || rendering) return;
+      const name = coatName.replace(/\s+/g, ' ').trim();
+      if (name.length < 2 || name.length > 24) {
+        onFail('Имя окраса: 2–24 символа.');
+        return;
+      }
+      setBusy(true);
+      try {
+        const mod = await import('@/lib/paint/catwar-coat');
+        const png = await mod.catwarCoatPng(code);
+        const file = new File([png.blob], 'catwar-coat.png', { type: 'image/png' });
+        const up = await httpUploadMineSprite(file, name);
+        if (!up.ok) {
+          const err = up as MineError;
+          const worn = err.wornBy || [];
+          onFail(
+            humanMineError(err.reason, 'Сохранить не удалось.'),
+            err.message ||
+              (worn.length ? `Одет у: ${worn.map((w) => `${w.login} (${w.character})`).join(', ')}` : undefined),
+          );
+          return;
+        }
+        const spriteId = up.sprite?.id ?? '';
+        const okText = up.dedup
+          ? 'Такая картинка уже была загружена — показываем существующий окрас.'
+          : 'Окрас из кода собран и сохранён — он в «Мои окрасы».';
+        if (mode === 'mine' || !spriteId) {
+          if (!spriteId) {
+            onFail('Окрас сохранился, но не читается из списка — обновите страницу.');
+            return;
+          }
+          onSaved(spriteId, okText);
+          return;
+        }
+        // «Сохранить и надеть»: внешность активного персонажа — PATCH /profiles/me
+        const patch = await httpPatchProfile({ sprite: spriteId });
+        if (!patch.ok) {
+          onSaved(spriteId, 'Окрас сохранён в «Мои окрасы», но надеть не вышло — надеть можно плиткой в профиле.');
+          return;
+        }
+        const idPart = selfAccountId ? `id=${encodeURIComponent(selfAccountId)}&` : '';
+        window.location.assign(`/players/?${idPart}mine=${encodeURIComponent(spriteId)}#settings`);
+      } catch {
+        onFail('Не получилось сохранить окрас — обновите страницу и попробуйте ещё раз.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [payload, busy, rendering, coatName, code, onSaved, onFail, selfAccountId],
+  );
+
+  return (
+    <div className="mt-3 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+      <p className="text-[11px] font-semibold text-[var(--sim-text-soft)]">Или собрать окрас по коду CatWar</p>
+      <p className="mt-0.5 text-[10px] text-[var(--sim-text-faint)]">
+        Скопируйте код окраса из конструктора на kns.miew.ru — покрасятся основные зоны окраса (шёрстка, хвост, уши).
+      </p>
+      <textarea
+        className="mt-1.5 w-full resize-y rounded-md border border-[var(--sim-line)] bg-black/20 p-2 font-mono text-[11px] leading-4 text-[var(--sim-text)] outline-none focus-visible:border-[var(--sim-line-hover)]"
+        rows={2}
+        value={code}
+        spellCheck={false}
+        placeholder={CATWAR_EXAMPLE}
+        onChange={(e) => onCodeChange(e.target.value)}
+      />
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+          disabled={rendering || busy || !code.trim()}
+          onClick={() => void makeCoat()}
+        >
+          {rendering ? 'Собираем котика…' : 'Создать окрас'}
+        </Button>
+        {payload ? (
+          <span className="text-[10px] text-[var(--sim-text-faint)]">
+            Готово: {payload.w}×{payload.h} px — сохраните, как вам нужно.
+          </span>
+        ) : null}
+      </div>
+      {/* канва монтируется заранее (реф нужен первому клику), до
+          готового превью вся секция скрыта классом 'hidden' ниже */}
+      <div className={payload ? 'mt-2 flex flex-wrap items-end gap-3' : 'hidden'}>
+        <canvas
+          ref={canvasRef}
+          width={PREVIEW_W}
+          height={PREVIEW_H}
+          className="h-auto w-full max-w-[220px] rounded-md border border-[var(--sim-line)] bg-black/25"
+        />
+        <div className="flex min-w-[180px] flex-1 flex-col gap-1.5">
+          <Input
+            className="h-8 text-xs"
+            value={coatName}
+            maxLength={24}
+            placeholder="Имя окраса (2–24)"
+            onChange={(e) => setCoatName(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+              disabled={busy || rendering}
+              onClick={() => void save('mine')}
+            >
+              {busy ? 'Сохраняем…' : 'Сохранить в Мои'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+              disabled={busy || rendering}
+              onClick={() => void save('wear')}
+            >
+              Сохранить и надеть
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
