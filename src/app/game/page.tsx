@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { GameBoot } from "@/components/sim/game-boot";
 import Simulator from "@/components/sim/simulator";
 import { AuthGate } from "@/components/menu/auth-gate";
 import { MODE_COPY, tabTitle } from "@/lib/net/modes";
@@ -20,7 +21,9 @@ export default function ElisionPage() {
   return (
     <AuthGate>
       <SiteHeader />
-      <Simulator mode="elision" />
+      <GameBoot>
+        <Simulator mode="elision" />
+      </GameBoot>
     </AuthGate>
   );
 }

@@ -240,6 +240,7 @@ import {
   type WeatherKind,
 } from '@/lib/sim/settings';
 import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
+import { useBootSignal } from './simulator/hooks/use-boot-signal';
 import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
@@ -1265,6 +1266,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /* ---------- спрайты ---------- */
 
   useSpriteCache({ spritesRef, whiteSpritesRef, brokenSpritesRef });
+  useBootSignal(stage);
   useWalkGifCache({ walkGifsRef });
 
   /* ---------- геометрия ---------- */
