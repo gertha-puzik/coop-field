@@ -96,7 +96,7 @@ stays as a legacy alias):
 
 | Host | Site | Notes |
 | --- | --- | --- |
-| `phainonsmilk.ru` (apex) | Elysiae base — registration + main menu (the current www-elyria build), later also the wiki | room entry `/elision/`, profiles, `/admin/` |
+| `phainonsmilk.ru` (apex) | Elysiae base — registration + main menu (the current www-elyria build), later also the wiki | room entry `/game/` (old `/elision/` — client redirect stub), profiles, `/admin/` |
 | `abnocw.phainonsmilk.ru` | Beer Grottoes (www-grotto) | open guest rooms, combat, hunger |
 | `elysiae.phainonsmilk.ru` | reserved for the future Elysiae-world split; TODAY it serves only PR previews: `pr-<N>.elysiae.phainonsmilk.ru` | preview zone, wildcard |
 | `icelation.phainonsmilk.ru` | reserved for the future Hunger-Games split (today `/hunger` inside grotto build) | DNS may be pre-created now |

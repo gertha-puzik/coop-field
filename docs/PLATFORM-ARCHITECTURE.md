@@ -17,8 +17,8 @@
 
 | Сайт | Домен | Что видит игрок | Сборка (P6) |
 | --- | --- | --- | --- |
-| **Пивные гроты** (public) | `abnocw.phainonsmilk.ru` (+ превью `pr-N.abnocw.phainonsmilk.ru`, легаси `abnocw.89-232-184-77.sslip.io`) | меню с гротами и «Голодными играми», `/combat/`, `/hunger/`. Без аккаунтов, без Элизии: ни ссылок, ни API, ни её комнат | `NEXT_PUBLIC_SITE=grotto` + `prune-export` — корень `www-grotto/` (маршруты elision/players/admin вырезаны) |
-| **Элизия** (elyria) | `phainonsmilk.ru` (+ превью `pr-N.elysiae.phainonsmilk.ru`) | вход/регистрация, каталог игроков, панель админа, `/elision/`; комнаты гротов остаются доступными из её меню | `NEXT_PUBLIC_SITE=elyria` + `prune-export` — корень `www-elyria/` (маршруты combat/hunger вырезаны) |
+| **Пивные гроты** (public) | `abnocw.phainonsmilk.ru` (+ превью `pr-N.abnocw.phainonsmilk.ru`, легаси `abnocw.89-232-184-77.sslip.io`) | меню с гротами и «Голодными играми», `/combat/`, `/hunger/`. Без аккаунтов, без Элизии: ни ссылок, ни API, ни её комнат | `NEXT_PUBLIC_SITE=grotto` + `prune-export` — корень `www-grotto/` (маршруты game/elision/players/admin вырезаны — elision-каталог теперь только стаб-пересылка) |
+| **Элизия** (elyria) | `phainonsmilk.ru` (+ превью `pr-N.elysiae.phainonsmilk.ru`) | вход/регистрация, каталог игроков, панель админа, `/game/` (со старого `/elision/` пересылает стаб); комнаты гротов остаются доступными из её меню | `NEXT_PUBLIC_SITE=elyria` + `prune-export` — корень `www-elyria/` (маршруты combat/hunger вырезаны) |
 
 Изоляция четырёхрубежная, каждый рубеж самодостаточен:
 
@@ -110,7 +110,7 @@ S4: `loopback` на прод-классе хоста = темп-лимиты aut
 | --- | --- | --- | --- | --- |
 | Меню Wanderpaws | — | — | открытый | `/` |
 | Пивной грот (beer) | `grot-1` `grot-2` `grot-3`, `demo` | `grid` 10×6 | открытый | `/combat/` |
-| Элизия | `test` | `test` 19×7 | **только сессия** | `/elision/` |
+| Элизия | `test` | `test` 19×7 | **только сессия** | `/game/` |
 | Голодные игры (каркас) | `hunger` | `grid` | открытый | `/hunger/` |
 
 - **Отдельный режим combat снят (P1).** Комнаты «combat» в каталоге нет; снятый код заморожен
@@ -321,7 +321,7 @@ main; репо-часть конвейера в этой ветке — толь
 | `src/components/sim/settings-panel.tsx` | 1240 | ролевой рендер вкладок (role из whoami; паролей нет) |
 | `src/components/players/players-catalog.tsx` | 628 | каталог игроков /players (поиск ?q, пагинация nextCursor, deep-link, правка своей) |
 | `src/components/admin/cfg-dashboard.tsx` | 736 | админ-дашборд /admin: реестр/списки разрешённых значений (B2)/restore/export/import, диф-предпросмотр |
-| `src/app/*/page.tsx` | 11–13 | оболочки Simulator: `/` hub, `/combat/` beer, `/elision/` elision, `/hunger/` каркас, `/players/`, `/admin/` |
+| `src/app/*/page.tsx` | 11–13 | оболочки Simulator: `/` hub, `/combat/` beer, `/game/` elision (+ `/elision/` — redirect-стаб), `/hunger/` каркас, `/players/`, `/admin/` |
 
 ## 12. Совместимость провода
 
