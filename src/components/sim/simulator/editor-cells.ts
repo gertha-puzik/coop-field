@@ -32,13 +32,13 @@ export function buildEditorCells({
   applyDraftPreview,
   syncEditorView,
 }: EditorCellsDeps) {
-  /** Протяжка «Земли»/«Покрытия»: насыпает клетки без снятия и без записи отмены
-   *  на каждую клетку (отмена пишется один раз на росчерк — см. pointerdown).
-   *  Земля и покрытие не совмещаются на одной клетке: покрытие заменяет проталину. */
-  const paintEditorCellObject = (kind: 'dirt' | 'ground', c: number, r: number): boolean => {
+  /** Протяжка «Земли»/«Покрытия»/«Тропинки»: насыпает клетки без снятия и без
+   *  записи отмены на каждую клетку (отмена — один раз на росчерк). На одной
+   *  клетке эти наземные виды не совмещаются. */
+  const paintEditorCellObject = (kind: 'dirt' | 'ground' | 'path', c: number, r: number): boolean => {
     const d = editorRef.current;
     if (!d) return false;
-    if (d.objects.some((o) => (o.kind === 'dirt' || o.kind === 'ground') && o.c === c && o.r === r)) return false;
+    if (d.objects.some((o) => (o.kind === 'dirt' || o.kind === 'ground' || o.kind === 'path') && o.c === c && o.r === r)) return false;
     if (d.objects.length >= TEST_MAP_LIMITS.objectsMax) {
       setEditorMsg(`Объектов не больше ${TEST_MAP_LIMITS.objectsMax}.`);
       return false;
@@ -46,7 +46,9 @@ export function buildEditorCells({
     d.objects.push(
       kind === 'ground'
         ? { id: newObjectId(), kind: 'ground', c, r, cv: editorCoverRef.current, pos: 'center' }
-        : { id: newObjectId(), kind: 'dirt', c, r, pos: 'center' },
+        : kind === 'path'
+          ? { id: newObjectId(), kind: 'path', c, r, pos: 'center' }
+          : { id: newObjectId(), kind: 'dirt', c, r, pos: 'center' },
     );
     d.dirty = true;
     applyDraftPreview();

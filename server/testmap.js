@@ -287,7 +287,9 @@ function sanitizeTestMap(raw) {
                   ? 'ground'
                   : o.kind === 'battle'
                     ? 'battle'
-                    : null);
+                    : o.kind === 'path'
+                      ? 'path'
+                      : null);
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
       // считаем из клетки и положения в ней (зеркало sanitizeTestMap клиента).

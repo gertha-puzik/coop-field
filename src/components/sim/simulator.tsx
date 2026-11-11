@@ -181,6 +181,7 @@ import {
   testPointInIsland,
   testWalkableCell,
 } from '@/lib/sim/test-field';
+import { drawPathSurface } from '@/lib/sim/path-field';
 import { coverPattern, grassPattern, stonePattern } from '@/lib/sim/textures';
 import {
   entryDirDelta,
@@ -2834,6 +2835,14 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           }
           ctx.restore();
         }
+        // тропинка: объединённый неровный контур + травинки по краю (кэш в geo).
+        // Не запекается в кисть — рисуется поверх paint/зон, режется клипом кромки.
+        if (geo.pathGeo) {
+          ctx.save();
+          ctx.clip(geo.path);
+          drawPathSurface(ctx, geo.pathGeo.path, geo.pathGeo.tufts, s.field.cellW, s.field.cellH);
+          ctx.restore();
+        }
         // клетки захода — тоже наземная разметка: градиент от боевой клетки и
         // две галочки по центру (вход в бой); режется клипом по кромке локации
         const entryObjs = mapObjects.filter((o) => o.kind === 'entry' && o.dir && (!hasElev || elevLevelAt(o.c, o.r) === 0));
@@ -3714,7 +3723,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       if (testMode) {
         const selfRectO = selfBillRect();
         for (const o of testObjects()) {
-          if (o.kind === 'dirt' || o.kind === 'entry' || o.kind === 'ground') continue; // земля, покрытие и заходы — часть грунта
+          if (o.kind === 'dirt' || o.kind === 'entry' || o.kind === 'ground' || o.kind === 'path') continue; // земля, покрытие, тропинка и заходы — часть грунта
           if (o.id === editorPlaceRef.current?.pickId) continue; // поднят в призрак редактора
           // Свободная точка опоры (доли клетки): сдвигает и точку опоры — глубинная
           // сортировка считает по ней же, деревья у края перекрывают корректно.

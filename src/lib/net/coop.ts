@@ -8,7 +8,9 @@ import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
 // Сам этот модуль coop-протокола остаётся чистым: защищённые потребители
 // SPRITES (entry-screen, simulator, settings-panel) читают массив при
 // каждом рендере и видят каталог без собственных правок.
-import "@/lib/sim/sprite-catalog";
+import { ensureFieldSprite } from "@/lib/sim/sprite-catalog";
+import { catScaleOf } from "@/lib/sim/sprite-aspect";
+export { catScaleOf } from "@/lib/sim/sprite-aspect";
 // Протокол-реестр W3: имена событий (EV), guard-валидаторы и типы payload
 // живут в ./protocol — вместе с каноном значений, который паритетит CI
 // против server/protocol.js (см. scripts/test-protocol-parity.mjs).
@@ -286,14 +288,16 @@ function asDummyState(payload: unknown): CoopDummyState | null {
 }
 
 export function catToDummy(cat: CoopCat): DummyConfig {
-  // Рост модельки, выбранный при спавне (сервер шлёт его в size, % высоты клетки).
-  // Вне диапазона 60–100 (старый сервер со своим size: 3.2, отсутствие поля) — 100%.
-  const rawScale = Math.round(Number(cat.size));
-  const scale = Number.isFinite(rawScale) && rawScale >= 60 && rawScale <= 100 ? rawScale : 100;
+  // Рост модельки, записанный при спавне (сервер шлёт его в size, % высоты клетки).
+  const scale = catScaleOf(cat.size);
+  const sprite = spriteOf(cat);
+  // Чужой/личный окрас → FIELD_SPRITES + предзагрузка: иначе WebGL берёт URL
+  // текстуры, а aspect остаётся дефолтным 2/3 до появления img в spritesRef.
+  ensureFieldSprite(sprite);
   return {
     id: `p${cat.id}`,
     name: cat.login || `#${cat.id}`,
-    sprite: spriteOf(cat),
+    sprite,
     col: Math.max(0, (cat.x || 1) - 1),
     row: Math.max(0, (cat.y || 1) - 1),
     scale,

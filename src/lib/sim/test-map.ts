@@ -24,8 +24,9 @@ export type TestMapZoneKind = 'cells' | 'green';
  *  ходьбе не мешают. Заход — клетка входа в боевую зону: стоит на траве рядом
  *  с боевыми клетками, стрелка указывает, куда игрока перенесёт шаг в бою.
  *  Спрайты рисуются от точки опоры вверх (земля/покрытие/заход — по всей клетке). */
-/** plant — свободно размещаемый декор; не создаёт коллизию или опору. */
-export type TestMapObjectKind = 'stone' | 'tree' | 'plant' | 'dirt' | 'entry' | 'ground' | 'battle';
+/** plant — свободно размещаемый декор; не создаёт коллизию или опору.
+ *  path — тропинка: клетки протяжкой, рендер неровным контуром (не коллизия). */
+export type TestMapObjectKind = 'stone' | 'tree' | 'plant' | 'dirt' | 'entry' | 'ground' | 'battle' | 'path';
 
 /** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
  *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
@@ -56,7 +57,7 @@ export function objectPosOffset(o: TestMapObject): { dx: number; dy: number } {
   return TEST_OBJECT_POS_OFFSET[o.pos ?? 'center'] ?? TEST_OBJECT_POS_OFFSET.center;
 }
 
-/** Препятствие это или наземный декор: землю и покрытие в проверки проходимости не берём. */
+/** Препятствие это или наземный декор: землю, покрытие и тропинку в проверки проходимости не берём. */
 export function isObstacleKind(kind: TestMapObjectKind): boolean {
   return kind === 'stone' || kind === 'tree';
 }
@@ -553,7 +554,9 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
                   ? 'ground'
                   : o.kind === 'battle'
                     ? 'battle'
-                    : null;
+                    : o.kind === 'path'
+                      ? 'path'
+                      : null;
       if (!kind) return { error: `объект №${i + 1}: неизвестный тип` };
       // Свободная точка опоры камня/дерева: дробные x/y; у старых конфигов её нет —
       // считаем из клетки и положения в ней (миграция при первом же сохранении).

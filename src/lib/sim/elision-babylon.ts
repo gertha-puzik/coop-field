@@ -36,6 +36,7 @@ import {
   type ElisionFrame,
   type ElisionView,
 } from './elision-scene';
+import { rememberSpriteAspect } from './sprite-aspect';
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
 
@@ -229,10 +230,28 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     syncTerrain(frame);
   };
 
+  const noteTextureAspect = (tex: Texture, url: string, image?: HTMLCanvasElement) => {
+    // Размеры текстуры → кэш aspect: билборд перестаёт тянуться, даже если
+    // HTMLImage ещё не лежит в spritesRef (типичный чужой/личный окрас).
+    if (image && image.width > 0 && image.height > 0) {
+      rememberSpriteAspect(url, image.width, image.height);
+      return;
+    }
+    const mark = () => {
+      const size = tex.getSize();
+      if (size.width > 1 && size.height > 1) rememberSpriteAspect(url, size.width, size.height);
+    };
+    if (tex.isReady()) mark();
+    else tex.onLoadObservable.addOnce(mark);
+  };
+
   const textureFor = (url: string,image?:HTMLCanvasElement): Texture => {
     const key=image??url;
     const cached = textures.get(key);
-    if (cached) return cached;
+    if (cached) {
+      noteTextureAspect(cached, url, image);
+      return cached;
+    }
     const tex = image ? RawTexture.CreateRGBATexture(
       new Uint8Array(image.getContext('2d')!.getImageData(0,0,image.width,image.height).data),
       image.width,image.height,scene,true,true,Constants.TEXTURE_TRILINEAR_SAMPLINGMODE,
@@ -247,6 +266,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     tex.anisotropicFilteringLevel = 8;
     tex.wrapU = tex.wrapV = Texture.CLAMP_ADDRESSMODE;
     textures.set(key, tex);
+    noteTextureAspect(tex, url, image);
     return tex;
   };
 

@@ -27,6 +27,7 @@ import { DUMMY_ID, NET_ROLLBACK_LOCK_MS, RAB_ID, RAB_POS } from '@/lib/sim/engin
 import { sanitizeTestMap, type TestMap } from '@/lib/sim/test-map';
 import { SPRITES, type DummyConfig, type SimSettings, type SpriteId } from '@/lib/sim/settings';
 import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
+import { catScaleOf } from '@/lib/sim/sprite-aspect';
 import { rememberRemoteCell, type Engine } from '../sim-model';
 
 export interface SimNetDeps {
@@ -185,12 +186,19 @@ export function useSimNet(deps: SimNetDeps) {
         meIdRef.current = cat.id;
         setMeId(cat.id);
         const worn = typeof cat.sprite === 'string' ? cat.sprite.trim() : '';
+        // Рост с сервера после join/перехода/reconnect — иначе локальный
+        // spriteScale может разъехаться с publicCat.size у соседей.
+        const scale = catScaleOf(cat.size);
+        const hasWireSize = Number.isFinite(Number(cat.size)) && scale === Math.round(Number(cat.size));
         if (worn) ensureFieldSprite(worn);
-        const size = cat.size;
-        setSettings(s => ({ ...s, character: { ...s.character,
-          sprite: worn || s.character.sprite,
-          spriteScale: typeof size === 'number' && size >= 60 && size <= 100 ? size : s.character.spriteScale,
-        } }));
+        if (worn || hasWireSize) {
+          setSettings((s) => {
+            const sprite = worn && s.character.sprite !== worn ? worn : s.character.sprite;
+            const spriteScale = hasWireSize && s.character.spriteScale !== scale ? scale : s.character.spriteScale;
+            if (sprite === s.character.sprite && spriteScale === s.character.spriteScale) return s;
+            return { ...s, character: { ...s.character, sprite, spriteScale } };
+          });
+        }
         setNetReady(true);
         freshJoinRef.current = true;
         const e = engineRef.current;

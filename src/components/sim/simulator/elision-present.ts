@@ -10,8 +10,10 @@ import type { EditorPlace } from '@/lib/sim/editor-model';
 import type { DummyConfig, SpriteId } from '@/lib/sim/settings';
 import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
+import { spriteAspectOf } from '@/lib/sim/sprite-aspect';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
+import { drawPathSurface } from '@/lib/sim/path-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
@@ -83,8 +85,10 @@ function spriteUrl(id: string): string {
   return SPRITES[0]?.src ?? '';
 }
 
-function aspectOf(img: SpriteImg | undefined): number {
-  return img && img.height > 0 ? img.width / img.height : 2 / 3;
+function aspectOf(sprite: string, img: SpriteImg | undefined): number {
+  // Кэш id/URL переживает кадры, пока HTMLImage ещё не в spritesRef —
+  // иначе ландшафтный окрас садится в дефолт 2/3 и тянется по вертикали.
+  return spriteAspectOf(sprite, img, spriteUrl(sprite));
 }
 
 function remoteHop(jpUntil: number | undefined, now: number): number {
@@ -140,6 +144,10 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
           (o.r + 0.5 + po.dy) * cellH, hashStr(o.id) & 7);
       }
     }
+  }
+  // Тропинка не запекается в кисть — рисуется поверх зон/paint, клип по кромке.
+  if (geo.pathGeo) {
+    drawPathSurface(g, geo.pathGeo.path, geo.pathGeo.tufts, cellW, cellH);
   }
   // Soft level tint: every higher surface is lighter, without covering the texture.
   for (const b of terrainTiles(effectiveElevRecord(map),cols,rows)) {
@@ -203,15 +211,15 @@ function catActor(
       id,
       x: drag.x,
       y: drag.y,
-      w: dragBox ? drag.w : spriteSizePx(input.cellH, scale, aspectOf(input.spriteImage(sprite))).w,
-      h: dragBox ? drag.h : spriteSizePx(input.cellH, scale, aspectOf(input.spriteImage(sprite))).h,
+      w: dragBox ? drag.w : spriteSizePx(input.cellH, scale, aspectOf(sprite, input.spriteImage(sprite))).w,
+      h: dragBox ? drag.h : spriteSizePx(input.cellH, scale, aspectOf(sprite, input.spriteImage(sprite))).h,
       lift,
       url: spriteUrl(sprite),
       mirror,
       rot: 0,
     };
   }
-  const size = spriteSizePx(input.cellH, scale, aspectOf(input.spriteImage(sprite)));
+  const size = spriteSizePx(input.cellH, scale, aspectOf(sprite, input.spriteImage(sprite)));
   const image=input.walkFrame?.(id,sprite);
   // Fit the authored frame without stretching it or moving the static foot anchor.
   const fit=image?Math.min(size.w/image.width,size.h/image.height):1;
@@ -296,7 +304,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
       const top = free
         ? { x: free.x * input.cellW, y: free.y * input.cellH }
         : { x: col * input.cellW, y: row * input.cellH };
-      const size = spriteSizePx(input.cellH, remote.scale, aspectOf(input.spriteImage(remote.sprite)));
+      const size = spriteSizePx(input.cellH, remote.scale, aspectOf(remote.sprite, input.spriteImage(remote.sprite)));
       const lift = (free ? supportLevelAt(free.x + size.w/2/input.cellW, free.y + size.h/input.cellH) : elevLevelAt(col, row)) * TERRAIN_LIFT_PX + remoteHop(free?.jpUntil, input.now);
       pushActor(
         decals,

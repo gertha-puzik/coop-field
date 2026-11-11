@@ -34,6 +34,7 @@ export type EditorTool =
   | 'plant'
   | 'dirt'
   | 'ground'
+  | 'path'
   | 'entry'
   | 'spawn'
   | 'raise'

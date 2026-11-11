@@ -23,6 +23,7 @@ import { useEffect, type RefObject } from 'react';
 import type { CoopAtmo, createCoopClient } from '@/lib/net/coop';
 import { FIELD_SPRITES, WALK_GIF_SRC, wrap180, wrap360, type SimSettings, type SpriteId } from '@/lib/sim/settings';
 import { subscribeSpriteCatalog } from '@/lib/sim/sprite-catalog';
+import { rememberSpriteAspect } from '@/lib/sim/sprite-aspect';
 import { loadWalkGif, type WalkGif } from '@/lib/sim/gif-walk';
 import type { AtmosphereLike } from '../sim-model';
 // Статический импорт: динамические async-чанки не выписываются в
@@ -134,6 +135,9 @@ export function useSpriteCache(deps: SpriteCacheDeps) {
       const store = () => {
         if (cancelled || spritesRef.current[sp.id]) return;
         spritesRef.current[sp.id] = img;
+        // Пропорции в кэш сразу: WebGL-билборд не ждёт повторного чтения img.
+        rememberSpriteAspect(sp.id, img.naturalWidth, img.naturalHeight);
+        rememberSpriteAspect(sp.src, img.naturalWidth, img.naturalHeight);
         // светлый силуэт того же спрайта: тонкая обводка своего кота
         const wc = document.createElement('canvas');
         wc.width = img.naturalWidth;
