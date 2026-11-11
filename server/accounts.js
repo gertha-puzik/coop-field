@@ -466,12 +466,14 @@ function spriteWearers(spriteId) {
 }
 
 /**
- * S1 (аудит Z.AI): единственный путь повысить роль до admin — этот mutator,
- * который вызывает ТОЛЬКО scripts/make-admin.mjs (CLI владелицы, вне сервера).
+ * Повышение роли до admin. Вызывают:
+ *   - scripts/make-admin.mjs (одноразовый CLI: первый админ / офлайн);
+ *   - POST /admin/players/promote (живой админ из панели «Игроки на поле»).
  * Существующий аккаунт: role → "admin" с сохранением пароль-хеша и прочих полей;
- * уже админ → no-op c меткой already (idempotent); НИКОГДА не понижает роль и
- * ничего не создаёт — создание делает сам CLI через createAccount + этот же
- * вызов. Запись атомарная (markDirty → flushAccounts → writeFileAtomic).
+ * уже админ → no-op с меткой already (idempotent); НИКОГДА не понижает роль и
+ * ничего не создаёт — создание делает CLI через createAccount + этот же вызов.
+ * Запись атомарная (markDirty → flushAccounts → writeFileAtomic). Сессии
+ * читают аккаунт через findById на каждый запрос — новая роль видна сразу.
  */
 function promoteToAdmin(login) {
   const acc = findByLogin(login);

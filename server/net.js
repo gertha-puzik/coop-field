@@ -256,7 +256,7 @@ export function startServer() {
       p === "/cfg" || p.startsWith("/cfg/") ||
       // Админ-операции «Игроки на поле» (/admin/players*): тот же CSRF-щит
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
-      // в зону попадают ТОЛЬКО эти два API-пути.
+      // в зону попадают API-пути (list/reset/promote), не HTML дашборда.
       p === "/admin/players" || p.startsWith("/admin/players/") ||
       // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
       // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный

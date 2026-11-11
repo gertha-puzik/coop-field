@@ -498,14 +498,22 @@ function roomsInfo(ws, payload = {}) {
  * publicCat (те же объекты, что рисуют поле). Пустые комнаты не показываем.
  * Полчленный fm/fx/fy — только для сверки freemove-точки «теста»: админ
  * принимает решение по координатам, не по подобию боевого протокола.
+ * accountLogin/accountRole — из ws.account сокета кота (гость → null): панель
+ * рисует бейдж роли и кнопку «Сделать админом» только у аккаунтных котов.
  */
 function adminOccupancy() {
   const out = [];
   for (const room of rooms.values()) {
     if (room.cats.size === 0) continue;
+    const accByCatId = new Map();
+    for (const [ws, cat] of room.sockets.entries()) {
+      if (!cat || !ws?.account) continue;
+      accByCatId.set(cat.id, ws.account);
+    }
     const cats = [];
     for (const cat of room.cats.values()) {
       const pc = publicCat(cat, room);
+      const acc = accByCatId.get(cat.id);
       cats.push({
         login: pc.login,
         id: pc.id,
@@ -515,6 +523,8 @@ function adminOccupancy() {
         fm: pc.fm ? 1 : 0,
         fx: Number.isFinite(pc.fx) ? pc.fx : null,
         fy: Number.isFinite(pc.fy) ? pc.fy : null,
+        accountLogin: acc ? String(acc.login || "") : null,
+        accountRole: acc ? (acc.role === "admin" ? "admin" : "registered") : null,
       });
     }
     out.push({

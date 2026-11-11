@@ -4,17 +4,17 @@
  * домен свой (живые комнаты, не реестр конфига), а граф импортов держим
  * изоляцией сайтов (§10.4) — модуль циклится только в бандле страницы /admin.
  *
- * Контракты (server/admin-ops.js), два маршрута:
- *   GET  /admin/players         — живые комнаты и коты: координаты прямо из
- *                                 комнатного состояния (без копии), поля
- *                                 login/id/x/y/sprite/fm(0|1)/fx/fy (fx/fy —
- *                                 при fm=1 точка freemove «теста», иначе null);
- *   POST /admin/players/reset   — {room, login} сброс кота на свежую клетку
- *                                 спавна → 200 {ok, room, login, x, y, sprite}.
+ * Контракты (server/admin-ops.js):
+ *   GET  /admin/players          — живые комнаты и коты: координаты прямо из
+ *                                  комнатного состояния; поля login/id/x/y/
+ *                                  sprite/fm/fx/fy + accountLogin/accountRole
+ *                                  (null у гостя без сессии);
+ *   POST /admin/players/reset    — {room, login} сброс кота на свежую клетку
+ *                                  спавна → 200 {ok, room, login, x, y, sprite};
+ *   POST /admin/players/promote  — {login} логин АККАУНТА → роль admin
+ *                                  (idempotent already).
  * Отказы 4xx: {ok:false, reason, message} — message от сервера уже
- * человекочитаемый (комнаты нет / кота нет / нет свободной клетки спавна).
- * Гейты: сессия (401), роль admin (403), CSRF-щит apiZone по Origin —
- * cookie-сессии достаточно, токена в JS-хранилище нет.
+ * человекочитаемый. Гейты: сессия (401), роль admin (403), CSRF-щит apiZone.
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 
@@ -29,6 +29,10 @@ export type AdminFieldCat = {
   fm: number;
   fx: number | null;
   fy: number | null;
+  /** Логин аккаунта сокета; null — гость без сессии (грот). */
+  accountLogin: string | null;
+  /** Роль аккаунта; null — гость. */
+  accountRole: "admin" | "registered" | null;
 };
 
 /** Комната в списке занятости: живые коты, пустые комнаты не отдаются. */
@@ -53,11 +57,23 @@ export type AdminResetAction =
   | { ok: true; login: string; x: number; y: number; sprite: string }
   | AdminFieldError;
 
+/** Ответ выдачи роли admin (POST /admin/players/promote). */
+export type AdminPromoteAction =
+  | { ok: true; login: string; id: string; already: boolean; message: string }
+  | AdminFieldError;
+
 const asNum = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 const asNumOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
+function parseRole(v: unknown): "admin" | "registered" | null {
+  if (v === "admin") return "admin";
+  if (v === "registered") return "registered";
+  return null;
+}
+
 /** Разбор строки кота: доверяем только прочитанным полям DTO. */
 function parseCat(row: ApiRow): AdminFieldCat {
+  const accountLogin = asText(row.accountLogin);
   return {
     login: asText(row.login),
     id: asNum(row.id, 0),
@@ -67,6 +83,8 @@ function parseCat(row: ApiRow): AdminFieldCat {
     fm: row.fm === 1 ? 1 : 0,
     fx: asNumOrNull(row.fx),
     fy: asNumOrNull(row.fy),
+    accountLogin: accountLogin || null,
+    accountRole: parseRole(row.accountRole),
   };
 }
 
@@ -109,6 +127,29 @@ export async function httpAdminPlayerReset(room: string, login: string): Promise
   });
   if (status === 200 && row?.ok === true) {
     return { ok: true, login: asText(row.login, login), x: asNum(row.x, 0), y: asNum(row.y, 0), sprite: asText(row.sprite) };
+  }
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/** Выдача роли admin (POST /admin/players/promote {login} — логин аккаунта). */
+export async function httpAdminPlayerPromote(login: string): Promise<AdminPromoteAction> {
+  const { status, row, text } = await apiFetch("/admin/players/promote", {
+    method: "POST",
+    body: { login },
+  });
+  if (status === 200 && row?.ok === true) {
+    return {
+      ok: true,
+      login: asText(row.login, login),
+      id: asText(row.id),
+      already: row.already === true,
+      message: asText(row.message, `«${login}» теперь администратор.`),
+    };
   }
   return {
     ok: false,

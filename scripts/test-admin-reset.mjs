@@ -21,7 +21,14 @@
  *   - POST сброса без Origin (CSRF-щит apiZone) → 403 csrf_origin_required;
  *   - POST сброса с несуществующей комнатой → 400 unknown_room (message читаем);
  *   - POST сброса с несуществующим котом → 400 unknown_cat (message читаем);
- *   - POST сброса с лишним полем → 400 unexpected_fields.
+ *   - POST сброса с лишним полем → 400 unexpected_fields;
+ *   - POST promote без Origin → 403 csrf_origin_required;
+ *   - POST promote не-админом → 403 forbidden;
+ *   - POST promote неизвестного логина → 400 no_such_login.
+ *
+ * Promote (права admin):
+ *   - POST /admin/players/promote {login} выдаёт роль; повтор — already;
+ *   - GET /admin/players у аккаунтного кота отдаёт accountLogin/accountRole.
  *
  * Ошибка «нет свободной клетки спавна» покрыта кодом роута (reason no_free_cell),
  * в живом тесте не разыгрывается: для неё нужно заполнить поле ногами (30 котов).
@@ -267,6 +274,72 @@ try {
   check(!backToOldPoint,
     `прежняя точка freemove не вернулась после повторного join: ${JSON.stringify({ fm: me2?.fm, fx: me2?.fx, fy: me2?.fy })}`);
   ws2.close();
+
+  // Promote: CSRF / роль / неизвестный логин / позитив + already.
+  const promoteNoOrigin = await httpJson("/admin/players/promote", {
+    method: "POST",
+    body: { login: USER },
+    token: adminTok,
+  });
+  check(promoteNoOrigin.status === 403 && promoteNoOrigin.json?.reason === "csrf_origin_required",
+    "promote без Origin → 403 csrf_origin_required");
+  const promoteUser = await httpJson("/admin/players/promote", {
+    method: "POST",
+    body: { login: ADMIN },
+    token: userTok,
+    origin: ORIGIN,
+  });
+  check(promoteUser.status === 403 && promoteUser.json?.reason === "forbidden",
+    "promote не-админом → 403 forbidden");
+  const promoteMissing = await httpJson("/admin/players/promote", {
+    method: "POST",
+    body: { login: "no_such_account_xyz" },
+    token: adminTok,
+    origin: ORIGIN,
+  });
+  check(promoteMissing.status === 400 && promoteMissing.json?.reason === "no_such_login",
+    "promote неизвестного логина → 400 no_such_login");
+  const promoteOk = await httpJson("/admin/players/promote", {
+    method: "POST",
+    body: { login: USER },
+    token: adminTok,
+    origin: ORIGIN,
+  });
+  check(promoteOk.status === 200 && promoteOk.json?.ok === true && promoteOk.json?.role === "admin" &&
+    promoteOk.json?.login === USER && promoteOk.json?.already !== true,
+    `promote выдаёт admin: ${JSON.stringify(promoteOk.json)}`);
+  const promoteAgain = await httpJson("/admin/players/promote", {
+    method: "POST",
+    body: { login: USER },
+    token: adminTok,
+    origin: ORIGIN,
+  });
+  check(promoteAgain.status === 200 && promoteAgain.json?.already === true && promoteAgain.json?.role === "admin",
+    "promote повтор — already");
+  // Аккаунт USER после promote входит как admin.
+  const userRelog = await httpJson("/auth/login", { method: "POST", body: { login: USER, pass: "password1" } });
+  check(userRelog.status === 200 && userRelog.json?.role === "admin",
+    "после promote вход USER даёт role=admin");
+
+  // Аккаунтный кот на поле: список несёт accountLogin/accountRole.
+  const wsAcc = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS);
+    ws.inbox = [];
+    ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
+    ws.on("error", reject);
+    ws.once("open", () => resolve(ws));
+  });
+  wsAcc.send(JSON.stringify(["auth", { action: "login", login: USER, pass: "password1" }]));
+  await waitFor(wsAcc, ([ev, p]) => ev === "whoami" && p?.ok === true && p?.role === "admin" && p?.accountId);
+  wsAcc.send(JSON.stringify(["join", { room: "test" }]));
+  await waitFor(wsAcc, ([ev]) => ev === "field");
+  const listAcc = await httpJson("/admin/players", { token: adminTok });
+  const rowAcc = (listAcc.json?.rooms || [])
+    .flatMap((r) => r.cats || [])
+    .find((c) => c.accountLogin === USER);
+  check(!!rowAcc && rowAcc.accountRole === "admin",
+    `список отдаёт accountLogin/accountRole для аккаунтного кота: ${JSON.stringify(rowAcc)}`);
+  wsAcc.close();
 
   await stopServer();
 } catch (e) {

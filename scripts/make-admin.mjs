@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Одноразовый CLI владелицы: назначение роли admin (аудит Z.AI S1, 2026-11-08).
+ * Одноразовый CLI владелицы: первый админ / офлайн-назначение роли admin
+ * (S1). Живая выдача из панели — POST /admin/players/promote.
  *
  *   node scripts/make-admin.mjs <login> [pass]
  *

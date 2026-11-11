@@ -20,7 +20,7 @@ per account:
 | `id` | `a` + 16 hex | random, never exposed to strangers |
 | `login` | 2–24 chars | unique, case-insensitive lookup; **new** registrations are latin/digits/`._-` only (register v2), legacy logins with spaces still work |
 | `pass` | `{algo:"scrypt", N, r, p, keylen, salt, hash}` | Passwords never leave `accounts.js` as plaintext; scrypt (N=16384, r=8, p=1, 32-byte key), random 16-byte salt, `timingSafeEqual` verification. Minimum password length: 8 (`PASS_MIN`) |
-| `role` | `registered` \| `admin` | `admin` is granted ONLY by the owner's one-shot CLI `scripts/make-admin.mjs` (server stopped); `BOOTSTRAP_ADMIN` names no longer auto-promote (S1) |
+| `role` | `registered` \| `admin` | first admin / offline via CLI `scripts/make-admin.mjs` (server stopped); live grant via `POST /admin/players/promote`; `BOOTSTRAP_ADMIN` names no longer auto-promote (S1) |
 | `createdAt` | epoch ms | |
 | `profile` | `{displayName, bio?, birthday?, avatarCharacterId?, sp?}` | `birthday` is stored as a full `YYYY-MM-DD` or null for the owner. Stranger catalog/card responses do not include the year (§3). `sp` stays private |
 | `characters` | `[{id, name, sprite, size}]` | sprite ids whitelist-checked against the live sprite catalogue; size clamped 60–100 |
@@ -191,4 +191,5 @@ Deploy scripts, PR previews and tests never read or copy a production
 `data/` directory (owner-directive boundary in AGENTS.md §7). The only
 code path that adds a real account outside a sandbox is the owner CLI
 `scripts/make-admin.mjs <login> [pass]` (creates or promotes an admin in the
-target `DATA_DIR`, server stopped).
+target `DATA_DIR`, server stopped) and the live admin API
+`POST /admin/players/promote` (panel «Игроки на поле»).
