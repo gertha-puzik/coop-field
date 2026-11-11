@@ -16,7 +16,8 @@ import { WIDTH, HEIGHT } from "./config.js";
 import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { rememberCat } from "./persist.js";
-import { TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
+import { locationFromRoom } from "./location-world.js";
+import { withTestLocation, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
 import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainPointLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, testPointInIsland } from "./world.js";
 
 function move(ws, payload = {}) {
@@ -116,7 +117,7 @@ function pumpMoveQueue(ws, cat) {
     if (!room || room.sockets.get(ws) !== cat) return;
     const next = cat.moveQueue.shift();
     if (next === undefined) return;
-    applyMove(ws, cat, next);
+    withTestLocation(locationFromRoom(room.code),()=>applyMove(ws,cat,next));
     if (cat.moveQueue.length > 0) pumpMoveQueue(ws, cat);
   }, Math.max(0, wait));
 }

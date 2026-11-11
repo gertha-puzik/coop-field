@@ -211,7 +211,7 @@ npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www
 ## Files to ask for, by task
 
 - **Change/add an event (anything on the wire):** `src/lib/net/protocol.ts`,
-  `server/protocol.js`, `AGENTS.md` (the 23+23 tables), `src/lib/net/coop.ts` (client
+  `server/protocol.js`, `AGENTS.md` (the 23+24 tables), `src/lib/net/coop.ts` (client
   dispatch), the `server/*.js` domain module, `scripts/test-ws.mjs`. Always ALL sides
   of the registry in one change — single-sided edits are guaranteed rework.
 - **Combat/damage/armor:** `src/lib/sim/settings.ts` (single client source) ↔

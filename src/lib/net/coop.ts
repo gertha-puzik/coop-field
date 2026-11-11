@@ -1,3 +1,4 @@
+import type { LocationPlace } from '@/lib/sim/location-map';
 import type { DummyConfig, SpriteId } from "@/lib/sim/settings";
 import { SPRITES } from "@/lib/sim/settings";
 import { sanitizeTestMap, type TestMap } from "@/lib/sim/test-map";
@@ -78,6 +79,7 @@ export type CoopCloseInfo = {
 export type CoopHandlers = {
   onYou?: (cat: CoopCat) => void;
   onField?: (field: {
+    locations?:LocationPlace[];
     width?: number;
     height?: number;
     /** «test» — поле нового формата (лужайка/переход/закуток, камера, свободная ходьба). */
@@ -100,6 +102,7 @@ export type CoopHandlers = {
   onChat?: (message: CoopChatMessage) => void;
   onChatLog?: (messages: CoopChatMessage[]) => void;
   onInfo?: (text: string) => void;
+  onLocations?: (items:LocationPlace[])=>void;
   onRefuse?: (refuse: CoopRefuse) => void;
   onNoplace?: (payload?: CoopNoplace) => void;
   /** Манекен включили/выключили или сменили спрайт (уходит и включившему). */
@@ -308,7 +311,13 @@ const RECONNECT_MAX_MS = 30_000;
 
 export function createCoopClient(handlers: CoopHandlers) {
   let ws: WebSocket | null = null;
-  let joinParams: { room?: string; login?: string; sprite?: string; size?: number } | null = null;
+  let resumeFirstWorldJoin=process.env.NEXT_PUBLIC_SITE==='elyria'&&typeof window!=='undefined'&&!new URLSearchParams(window.location.search).get('room');
+  const prepareJoin=(join:{room?:string;login?:string;sprite?:string;resume?:boolean;size?:number})=>{
+    const resume=join.resume??(join.room==='test'&&resumeFirstWorldJoin);
+    if(join.room==='test'||/^test-loc-\d+$/.test(join.room??''))resumeFirstWorldJoin=false;
+    return {...join,resume};
+  };
+  let joinParams: { room?: string; login?: string; sprite?: string; resume?:boolean; size?: number } | null = null;
   let manualClose = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -364,6 +373,7 @@ export function createCoopClient(handlers: CoopHandlers) {
           login: joinParams.login || "",
           sprite: joinParams.sprite,
           size: joinParams.size,
+          resume:joinParams.resume,
         });
       }
     };
@@ -379,7 +389,11 @@ export function createCoopClient(handlers: CoopHandlers) {
       if (event === EV.YOU) {
         // Канон-валидация вместо слепого каста: битый publicCat не попадает в стейт.
         if (isCoopCat(payload)) handlers.onYou?.(payload);
-      } else if (event === EV.FIELD) handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmoAnchor; dummy?: CoopDummyState | null; rab?: CoopRabState | null });
+      } else if (event === EV.FIELD) {
+        const room=(payload as {room?:unknown})?.room;
+        if(joinParams&&typeof room==="string")joinParams={...joinParams,room,resume:false};
+        handlers.onField?.(payload as { width?: number; height?: number; format?: string; room?: string; cats?: CoopCat[]; map?: TestMap; atmo?: CoopAtmoAnchor; dummy?: CoopDummyState | null; rab?: CoopRabState | null; locations?:LocationPlace[] });
+      }
       else if (event === EV.MAP) {
         // Конфиг локации проходит ту же проверку, что и на сервере:
         // битый или чужой пакет просто игнорируется.
@@ -414,7 +428,8 @@ export function createCoopClient(handlers: CoopHandlers) {
       } else if (event === EV.CHATLOG) {
         if (!Array.isArray(payload)) return;
         handlers.onChatLog?.(payload.map(asChat).filter((row): row is CoopChatMessage => row != null));
-      } else if (event === EV.INFO) handlers.onInfo?.(String(payload));
+      } else if(event===EV.LOCATIONS&&Array.isArray(payload))handlers.onLocations?.(payload as LocationPlace[]);
+      else if (event === EV.INFO) handlers.onInfo?.(String(payload));
       else if (event === EV.REFUSE) {
         const row = asRefuse(payload);
         if (row) handlers.onRefuse?.(row);
@@ -519,8 +534,8 @@ export function createCoopClient(handlers: CoopHandlers) {
     };
   };
 
-  const connect = (join: { room?: string; login?: string; sprite?: string; size?: number } | null) => {
-    joinParams = join;
+  const connect = (join: { room?: string; login?: string; sprite?: string; resume?:boolean; size?: number } | null) => {
+    joinParams = join?prepareJoin(join):null;
     manualClose = false;
     clearReconnect();
     if (ws) {
@@ -541,14 +556,14 @@ export function createCoopClient(handlers: CoopHandlers) {
    * из прежней комнаты и заведёт в новую. Новое соединение поднимаем, только если
    * связи нет вовсе (или она доживает — тогда дождёмся open и уйдём join-ом оттуда).
    */
-  const joinRoom = (join: { room?: string; login?: string; sprite?: string; size?: number }) => {
-    joinParams = join;
+  const joinRoom = (join: { room?: string; login?: string; sprite?: string; resume?:boolean; size?: number }) => {
+    join=prepareJoin(join);joinParams = join;
     manualClose = false;
     clearReconnect();
     if (ws) {
       if (ws.readyState === WebSocket.OPEN) {
         attempt = 0;
-        emit(EV.JOIN, { room: join.room || "demo", login: join.login || "", sprite: join.sprite, size: join.size });
+        emit(EV.JOIN, { room: join.room || "demo", login: join.login || "", sprite: join.sprite, size: join.size,resume:join.resume });
         return;
       }
       if (ws.readyState === WebSocket.CONNECTING) return; // open пошлёт join уже с новыми параметрами
@@ -571,6 +586,7 @@ export function createCoopClient(handlers: CoopHandlers) {
   return {
     emit,
     connect,
+    travel:(passageId:string)=>emit(EV.JOIN,{passageId}),
     joinRoom,
     requestRooms,
     close() {

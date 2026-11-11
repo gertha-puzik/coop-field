@@ -48,7 +48,8 @@
     "test:sp-privacy": "node scripts/test-sp-privacy.mjs",
     "test:stone": "node scripts/test-stone-platform.mjs",
     "test:editor-save": "node scripts/test-editor-save.mjs",
-    "test:atomic-file": "node scripts/test-atomic-file.mjs"
+    "test:atomic-file": "node scripts/test-atomic-file.mjs",
+    "test:locations": "node scripts/test-locations.mjs"
   },
   "engines": {
     "node": ">=18"

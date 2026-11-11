@@ -68,7 +68,7 @@ eq("config.isAllowedOrigin: пустой Origin без REQUIRE_ORIGIN", cfg.isAl
 eq("config.isAllowedOrigin: чужой https", cfg.isAllowedOrigin("https://random.example"), false);
 
 /* ---------- protocol.js (W3-канон, не изменился) ---------- */
-eq("protocol: 23+23 событий", [protocol.CLIENT_EVENTS.length, protocol.SERVER_EVENTS.length], [23, 23]);
+eq("protocol: 23+24 событий", [protocol.CLIENT_EVENTS.length, protocol.SERVER_EVENTS.length], [23, 24]);
 eq("protocol: ARMOR_CURVE точек", protocol.ARMOR_CURVE.length, 7);
 
 /* ---------- combat.js — чистая математика боя (золото со старого кода) ---------- */

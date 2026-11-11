@@ -117,7 +117,7 @@ export function drawGroundEffects(
     if(state.rain.length>64)state.rain.splice(0,state.rain.length-64);
   }
   const g=canvas?.getContext('2d');if(!g)return;
-  const visible=(p:{x:number;y:number})=>p.x>=-20&&p.y>=-20&&p.x<=frame.viewW+20&&p.y<=frame.viewH+20&&!(p.x>frame.viewW-150&&p.y<130);
+  const visible=(p:{x:number;y:number})=>p.x>=-20&&p.y>=-20&&p.x<=frame.viewW+20&&p.y<=frame.viewH+20&&!(p.x>frame.viewW-190&&p.y<170);
   const dpr=Math.min(2,window.devicePixelRatio||1);
   g.save();g.setTransform(dpr,0,0,dpr,0,0);
   for(const part of parts){

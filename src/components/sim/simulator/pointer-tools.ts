@@ -1,3 +1,4 @@
+import { newPassageId, passageContains } from '@/lib/sim/location-map';
 import { isElevationTool, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
  * Verbatim canvas pointer tools carved out of simulator.tsx (W5b stage 2,
@@ -74,7 +75,7 @@ export interface PointerToolsDeps {
   paintEditorCellObject: (kind: 'dirt' | 'ground', c: number, r: number) => boolean;
   placeBattleCell: (c: number, r: number) => void;
   placeEditorEntry: (c: number, r: number) => boolean;
-  pushEditorUndo: (withPaint?: boolean) => void;
+  pushEditorUndo: (withPaint?: boolean,label?:string) => void;
   toggleEditorSpawn: (c: number, r: number) => boolean;
   editorPlacementClick: (mx: number, my: number) => void;
   pickEditorSelection: (c: number, r: number) => void;
@@ -223,6 +224,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
         mx = ground.x; my = ground.y;
         ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
+
         ed.terrainSnapDistance=10/(s.field.cellW*camFxRef.current.z);
         const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
         const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));
@@ -356,6 +358,14 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x; my = ground.y;
       ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
+      if(ed.tool==='passage'&&(ev.button===0||ev.button===2)){
+        const at=ed.terrainCursor,brush=ed.passageBrush??{w:1,h:1,targetId:(ed.place?.id??1)===1?2:1,link:'',direction:'right' as const};
+        const hit=(ed.passages??[]).find(p=>passageContains(p,at.x,at.y));
+        pushEditorUndo(false,'Область перехода');
+        if(ev.button===2)ed.passages=(ed.passages??[]).filter(p=>p.id!==hit?.id);
+        else{const w=Math.min(brush.w,ed.cols),h=Math.min(brush.h,ed.rows);ed.passages=[...(ed.passages??[]),{...brush,w,h,id:newPassageId(),x:Math.max(0,Math.min(ed.cols-w,at.x-w/2)),y:Math.max(0,Math.min(ed.rows-h,at.y-h/2))}];}
+        ed.dirty=true;refreshEditorPreview();syncEditorView();ev.preventDefault();return;
+      }
       ed.terrainSnapDistance=10/(s.field.cellW*camFxRef.current.z);
       const c = Math.min(ed.cols - 1, Math.max(0, Math.floor(mx / s.field.cellW)));
       const r = Math.min(ed.rows - 1, Math.max(0, Math.floor(my / s.field.cellH)));

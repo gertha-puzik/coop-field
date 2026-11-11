@@ -9,6 +9,7 @@
  * validation one-to-one (limits via server/protocol.js, W3).
  */
 import fs from "node:fs";
+import { sanitizeLocationFields, locationFile, loadLocationMap, locationFromRoom, placeOf, locationCatalogue } from "./location-world.js";
 import path from "node:path";
 import {
   DATA_DIR, TEST_ROOM,
@@ -193,6 +194,7 @@ export function terrainBodyContact(elev,cols,rows,x,y,rx,ry,level) {
 }
 
 const MAP_FILE = path.join(DATA_DIR, "test-map.json");
+export let activeLocationId=1;
 
 export let testMap = loadTestMap();
 export let TEST_WIDTH = testMap.cols;
@@ -498,8 +500,10 @@ function sanitizeTestMap(raw) {
     if(!elev)return {error:"слишком много участков рельефа"};
     if (Object.keys(elev).length === 0) elev = undefined;
   }
+  const location=sanitizeLocationFields(raw,cols,rows);if(location.error)return {error:location.error};
   return {
     map: {
+      ...location,
       v: raw.v,
       cols,
       rows,
@@ -555,12 +559,14 @@ function loadTestMap() {
  *  или потерю файла можно откатить, а не собирать локацию заново. */
 function backupTestMap() {
   try {
-    if (!fs.existsSync(MAP_FILE)) return;
+    const file=locationFile(activeLocationId);
+    if (!fs.existsSync(file)) return;
     const dir = path.join(DATA_DIR, "backups");
     fs.mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    fs.copyFileSync(MAP_FILE, path.join(dir, `test-map-${stamp}.json`));
-    const old = fs.readdirSync(dir).filter((f) => f.startsWith("test-map-")).sort();
+    const prefix=activeLocationId===1?"test-map-":`location-${activeLocationId}-`;
+    fs.copyFileSync(file, path.join(dir, `${prefix}${stamp}.json`));
+    const old = fs.readdirSync(dir).filter((f) => f.startsWith(prefix)).sort();
     while (old.length > 8) fs.unlinkSync(path.join(dir, old.shift()));
   } catch (e) {
     console.warn("map backup failed:", e?.message || e);
@@ -570,7 +576,7 @@ function backupTestMap() {
 function saveTestMap() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   backupTestMap();
-  writeFileAtomic(MAP_FILE, JSON.stringify(testMap, null, 2));
+  writeFileAtomic(locationFile(activeLocationId), JSON.stringify(testMap, null, 2));
 }
 
 rebuildTestGeometry();
@@ -595,7 +601,7 @@ function setMap(ws, payload = {}) {
     send(ws, EV.INFO, 'Редактор: сохранение локации доступно только администраторам.');
     return;
   }
-  if (ws.room?.code !== TEST_ROOM || !ws.room.sockets.has(ws)) {
+  if (ws.room?.fmt !== 'test' || !ws.room.sockets.has(ws)) {
     send(ws, EV.INFO, 'Редактор: сначала войдите в локацию.');
     return;
   }
@@ -610,7 +616,7 @@ function setMap(ws, payload = {}) {
     return;
   }
   ws.lastSetmap = now;
-  const r = sanitizeTestMap(payload?.map);
+  const r = sanitizeTestMap({...payload?.map,place:placeOf(payload?.map??{},activeLocationId)});
   if (!r.map) {
     send(ws, EV.INFO, `Редактор: ${r.error}.`);
     return;
@@ -632,7 +638,7 @@ function setMap(ws, payload = {}) {
   // Small acknowledgement follows the successful atomic write, before expensive
   // player relocation and the full map broadcast. Only the author receives it.
   send(ws,EV.INFO,'Редактор: сохранено.');
-  const room = rooms.get(TEST_ROOM);
+  const room = rooms.get(ws.room.code);
   if (room && room.sockets.size > 0) {
     for (const cat of room.cats.values()) {
       if (cat.fm === 1) {
@@ -658,7 +664,29 @@ function setMap(ws, payload = {}) {
     for (const w of room.sockets.keys()) send(w, EV.MAP, testMap);
     broadcast(room, EV.FIELD, fieldPayload(room));
   }
+  if(rooms.size&&JSON.stringify(previousMap.place)!==JSON.stringify(testMap.place)){const catalogue=locationCatalogue();for(const other of rooms.values())if(other.fmt==='test'&&other!==room)broadcast(other,EV.LOCATIONS,catalogue);}
   console.log(`map set: ${testMap.cols}x${testMap.rows}, zones=${testMap.zones.length}, objects=${(testMap.objects || []).length}, spawns=${(testMap.spawns || []).length}`);
+}
+
+/** Legacy geometry functions read live bindings. A synchronous room operation
+ * gets its own cached snapshot; finally restores the previous world, including
+ * nested field/catalog calls. Never hold this scope across an await.
+ */
+const locationWorlds=new Map();
+const captureWorld=()=>({testMap,TEST_WIDTH,TEST_HEIGHT,TEST_ISLAND,TEST_CELLS,TEST_OBST_CELLS,TEST_OBST_BODIES,TEST_PAINT});
+function restoreWorld(s){({testMap,TEST_WIDTH,TEST_HEIGHT,TEST_ISLAND,TEST_CELLS,TEST_OBST_CELLS,TEST_OBST_BODIES,TEST_PAINT}=s);}
+export function withTestLocation(id,fn){
+  id=Number(id)||1;if(id===activeLocationId)return fn();
+  const previous=activeLocationId,snapshot=captureWorld();locationWorlds.set(previous,snapshot);let activated=false;
+  try{
+    activeLocationId=id;
+    const stored=locationWorlds.get(id);
+    if(stored)restoreWorld(stored);
+    else{testMap=loadLocationMap(id);rebuildTestGeometry();}
+    activated=true;const result=fn();
+    if(result&&typeof result.then==='function')throw new Error('World scope must be synchronous');
+    return result;
+  }finally{if(activated)locationWorlds.set(id,captureWorld());restoreWorld(snapshot);activeLocationId=previous;}
 }
 
 export {

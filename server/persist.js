@@ -60,9 +60,10 @@ function flushCatBook(force = false) {
 }
 
 /** Кот стоит на новом месте — помечаем книгу грязной (пишется общим сливом). */
+const positionKey=(login,id)=>String(login||'').toLowerCase()+(id>1?`#location:${id}`:'');
 function rememberCat(cat) {
   if (!cat || !cat.login) return;
-  catBook[String(cat.login).toLowerCase()] = {
+  catBook[positionKey(cat.login,cat.locationId)] = {
     login: cat.login,
     fm: cat.fm ? 1 : 0,
     fx: Number.isFinite(cat.fx) ? cat.fx : undefined,
@@ -71,8 +72,11 @@ function rememberCat(cat) {
     y: cat.y,
     ts: Date.now(),
   };
+  const key=positionKey(cat.login,1),base=catBook[key]??{login:cat.login};
+  catBook[key]={...base,lastLocationId:cat.locationId||1,ts:Date.now()};
   catBookDirty = true;
 }
+export function lastLocationFor(login){const rec=catBook[positionKey(login,1)];return rec&&Date.now()-(rec.ts||0)<CATS_TTL_MS?Number(rec.lastLocationId)||1:1;}
 
 /**
  * P5-редизайн каталога (read-only вью): время последней записи позиции кота
@@ -84,8 +88,7 @@ function rememberCat(cat) {
  */
 function catSeenAt(login) {
   const rec = catBook[String(login || "").toLowerCase()];
-  if (!rec || typeof rec !== "object") return 0;
-  return Number(rec.ts) || 0;
+  return Math.max(Number(rec?.ts)||0,Number(catBook[positionKey(login,2)]?.ts)||0);
 }
 
 /** Мирная точка не внутри тела препятствия (эллипс с поворотом, чуть проще
@@ -116,7 +119,7 @@ function peacePointFreeOfObjects(fx, fy) {
  *  на обычном спавне. */
 function restoreCatPosition(room, cat) {
   if (!room || room.fmt !== "test") return;
-  const rec = catBook[String(cat.login || "").toLowerCase()];
+  const rec = catBook[positionKey(cat.login,cat.locationId)];
   if (!rec || Date.now() - (rec.ts || 0) > CATS_TTL_MS) return;
   if (rec.fm === 1 && Number.isFinite(rec.fx) && Number.isFinite(rec.fy)) {
     const fx = Math.round(rec.fx * 100) / 100;
@@ -154,8 +157,8 @@ function restoreCatPosition(room, cat) {
  * точку — восстановление пройдёт по свежей клетке спавна; новая ходьба честно
  * запишется сама. true — запись была и удалена, false — записи и так не было.
  */
-function forgetCat(rawLogin) {
-  const key = String(rawLogin || "").toLowerCase();
+function forgetCat(rawLogin,locationId=1) {
+  const key = positionKey(rawLogin,locationId);
   if (!key || !Object.prototype.hasOwnProperty.call(catBook, key)) return false;
   delete catBook[key];
   catBookDirty = true;

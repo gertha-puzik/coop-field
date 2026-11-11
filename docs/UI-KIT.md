@@ -184,7 +184,7 @@ Cursor (owner update 2026-11-11): the original `lapka.svg` paths are reused
 unchanged in `paw-cursor.svg` and `paw-cursor-small.svg`, with a fixed −20°
 tilt around the pad. Shared CSS variables in `public/ui/editor-chrome.css`
 keep hover/grab identical; the field uses the smaller paw without a reticle.
-`PawCursor` only emits a bounded decorative right-click wave (disabled for
+`PawCursor` only emits a bounded decorative left-click circular wave (disabled for
 touch and reduced motion); it never rotates or reshapes the cursor or cancels input.
 
 ## 7. Drawbacks / accepted debts (honesty section)

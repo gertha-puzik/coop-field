@@ -131,8 +131,8 @@ function checkGolden(label, serverValue, goldenValue) {
 check("CLIENT_EVENTS", [...serverProtocol.CLIENT_EVENTS], client.CLIENT_TO_SERVER);
 check("SERVER_EVENTS", [...serverProtocol.SERVER_EVENTS], client.SERVER_TO_CLIENT);
 check("EV-словарь имён", serverProtocol.EV, client.EV);
-if ([...serverProtocol.CLIENT_EVENTS].length !== 23 || [...serverProtocol.SERVER_EVENTS].length !== 23) {
-  fail.push(`FAIL счётчик событий: CLIENT_EVENTS=${serverProtocol.CLIENT_EVENTS.length}, SERVER_EVENTS=${serverProtocol.SERVER_EVENTS.length} — должно быть 23+23 (см. AGENTS.md).`);
+if ([...serverProtocol.CLIENT_EVENTS].length !== 23 || [...serverProtocol.SERVER_EVENTS].length !== 24) {
+  fail.push(`FAIL счётчик событий: CLIENT_EVENTS=${serverProtocol.CLIENT_EVENTS.length}, SERVER_EVENTS=${serverProtocol.SERVER_EVENTS.length} — должно быть 23+24 (см. AGENTS.md).`);
 }
 
 /* 2. Зеркалируемые константы — сервер == клиент (клиент — свой источник значений). */
