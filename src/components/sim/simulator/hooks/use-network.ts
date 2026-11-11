@@ -256,6 +256,7 @@ export function useSimNet(deps: SimNetDeps) {
         camRef.current.init = false;
         remoteFreeRef.current.clear();
         remoteFmRef.current.clear();
+        for (const cat of others) if (cat.sprite) ensureFieldSprite(cat.sprite);
         liveRemotesRef.current = others.map(catToDummy);
         // Кто из чужих котов идёт свободно (fm=1) — сеем плавную доведённую позицию.
         for (const c of others) {
@@ -376,6 +377,7 @@ export function useSimNet(deps: SimNetDeps) {
         if (cat.blocking === true) remoteBlockRef.current.add(cat.id);
         else if (cat.blocking === false) remoteBlockRef.current.delete(cat.id);
         const prev = liveRemotesRef.current.find((d) => d.id === `p${cat.id}`);
+        if (cat.sprite) ensureFieldSprite(cat.sprite);
         const dummy = catToDummy({
           id: cat.id,
           login: cat.login || prev?.name,
