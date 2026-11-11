@@ -19,6 +19,7 @@ import styles from './editor-workspace.module.css';
 import type { MouseEvent, PointerEvent, RefObject, ReactNode } from 'react';
 
 export interface FieldStageProps {
+  worldOverlay?:ReactNode;
   fieldFrameRef: RefObject<HTMLDivElement | null>;
   testField: boolean;
   fieldFit: { w: number; h: number } | null;
@@ -66,6 +67,7 @@ export function FieldStage(props: FieldStageProps) {
     hudRef,
     battleHint,
     mapLoading,
+    worldOverlay,
     editorOverlay,
     touchControls,
   } = props;
@@ -138,6 +140,7 @@ export function FieldStage(props: FieldStageProps) {
                   «прыжок» справа-снизу поверх HUD (z-50); события ловят
                   только круги, поля кругами не перехватываются. Слот пуст
                   на десктопе или при спрятанных контролах. */}
+              {worldOverlay}
               {touchControls}
             </div>
             {battleHint ? (

@@ -69,7 +69,7 @@ const ELYRIA_WORLDS: readonly WorldCard[] = [
     name: 'Wanderpaws: Elysiae',
     blurb: 'Твой путь начинается здесь',
     italic: true,
-    ids: ['test'],
+    ids: ['test','test-loc-2'],
     preview: 'elision',
   },
 ];

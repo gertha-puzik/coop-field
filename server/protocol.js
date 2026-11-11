@@ -42,7 +42,7 @@ export const CLIENT_EVENTS = Object.freeze([
   "auth",
 ]);
 
-/** Сервер → клиент, 23 события. Порядок — как в таблице AGENTS.md. */
+/** Сервер → клиент, 24 события. Порядок — как в таблице AGENTS.md. */
 export const SERVER_EVENTS = Object.freeze([
   "you",
   "field",
@@ -67,10 +67,11 @@ export const SERVER_EVENTS = Object.freeze([
   "freemove",
   "roomsinfo",
   "whoami",
+  "locations",
 ]);
 
 /**
- * Все 36 уникальных имён протокола в одном словаре для кода:
+ * Все 37 уникальных имён протокола в одном словаре для кода:
  * страницы диспатчера/рассылки берут отсюда, строковые литералы не дублируются.
  * «move»/«chat»/«space» и ещё 7 имён ходят в обе стороны — ключ один.
  */
@@ -103,6 +104,7 @@ export const EV = Object.freeze({
   RAB_STATE: "rabState",
   ROOMSINFO: "roomsinfo",
   WHOAMI: "whoami",
+  LOCATIONS: "locations",
   // обе стороны
   MOVE: "move",
   CHAT: "chat",

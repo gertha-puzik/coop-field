@@ -2,7 +2,7 @@
  * persistent save tray. Editing data remains in the existing draft/operations.
  */
 import { useEffect, useState } from 'react';
-import type { RefObject } from 'react';
+import type { RefObject, ReactNode } from 'react';
 import { Button, Dropdown, EditorShell } from '@/components/ui';
 import type { EditorDraft, EditorPlace, EditorTool } from '@/lib/sim/editor-model';
 import { PAINT_MATS } from '@/lib/sim/paint';
@@ -11,6 +11,7 @@ import { TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
 import type { EditorSaveState } from '../editor-ops';
 import styles from './editor-workspace.module.css';
 export interface EditorOverlayProps {
+  worldPanel?:ReactNode; passagePanel?:ReactNode;
   rotateCamera: (direction: -1 | 1) => void;
   editorRef: RefObject<EditorDraft | null>;
   syncEditorView: () => void;
@@ -67,6 +68,7 @@ const tools:{id:EditorTool;label:string;icon:string;category:Category;key?:strin
   {id:'cells',label:'Боевая область',icon:'zone',category:'zones'},
   {id:'green',label:'Лужайка',icon:'tree',category:'zones'},
   {id:'entry',label:'Вход',icon:'enter',category:'zones'},
+  {id:'passage',label:'Область перехода',icon:'enter',category:'zones'},
   {id:'spawn',label:'Точка появления',icon:'pin',category:'zones'},
 ];
 const paths:Record<string,string>={
@@ -195,6 +197,7 @@ export function EditorOverlay(p:EditorOverlayProps){
        </>}
        {section==='zones'&&<>
          <div className={styles.toolGrid}>{tools.filter(t=>t.category==='zones').map(toolButton)}</div>
+         {d.tool==='passage'&&p.passagePanel}
          {d.tool==='entry'&&<label className={styles.field}>Направление входа<Dropdown aria-label="Направление входа" value={p.editorEntryDir} onChange={v=>p.setEditorEntryDir(v as TestMapEntryDir)} className="w-auto" options={([['left','Влево'],['right','Вправо'],['up','Вверх'],['down','Вниз']] as const).map(([id,label])=>({value:id,label}))}/></label>}
          <h3>Зоны локации <span>{d.zones.length}</span></h3>
          <div className={styles.zoneList}>{d.zones.map(z=><div key={z.id} className={styles.zone} data-selected={d.sel.includes(z.id)}><input type="checkbox" aria-label={`Выбрать зону ${z.name}`} checked={d.sel.includes(z.id)} onChange={()=>p.toggleEditorSel(z.id)}/><i data-kind={z.kind}/><input aria-label={`Имя зоны ${z.name}`} defaultValue={z.name} key={z.id+z.name} onBlur={e=>{if(e.target.value!==z.name)p.renameEditorZone(z.id,e.target.value);}}/><small>{z.c1-z.c0+1}×{z.r1-z.r0+1}</small><button type="button" aria-label={`Удалить зону ${z.name}`} onClick={()=>p.deleteEditorZone(z.id)}>×</button></div>)}</div>
@@ -202,6 +205,7 @@ export function EditorOverlay(p:EditorOverlayProps){
          <p className={styles.hint}>Тяните область на карте. Выделение переносит участок вместе с рисунком, объектами и высотой.</p>
        </>}
        {section==='world'&&<>
+         {p.worldPanel}
          <h3>Размер локации</h3>
          <div className={styles.two}><NumberField label="Ширина мира" value={world.cols} min={TEST_MAP_LIMITS.colsMin} max={TEST_MAP_LIMITS.colsMax} onChange={cols=>setWorld({...world,cols})}/><NumberField label="Длина мира" value={world.rows} min={TEST_MAP_LIMITS.rowsMin} max={TEST_MAP_LIMITS.rowsMax} onChange={rows=>setWorld({...world,rows})}/></div>
          <Button variant="outline" className={styles.wide} onClick={()=>p.resizeEditorWorld(world.cols,world.rows)}>Применить размер</Button>

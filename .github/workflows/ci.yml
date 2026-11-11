@@ -87,6 +87,10 @@ jobs:
       - name: Очередь шагов на сервере
         run: node scripts/test-move-queue.mjs
       # Общий потолок block/space/atmo/dummy/rab. Скрипт сам поднимает песочницу.
+      - name: Сохранение редактора и изоляция рисунка локаций
+        run: npm run test:editor-save
+      - name: Локации мира и переходы
+        run: npm run test:locations
       - name: Потолок кадров block/space/atmo/dummy
         run: npm run test:frame-limit
       - name: Аккаунты и закрытая Элизия

@@ -30,6 +30,7 @@ const RETIRED_ROOMS = Object.freeze({ combat: "grot-1" });
 const BY_ID = new Map(MODE_ROOMS.map((r) => [r.id, r]));
 
 function modeOf(code) {
+  if(/^test-loc-\d+$/.test(String(code)))return {...BY_ID.get(TEST_ROOM),id:String(code)};
   return BY_ID.get(String(code || "")) || null;
 }
 

@@ -90,6 +90,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     // Правки редактора сохраняются в текущей версии конфига (v2 — деление поля
     // на траву и боевые клетки).
     v: 2,
+    place:d.place,passages:d.passages?.map(p=>({...p})),
     cols: d.cols,
     rows: d.rows,
     margin: d.margin??savedMapRef.current.margin,
@@ -144,6 +145,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const m = savedMapRef.current;
     const draft: EditorDraft = {
       seed:m.seed,margin:m.margin,
+      place:m.place?{...m.place}:undefined,passages:m.passages?.map(p=>({...p})),
       zones: m.zones.map((z) => ({ ...z })),
       objects: (m.objects ?? []).map((o) => ({ ...o })),
       spawns: (m.spawns ?? []).map((s) => ({ ...s })),
@@ -390,6 +392,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     });
     // Клетки спавна за новым краем тоже исчезают — иначе сервер откажет всей
     // правке («спавн №N: вне границ мира»).
+    d.passages=d.passages?.filter(p=>p.x+p.w<=nc&&p.y+p.h<=nr);
     d.spawns = d.spawns.filter((s) => s.c < nc && s.r < nr);
     // Клетки высот за новым краем мира исчезают вместе с краем.
     const keptElev: Record<string, number> = {};
@@ -615,6 +618,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const m = savedMapRef.current;
     d.zones = m.zones.map((z) => ({ ...z }));
     d.objects = (m.objects ?? []).map((o) => ({ ...o }));
+    d.place=m.place?{...m.place}:undefined;d.passages=m.passages?.map(p=>({...p}));
     d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
     d.elev = { ...(m.elev ?? {}) };
     d.seed=m.seed;d.margin=m.margin;
@@ -639,7 +643,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const d=editorRef.current;if(!d)return;
     if(d.selFloat)dropEditorSelection();
     pushEditorUndo(true,label);
-    Object.assign(d,{seed:m.seed,margin:m.margin,cols:m.cols,rows:m.rows,zones:m.zones.map(z=>({...z})),objects:(m.objects??[]).map(o=>({...o})),
+    Object.assign(d,{place:d.place?{...(m.place??d.place),id:d.place.id}:m.place,passages:m.passages?.map(p=>({...p}))??[],seed:m.seed,margin:m.margin,cols:m.cols,rows:m.rows,zones:m.zones.map(z=>({...z})),objects:(m.objects??[]).map(o=>({...o})),
       spawns:(m.spawns??[]).map(o=>({...o})),elev:{...m.elev},sel:[],selRect:null,selFloat:null,
       pcv:cv,ppaint:m.paint??null,pdirty:false,dirty:true,pan:{x:0,y:0,reset:true}});
     editorSelRef.current=null;setEditorPlace(null);editorPlaceRef.current=null;
@@ -647,7 +651,7 @@ export function buildEditorOps(params: EditorOpsParams) {
   };
   const clearEditorMap = () => {
     const d=editorRef.current;if(!d)return;
-    replaceEditorMap({...draftMap(d,false),zones:[],objects:[],spawns:[],elev:{}},null,'Полная очистка локации');
+    replaceEditorMap({...draftMap(d,false),zones:[],objects:[],spawns:[],passages:[],elev:{}},null,'Полная очистка локации');
     setEditorMsg('Локация очищена в черновике. Можно отменить или сохранить.');
   };
   const exportEditorMap = async () => {
@@ -657,7 +661,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       const snapshot=draftMap(d,false),paint=await encodeDraftPaintAsync(d);
       const bytes=encodeMapArchive({...snapshot,...(paint?{paint}:{})});
       const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
-      const link=document.createElement('a');link.href=url;link.download=`location-${d.cols}x${d.rows}-${new Date().toISOString().slice(0,10)}.zip`;link.click();
+      const link=document.createElement('a');link.href=url;link.download=`location-${d.place?.id??1}-${d.cols}x${d.rows}-${new Date().toISOString().slice(0,10)}.zip`;link.click();
       setTimeout(()=>URL.revokeObjectURL(url),1000);setEditorMsg('Архив локации скачан.');
     }catch(error){setEditorMsg(`Не удалось создать архив: ${error instanceof Error?error.message:String(error)}`);}
   };
@@ -665,7 +669,9 @@ export function buildEditorOps(params: EditorOpsParams) {
     const d=editorRef.current;if(!d)return;
     try{
       if(file.size>16*1024*1024+1024)throw new Error('Архив больше 16 МБ');
-      const map=decodeMapArchive(new Uint8Array(await file.arrayBuffer())),cv=await archivePaintCanvas(map);
+      const map=decodeMapArchive(new Uint8Array(await file.arrayBuffer()));
+      if(d.place&&map.place&&map.place.id!==d.place.id&&map.passages?.some(p=>p.targetId===d.place!.id))throw new Error("Архив содержит переход в текущую локацию. Сначала уберите его в исходной карте.");
+      const cv=await archivePaintCanvas(map);
       if(editorRef.current!==d)return;
       replaceEditorMap(map,cv,'Загрузка архива локации');
       setEditorMsg('Архив применён к черновику. Нажмите «Сохранить локацию», чтобы применить для всех.');

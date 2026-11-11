@@ -1,3 +1,5 @@
+import { withTestLocation } from "./testmap.js";
+import { locationFromRoom, travel } from "./location-world.js";
 /**
  * Transport (W4 carve, behavior-preserving): the `[event, payload]` inbound
  * dispatcher, the health/static HTTP server, the WebSocket accept path
@@ -53,7 +55,11 @@ import { handleMineSpritesHttp } from "./my-sprites.js";
 import { handleAvatarsHttp } from "./avatars.js";
 import { handleProfilesHttp } from "./profiles.js";
 
-function onMessage(ws, raw) {
+function onMessage(ws,raw){
+  try{return withTestLocation(locationFromRoom(ws.room?.code??""),()=>dispatchMessage(ws,raw));}
+  catch(error){console.warn("world frame failed:",error.message);send(ws,EV.INFO,"Локация недоступна. Попробуйте позже.");}
+}
+function dispatchMessage(ws, raw) {
   // Длина кадра в байтах: ws отдаёт Buffer (length уже октеты), byteLength —
   // запасной путь на случай строки.
   const bytes = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(String(raw));
@@ -73,7 +79,7 @@ function onMessage(ws, raw) {
   // Общий потолок block/space/atmo/atmoset/dummy/rab: молча, без нового события.
   if (isFrameLimited(event) && !allowBroadcastFrame(ws)) return;
   const payload = Array.isArray(msg) ? msg[1] : msg;
-  if (event === EV.JOIN) join(ws, payload || {});
+  if (event === EV.JOIN){if(payload?.passageId)travel(ws,payload);else join(ws,payload||{});}
   else if (event === EV.MOVE) move(ws, payload || {});
   else if (event === EV.AIM) aim(ws, payload || {});
   else if (event === EV.STRIKE) strike(ws, payload || {});

@@ -30,6 +30,10 @@ import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
 import { rememberRemoteCell, type Engine } from '../sim-model';
 
 export interface SimNetDeps {
+  onWorldField?: (map:TestMap,locations?:import('@/lib/sim/location-map').LocationPlace[])=>void;
+  onWorldDisconnect?:()=>void;
+  onWorldLocations?: (items:import('@/lib/sim/location-map').LocationPlace[])=>void;
+  onWorldInfo?: (text:string)=>void;
   loaded: boolean;
   netStarted: boolean;
   setChatLines: Dispatch<SetStateAction<CoopChatMessage[]>>;
@@ -148,7 +152,7 @@ export function useSimNet(deps: SimNetDeps) {
     // пока игрок печатает имя. Вход без имени не делаем — join уйдёт из
     // pickRoom(), где имя берётся из pendingJoinRef (его кладёт joinFromEntry).
     if (login) setPlayerName(login);
-    let lastMapSignature='';
+    let lastMapSignature='';let lastRoom='';
     const receiveMap=(map:TestMap,notify=false)=>{
       const signature=JSON.stringify(map);
       clearEditorSave();
@@ -215,6 +219,12 @@ export function useSimNet(deps: SimNetDeps) {
         netRef.current?.emit('armor', { armor: settingsRef.current.combat.armorLevel / 10 });
       },
       onField: (field) => {
+        if(field.room&&field.room!==lastRoom){
+          setChatLines([]);lastRoom=field.room;
+          if(pendingJoinRef.current)pendingJoinRef.current={...pendingJoinRef.current,room:field.room};
+          entryAnchorRef.current=null;battleEntryRef.current=null;battleExitRef.current=null;
+          netMovesRef.current.pending=[];engineRef.current.step=null;engineRef.current.path=[];
+        }
         const cats = field.cats || [];
         const others = cats.filter((c) => c.id !== meIdRef.current);
         // Формат поля комнаты: «test» — лужайка/переход/закуток (камера, свободная ходьба).
@@ -253,10 +263,8 @@ export function useSimNet(deps: SimNetDeps) {
         // клетках остаётся (см. игровой цикл). Правка локации (setmap) тоже
         // присылает field — гасить боевой режим у всех в этот момент нельзя:
         // принудительный мирный режим — только на самом входе в комнату (после you).
-        if (fmt === 'test' && settingsRef.current.arrow.battleMode && freshJoinRef.current) {
-          freshJoinRef.current = false;
-          suppressExitTeleportRef.current = true;
-          setSettings((p) => ({ ...p, arrow: { ...p.arrow, battleMode: false } }));
+        if(fmt==='test'&&freshJoinRef.current){freshJoinRef.current=false;
+          if(settingsRef.current.arrow.battleMode){suppressExitTeleportRef.current=true;setSettings(p=>({...p,arrow:{...p.arrow,battleMode:false}}));}
         }
         // Спавн-точка считаем «внутри зоны»: свежий вход в боевую зону срабатывает
         // только после реального выхода из неё (край, а не «пока внутри»).
@@ -300,7 +308,7 @@ export function useSimNet(deps: SimNetDeps) {
           }
           netMovesRef.current.server = { col, row };
         }
-        setNetStatus(`Вы в комнате ${roomTitle(field.room || 'demo')} · ${cats.length} на поле`);
+        setNetStatus(`${fmt==='test'?'Вы в локации '+(field.map?.place?.name??roomTitle(field.room||'demo')):'Вы в комнате '+roomTitle(field.room||'demo')} · ${cats.length} на поле`);
         // Манекен и мишень — состояние комнаты: onField приходит при входе и после каждого переподключения.
         const fd = field.dummy;
         if (fd && fd.on && Number.isFinite(fd.x) && Number.isFinite(fd.y)) {
@@ -312,6 +320,7 @@ export function useSimNet(deps: SimNetDeps) {
           dummyGrabRef.current = null;
         }
         applyRab(!!field.rab?.on);
+        if (field.map)deps.onWorldField?.(field.map,field.locations);
       },
       onMap: (map) => receiveMap(map,true),
       onCat: (cat) => {
@@ -503,7 +512,9 @@ export function useSimNet(deps: SimNetDeps) {
         });
       },
       onChatLog: (messages) => setChatLines(messages.slice(-80)),
+      onLocations:items=>deps.onWorldLocations?.(items),
       onInfo: (text) => {
+        deps.onWorldInfo?.(text);
         setNetStatus(text);
         // Ответ сервера на сохранение локации («Редактор: …») — прогресс больше
         // не ждёт. Отказ (троттлинг «слишком часто», игрок вне локации,
@@ -612,6 +623,7 @@ export function useSimNet(deps: SimNetDeps) {
         jellyRef.current[RAB_ID] = 1;
       },
       onClose: (info) => {
+        deps.onWorldDisconnect?.();
         clearEditorSave();
         if(editorOpenRef.current)setEditorMsg('Связь прервалась. Подтверждение сохранения не получено; после подключения проверьте карту.');
         setNetReady(false);

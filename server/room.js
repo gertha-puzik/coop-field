@@ -12,7 +12,7 @@ import { EV, MAX_PLAYERS, JOIN_COOLDOWN_MS, RAB_CELL } from "./protocol.js";
 import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM, ROOMS_MAX } from "./config.js";
 import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
-import { rememberCat, flushCatBook, restoreCatPosition, forgetCat } from "./persist.js";
+import { rememberCat, flushCatBook, restoreCatPosition, forgetCat, lastLocationFor } from "./persist.js";
 import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
 import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 // F2 (спек §3): per-room overrides атмосферных параметров — начальный якорь
@@ -22,7 +22,8 @@ import { initialRoomAtmo } from "./room-config.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
-import { testMap, TEST_PAINT, TEST_OBST_CELLS, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
+import { locationFromRoom, locationRoom, knownLocation, placeOf, locationCatalogue } from "./location-world.js";
+import { withTestLocation, testMap, TEST_PAINT, TEST_OBST_CELLS, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
 import { testCellInIsland, testWalkable, testPointInIsland } from "./world.js";
 
 const rooms = new Map();
@@ -36,13 +37,14 @@ function send(ws, event, payload) {
 /** Нормализация кода комнаты: латиница/цифры/дефис/подчёркивание, до 24 символов.
  *  Одна и для join, и для списка комнат — иначе состав покажется не для той комнаты. */
 function normalizeRoomCode(code) {
-  return (
+  const normalized = (
     String(code || "demo")
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "")
       .slice(0, 24) || "demo"
   );
+  const id=locationFromRoom(normalized);return knownLocation(id)?locationRoom(id):normalized;
 }
 
 function roomOf(code) {
@@ -53,7 +55,7 @@ function roomOf(code) {
   if (!rooms.has(key)) {
     rooms.set(key, {
       code: key,
-      fmt: key === TEST_ROOM ? 'test' : 'grid',
+      fmt: knownLocation(locationFromRoom(key)) ? 'test' : 'grid',
       cats: new Map(),
       sockets: new Map(),
       chat: [],
@@ -95,7 +97,8 @@ function occupied(room, x, y, exceptId) {
   return false;
 }
 
-function spawnCell(room) {
+function spawnCell(room){return withTestLocation(locationFromRoom(room.code),()=>spawnCellInWorld(room));}
+function spawnCellInWorld(room) {
   const test = room.fmt === 'test';
   const W = test ? TEST_WIDTH : WIDTH;
   const H = test ? TEST_HEIGHT : HEIGHT;
@@ -196,7 +199,8 @@ function publicCat(cat, room) {
   return base;
 }
 
-function fieldPayload(room) {
+function fieldPayload(room){return withTestLocation(locationFromRoom(room.code),()=>fieldPayloadInWorld(room));}
+function fieldPayloadInWorld(room) {
   const test = room.fmt === 'test';
   const W = test ? TEST_WIDTH : WIDTH;
   const H = test ? TEST_HEIGHT : HEIGHT;
@@ -212,10 +216,10 @@ function fieldPayload(room) {
     room: room.code,
     // Конфиг локации «теста»: клиент рисует поле по нему и хранит как эталон
     // сохранённой локации (редактор откатывается к нему при закрытии без записи).
-    ...(test ? { map: testMap } : {}),
+    ...(test ? { map: {...testMap,place:placeOf(testMap,locationFromRoom(room.code))}, locations:locationCatalogue() } : {}),
     users,
     cats: [...room.cats.values()].map((c) => publicCat(c, room)),
-    location: { name: test ? 'Пробная лужайка' : 'Расщелина меж скал', bg: test ? 4234811 : 71085 },
+    location: { name: test ? placeOf(testMap,locationFromRoom(room.code)).name : 'Расщелина меж скал', bg: test ? 4234811 : 71085 },
     dummy: room.dummy
       ? { on: true, x: room.dummy.x, y: room.dummy.y, sprite: room.dummy.sprite, grab: room.dummyGrab || null }
       : null,
@@ -292,7 +296,21 @@ function liveRoomsCount() {
   return n;
 }
 
-function join(ws, payload = {}) {
+function join(ws,payload={},options={}){
+  if(payload.resume===true&&normalizeRoomCode(payload.room)===TEST_ROOM&&ws.account){
+    const id=lastLocationFor(activeCharacter(ws.account)?.name||ws.account.login);
+    if(knownLocation(id)){
+      try{withTestLocation(id,()=>{});payload={...payload,room:locationRoom(id),resume:false};}
+      catch(error){console.warn('resume location unavailable:',error.message);payload={...payload,room:TEST_ROOM,resume:false};send(ws,EV.INFO,'Предыдущая локация недоступна — возвращаем в Долину.');}
+    }
+  }
+  const id=locationFromRoom(normalizeRoomCode(payload.room));
+  if(id&&!knownLocation(id)){send(ws,EV.NOPLACE,{room:payload.room,reason:'unknown_location'});return;}
+  if(id&&!ws.account){send(ws,EV.REFUSE,{code:'auth_required',text:'Эта комната недоступна без входа.'});send(ws,EV.INFO,'Эта комната недоступна без входа.');send(ws,EV.NOPLACE,{room:normalizeRoomCode(payload.room),reason:'auth_required'});return;}
+  try{return withTestLocation(id,()=>joinInWorld(ws,payload,options));}
+  catch(error){console.warn('location join failed:',error.message);send(ws,EV.INFO,'Переход: не удалось открыть локацию. Попробуйте позже.');if(!ws.room)send(ws,EV.NOPLACE,{room:payload.room,reason:'location_unavailable'});}
+}
+function joinInWorld(ws, payload = {},options={}) {
   const now = Date.now();
   if (now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
     send(ws, EV.INFO, "Слишком часто. Подождите секунду.");
@@ -344,6 +362,7 @@ function join(ws, payload = {}) {
   const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
   const cat = {
     id: nextId++,
+    locationId: locationFromRoom(room.code)||undefined,
     login,
     color: PALETTE[slot % PALETTE.length],
     sprite: savedSprite || pickSprite(payload, slot),
@@ -373,6 +392,8 @@ function join(ws, payload = {}) {
   // Рестарт сервера не выбрасывает кота на спавн: возвращаем его последнюю позицию
   // (см. restoreCatPosition) — особенно важно для АФК-котов.
   restoreCatPosition(room, cat);
+  if(options.arrival){const a=options.arrival;Object.assign(cat,{fm:1,fx:a.fx,fy:a.fy,x:a.x,y:a.y,freeFoot:a.foot});}
+  if(room.fmt==='test')rememberCat(cat);
   send(ws, EV.YOU, publicCat(cat, room));
   send(ws, EV.FIELD, fieldPayload(room));
   if (room.chat?.length) send(ws, EV.CHATLOG, room.chat);
@@ -568,7 +589,7 @@ function resetPlayerPosition(rawRoom, rawLogin) {
   cat.freeJumpUntil = 0;
   // Прежняя точка уходит из книги персистентных позиций — атомарный слив
   // flushCatBook по конвенции записи; новая ходьба после сброса запишется сама.
-  forgetCat(cat.login);
+  forgetCat(cat.login,cat.locationId);
   flushCatBook(true);
   broadcast(room, EV.MOVE, publicCat(cat, room));
   console.log(`admin reset: room=${room.code} cat=${cat.login}#${cat.id} -> ${cell[0]},${cell[1]}`);
@@ -576,6 +597,6 @@ function resetPlayerPosition(rawRoom, rawLogin) {
 }
 
 export {
-  rooms, send, broadcast, normalizeRoomCode, occupied, publicCat, fieldPayload,
+  rooms, roomOf, spawnCell, send, broadcast, normalizeRoomCode, occupied, publicCat, fieldPayload,
   leave, join, setSprite, block, space, roomsInfo, adminOccupancy, resetPlayerPosition,
 };

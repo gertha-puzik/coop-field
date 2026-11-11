@@ -33,7 +33,7 @@ const source = fs.readFileSync(new URL('../src/components/sim/simulator/editor-o
 const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const exports = {};
 new Function('require','exports',compiled)(id => mocks[id] ?? require(id),exports);
-const original = {cols:6,rows:6,margin:.5,seed:'regression',zones:[{kind:'cells',c0:0,r0:0,c1:5,r1:5}],objects:[],spawns:[],elev:{'1,1':2}};
+const original = {place:{id:1,name:'Долина',zoneId:1,zoneName:'Средиземье'},passages:[{id:'forest',x:1,y:1,w:1,h:1,targetId:2,link:'trail',direction:'right'}],cols:6,rows:6,margin:.5,seed:'regression',zones:[{kind:'cells',c0:0,r0:0,c1:5,r1:5}],objects:[],spawns:[],elev:{'1,1':2}};
 const editorRef={current:{...structuredClone(original),undo:[],elev:{'1,1':2},dirty:false,pcv:null}};
 const sent=[];
 const params = { editorRef, elevStrokeRef:{current:null}, savedMapRef:{current:original}, netRef:{current:{ready:true,emit:(...args)=>sent.push(args)}}, camRef:{current:{}}, setTestMap:()=>{} };
@@ -51,7 +51,9 @@ assert.equal(sent[0][0],'setmap');
 assert(!('pass' in sent[0][1]),'client sends no editor password');
 assert.deepEqual(sent[0][1].map.elev,{'1,1':2,'2,2,1,1':1},'old and new elevations both survive');
 assert.deepEqual(original.elev,{'1,1':2},'preview does not mutate saved map');
-console.log('editor elevation save after close: OK');
+assert.deepEqual(sent[0][1].map.place,original.place,'location identity survives save-after-close');
+assert.deepEqual(sent[0][1].map.passages,original.passages,'passages survive save-after-close');
+console.log('editor elevation, location and passage save after close: OK');
 
 // Load the real field helpers; DOM is not needed for terrain/support queries.
 const actualField=loadTs(new URL('../src/lib/sim/test-field.ts',import.meta.url));
@@ -76,7 +78,7 @@ const previousMap=serverMap.testMap;
 fs.mkdirSync(process.env.DATA_DIR+'/test-map.json'); // force atomic rename to fail
 const replies=[];
 const ws={readyState:1,lastSetmap:0,account:{role:'admin'},send:data=>replies.push(JSON.parse(data))};
-ws.room={code:'test',sockets:new Map([[ws,{}]])};
+ws.room={code:'test',fmt:'test',sockets:new Map([[ws,{}]])};
 serverMap.setMap(ws,{map:{...previousMap,elev:{'2,2,1,1':1}}});
 assert.equal(serverMap.testMap,previousMap,'failed save restores previous live map');
 assert(replies.some(([event,text])=>event==='info'&&text.includes('сохранить локацию на диск не удалось')));
@@ -153,7 +155,7 @@ console.log('free terrain placement, optional snapping and height filter: OK');
 // A successful disk write has a small direct acknowledgement even without a broadcast room.
 const okReplies=[];
 const okWs={readyState:1,lastSetmap:0,account:{role:'admin'},send:data=>okReplies.push(JSON.parse(data))};
-okWs.room={code:'test',sockets:new Map([[okWs,{}]])};
+okWs.room={code:'test',fmt:'test',sockets:new Map([[okWs,{}]])};
 const oldIsland=serverMap.TEST_ISLAND,oldCells=serverMap.TEST_CELLS;
 serverMap.setMap(okWs,{map:{...previousMap,elev:{'2,2,1,1':6.7}}});
 assert.equal(serverMap.TEST_ISLAND,oldIsland,'height-only saves reuse the ground contour');
@@ -167,7 +169,7 @@ console.log('explicit save acknowledgement follows durable write: OK');
 // live map unchanged, no broadcast.
 const gatedReplies=[];
 const gatedWs={readyState:1,lastSetmap:0,account:{role:'registered'},send:data=>gatedReplies.push(JSON.parse(data))};
-gatedWs.room={code:'test',sockets:new Map([[gatedWs,{}]])};
+gatedWs.room={code:'test',fmt:'test',sockets:new Map([[gatedWs,{}]])};
 const liveBeforeGate=serverMap.testMap;
 serverMap.setMap(gatedWs,{map:{...previousMap,elev:{'4,4,1,1':5}}});
 assert(gatedReplies.some(([event,text])=>event==='info'&&String(text).includes('доступно только администраторам')),'non-admin setmap is refused by the admin gate');
@@ -322,3 +324,29 @@ const chips=[];groundFx.spawnSprintPart(chips,100,150,1,0,52);assert.equal(chips
 const rainState=groundFx.createGroundEffects();rainState.rain.push({x:100,y:150,lift:0,life:0,ttl:300,seed:0});
 groundFx.drawGroundEffects(null,{editor:false},[],rainState,16,false);assert.equal(rainState.rain.length,0,'weather off clears ground splashes immediately');
 console.log('landing dust cap/lifetime, sprint lift/physics and immediate splash clear: OK');
+
+// A late paint decode from a departed location must not populate the new draft.
+const receiverSource=fs.readFileSync(new URL('../src/components/sim/simulator/map-receive.ts',import.meta.url),'utf8');
+const receiverJs=ts.transpileModule(receiverSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const receiver={},deferred=new Map();let decodingMap,decodedCanvas=null;const paintOverrides=[];
+const receiverMocks={
+  '@/lib/sim/test-map':{mapHasPaint:map=>!!map.paint},
+  '@/lib/sim/test-field':{
+    setTestMap:map=>{decodingMap=map;decodedCanvas=null;},
+    ensurePaintDecoded:()=>{const id=decodingMap.place.id;if(!deferred.has(id)){let resolve;const promise=new Promise(done=>{resolve=done;});deferred.set(id,{promise,resolve});}return deferred.get(id).promise;},
+    setPaintOverride:cv=>paintOverrides.push(cv),
+  },
+  '@/lib/sim/paint':{copyPaintCanvas:()=>decodedCanvas},
+};
+new Function('require','exports',receiverJs)(id=>receiverMocks[id]??require(id),receiver);
+const firstMap={...structuredClone(original),v:2,paint:'first-paint'},secondMap={...firstMap,place:{...firstMap.place,id:2,name:'Редколесье'},passages:[],paint:'second-paint'};
+const firstDraft={...structuredClone(editorRef.current),place:firstMap.place,pcv:null,ppaint:null,pdirty:false,dirty:false};
+const receiveDeps={savedMapRef:{current:firstMap},editorRef:{current:firstDraft},setEditorView:()=>{},setEditorMsg:()=>{}};
+receiver.receiveEditorMap(receiveDeps,firstMap);
+const secondDraft={...structuredClone(firstDraft),place:secondMap.place,pcv:null,ppaint:null,pdirty:false};receiveDeps.editorRef.current=secondDraft;
+receiver.receiveEditorMap(receiveDeps,secondMap);
+decodedCanvas={location:1};deferred.get(1).resolve(true);await new Promise(r=>setImmediate(r));
+assert.equal(secondDraft.pcv,null,'stale source decode cannot enter destination draft');assert.equal(paintOverrides.length,0);
+decodedCanvas={location:2};deferred.get(2).resolve(true);await new Promise(r=>setImmediate(r));
+assert.equal(secondDraft.pcv.location,2);assert.equal(paintOverrides.at(-1).location,2);
+console.log('async paint isolation between location drafts: OK');

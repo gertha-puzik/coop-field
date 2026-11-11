@@ -1,3 +1,4 @@
+import type { LocationPlace, LocationPassage } from './location-map';
 /**
  * Location-editor pure model: tool ids, brush shapes, the placing «ghost» and
  * the WYSIWYG draft of a TestMap — types plus the editor password storage key.
@@ -24,6 +25,7 @@ export const SETMAP_MIN_GAP_MS = 10000;
  *  поворотом; земля — проталина-декор; покрытие — плитка/цветы/пол на клетку,
  *  красятся протяжкой) или клетка захода (вход в боевую зону с направлением шага). */
 export type EditorTool =
+  | 'passage'
   | 'cells'
   | 'green'
   | 'erase'
@@ -69,6 +71,8 @@ export type EditorPlace = {
 
 /** Черновик локации в редакторе: рисуется на поле сразу (WYSIWYG), живёт до закрытия. */
 export type EditorDraft = {
+  place?:LocationPlace; passages?:LocationPassage[];
+  passageBrush?:{w:number;h:number;targetId:number;link:string;direction:LocationPassage["direction"]};
   zones: TestMapZone[];
   /** Препятствия черновика (камни/деревья) — едут в конфиг вместе с зонами. */
   objects: TestMapObject[];
@@ -123,12 +127,13 @@ export type EditorDraft = {
 
 
 export type EditorSnapshot = {
+  place?:LocationPlace;passages?:LocationPassage[];
   zones: TestMapZone[]; objects: TestMapObject[]; spawns: TestMapSpawn[];
   elev: Record<string,number>; cols:number; rows:number; seed?:string; margin?:number;
   paint?:ImageData|null; label?:string; dirty?:boolean;
 };
 export function editorSnapshot(d:EditorDraft,withPaint=false):EditorSnapshot {
-  const snapshot:EditorSnapshot={seed:d.seed,margin:d.margin,dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='plant'?'Растение':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
+  const snapshot:EditorSnapshot={place:d.place?{...d.place}:undefined,passages:d.passages?.map(p=>({...p})),seed:d.seed,margin:d.margin,dirty:d.dirty,zones:d.zones.map(z=>({...z})),objects:d.objects.map(o=>({...o})),spawns:d.spawns.map(s=>({...s})),elev:{...d.elev},cols:d.cols,rows:d.rows,label:d.tool==='paint'?'Мазок кисти':d.tool==='fill'?'Заливка':d.tool==='height'?'Блок высоты':d.tool==='plant'?'Растение':d.tool==='tree'?'Дерево':d.tool==='stone'?'Камень':'Изменение карты'};
   if(withPaint){
     if(!d.pcv)snapshot.paint=null;
     else snapshot.paint=d.pcv.getContext('2d')?.getImageData(0,0,d.pcv.width,d.pcv.height);
@@ -141,6 +146,7 @@ export function trimEditorHistory(d:EditorDraft):void {
   while((d.redo?.length??0)>1&&bytes>96*1024*1024)bytes-=d.redo!.shift()?.paint?.data.byteLength??0;
 }
 export function restoreEditorSnapshot(d:EditorDraft,s:EditorSnapshot):void {
+  d.place=s.place?{...s.place}:undefined;d.passages=s.passages?.map(p=>({...p}));
   d.seed=s.seed;d.margin=s.margin;
   d.zones=s.zones.map(z=>({...z}));d.objects=s.objects.map(o=>({...o}));d.spawns=s.spawns.map(p=>({...p}));d.elev={...s.elev};d.cols=s.cols;d.rows=s.rows;
   d.selRect=null;d.selFloat=null;d.sel=[];d.paintLast=undefined;d.dirty=s.dirty??true;

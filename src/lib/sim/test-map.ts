@@ -1,3 +1,4 @@
+import { sanitizeLocationFields, type LocationPlace, type LocationPassage } from './location-map.ts';
 import plantSprites from './plant-sprites.json' with { type: 'json' };
 import { terrainAt, sanitizeTerrainElev } from './terrain-shape.ts';
 /**
@@ -389,6 +390,7 @@ export function mapElevOf(map: Pick<TestMap, 'elev'>, c: number, r: number): num
 }
 
 export type TestMap = {
+  place?:LocationPlace; passages?:LocationPassage[];
   /** Версия конфига: 1 — клетки везде, 2 — деление поля на траву и боевые клетки.
    *  Старый файл с v1 сервер поднимает до дефолта v2 при загрузке (миграция). */
   v: number;
@@ -724,8 +726,10 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     if(!clean)return {error: 'слишком много участков рельефа'};
     if (Object.keys(clean).length > 0) elev = clean;
   }
+  const location=sanitizeLocationFields(src,cols,rows);if(location.error)return {error:location.error};
   return {
     map: {
+      ...location,
       v: src.v,
       cols,
       rows,

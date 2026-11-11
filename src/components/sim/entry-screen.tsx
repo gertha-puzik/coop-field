@@ -323,7 +323,8 @@ export function EntryScreen({
 
   /** Комната Элизии этого экрана: первый ряд «по аккаунту» из текущего
    *  режима — тот же id, что ушла бы из кнопки выбора комнаты. */
-  const elyRoomId = roomRows.find((row) => namedRoom(row.id)?.access === 'registered')?.id ?? null;
+  const requestedLocation=typeof window==='undefined'?'':new URLSearchParams(window.location.search).get('room')??'';
+  const elyRoomId = IS_ELYRIA&&/^test-loc-\d+$/.test(requestedLocation)?requestedLocation:roomRows.find((row) => namedRoom(row.id)?.access === 'registered')?.id ?? null;
 
   /** Автовход (Элизия): профиль полон → на поле сразу, минуя выбор комнаты.
    *  Один раз на аккаунт (перевход не долбит второй join), только по

@@ -53,7 +53,7 @@ export function clearFieldHud(cv:HTMLCanvasElement,vw:number,vh:number){
 /** Fixed left needle reads the continuously rotating day disc. No rotation of the whole HUD. */
 export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,weather:WeatherKind,weatherPrev:WeatherKind,weatherAt:number) {
   const g=clearFieldHud(cv,vw,vh);if(!g)return;
-  const r=43,cx=vw-80,cy=64,satX=cx+r-2;
+  const r=43,cx=vw-80,cy=88,satX=cx+r-2;
   g.save();g.shadowColor='rgba(0,0,0,.42)';g.shadowBlur=9;g.shadowOffsetY=3;
   circle(g,cx,cy,r+2);g.fillStyle='#132343';g.fill();g.restore();
   g.save();circle(g,cx,cy,r-2);g.clip();g.translate(cx,cy);g.rotate(-p4*Math.PI/2);

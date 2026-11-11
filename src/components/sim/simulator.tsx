@@ -1,4 +1,7 @@
 'use client';
+import { receiveEditorMap } from './simulator/map-receive';
+import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel } from './world-locations';
+import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
 import { drawRectTerrain } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
 /**
@@ -879,82 +882,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
 
   /* ---------- редактор локации «теста» ---------- */
 
-  /** Применение конфига локации (с сервера или черновика редактора): setTestMap
-   *  сбрасывает кэши — картинка и проверки ходьбы сразу считают новую локацию. */
-  const applyTestMap = useCallback((map: TestMap) => {
-    setTestMap(map);
-    savedMapRef.current = map;
-    // Пиксельная отрисовка чужого/нового конфига: декод асинхронный — как только
-    // готов, кэши контура пересобираются и поле перерисовывается уже по рисунку.
-    if (mapHasPaint(map)) void ensurePaintDecoded();
-    const d = editorRef.current;
-    if (d) {
-      // Свой только что сохранённый конфиг возвращается рассылкой «map»:
-      // черновик совпал с сохранённой локацией — метка «не сохранено» гаснет.
-      const same =
-        (d.seed??map.seed)===map.seed && (d.margin??map.margin)===map.margin &&
-        d.cols === map.cols &&
-        d.rows === map.rows &&
-        JSON.stringify(d.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) ===
-          JSON.stringify(map.zones.map((z) => [z.name, z.kind, z.c0, z.r0, z.c1, z.r1])) &&
-        JSON.stringify(d.objects.map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? 1, o.rot ?? 0, o.spr ?? null, o.cv ?? null, o.mir ?? 0])) ===
-          JSON.stringify((map.objects ?? []).map((o) => [o.kind, o.x ?? o.c, o.y ?? o.r, o.s ?? 1, o.rot ?? 0, o.spr ?? null, o.cv ?? null, o.mir ?? 0])) &&
-        JSON.stringify(d.spawns.map((s) => [s.c, s.r])) ===
-          JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r])) &&
-        JSON.stringify(d.elev) === JSON.stringify(map.elev ?? {}) &&
-        (d.pcv ? d.ppaint ?? '' : '') === (map.paint ?? '');
-      if (same) {
-        for(const entry of [...d.undo,...(d.redo??[])])entry.dirty=true;
-        d.dirty = false;
-        d.seed=map.seed;d.margin=map.margin;
-        d.zones = map.zones.map((z) => ({ ...z }));
-        d.objects = (map.objects ?? []).map((o) => ({ ...o }));
-        d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
-        d.elev = { ...(map.elev ?? {}) };
-        setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
-        return;
-      }
-    }
-    if (!d) return;
-    d.undo=[];d.redo=[];
-    if (d.dirty) {
-      // Внешняя карта при открытом черновике с правками: несводимую правку не
-      // слить с чужим конфигом — черновик сбрасывается на новую карту целиком
-      // (как при открытии редактора), игрок видит предупреждение в панели.
-      d.undo = [];
-      d.sel = [];
-      d.drag = null;
-      d.dirty = false;
-      setEditorMsg('Локацию сохранил другой игрок — несохранённая правка черновика сброшена на новую карту.');
-    }
-    d.seed=map.seed;d.margin=map.margin;
-    d.zones = map.zones.map((z) => ({ ...z }));
-    d.objects = (map.objects ?? []).map((o) => ({ ...o }));
-    d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
-    d.elev = { ...(map.elev ?? {}) };
-    d.cols = map.cols;
-    d.rows = map.rows;
-    // Холст кисти переснимается из рисунка новой карты — те же вызовы, что
-    // начальный снапшот при открытии редактора. Без этого pcv остаётся в
-    // размерах старой карты: кисть красит в старых координатах (WYSIWYG
-    // сломан), а сохранение молча переносит старый холст 1:1 (encodeDraftPaint).
-    d.pundo = [];
-    d.pdirty = false;
-    d.ppaint = map.paint??null;
-    d.pcv = copyPaintCanvas();
-    if (!d.pcv && mapHasPaint(map)) {
-      // Рисунок новой карты ещё декодируется: снимок снимется по готовности
-      // (как при открытии редактора); кисть до того ленивая и создаст холст
-      // уже в размерах новой карты (ensureDraftPaint).
-      void ensurePaintDecoded().then((ok2) => {
-        const e = editorRef.current;
-        if (!ok2 || !e || e.pcv || e.pdirty) return;
-        e.pcv = copyPaintCanvas();
-        if (e.pcv) setPaintOverride(e.pcv, true);
-      });
-    }
-    setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
-  }, []);
+  const applyTestMap = useCallback((map:TestMap)=>receiveEditorMap({savedMapRef,editorRef,setEditorView,setEditorMsg},map),[]);
 
   const {
     syncEditorView,
@@ -1123,7 +1051,34 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /** Принудительное выключение боя на входе в комнату (свежий спавн) — это не
    *  «выход из боя», телепорт на клетку выхода не нужен. */
   const suppressExitTeleportRef = useRef(false);
+  const world=useWorldLocations({
+    enabled:IS_ELYRIA&&mode==='elision',
+    engine:engineRef,settings:settingsRef,editor:editorRef,editorOpen:editorOpenRef,net:netRef,
+    foot:freeFoot,map:currentTestMap,yaw:()=>camYawRef.current,
+    ready:()=> (!paintActive()||paintReady()) && elisionStatusRef.current!=='pending' &&
+      (!paintActive()||elisionStatusRef.current==='fallback'||elisionViewRef.current?.ground==='paint') &&
+      !!spritesRef.current[settingsRef.current.character.sprite]?.complete,
+    support:(x,y)=>supportLevelAt(x,y)*TERRAIN_LIFT_PX,
+    walkable:(x,y)=>{
+      const f=freeFoot(),e=engineRef.current;
+      return testPeacePointFree(x,y)&&Math.abs(terrainPointLevelAt(x,y)-terrainPointLevelAt(e.fx+f.dx,e.fy+f.dy))<=1;
+    },
+    moving:freeSyncRef,
+    cancelInputs:()=>{
+      if(spaceHoldRef.current.holding)netRef.current?.emit('space',{on:false,cancel:true});
+      spaceHoldRef.current={holding:false,since:0,releaseAt:0,charge:0};leapRequestRef.current=null;
+      sprintRef.current=false;engineRef.current.leap=null;engineRef.current.leapZ=0;
+      sprintPartsRef.current.length=0;groundEffectsRef.current.rain.length=0;groundEffectsRef.current.rainBudget=0;
+    },
+    openEditor:()=>{if(whoami?.role==='admin')openEditorBase();},closeEditor,
+  });
+  const changeLocationDraft=(change:(d:EditorDraft)=>void)=>{
+    const d=editorRef.current;if(!d)return;
+    pushEditorUndo(false,'Изменение локации мира');change(d);d.dirty=true;refreshEditorPreview();syncEditorView();
+  };
+
   useSimNet({
+    onWorldField:world.onField,onWorldInfo:world.onInfo,onWorldLocations:world.onCatalogue,onWorldDisconnect:world.onDisconnect,
     loaded,
     netStarted,
     setChatLines,
@@ -1646,6 +1601,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     };
 
     const update = (now: number, dt: number) => {
+      if(world.tick(now,dt))return;
       stepRemoteDraws(liveRemotesRef.current, remoteDrawRef.current, now);
       const s = settingsRef.current;
       const e = engineRef.current;
@@ -4207,6 +4163,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             if (frame.editor && draft) drawTerrainEditorOverlay(hudRef.current, frame, {
               draft, hover: engineRef.current.hover, placement: editorPlaceRef.current, selectionCanvas: editorSelRef.current?.cv,
             });
+            if(frame.editor&&draft){
+              const b=draft.passageBrush??{w:1,h:1,targetId:(draft.place?.id??1)===1?2:1,link:'',direction:'right' as const},p=draft.terrainCursor;
+              const ghost:LocationPassage|undefined=draft.tool==='passage'&&p?{...b,id:'preview',x:Math.max(0,Math.min(draft.cols-b.w,p.x-b.w/2)),y:Math.max(0,Math.min(draft.rows-b.h,p.y-b.h/2))}:undefined;
+              drawLocationPassages(hudRef.current,frame,draft.passages??[],ghost);
+            }
+
           } catch (error) {
             console.warn('[elision] WebGL-вид упал — остаётся прежний холст', error);
             try {
@@ -4795,6 +4757,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             (use-touch-controls.ts). Монтируется только вне редактора:
             редактор локации глушит и клавиши, и тач в одном стиле. */}
         <FieldStage
+        worldOverlay={testField?<WorldLocationOverlay world={world} editorOpen={editorOpen}/>:null}
           fieldFrameRef={fieldFrameRef}
           testField={testField}
           fieldFit={fieldFit}
@@ -4827,6 +4790,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           editorOverlay={
             editorOpen && editorView ? (
               <EditorOverlay
+        worldPanel={editorView?<LocationEditorPanel draft={editorView} places={world.places} change={changeLocationDraft} sync={syncEditorView} switchLocation={world.switchEditor}/>:null}
+        passagePanel={editorView?<PassageEditorPanel draft={editorRef.current??editorView} places={world.places} change={changeLocationDraft} sync={syncEditorView} switchLocation={world.switchEditor}/>:null}
                 rotateCamera={(direction) => { camYawTargetRef.current += direction*Math.PI/2; }}
                 editorRef={editorRef}
                 syncEditorView={syncEditorView}

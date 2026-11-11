@@ -47,7 +47,7 @@ function docEvents(heading) {
 }
 
 const docClient = docEvents("### Client → server (23)");
-const docServer = docEvents("### Server → client (23)");
+const docServer = docEvents("### Server → client (24)");
 const regClient = [...protocol.CLIENT_EVENTS];
 const regServer = [...protocol.SERVER_EVENTS];
 

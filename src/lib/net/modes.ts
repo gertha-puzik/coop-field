@@ -103,7 +103,7 @@ export const NAMED_ROOMS: readonly NamedRoom[] = IS_ELYRIA
  * должен даже показывать код закрытой комнаты (спек §11 room discovery).
  */
 export function isRegisteredOnlyCode(id: string): boolean {
-  if (id === "test") return true;
+  if (id === "test" || /^test-loc-\d+$/.test(id)) return true;
   const hit = NAMED_ROOMS.find((r) => r.id === id);
   return hit?.access === "registered";
 }

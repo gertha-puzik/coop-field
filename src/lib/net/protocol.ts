@@ -72,7 +72,7 @@ export const CLIENT_TO_SERVER = [
   "auth",
 ] as const;
 
-/** Сервер → клиент, 23 события. Порядок — как в таблице AGENTS.md. */
+/** Сервер → клиент, 24 события. Порядок — как в таблице AGENTS.md. */
 export const SERVER_TO_CLIENT = [
   "you",
   "field",
@@ -97,12 +97,13 @@ export const SERVER_TO_CLIENT = [
   "freemove",
   "roomsinfo",
   "whoami",
+  "locations",
 ] as const;
 
 export type ClientEventName = (typeof CLIENT_TO_SERVER)[number];
 export type ServerEventName = (typeof SERVER_TO_CLIENT)[number];
 
-/** Все 36 уникальных имён протокола одним словарём для кода (диспетчер coop.ts).
+/** Все 37 уникальных имён протокола одним словарём для кода (диспетчер coop.ts).
  *  «move»/«chat» и ещё 8 имён ходят в обе стороны — ключ один. Имя с пробелом —
  *  только как значение: в коде пишем EV.UPDATE_CAT, на проводе — "update cat". */
 export const EV = {
@@ -134,6 +135,7 @@ export const EV = {
   RAB_STATE: "rabState",
   ROOMSINFO: "roomsinfo",
   WHOAMI: "whoami",
+  LOCATIONS: "locations",
   // обе стороны
   MOVE: "move",
   CHAT: "chat",
