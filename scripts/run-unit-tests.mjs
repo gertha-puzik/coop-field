@@ -25,6 +25,7 @@ const TESTS = [
   "scripts/test-editor-save.mjs",
   "scripts/test-handbook.mts",
   "scripts/test-elision-scene.mts",
+  "scripts/test-sprite-aspect.mts",
   // Волна C (агент-спека): регресс-пакеты слоёв, доступных без стенда.
   "scripts/test-combat-legacy.mts",
   "scripts/test-cfg-guard.mts",
