@@ -51,10 +51,13 @@ async function client(cookie = '') {
 try {
     await start();
     const cookie = await login();
+    const appearance = await fetch(origin + '/profiles/me', { method: 'PATCH', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ scale: 67 }) });
+    assert.equal(appearance.status, 200);
     const a = await client(cookie), b = await client(cookie), guest = await client();
     a.send('join', { room: 'test', login: 'World A' });
     const first = await a.wait(f => f[0] === 'field');
     assert.equal(first.width, 12);
+    assert.equal(first.cats[0].size, 67, 'saved profile size survives joins without an override');
     assert.equal(first.map.place.id, 1);
     assert.equal(first.locations.length, 2);
     b.send('join', { room: 'test-loc-2', login: 'World B' });
@@ -99,6 +102,7 @@ try {
     const arrived = await a.wait(f => f[0] === 'field' && f[1].room === 'test-loc-2', n);
     const me = arrived.cats.find(c => c.id === a.frames.slice(n).find(f => f[0] === 'you')[1].id);
     assert.equal(me.fm, 1);
+    assert.equal(me.size, 67, 'passage retains saved height');
     assert(me.fx + .45 >= 0 && me.fx + .45 < 10 && me.fy + .95 >= 0 && me.fy + .95 < 10, 'fallback arrival is on destination map');
     // Rename and passage edits affect only the destination file/room.
     const observer=await client(cookie);observer.send('join',{room:'test'});await observer.wait(f=>f[0]==='field');
@@ -130,6 +134,7 @@ try {
     const reconnect = await client(cookie);
     reconnect.send('join', { room: 'test-loc-2' });
     const restored = await reconnect.wait(f => f[0] === 'you');
+    assert.equal(restored.size, 67, 'reconnect retains saved height');
     assert(Math.abs(restored.fx - position.fx) < .02 && Math.abs(restored.fy - position.fy) < .02, 'reconnect restores this location position');
     const resume=await client(cookie);resume.send('join',{room:'test',resume:true});const resumed=await resume.wait(f=>f[0]==='field');assert.equal(resumed.room,'test-loc-2','fresh world entry resumes the latest location');
     const explicit=await client(cookie);explicit.send('join',{room:'test'});assert.equal((await explicit.wait(f=>f[0]==='field')).room,'test','explicit Valley room still opens Valley');

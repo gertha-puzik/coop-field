@@ -18,6 +18,7 @@ const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
 // поднятого сервера и без сети — это юнит-слой) и добавь сюда одну строку.
 const TESTS = [
   "scripts/test-keys.mts",
+  "scripts/test-network-appearance.mjs",
   "scripts/test-remote-aim.mts",
   "scripts/test-move-book.ts",
   "scripts/test-elev-rules.mts",

@@ -358,7 +358,7 @@ function joinInWorld(ws, payload = {},options={}) {
   const login = uniqueLogin(room, sanitizeLogin(wantedName, NAMES[slot] || `Кот ${slot + 1}`));
   // Рост модельки, выбранный при спавне: клиент шлёт проценты (60–100).
   // Вне диапазона/не число — 100% (обычный рост).
-  const sizeRaw = Number(payload.size);
+  const sizeRaw = Number(payload.size ?? fromAccount?.size);
   const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
   const cat = {
     id: nextId++,
