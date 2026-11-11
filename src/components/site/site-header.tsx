@@ -115,7 +115,7 @@ export function SiteHeader({ ghost = false }: { ghost?: boolean }) {
    *  массив. Элизия-маршруты — только в инлайн-тернарниках над
    *  IS_ELYRIA (правило P3: grotto-сборка вырезает литералы, DCE). */
   const navItems = [
-    { key: 'home', label: 'Главная', href: '/' },
+    { key: 'home', label: 'Главная', href: IS_ELYRIA ? 'https://abnocw.phainonsmilk.ru/' : '/' },
     { key: 'game', label: 'Игровая комната', href: IS_ELYRIA ? '/game/' : '/' },
     { key: 'players', label: 'Игроки', href: IS_ELYRIA ? '/players/' : '/' },
     { key: 'profile', label: 'Мой профиль', href: myProfileHref(me) },

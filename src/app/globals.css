@@ -393,12 +393,19 @@
   }
 }
 
-/* Курсор-лапка: PawCursor (src/components/ui/paw-cursor.tsx) подменяет
-   --paw-cursor (нейтраль) и --paw-cursor-hover (коготки) повёрнутыми
-   вариантами lapka.svg, статичные стейты — --paw-cursor-grab/grabbing/aim.
-   До инициализации, без JS и при prefers-reduced-motion действует
-   статичный фолбэк. Список курсора обязан завершаться generic-keyword
-   (Chrome отвергает списки из одних url()). */
+/* Одна неизменная лапка с наклоном влево; на поле — её маленькая копия.
+   Все состояния используют тот же рисунок, без когтей, сжатия и рамки.
+   Статические SVG работают до JS и при prefers-reduced-motion. */
+.paw-click-wave {
+  position: fixed;
+  z-index: 2147483647;
+  width: 28px;
+  height: 22px;
+  border: 1px solid rgba(255, 246, 232, 0.65);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
 body {
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
@@ -408,6 +415,9 @@ body {
    @layer, чтобы оно побеждало и UA-стиль, и tailwind cursor-*. Выключенные
    пункты остаются с нейтральной лапкой и not-allowed — список по-прежнему
    открывается и выбирается клавиатурой. */
+a[href],
+button,
+[role='button'],
 select,
 option,
 summary,
@@ -424,9 +434,8 @@ option:disabled,
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), not-allowed;
 }
 
-/* Стейты лапки поверх tailwind-классов (unlayered правила выше
-   @layer utilities): прицел на игровом поле, захват/перетаскивание
-   в каруселях. Tailwind-класс в разметке остаётся фолбэком до JS. */
+/* Размер лапки поверх tailwind-классов: маленькая на поле,
+   обычная при перетаскивании. Форма и угол всегда одинаковые. */
 .cursor-crosshair {
   cursor: var(--paw-cursor-aim), crosshair;
 }
