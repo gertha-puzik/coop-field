@@ -2,6 +2,15 @@
    в игре (переменные --ed-*) и body.uk-editor-page в KNS Paint
    (мост подключает этот же файл, копию редактора не красит). */
 
+/* Общие неподвижные курсоры для сайта и отдельной страницы Paint. */
+:root {
+  --paw-cursor: url('/paw-cursor.svg?v=static-tilt') 20 20;
+  --paw-cursor-hover: var(--paw-cursor);
+  --paw-cursor-grab: var(--paw-cursor);
+  --paw-cursor-grabbing: var(--paw-cursor);
+  --paw-cursor-aim: url('/paw-cursor-small.svg?v=static-tilt') 12 12;
+}
+
 .uk-editor,
 body.uk-editor-page {
   --ed-bg: #1c1b27;
