@@ -96,7 +96,7 @@ S4: `loopback` на прод-классе хоста = темп-лимиты aut
 | --- | --- | --- |
 | `guest` | нет сессии | гроты, demo, голодные игре, справочник. **Не** Элизия (join-отказ `auth_required`, даже прямым WS) |
 | `registered` | регистрация | + Элизия, свой профиль (PATCH /profiles/me), страницы /players |
-| `admin` | только одноразовый CLI владелицы: `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет). Env `BOOTSTRAP_ADMIN` отныне МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin. `setmap` принимает только role=admin в комнате test; пароль не проверяется |
+| `admin` | два пути: (1) одноразовый CLI `node scripts/make-admin.mjs <login> [pass]` (server остановлен; повышает существующий аккаунт с сохранением пароль-хеша ИЛИ создаёт аккаунт сразу с ролью; повтор — idempotent; понижения не умеет) — первый админ / офлайн; (2) живой админ через `POST /admin/players/promote {login}` (панель «Игроки на поле», role-gate admin, CSRF). Env `BOOTSTRAP_ADMIN` МИГРАЦИОННЫЙ: имена читаются, но при регистрации роли НЕ назначают — сервер пишет в лог warning «bootstrap имя занято; назначьте роль через scripts/make-admin.mjs». Поле `role` в `accounts.json` — прямой путь для migrateStore (существующие админы старого механизма сохраняются при старте) | + GET/POST /cfg/admin-роуты (реестр, история, restore, export/import), админ-вкладки панели (ролевой рендер), дашборд /admin, `POST /admin/players/promote`. `setmap` принимает только role=admin в комнате test; пароль не проверяется |
 
 Права проверяет **сервер** (сессия), UI только рендерит по `whoami.role`. Клиентский
 «пароль вкладок» снят (P3): вкладки `admin:true` в settings-panel рендерятся только при
@@ -314,7 +314,7 @@ main; репо-часть конвейера в этой ветке — толь
 | `server/auth.js` | 538 | сессии, cookie HttpOnly host-only/Lax/Secure, матрица токенов, rate-лимиты, /auth/* |
 | `server/modes.js` | 45 | каталог комнат + RETIRED_ROOMS (combat→grot-1) |
 | `server/room.js` | 460 | join-гейт `auth_required`, roomsinfo-призрак, алиас roomOf, потолок живых комнат ROOMS_MAX → rooms_full (S5b) |
-| `server/accounts.js` | 372 | scrypt-стор, publicAccount/publicProfile, BOOTSTRAP_ADMIN миграционный + promoteToAdmin только из make-admin CLI (S1), MAX_ACCOUNTS |
+| `server/accounts.js` | 507 | scrypt-стор, publicAccount/publicProfile, BOOTSTRAP_ADMIN миграционный + promoteToAdmin (CLI make-admin и POST /admin/players/promote), MAX_ACCOUNTS |
 | `server/profiles.js` | 430 | HTTP /profiles*: каталог (?q/?limit/?cursor), карточка, правка своего профиля |
 | `server/cfg-registry.js` | 295 | whitelist 5 ключей + формулы клэмпов (maxStrikeDamage, snapArmorToUniverse) + метаданные списочных мутаций (B2) |
 | `server/runtime-config.js` | 357 | значения v2, read-time миграция v1, бэкапы, HTTP /cfg(+admin-роуты) |

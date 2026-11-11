@@ -1,19 +1,18 @@
 'use client';
 
 /**
- * Вкладка «Игроки на поле» дашборда /admin (спека: админ-операция «сброс
- * положения игрока на поле»). Живые комнаты и коты с координатами — список
- * читается(GET /admin/players) прямо из комнатного состояния сервера (без
- * копии), обновляется сам раз в 5 секунд и после каждой операции.
+ * Вкладка «Игроки на поле» дашборда /admin. Живые комнаты и коты с
+ * координатами — список читается (GET /admin/players) прямо из комнатного
+ * состояния сервера, обновляется сам раз в 5 секунд и после каждой операции.
  *
- * Операция: кнопка «Сброс на спавн» → инлайн-подтверждение (второй клик),
- * как у деструктивных кнопок конфиг-панели — никакого window.confirm. POST
- * /admin/players/reset {room, login} переносит кота на свежую клетку спавна,
- * кадр EV.MOVE доезжает всем в комнате, персистная точка кота стирается.
+ * Операции (инлайн-подтверждение вторым кликом, без window.confirm):
+ *   - «Сброс на спавн» → POST /admin/players/reset {room, login};
+ *   - «Сделать админом» у кота с аккаунтом → POST /admin/players/promote
+ *     {login: accountLogin};
+ *   - форма «Логин аккаунта» вверху — та же promote для офлайн-игрока.
  *
- * Отказы человекочитаемы: сервер отвечает message («комнаты нет», «кота
- * нет», «нет свободной клетки спавна»), сорца — принцип каталога игроков
- * (humanError); тех-тело ответа показываем в деталях, обрезки нет.
+ * Отказы человекочитаемы: сервер отвечает message, сорца — humanError;
+ * тех-тело ответа показываем в деталях.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import {
   httpAdminPlayers,
   httpAdminPlayerReset,
+  httpAdminPlayerPromote,
   type AdminFieldRoom,
 } from '@/lib/net/http-admin-ops';
 
@@ -29,8 +29,7 @@ const REFRESH_MS = 5000;
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
-/** Человекочитаемое пояснение machine reason (паттерн каталога игроков:
- *  primary — понятная строка, technical reason — вторично). */
+/** Человекочитаемое пояснение machine reason (паттерн каталога игроков). */
 function humanError(reason: string | undefined, fallback: string): string {
   switch (reason) {
     case 'auth_required':
@@ -46,6 +45,8 @@ function humanError(reason: string | undefined, fallback: string): string {
       return 'Кота с таким именем в комнате нет.';
     case 'no_free_cell':
       return 'На поле нет свободной клетки спавна.';
+    case 'no_such_login':
+      return 'Такого аккаунта нет — нужен логин входа, не имя кота на поле.';
     case 'invalid_login':
       return 'Не указано имя кота.';
     case 'invalid':
@@ -68,9 +69,10 @@ function spriteUrl(sprite: string): string {
 export function PlayersFieldTab() {
   const [rooms, setRooms] = useState<AdminFieldRoom[] | null>(null);
   const [status, setStatus] = useState<Status>(null);
-  /** Инлайн-подтверждение конкретной строки «room/login»; отмена — ничего не отправлено. */
+  /** Инлайн-подтверждение: `reset:room/login` | `promote:accountLogin` | `promote-form`. */
   const [armed, setArmed] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [promoteLogin, setPromoteLogin] = useState('');
   const aliveRef = useRef(true);
 
   const reload = useCallback(async () => {
@@ -99,7 +101,7 @@ export function PlayersFieldTab() {
 
   const resetCat = useCallback(
     async (room: string, login: string) => {
-      const key = `${room}/${login}`;
+      const key = `reset:${room}/${login}`;
       setBusy(key);
       const res = await httpAdminPlayerReset(room, login);
       setBusy(null);
@@ -112,6 +114,33 @@ export function PlayersFieldTab() {
       setStatus({
         kind: 'err',
         text: humanError(res.reason, `Не удалось сбросить «${login}» на спавн.`),
+        details: res.details || res.message || undefined,
+      });
+      await reload();
+    },
+    [reload],
+  );
+
+  const promoteAccount = useCallback(
+    async (login: string, armKey: string) => {
+      const trimmed = login.trim();
+      if (!trimmed) {
+        setStatus({ kind: 'err', text: 'Введите логин аккаунта.' });
+        return;
+      }
+      setBusy(armKey);
+      const res = await httpAdminPlayerPromote(trimmed);
+      setBusy(null);
+      if (res.ok === true) {
+        setArmed(null);
+        if (armKey === 'promote-form') setPromoteLogin('');
+        setStatus({ kind: 'ok', text: res.message });
+        await reload();
+        return;
+      }
+      setStatus({
+        kind: 'err',
+        text: humanError(res.reason, res.message || `Не удалось выдать админку «${trimmed}».`),
         details: res.details || res.message || undefined,
       });
       await reload();
@@ -138,6 +167,58 @@ export function PlayersFieldTab() {
         </div>
       ) : null}
 
+      <section className="rounded-xl border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] p-4">
+        <p className="text-sm font-bold text-[var(--sim-text)]">Права администратора</p>
+        <p className="mt-1 text-[11px] text-[var(--sim-text-soft)]">
+          Логин аккаунта (вход в Элизию), не имя кота на поле. Снять права из панели нельзя.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={promoteLogin}
+            onChange={(e) => setPromoteLogin(e.target.value)}
+            placeholder="логин аккаунта"
+            maxLength={24}
+            className="h-8 min-w-[10rem] flex-1 rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)] outline-none focus:border-[var(--sim-line-strong)]"
+            disabled={busy !== null}
+          />
+          {armed === 'promote-form' ? (
+            <span className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 border-amber-900/70 bg-amber-950/60 px-2 text-[11px] text-amber-100 hover:bg-amber-900/60"
+                disabled={busy !== null}
+                onClick={() => void promoteAccount(promoteLogin, 'promote-form')}
+              >
+                Подтверждаю — сделать админом
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 text-[11px]"
+                disabled={busy !== null}
+                onClick={() => setArmed(null)}
+              >
+                Отмена
+              </Button>
+            </span>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px]"
+              disabled={busy !== null || !promoteLogin.trim()}
+              onClick={() => setArmed('promote-form')}
+            >
+              Сделать админом
+            </Button>
+          )}
+        </div>
+      </section>
+
       {rooms === null ? (
         <p className="text-sm text-[var(--sim-text-soft)]">Загружаем занятость поля…</p>
       ) : rooms.length === 0 ? (
@@ -155,9 +236,11 @@ export function PlayersFieldTab() {
             </p>
             <ul className="mt-2 flex flex-col gap-1.5">
               {r.cats.map((c) => {
-                const key = `${r.room}/${c.login}`;
-                const isArmed = armed === key;
-                const isBusy = busy === key;
+                const resetKey = `reset:${r.room}/${c.login}`;
+                const promoteKey = c.accountLogin ? `promote:${c.accountLogin}` : null;
+                const isResetArmed = armed === resetKey;
+                const isPromoteArmed = promoteKey !== null && armed === promoteKey;
+                const isBusy = busy === resetKey || (promoteKey !== null && busy === promoteKey);
                 return (
                   <li
                     key={c.id}
@@ -171,44 +254,90 @@ export function PlayersFieldTab() {
                       loading="lazy"
                     />
                     <span className="text-sm font-semibold text-[var(--sim-text)]">{c.login}</span>
+                    {c.accountRole === 'admin' ? (
+                      <span className="rounded border border-amber-800/60 bg-amber-950/40 px-1.5 py-0.5 text-[10px] text-amber-200">
+                        админ
+                      </span>
+                    ) : null}
+                    {c.accountLogin && c.accountLogin !== c.login ? (
+                      <span className="text-[11px] text-[var(--sim-text-faint)]">акк. {c.accountLogin}</span>
+                    ) : null}
                     <span className="text-[11px] text-[var(--sim-text-soft)]">
                       клетка {c.x}, {c.y}
                       {c.fm === 1 && c.fx !== null && c.fy !== null ? ` · точка ${c.fx.toFixed(1)}, ${c.fy.toFixed(1)}` : ''}
                     </span>
-                    {isArmed ? (
-                      <span className="ml-auto flex items-center gap-1.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-7 border-red-900/70 bg-red-950/60 px-2 text-[11px] text-red-200 hover:bg-red-900/60"
-                          disabled={busy !== null}
-                          onClick={() => void resetCat(r.room, c.login)}
-                        >
-                          Подтверждаю — сбросить на спавн
-                        </Button>
+                    <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+                      {c.accountLogin && c.accountRole !== 'admin' ? (
+                        isPromoteArmed ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-7 border-amber-900/70 bg-amber-950/60 px-2 text-[11px] text-amber-100 hover:bg-amber-900/60"
+                              disabled={busy !== null}
+                              onClick={() => void promoteAccount(c.accountLogin!, promoteKey!)}
+                            >
+                              Подтверждаю — админ
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              disabled={busy !== null}
+                              onClick={() => setArmed(null)}
+                            >
+                              Отмена
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={busy !== null || isBusy}
+                            onClick={() => setArmed(promoteKey)}
+                          >
+                            Сделать админом
+                          </Button>
+                        )
+                      ) : null}
+                      {isResetArmed ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-7 border-red-900/70 bg-red-950/60 px-2 text-[11px] text-red-200 hover:bg-red-900/60"
+                            disabled={busy !== null}
+                            onClick={() => void resetCat(r.room, c.login)}
+                          >
+                            Подтверждаю — сбросить на спавн
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            disabled={busy !== null}
+                            onClick={() => setArmed(null)}
+                          >
+                            Отмена
+                          </Button>
+                        </>
+                      ) : (
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
                           className="h-7 text-[11px]"
-                          disabled={busy !== null}
-                          onClick={() => setArmed(null)}
+                          disabled={busy !== null || isBusy}
+                          onClick={() => setArmed(resetKey)}
                         >
-                          Отмена
+                          Сброс на спавн
                         </Button>
-                      </span>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="ml-auto h-7 text-[11px]"
-                        disabled={busy !== null || isBusy}
-                        onClick={() => setArmed(key)}
-                      >
-                        Сброс на спавн
-                      </Button>
-                    )}
+                      )}
+                    </span>
                   </li>
                 );
               })}
