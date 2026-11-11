@@ -12,6 +12,13 @@ const mocks = {
     catToDummy: c => ({ id: `p${c.id}`, sprite: c.sprite, scale: c.size ?? 100, col: c.x - 1, row: c.y - 1 }),
   },
   '@/lib/sim/sprite-catalog': { ensureFieldSprite: id => registered.add(id) },
+  // Зеркало catScaleOf из sprite-aspect.ts — onYou тянет его после merge с #136.
+  '@/lib/sim/sprite-aspect': {
+    catScaleOf: (size) => {
+      const raw = Math.round(Number(size));
+      return Number.isFinite(raw) && raw >= 60 && raw <= 100 ? raw : 100;
+    },
+  },
   '@/lib/net/move-book': { seedRemoteDraw: x => x },
   '@/lib/sim/remote-aim': { createRemoteAim: noop },
   '@/lib/sim/settings': { SPRITES: [] },
