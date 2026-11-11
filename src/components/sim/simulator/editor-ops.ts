@@ -473,7 +473,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     if (drag.erase || d.tool === 'erase') {
       d.zones = d.zones.flatMap((z) => subtractFromZone(z, { c0, r0, c1, r1 }));
       // ластик снимает препятствия (по точке опоры), клеточные объекты
-      // (землю/покрытие/заход) и клетки спавна внутри стёртого прямоугольника
+      // (землю/покрытие/тропинку/заход) и клетки спавна внутри стёртого прямоугольника
       d.objects = d.objects.filter((o) => {
         if (o.kind === 'stone' || o.kind === 'tree' || o.kind === 'plant') {
           const b = objectBase(o);

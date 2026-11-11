@@ -13,6 +13,7 @@ import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { spriteAspectOf } from '@/lib/sim/sprite-aspect';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
+import { drawPathSurface } from '@/lib/sim/path-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
@@ -143,6 +144,10 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
           (o.r + 0.5 + po.dy) * cellH, hashStr(o.id) & 7);
       }
     }
+  }
+  // Тропинка не запекается в кисть — рисуется поверх зон/paint, клип по кромке.
+  if (geo.pathGeo) {
+    drawPathSurface(g, geo.pathGeo.path, geo.pathGeo.tufts, cellW, cellH);
   }
   // Soft level tint: every higher surface is lighter, without covering the texture.
   for (const b of terrainTiles(effectiveElevRecord(map),cols,rows)) {

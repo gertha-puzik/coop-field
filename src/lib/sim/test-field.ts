@@ -44,6 +44,7 @@ import {
   type TestMapZone,
 } from './test-map';
 import { PACK_TUFT_COUNT, coverPattern, stonePattern, packImg, type PackName } from './textures';
+import { buildPathGeo, type PathGeo } from './path-field';
 
 /** Код комнаты с новым форматом (сервер принимает только латиницу). */
 export const TEST_ROOM_ID = 'test';
@@ -2094,6 +2095,8 @@ type GeoCache = {
   /** bbox полигона в px — границы камеры */
   bboxPx: { x0: number; y0: number; x1: number; y1: number };
   decor: DecorItem[];
+  /** Тропинка: контур + травинки; null если клеток path нет. */
+  pathGeo: PathGeo | null;
 };
 
 let geoCache: GeoCache | null = null;
@@ -2103,7 +2106,13 @@ let geoCache: GeoCache | null = null;
  * bbox и декор. Считается один раз; перегенерируется при смене размера клетки.
  */
 export function testFieldGeometry(cellW = 100, cellH = 150): GeoCache {
-  const key = `${cellW}x${cellH}`;
+  // Ключ включает состав тропинки: правка path-клеток в редакторе сбрасывает кэш.
+  const pathSig = (currentMap.objects ?? [])
+    .filter((o) => o.kind === 'path')
+    .map((o) => `${o.c},${o.r}`)
+    .sort()
+    .join(';');
+  const key = `${cellW}x${cellH}|${currentMap.seed}|${pathSig}`;
   if (geoCache && geoCache.key === key) return geoCache;
   const polygon = islandPolygon();
   const path = new Path2D();
@@ -2137,6 +2146,7 @@ export function testFieldGeometry(cellW = 100, cellH = 150): GeoCache {
     bboxPx: { x0: bb.x0 * cellW, y0: bb.y0 * cellH, x1: bb.x1 * cellW, y1: bb.y1 * cellH },
     // С рисунком процедурного декора нет: кисть сама рисует траву, цветы и кусты.
     decor: paintReady() ? [] : buildTestDecor(polygon, currentMap.seed),
+    pathGeo: buildPathGeo(currentMap.objects, currentMap.cols, currentMap.rows, currentMap.seed, cellW, cellH),
   };
   return geoCache;
 }
