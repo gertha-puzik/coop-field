@@ -61,6 +61,9 @@ const tools:{id:EditorTool;label:string;icon:string;category:Category;key?:strin
   {id:'plant',label:'Растения',icon:'tree',category:'objects'},
   {id:'tree',label:'Дерево',icon:'tree',category:'objects'},
   {id:'stone',label:'Камень',icon:'rock',category:'objects'},
+  {id:'path',label:'Тропинка',icon:'path',category:'surface'},
+  {id:'dirt',label:'Земля',icon:'dirt',category:'surface'},
+  {id:'ground',label:'Покрытие',icon:'ground',category:'surface'},
   {id:'height',label:'Блок',icon:'layers',category:'terrain'},
   {id:'raise',label:'Насыпать',icon:'up',category:'terrain'},
   {id:'lower',label:'Срыть',icon:'down',category:'terrain'},
@@ -85,6 +88,8 @@ const paths:Record<string,string>={
  grid:'M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18',
  up:'M12 21V3 M5 10l7-7 7 7',down:'M12 3v18 M5 14l7 7 7-7',flat:'M3 12h18',
  enter:'M10 3h11v18H10 M2 12h13 M10 7l5 5-5 5',pin:'M12 22S3 13 3 9a9 9 0 1118 0c0 4-9 13-9 13z M12 6v5',
+ path:'M3 17c3-6 5-4 8-8s5-2 10-6 M4 19c4-5 6-3 9-7',dirt:'M4 16c2-6 6-10 8-10s6 4 8 10z M7 14h10',
+ ground:'M3 18h18 M5 18V9l7-5 7 5v9 M9 18v-5h6v5',
 };
 function Icon({name}:{name:string}){return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={paths[name]??paths.zone}/></svg>;}
 function NumberField({label,value,min,max,step=1,onChange}:{label:string;value:number;min:number;max:number;step?:number;onChange:(n:number)=>void}){
@@ -163,6 +168,9 @@ export function EditorOverlay(p:EditorOverlayProps){
        {q?<div className={styles.results}>{searchResults.length?searchResults.map(r=><button type="button" key={r.id} onClick={()=>{r.run();setQuery('');}}><span>{r.label}</span><small>{r.kind}</small></button>):<p className={styles.hint}>Ничего не найдено. Попробуйте «трава» или «камень».</p>}</div>:<>
        {section==='surface'&&<>
          <div className={styles.segment}>{tools.filter(t=>['paint','fill'].includes(t.id)).map(toolButton)}<button type="button" aria-label="Ластик" aria-pressed={d.tool==='paint'&&d.pmat==='erase'} onClick={erase}><Icon name="eraser"/>Ластик</button></div>
+         <h3>Клеточные настилы</h3>
+         <div className={styles.toolGrid}>{tools.filter(t=>['path','dirt','ground'].includes(t.id)).map(toolButton)}</div>
+         <p className={styles.hint}>Тропинка, земля и покрытие красятся протяжкой по клеткам. Тропинка рисуется неровным контуром с травой по краю.</p>
          <h3>Форма и размер</h3>
          <div className={styles.presets}>
            <button type="button" aria-pressed={d.pshape==='round'} onClick={()=>update({pshape:'round'})}><span>◯</span>Круг</button>
@@ -234,7 +242,7 @@ export function EditorOverlay(p:EditorOverlayProps){
      <div className={styles.inspectorFoot}><kbd>B</kbd> кисть <kbd>E</kbd> ластик <kbd>Ctrl Z</kbd> отмена</div>
    </aside>
    <div className={styles.toolbar} role="toolbar" aria-label="Быстрые инструменты">
-     <div className={styles.segment}>{tools.filter(t=>['cursor','paint'].includes(t.id)).map(toolButton)}<button type="button" aria-label="Ластик" title="Ластик · E" aria-pressed={d.tool==='paint'&&d.pmat==='erase'} onClick={erase}><Icon name="eraser"/><span>Ластик</span></button>{tools.filter(t=>['fill','select','pan'].includes(t.id)).map(toolButton)}</div>
+     <div className={styles.segment}>{tools.filter(t=>['cursor','paint'].includes(t.id)).map(toolButton)}<button type="button" aria-label="Ластик" title="Ластик · E" aria-pressed={d.tool==='paint'&&d.pmat==='erase'} onClick={erase}><Icon name="eraser"/><span>Ластик</span></button>{tools.filter(t=>['path','fill','select','pan'].includes(t.id)).map(toolButton)}</div>
      <div className={styles.toolbarEnd}><button type="button" aria-label="Отменить" title="Отменить · Ctrl+Z" disabled={!d.undo.length} onClick={()=>p.undoEditor()}><Icon name="undo"/></button><button type="button" aria-label="Повторить" title="Повторить · Ctrl+Shift+Z" disabled={!d.redo?.length} onClick={()=>p.redoEditor()}><Icon name="redo"/></button><span className={styles.separator}/><button type="button" aria-label="Повернуть камеру влево" onClick={()=>p.rotateCamera(-1)}>↶</button><button type="button" aria-label="Повернуть камеру вправо" onClick={()=>p.rotateCamera(1)}>↷</button></div>
    </div>
    <footer className={styles.footer}>

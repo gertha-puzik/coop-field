@@ -72,7 +72,7 @@ export interface PointerToolsDeps {
   endElevStroke: () => void;
   syncEditorView: () => void;
   refreshEditorPreview: () => void;
-  paintEditorCellObject: (kind: 'dirt' | 'ground', c: number, r: number) => boolean;
+  paintEditorCellObject: (kind: 'dirt' | 'ground' | 'path', c: number, r: number) => boolean;
   placeBattleCell: (c: number, r: number) => void;
   placeEditorEntry: (c: number, r: number) => boolean;
   pushEditorUndo: (withPaint?: boolean,label?:string) => void;
@@ -234,8 +234,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         }
         // «Перенести»: плавающий кусок следует за курсором после вырезания
         if (ed.selFloat && ed.tool === 'select') dragEditorSelection(c, r);
-        if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground') && ev.buttons & 1) {
-          paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
+        if (dirtPaintingRef.current && (ed.tool === 'dirt' || ed.tool === 'ground' || ed.tool === 'path') && ev.buttons & 1) {
+          paintEditorCellObject(ed.tool === 'ground' ? 'ground' : ed.tool === 'path' ? 'path' : 'dirt', c, r);
         }
         // протяжка «Спавна» — только добавляет точки (снимает кликом)
         if (dirtPaintingRef.current && ed.tool === 'spawn' && ev.buttons & 1) {
@@ -418,10 +418,10 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         ev.preventDefault();
         return;
       }
-      if (ev.button === 0 && (ed.tool === 'dirt' || ed.tool === 'ground')) {
+      if (ev.button === 0 && (ed.tool === 'dirt' || ed.tool === 'ground' || ed.tool === 'path')) {
         pushEditorUndo();
         dirtPaintingRef.current = true;
-        paintEditorCellObject(ed.tool === 'ground' ? 'ground' : 'dirt', c, r);
+        paintEditorCellObject(ed.tool === 'ground' ? 'ground' : ed.tool === 'path' ? 'path' : 'dirt', c, r);
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();
