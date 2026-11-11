@@ -388,7 +388,11 @@ export function createCoopClient(handlers: CoopHandlers) {
       const [event, payload] = msg as [string, unknown];
       if (event === EV.YOU) {
         // Канон-валидация вместо слепого каста: битый publicCat не попадает в стейт.
-        if (isCoopCat(payload)) handlers.onYou?.(payload);
+        if (isCoopCat(payload)) {
+          if (joinParams) joinParams = { ...joinParams, sprite: payload.sprite || joinParams.sprite,
+            size: payload.size ?? joinParams.size };
+          handlers.onYou?.(payload);
+        }
       } else if (event === EV.FIELD) {
         const room=(payload as {room?:unknown})?.room;
         if(joinParams&&typeof room==="string")joinParams={...joinParams,room,resume:false};
