@@ -104,20 +104,23 @@ try {
   assert.equal(login.status, 200);
   const cookie = login.headers.getSetCookie().map((s) => s.split(";")[0]).join("; ");
 
-  const pub = await fetch(origin + "/tex/catalog");
+  const pub = await fetch(origin + "/cfg/tex-catalog");
   assert.equal(pub.status, 200);
   const pubBody = await pub.json();
   assert.equal(pubBody.items.length, EXPECTED);
   assert.equal(pubBody.items.find((i) => i.id === "tree-1").replaced, false);
+  // Legacy alias still works locally / when nginx has exact /tex/catalog.
+  assert.equal((await fetch(origin + "/tex/catalog")).status, 200);
 
+  assert.equal((await fetch(origin + "/cfg/tex")).status, 401);
   assert.equal((await fetch(origin + "/admin/tex")).status, 401);
-  const adminList = await fetch(origin + "/admin/tex", { headers: { Cookie: cookie } });
+  const adminList = await fetch(origin + "/cfg/tex", { headers: { Cookie: cookie } });
   assert.equal(adminList.status, 200);
   const listBody = await adminList.json();
   assert.equal(listBody.items.length, EXPECTED);
   assert.equal(listBody.categories.length, 5);
 
-  const noOrigin = await fetch(origin + "/admin/tex/tree-1", {
+  const noOrigin = await fetch(origin + "/cfg/tex/tree-1", {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": multipart(tinyPng()).contentType },
     body: multipart(tinyPng()).body,
@@ -125,7 +128,7 @@ try {
   assert.equal(noOrigin.status, 403);
 
   const form = multipart(tinyPng(12, 10));
-  const replaced = await fetch(origin + "/admin/tex/tree-1", {
+  const replaced = await fetch(origin + "/cfg/tex/tree-1", {
     method: "POST",
     headers: { Origin: origin, Cookie: cookie, "Content-Type": form.contentType },
     body: form.body,
@@ -137,15 +140,17 @@ try {
   assert.equal(replacedBody.item.replaced, true);
   assert.equal(replacedBody.item.w, 12);
   assert.equal(replacedBody.item.h, 10);
-  assert(replacedBody.item.src.startsWith("/tex/file/tree-1.png?v="));
+  assert(replacedBody.item.src.startsWith("/cfg/tex-file/tree-1.png?v="));
 
   const fileRes = await fetch(origin + replacedBody.item.src);
   assert.equal(fileRes.status, 200);
   assert.equal(fileRes.headers.get("content-type"), "image/png");
   const bytes = Buffer.from(await fileRes.arrayBuffer());
   assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  // Legacy /tex/file alias still serves the same bytes.
+  assert.equal((await fetch(origin + "/tex/file/tree-1.png?v=1")).status, 200);
 
-  const badId = await fetch(origin + "/admin/tex/nope-tex", {
+  const badId = await fetch(origin + "/cfg/tex/nope-tex", {
     method: "POST",
     headers: { Origin: origin, Cookie: cookie, "Content-Type": form.contentType },
     body: form.body,
@@ -153,14 +158,14 @@ try {
   assert.equal(badId.status, 404);
 
   const notPng = multipart(Buffer.from("not-a-png"), "x.png");
-  const badPng = await fetch(origin + "/admin/tex/rock-1", {
+  const badPng = await fetch(origin + "/cfg/tex/rock-1", {
     method: "POST",
     headers: { Origin: origin, Cookie: cookie, "Content-Type": notPng.contentType },
     body: notPng.body,
   });
   assert.equal(badPng.status, 400);
 
-  const restored = await fetch(origin + "/admin/tex/tree-1", {
+  const restored = await fetch(origin + "/cfg/tex/tree-1", {
     method: "DELETE",
     headers: { Origin: origin, Cookie: cookie },
   });
@@ -169,7 +174,7 @@ try {
   assert.equal(restoredBody.restored, true);
   assert.equal(restoredBody.item.replaced, false);
   assert.equal(restoredBody.item.src, "/tex/tree-1.png");
-  assert.equal((await fetch(origin + "/tex/file/tree-1.png")).status, 404);
+  assert.equal((await fetch(origin + "/cfg/tex-file/tree-1.png")).status, 404);
 
   function multipartCreate(fileBuf, fields) {
     const boundary = "----cooptexcreate";
@@ -195,7 +200,7 @@ try {
     category: "trees",
     group: "Мои",
   });
-  const created = await fetch(origin + "/admin/tex", {
+  const created = await fetch(origin + "/cfg/tex", {
     method: "POST",
     headers: { Origin: origin, Cookie: cookie, "Content-Type": createdForm.contentType },
     body: createdForm.body,
@@ -210,13 +215,14 @@ try {
   assert.match(createdBody.item.id, /^x-/);
   assert.equal(createdBody.item.w, 16);
   assert.equal(createdBody.item.h, 20);
+  assert(createdBody.item.src.startsWith("/cfg/tex-file/"));
   const customId = createdBody.item.id;
 
-  const catAfter = await (await fetch(origin + "/tex/catalog")).json();
+  const catAfter = await (await fetch(origin + "/cfg/tex-catalog")).json();
   assert.equal(catAfter.items.length, EXPECTED + 1);
   assert(catAfter.items.some((i) => i.id === customId));
 
-  const patched = await fetch(origin + "/admin/tex/" + customId, {
+  const patched = await fetch(origin + "/cfg/tex/" + customId, {
     method: "PATCH",
     headers: { Origin: origin, Cookie: cookie, "Content-Type": "application/json" },
     body: JSON.stringify({ label: "Дуб переименован", category: "rocks", group: "Камни мои" }),
@@ -227,17 +233,17 @@ try {
   assert.equal(patchedBody.item.category, "rocks");
   assert.equal(patchedBody.item.group, "Камни мои");
 
-  const deleted = await fetch(origin + "/admin/tex/" + customId, {
+  const deleted = await fetch(origin + "/cfg/tex/" + customId, {
     method: "DELETE",
     headers: { Origin: origin, Cookie: cookie },
   });
   assert.equal(deleted.status, 200);
   const deletedBody = await deleted.json();
   assert.equal(deletedBody.deleted, true);
-  assert.equal((await (await fetch(origin + "/tex/catalog")).json()).items.length, EXPECTED);
-  assert.equal((await fetch(origin + "/tex/file/" + customId + ".png")).status, 404);
+  assert.equal((await (await fetch(origin + "/cfg/tex-catalog")).json()).items.length, EXPECTED);
+  assert.equal((await fetch(origin + "/cfg/tex-file/" + customId + ".png")).status, 404);
 
-  console.log("PASS: tex catalog, replace/restore, custom CRUD, file serve, CSRF and validation gates");
+  console.log("PASS: tex catalog, replace/restore, custom CRUD, /cfg bypass, file serve, CSRF and validation gates");
 } finally {
   if (server) {
     server.kill("SIGTERM");
