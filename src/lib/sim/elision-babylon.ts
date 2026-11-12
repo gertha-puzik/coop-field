@@ -8,6 +8,7 @@
  * screenToWorld (формулы — elision-scene.ts), поэтому клики не переезжают.
  */
 import { Engine } from '@babylonjs/core/Engines/engine';
+import type { ThinEngine } from '@babylonjs/core/Engines/thinEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import { Camera } from '@babylonjs/core/Cameras/camera';
@@ -87,9 +88,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   groundMat.backFaceCulling = false;
 
   let ground: ReturnType<typeof CreateGround> | null = null;
-  /** DynamicTexture: mid-stroke upload с canvas без getImageData (RawTexture
-   *  каждый paintRev создавал новую GPU-текстуру и рвал росчерк). */
+  /** DynamicTexture поверх атласа surface: mid-stroke — dirty texSubImage2D,
+   *  без mipmaps (generateMipmap на весь мир давал ~10 fps на мазке). */
   let groundDyn: DynamicTexture | null = null;
+  let groundSrc: HTMLCanvasElement | null = null;
   let terrainTop: Mesh | null = null;
   let terrainWalls: Mesh | null = null;
   let terrainFringe: Mesh | null = null;
@@ -181,6 +183,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       return;
     }
     const sizeChanged = !paintKey.startsWith(sizeKey + ':') || !ground;
+    const revChanged = key !== paintKey;
     paintKey = key;
     if (sizeChanged) placeGround(worldW, worldH);
     if (!src || src.width < 2 || src.height < 2) {
@@ -190,6 +193,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       groundMat.opacityTexture = null;
       groundDyn?.dispose();
       groundDyn = null;
+      groundSrc = null;
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
@@ -199,19 +203,25 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     try {
       const tw = src.width;
       const th = src.height;
-      const needNew = !groundDyn || groundDyn.getSize().width !== tw || groundDyn.getSize().height !== th;
+      // Без mipmaps: иначе каждый update гоняет generateMipmap по всему миру.
+      // Атлас surface — сам canvas DynamicTexture (без второй полной копии).
+      const needNew =
+        !groundDyn ||
+        groundSrc !== src ||
+        groundDyn.getSize().width !== tw ||
+        groundDyn.getSize().height !== th;
       if (needNew) {
         groundDyn?.dispose();
-        // invertY=false — как у прежнего RawTexture: CreateGround v=0 на z=0.
         groundDyn = new DynamicTexture(
           'elision-ground',
-          { width: tw, height: th },
+          src,
           scene,
-          version >= 2,
-          version >= 2 ? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE : Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
+          false,
+          Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
           Constants.TEXTUREFORMAT_RGBA,
           false,
         );
+        groundSrc = src;
         groundDyn.hasAlpha = true;
         groundDyn.anisotropicFilteringLevel = 8;
         groundDyn.wrapU = groundDyn.wrapV = Texture.CLAMP_ADDRESSMODE;
@@ -219,15 +229,34 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         groundMat.opacityTexture = groundDyn;
         groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
         groundMat.alphaCutOff = 0.15;
+        groundDyn.update(false);
+      } else if (revChanged) {
+        const dyn = groundDyn;
+        if (!dyn) throw new Error('no groundDyn');
+        const dirty = frame.paintDirty;
+        const area = dirty ? dirty.w * dirty.h : tw * th;
+        const internal = dyn.getInternalTexture();
+        // Малый dirty — texSubImage2D; крупный/полный — обычный update.
+        if (dirty && internal && area > 0 && area <= tw * th * 0.25) {
+          const ctx = src.getContext('2d');
+          if (!ctx) throw new Error('no atlas ctx');
+          const img = ctx.getImageData(dirty.x, dirty.y, dirty.w, dirty.h);
+          (scene.getEngine() as ThinEngine).updateTextureData(
+            internal,
+            img.data,
+            dirty.x,
+            dirty.y,
+            dirty.w,
+            dirty.h,
+            0,
+            0,
+            false,
+          );
+        } else {
+          dyn.update(false);
+        }
       }
-      const dyn = groundDyn;
-      if (!dyn) throw new Error('no groundDyn');
-      const g = dyn.getContext() as CanvasRenderingContext2D;
-      g.imageSmoothingEnabled = false;
-      g.clearRect(0, 0, tw, th);
-      g.drawImage(src, 0, 0);
-      dyn.update(false);
-      wallMat.opacityTexture = dyn;
+      wallMat.opacityTexture = groundDyn;
       groundMode = 'paint';
       applyTint(true);
       // Рельеф/стены — только при смене размера мира; mid-stroke их не трогаем.
