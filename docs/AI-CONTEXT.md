@@ -89,7 +89,7 @@ Deploy of a PR serves both hosts `pr-<N>.abnocw.phainonsmilk.ru` (grottoes) and
 | `src/lib/site.ts` | 28 | Site variant canon: `NEXT_PUBLIC_SITE=grotto\|elyria`, default grotto (fail-safe). Variant-dependent modules check env INLINE (`const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria'`) — imports from site.ts do NOT fold, inline checks do |
 | `src/lib/net/coop.ts` | 582 | Transport: socket choice by host (elisium → same-origin `/ws` via an INLINE env check inside `wsUrlBase` :193 — the dead branch dies at build in the grotto artifact, together with the elisium hostnames; preview → own `/ws`, legacy → room socket, localhost → :3780), `httpOrigin()` :208 for the HTTP flows, reconnect backoff, inbound dispatcher. No `?t=` in URLs |
 | `src/lib/net/protocol.ts` | 367 | Client protocol canon: mirrored `EV.*` registries, payload types, guards |
-| `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 93 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — auth-only core: `/auth/register\|login\|logout\|me` + shared low-level helpers `apiFetch/asText/asId/ApiRow`; WS auth frames go through `auth.ts` |
+| `src/lib/net/auth.ts` + `http-auth.ts` | 30 + 160 | Session = HttpOnly cookie (no token in JS storage). `http-auth.ts` — auth-only core: `/auth/register\|login\|logout\|me` (`httpRegister` sends an optional `invite` field when the user enters a code) + shared low-level helpers `apiFetch/asText/asId/ApiRow`; WS auth frames go through `auth.ts` |
 | `src/lib/net/http-profiles.ts` | 152 | Profiles catalog client: `httpProfileCatalog` (?q search, ?limit def. 24, ?cursor keyset pagination), `httpProfileById`, `httpMyProfile`, `httpPatchProfile` |
 | `src/lib/net/http-cfg.ts` | 335→521 | Admin cfg client: /cfg fetch wrappers (apply/reset/restore/export/import) + F2 `/cfg/rooms*` room-fetchers (list/config/update/reset/reset-all/history/restore) + PURE draft/diff helpers (`draftFromSnapshot` carries §4 playerSelectable flags, `cfgPatchFromDraft` sends them explicitly, `canonByKind`, `buildCfgDiff` — §4 choice-aspect, `narrowingWarning`, `listIssue`, `successText`, `applyBadgeText`); React UI stays in cfg-dashboard.tsx / room-config-panel.tsx. Split for bundle isolation: the simulator-graph donor module must not pull Elysiae HTTP routes into the grotto bundle |
 | `src/lib/net/cfg-live.ts` + `src/lib/cfg-registry.ts` | 122 + 157 | Live universes from public `GET /cfg` (one fetch per tab; registry defaults on failure; a dropped saved value snaps to DEFAULT); client mirror of the 6-key config registry (5 numeric + bool atmoset gate, parity gate) |
@@ -153,6 +153,12 @@ Audit canons (Z.AI security audit 2026-11-08, follow-up waves B/C — hard rules
   `registered` (NOT admin) + a warning line in the server log; the ONLY way to become
   admin is the owner's one-shot `node scripts/make-admin.mjs <login> [pass]`, run with
   the server stopped (a live server would overwrite accounts.json from memory).
+- **Invites — registration is invite-only on production (2026-11-12).** POST /auth/register takes an
+  optional `invite` code (`XXXX-XXXX`, 24h TTL); on `COOP_INSTANCE_CLASS=production` a valid unused
+  non-expired non-revoked code is REQUIRED (bad code → 400 `reason:"invite"`). preview/local/test
+  classes skip the gate; `AUTH_INVITE_ENFORCE=1/0` overrides either way; `AUTH_INVITE_TTL_MS` adjusts
+  the TTL. Codes are generated/revoked by admins in the /admin tab «Коды приглашений» (routes
+  GET/POST /admin/invites*; the store is `DATA_DIR/invites.json`).
 - **Location editor:** no password. Since 2026-11-10 only `role=admin` may save
   the test-room map. Legacy localStorage password keys are only removed, never reused.
 - **S5 — resource caps:** `WS_MAX_PER_IP` (default 8) — per-IP simultaneous WS sockets,

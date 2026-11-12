@@ -32,7 +32,18 @@
  *     https-cookie SameSite=Lax+Secure; join по коду combat → поле room
  *     grot-1 (снятая комната алиасится в RETIRED_ROOMS);
  *  9. (P2) там же: admin-маршруты конфига — /cfg/admin и /cfg/export на
- *     public-хосте 404, гость/не-админ на elyria 403, админ 200 с registry.
+ *     public-хосте 404, гость/не-админ на elyria 403, админ 200 с registry;
+ * 10. (invites) четвёртый sandbox: одноразовые инвайт-коды регистрации —
+ *     штатный класс local без AUTH_INVITE_ENFORCE НЕ требует кода (обратная
+ *     совместимость, поле игнорируется); рестарт с AUTH_INVITE_ENFORCE=1:
+ *     без кода / неизвестный / просроченный сид → 400 reason invite,
+ *     WS-кадр register → whoami ok=false reason=invite + info-текст;
+ *     taken не сжигает валидный код; админ-роуты /admin/invites: гость 401,
+ *     не-админ 403, generate count=2 → две active-записи, активация гасит
+ *     код (claimedByLogin в журнале), revoke живого/использованного/
+ *     отозванного/неизвестного — различимые reason;
+ *     (второй sandbox выше — класс production — ходит с AUTH_INVITE_ENFORCE=0:
+ *     его register-пробы проверяют rate-гейт, а не инвайты-дефолт прод-класса).
  *
  * Запуск: node scripts/test-auth.mjs (сам спавнит server.js в песочнице DATA_DIR).
  */
@@ -494,6 +505,9 @@ const server2 = spawn(process.execPath, ["server.js"], {
     HOST,
     DATA_DIR: DATA2,
     COOP_INSTANCE_CLASS: "production",
+    // Инвайт-гейт (invites.js) на прод-классе требуется по дефолту — этот
+    // стенд проверяет rate-харднинг, а не инвайты: выключаем явно.
+    AUTH_INVITE_ENFORCE: "0",
     BOOTSTRAP_ADMIN: "gertha_q, liza_q",
     MAX_ACCOUNTS: "8",
     AUTH_LOGIN_FAIL_MAX: "2",
@@ -979,6 +993,241 @@ try {
   console.error("FAIL exception (host-policy sandbox)", e);
 } finally {
   server3.kill("SIGTERM");
+}
+
+/* ---------- 10. Инвайт-коды регистрации (invites, четвёртый sandbox) ----------
+ * Два прохода над одним DATA_DIR: спавн БЕЗ переменной (штатный класс local —
+ * код не нужен, поле invite игнорируется), стоп, make-admin будущего админа,
+ * рестарт уже с AUTH_INVITE_ENFORCE=1. Журнал invites.json сидируется до
+ * первого старта записью с expiresAt в прошлом — она же негативная проба
+ * «просроченный код» и проверка статуса expired в выдаче админу. */
+const DATA4 = mkdtempSync(path.join(tmpdir(), "coop-auth-inv-"));
+const PORT4 = 4100 + Math.floor(Math.random() * 60);
+const HTTP4 = `http://${HOST}:${PORT4}`;
+const WS4 = `ws://${HOST}:${PORT4}`;
+
+const seedNow = Date.now();
+writeFileSync(
+  path.join(DATA4, "invites.json"),
+  JSON.stringify(
+    {
+      v: 1,
+      invites: [
+        {
+          code: "TEST-TEST",
+          createdAt: seedNow - 3 * 3600_000,
+          expiresAt: seedNow - 3600_000,
+          note: "просроченный сид (секция 10)",
+          claimedById: null,
+          claimedByLogin: null,
+          claimedAt: null,
+          revokedAt: null,
+        },
+      ],
+    },
+    null,
+    2,
+  ),
+);
+
+const waitExit4 = (child) =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode) return resolve();
+    child.once("exit", resolve);
+  });
+
+/** Регистрация на стенде секции: логин + доп. поля (invite). */
+const reg4 = (login, extra = {}) =>
+  fetch(`${HTTP4}/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login, pass: "password1", ...extra }),
+  });
+
+const login4 = (login) =>
+  fetch(`${HTTP4}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login, pass: "password1" }),
+  });
+
+let server4 = spawn(process.execPath, ["server.js"], {
+  cwd: ROOT,
+  env: { ...process.env, PORT: String(PORT4), HOST, DATA_DIR: DATA4 },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+server4.stderr.on("data", (d) => process.stderr.write(d));
+
+try {
+  await waitReady(WS4);
+  // Обратная совместимость: пустой env, класс local — инвайт не нужен,
+  // поле invite (даже мусорное) не мешает регистрации.
+  const bcUser = await reg4("invuser_q");
+  check(bcUser.ok, "invites: класс local без AUTH_INVITE_ENFORCE — регистрация без кода жива");
+  const bcAdm = await reg4("invadm_q");
+  check(bcAdm.ok, "invites: будущий админ зарегистрирован ДО включения enforcement");
+  const bcIgnored = await reg4("invignore_q", { invite: "ZZZZ-ZZZZ" });
+  check(bcIgnored.ok, "invites: enforcement выключен — поле invite игнорируется");
+} finally {
+  server4.kill("SIGTERM");
+}
+await waitExit4(server4);
+// Назначение админа — только на ОСТАНОВЛЕННОМ сервере (паттерн раздела 7).
+const invCli = execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), "invadm_q"], {
+  env: { ...process.env, DATA_DIR: DATA4 },
+  encoding: "utf8",
+});
+check(/повышен/.test(invCli), "invites: make-admin повысил будущего админа (CLI, код возврата 0)");
+
+// Рестарт с включённым enforcement — курица-яйцо обходится: админ уже есть.
+server4 = spawn(process.execPath, ["server.js"], {
+  cwd: ROOT,
+  env: { ...process.env, PORT: String(PORT4), HOST, DATA_DIR: DATA4, AUTH_INVITE_ENFORCE: "1" },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+server4.stderr.on("data", (d) => process.stderr.write(d));
+
+try {
+  await waitReady(WS4);
+
+  // Негативные пробы: 400 reason invite ДО createAccount (логины остаются
+  // свободными). Просроченный сид шлём «по-человечески» — нормализация
+  // обязана простить пробелы и регистр.
+  const noCode = await reg4("invnope_q");
+  const noCodeBody = await noCode.json();
+  check(noCode.status === 400 && noCodeBody.reason === "invite", "invites: без кода → 400 reason invite");
+  const garbage = await reg4("invgarb_q", { invite: "ZZZZ-ZZZZ" });
+  const garbageBody = await garbage.json();
+  check(garbage.status === 400 && garbageBody.reason === "invite", "invites: неизвестный код → 400 invite");
+  const expired = await reg4("invexp_q", { invite: "  test-tesT " });
+  const expiredBody = await expired.json();
+  check(expired.status === 400 && expiredBody.reason === "invite", "invites: просроченный сид → 400 invite (нормализация ввода)");
+
+  // WS-кадр register: тот же гейт — whoami ok=false reason=invite парой с
+  // EV.INFO-текстом (машина + человек).
+  const ws4 = (headers) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(WS4, { headers: headers || {} });
+      const inbox = [];
+      ws.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
+      ws.on("error", reject);
+      ws.inbox = inbox;
+      ws.once("open", () => resolve(ws));
+    });
+  const wBad = await ws4();
+  wBad.send(JSON.stringify(["auth", { action: "register", login: "wsinv_q", pass: "password1", invite: "ZZZZ-ZZZZ" }]));
+  const badWho = await waitFor(wBad, (m) => m[0] === "whoami" && m[1]?.ok === false && m[1]?.reason === "invite");
+  check(!!badWho, "invites: WS register с мусорным кодом → whoami ok=false reason=invite");
+  const badInfo = await waitFor(wBad, (m) => m[0] === "info");
+  check(/код приглашения/i.test(String(badInfo[1])), "invites: WS-отказ несёт EV.INFO с человеческим текстом");
+  wBad.close();
+
+  // Гейты админ-зоны: гость 401, зарегистрированный не-админ 403.
+  const listGuest = await fetch(`${HTTP4}/admin/invites`);
+  check(listGuest.status === 401, "invites: GET /admin/invites гость → 401");
+  const userTok4 = (await (await login4("invuser_q")).json()).token;
+  const admTok4 = (await (await login4("invadm_q")).json()).token;
+  check(!!userTok4 && !!admTok4, "invites: вход обеих учёток стенда (токен local-класса)");
+  const listUser = await fetch(`${HTTP4}/admin/invites?t=${userTok4}`);
+  check(listUser.status === 403, "invites: GET /admin/invites зарегистрированный не-админ → 403");
+  const badMethod = await fetch(`${HTTP4}/admin/invites/generate?t=${admTok4}`);
+  check(badMethod.status === 404, "invites: GET /admin/invites/generate — непредусмотренная ветка → 404 not_found");
+
+  // generate: count=2 + note → две живые записи канонического вида.
+  const gen = await fetch(`${HTTP4}/admin/invites/generate?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ count: 2, note: "QA-стенд секции 10" }),
+  });
+  const genBody = await gen.json();
+  check(
+    gen.status === 200 && genBody.ok === true && Array.isArray(genBody.invites) && genBody.invites.length === 2,
+    "invites: generate count=2 → 200, две новые записи",
+  );
+  const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/;
+  check(
+    genBody.invites.every((r) => r.status === "active" && r.note === "QA-стенд секции 10" && CODE_RE.test(r.code)),
+    "invites: новые записи status active, канонический XXXX-XXXX, note сохранён",
+  );
+  const genJunk = await fetch(`${HTTP4}/admin/invites/generate?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ count: 99 }),
+  });
+  check(genJunk.status === 400, "invites: generate count вне 1..10 → 400");
+
+  const [code1, code2] = genBody.invites.map((r) => r.code);
+
+  // Активация: первый код «по-человечески» в нижнем регистре с пробелами —
+  // нормализация обязана распознать.
+  const invited = await reg4("invited_q", { invite: `  ${code1.toLowerCase()}  ` });
+  const invitedBody = await invited.json();
+  check(invited.ok && invitedBody.ok === true && invitedBody.login === "invited_q", "invites: регистрация с валидным кодом → 200 (нормализация ввода)");
+
+  // 'taken' не сжигает валидный код: занятый логин + живой code2 — отказ
+  // приходит ОТ createAccount (reason 'taken', не invite); code2 ниже
+  // успешно отзывается, значит остался живым.
+  const taken = await reg4("invited_q", { invite: code2 });
+  const takenBody = await taken.json();
+  check(taken.status === 400 && takenBody.reason === "taken", "invites: занятый логин не сжигает код (валидация ДО createAccount)");
+
+  // Повторная регистрация тем же (активированным) кодом — отказ invite.
+  const reused = await reg4("invited2_q", { invite: code1 });
+  const reusedBody = await reused.json();
+  check(reused.status === 400 && reusedBody.reason === "invite", "invites: повторная регистрация тем же кодом → 400 invite (код сожжён)");
+
+  // Журнал: активированный код — used с активатором, просроченный сид — expired.
+  const list2 = await fetch(`${HTTP4}/admin/invites?t=${admTok4}`);
+  const list2Body = await list2.json();
+  const usedRec = list2Body.invites?.find((r) => r.code === code1);
+  const seedRec = list2Body.invites?.find((r) => r.code === "TEST-TEST");
+  check(
+    usedRec?.status === "used" && usedRec?.claimedByLogin === "invited_q" && !!usedRec?.claimedAt,
+    "invites: журнал показывает статус used и активатора (claimedByLogin)",
+  );
+  check(seedRec?.status === "expired", "invites: просроченный сид в журнале — status expired");
+
+  // revoke: живой код гасим, регистрации им — отказ; различимые reason на
+  // повторный отзыв, использованный код и неизвестный.
+  const revoke = await fetch(`${HTTP4}/admin/invites/revoke?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code2 }),
+  });
+  const revokeBody = await revoke.json();
+  check(
+    revoke.status === 200 && revokeBody.ok === true && revokeBody.invite?.status === "revoked",
+    "invites: revoke живого кода → 200, запись revoked",
+  );
+  const revokedReg = await reg4("revoked_q", { invite: code2 });
+  const revokedRegBody = await revokedReg.json();
+  check(revokedReg.status === 400 && revokedRegBody.reason === "invite", "invites: регистрация отозванным кодом → 400 invite");
+  const revokeTwice = await fetch(`${HTTP4}/admin/invites/revoke?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code2 }),
+  });
+  const revokeTwiceBody = await revokeTwice.json();
+  check(revokeTwice.status === 400 && revokeTwiceBody.reason === "revoked", "invites: повторный revoke → 400 reason revoked");
+  const revokeUsed = await fetch(`${HTTP4}/admin/invites/revoke?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code1 }),
+  });
+  const revokeUsedBody = await revokeUsed.json();
+  check(revokeUsed.status === 400 && revokeUsedBody.reason === "used", "invites: revoke использованного кода → 400 reason used");
+  const revokeUnknown = await fetch(`${HTTP4}/admin/invites/revoke?t=${admTok4}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "ZZZZ-ZZZZ" }),
+  });
+  const revokeUnknownBody = await revokeUnknown.json();
+  check(revokeUnknown.status === 400 && revokeUnknownBody.reason === "no_such_invite", "invites: revoke неизвестного кода → 400 reason no_such_invite");
+} catch (e) {
+  failures += 1;
+  console.error("FAIL exception (invites sandbox)", e);
+} finally {
+  server4.kill("SIGTERM");
 }
 
 if (failures) {

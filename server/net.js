@@ -37,6 +37,10 @@ import { handleRoomCfgHttp } from "./room-config.js";
 // Админ-операции «Игроки на поле» (GET/POST /admin/players*): гейт session
 // + role=admin + общий apiZone-CSRF — сам домен в room.js (W4-граница).
 import { handleAdminOpsHttp } from "./admin-ops.js";
+// Одноразовые инвайт-коды регистрации (server/invites.js): админ-роуты
+// GET/POST /admin/invites* (гейты — в самом домене, как admin-ops.js;
+// host-гейт ниже прячет /admin ЦЕЛИКОМ на public, apiZone — CSRF-щит).
+import { handleInvitesHttp } from "./invites.js";
 // Менеджер спрайтов (server/sprites.js): публичный каталог + файлы загруженных
 // (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
 // админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
@@ -261,6 +265,9 @@ export function startServer() {
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
       // в зону попадают API-пути (list/reset/promote), не HTML дашборда.
       p === "/admin/players" || p.startsWith("/admin/players/") ||
+      // Инвайт-коды регистрации (/admin/invites*): тот же CSRF-щит
+      // (unsafe + cookie ⇒ Origin) и CORS-надзор, что у «Игроков на поле».
+      p === "/admin/invites" || p.startsWith("/admin/invites/") ||
       // Создание локаций мира (POST /locations|/cfg/locations и алиас /admin/locations).
       p === "/locations" || p === "/cfg/locations" ||
       p === "/admin/locations" || p.startsWith("/admin/locations/") ||
@@ -327,6 +334,10 @@ export function startServer() {
       // а вот эти API-пути живой домен room.js должен перехватить.
       return handleAdminOpsHttp(req, res).then((opsHit) => {
         if (opsHit) return;
+      // Инвайт-коды регистрации (/admin/invites*): разбор ДО /locations и
+      // статики, гейт (сессия + role=admin) домен проверяет сам.
+      return handleInvitesHttp(req, res).then((invHit) => {
+        if (invHit) return;
       return Promise.resolve(handleLocationsHttp(req, res)).then((locHit) => {
         if (locHit) return;
       // Текстуры ДО /cfg: на проде nginx уже шлёт весь /cfg в Node, а
@@ -364,6 +375,7 @@ export function startServer() {
             });
           });
         });
+      });
       });
       });
       });

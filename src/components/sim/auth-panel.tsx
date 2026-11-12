@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input, Panel } from '@/components/ui';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import { localAuthError, localFieldNameError, localNewLoginError, reasonText, roleLabel } from './auth-reasons';
+import { localAuthError, localFieldNameError, localInviteError, localNewLoginError, reasonText, roleLabel } from './auth-reasons';
 
 /**
  * Боковая панель входа на русском. Пароль не показывается. Панель монтируется
@@ -32,13 +32,16 @@ export function AuthPanel({
   busy?: boolean;
   message?: string | null;
   onLogin: (login: string, pass: string) => void;
-  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт логином). */
-  onRegister: (login: string, pass: string, name?: string) => void;
+  /** register v2: name — опциональное «имя на поле» (пусто → сервер зовёт
+   *  логином); invite — код приглашения XXXX-XXXX (регистрация закрытого
+   *  сайта — только по кодам от админов, живут 24 часа). */
+  onRegister: (login: string, pass: string, name?: string, invite?: string) => void;
   onLogout: () => void;
 }) {
   const [login, setLogin] = useState(whoami?.login || '');
   const [pass, setPass] = useState('');
   const [fieldName, setFieldName] = useState('');
+  const [invite, setInvite] = useState('');
   /** Ошибка локальной проверки — показывается до отправки и гаснет при вводе. */
   const [localFail, setLocalFail] = useState<string | null>(null);
   const inAccount = !!(whoami?.ok && whoami.accountId);
@@ -69,6 +72,10 @@ export function AuthPanel({
     setFieldName(v);
     setLocalFail(null);
   };
+  const editInvite = (v: string) => {
+    setInvite(v);
+    setLocalFail(null);
+  };
   const submit = (action: 'login' | 'register') => {
     if (busy) return;
     const local = localAuthError(login, pass);
@@ -79,16 +86,17 @@ export function AuthPanel({
     // Register v2: логин при создании — строгий формат; имя на поле — опция.
     if (action === 'register') {
       const newLogin = localNewLoginError(login);
+      const inviteErr = localInviteError(invite);
       const fieldErr = localFieldNameError(fieldName);
-      if (newLogin || fieldErr) {
-        setLocalFail(newLogin || fieldErr || null);
+      if (newLogin || inviteErr || fieldErr) {
+        setLocalFail(newLogin || inviteErr || fieldErr || null);
         return;
       }
     }
     setLocalFail(null);
     // Логин режем так же, как сервер (обрезка пробелов); пароль — как набран.
     if (action === 'login') onLogin(login.trim(), pass);
-    else onRegister(login.trim(), pass, fieldName.trim() || undefined);
+    else onRegister(login.trim(), pass, fieldName.trim() || undefined, invite.trim() || undefined);
   };
 
   if (inAccount) {
@@ -120,9 +128,9 @@ export function AuthPanel({
       <h2 className="text-base font-bold text-[var(--sim-text)]">Аккаунт</h2>
       <p className="mt-1 text-xs text-[var(--sim-text-muted)]">
         Закрытый мир: чтобы играть под своим именем, войдите или создайте аккаунт. Логин при создании — латиница, цифры
-        и ._-, 2–24 символа; пароль — от 8.
+        и ._-, 2–24 символа; пароль — от 8. Регистрация — только по кодам приглашений от администрации.
       </p>
-      <Field className="mt-3" label="Имя" htmlFor="auth-login" describedBy="auth-fail">
+      <Field className="mt-2" label="Имя" htmlFor="auth-login" describedBy="auth-fail">
         <Input
           id="auth-login"
           className="mt-1 h-8 text-sm"
@@ -132,6 +140,23 @@ export function AuthPanel({
           placeholder="От 2 до 24 символов"
           autoFocus
           onChange={(e) => editLogin(e.target.value)}
+        />
+      </Field>
+      <Field
+        className="mt-2"
+        label="Код приглашения (для регистрации)"
+        htmlFor="auth-invite"
+        hint="регистрация — только по приглашениям"
+        describedBy="auth-fail"
+      >
+        <Input
+          id="auth-invite"
+          className="mt-1 h-8 font-mono text-sm"
+          value={invite}
+          maxLength={9}
+          autoComplete="off"
+          placeholder="XXXX-XXXX — действует 24 часа"
+          onChange={(e) => editInvite(e.target.value)}
         />
       </Field>
       <Field
@@ -183,7 +208,8 @@ export function AuthPanel({
         </Button>
       </div>
       <p className="mt-2 text-[10px] leading-snug text-[var(--sim-text-faint)]">
-        «Войти» — по существующему имени. «Зарегистрироваться» — создаст аккаунт с этим логином; имя на поле — как вас будут звать (пустое → логином).
+        «Войти» — по существующему имени. «Зарегистрироваться» — создаст аккаунт по коду приглашения; имя на поле — как
+        вас будут звать (пустое → логином).
       </p>
     </Panel>
   );

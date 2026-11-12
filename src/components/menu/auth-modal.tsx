@@ -19,11 +19,12 @@ const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
  * успех «в игре» #7dcaa0.
  *
  * Поля — реальные контракты server/auth.js: при регистрации логин — латиница/
- * цифры/._- 2–24, «Имя на поле» — опциональное видимое имя 2–24 (без него зовут
- * логином), пароль от 8; вход — прежние мягкие правила (старые логины бывают с
- * пробелами). Отправка через onLogin/onRegister(login, pass, name?) наружу
- * (гейт сам зовёт httpLogin/httpRegister из http-auth.ts — клиенты не
- * дублируются).
+ * цифры/._- 2–24, «Код приглашения» — XXXX-XXXX от администрации (24 часа,
+ * без него регистрация закрыта), «Имя на поле» — опциональное видимое имя
+ * 2–24 (без него зовут логином), пароль от 8; вход — прежние мягкие правила
+ * (старые логины бывают с пробелами). Отправка через
+ * onLogin/onRegister(login, pass, name?, invite?) наружу (гейт сам зовёт
+ * httpLogin/httpRegister из http-auth.ts — клиенты не дублируются).
  */
 
 type Mode = 'login' | 'register';
@@ -74,14 +75,17 @@ export function AuthModal({
   fail?: string | null;
   welcome?: string | null;
   onLogin: (login: string, pass: string) => void;
-  /** register v2: name — опциональное «имя на поле» (отсутствует → звать логином). */
-  onRegister: (login: string, pass: string, name?: string) => void;
+  /** register v2: name — опциональное «имя на поле» (отсутствует → звать
+   *  логином); invite — код приглашения XXXX-XXXX (регистрация закрытого
+   *  сайта только по кодам от админов, живут 24 часа). */
+  onRegister: (login: string, pass: string, name?: string, invite?: string) => void;
 }) {
   const [mode, setMode] = useState<Mode>('login');
   const [login, setLogin] = useState('');
   const [pass, setPass] = useState('');
   const [pass2, setPass2] = useState('');
   const [fieldName, setFieldName] = useState('');
+  const [invite, setInvite] = useState('');
   /** локальная ошибка полей: подсветка + hint; гаснет при любом вводе */
   const [localFail, setLocalFail] = useState<string | null>(null);
   const loginRef = useRef<HTMLInputElement | null>(null);
@@ -102,14 +106,21 @@ export function AuthModal({
   const submit = (ev: React.FormEvent) => {
     ev.preventDefault();
     if (busy || welcome) return;
-    const local = localGateError(mode, login, pass, mode === 'register' ? pass2 : undefined, mode === 'register' ? fieldName : undefined);
+    const local = localGateError(
+      mode,
+      login,
+      pass,
+      mode === 'register' ? pass2 : undefined,
+      mode === 'register' ? fieldName : undefined,
+      mode === 'register' ? invite : undefined,
+    );
     if (local) {
       setLocalFail(local);
       return;
     }
     const clean = login.trim().slice(0, 24);
     if (mode === 'login') onLogin(clean, pass);
-    else onRegister(clean, pass, fieldName.trim() || undefined);
+    else onRegister(clean, pass, fieldName.trim() || undefined, invite.trim() || undefined);
   };
 
   const failText = localFail || fail || null;
@@ -185,6 +196,26 @@ export function AuthModal({
                   className={`${INPUT_BASE} ${badLogin}`}
                 />
               </Field>
+              {mode === 'register' ? (
+                <Field label="Код приглашения">
+                  <input
+                    type="text"
+                    value={invite}
+                    maxLength={9}
+                    autoComplete="off"
+                    placeholder="XXXX-XXXX — действует 24 часа"
+                    aria-invalid={Boolean(failText)}
+                    onChange={(e) => {
+                      setInvite(e.target.value);
+                      touch();
+                    }}
+                    className={`${INPUT_BASE} ${badLogin}`}
+                  />
+                  <span className="mt-1.5 block text-[12.5px] leading-snug text-[rgba(185,179,217,0.6)]">
+                    регистрация — только по приглашениям администрации
+                  </span>
+                </Field>
+              ) : null}
               {mode === 'register' ? (
                 <Field label="Имя на поле">
                   <input

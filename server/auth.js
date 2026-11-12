@@ -17,6 +17,12 @@ import {
   publicAccount,
   flushAccounts,
 } from "./accounts.js";
+// Одноразовые инвайт-коды регистрации (server/invites.js): enforce-гейт
+// включается политикой (env AUTH_INVITE_ENFORCE / класс инстанса), валидация
+// идёт ДО createAccount, захват — после успеха. Цикл auth↔invites осознанный:
+// внутри invites.js sessionFromRequest нужен только в телах функций (ESM
+// live-биндинги), как в accounts.js ↔ sprites.js.
+import { invitesEnforced, checkInviteCode, claimInvite } from "./invites.js";
 
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const COOKIE = "coop_session";
@@ -388,6 +394,7 @@ function reasonText(code) {
   if (code === "badname") return "Имя на поле — от 2 до 24 видимых символов.";
   if (code === "bad") return "Неверный логин или пароль.";
   if (code === "full") return "Регистрация закрыта: на сервере больше нет свободных мест для аккаунтов.";
+  if (code === "invite") return "Неверный или устаревший код приглашения. Попросите новый у администрации.";
   if (code === "rate") return "Слишком часто. Подождите немного.";
   return "Не получилось войти.";
 }
@@ -499,12 +506,29 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
       send(ws, EV.INFO, reasonText("rate"));
       return;
     }
+    // Инвайт-гейт (server/invites.js): при включённом enforcement код
+    // валидируется ДО createAccount — отказ идёт парой кадров, как у rate:
+    // whoami ok=false reason='invite' для клиентской машины + EV.INFO с
+    // человеческим текстом. Выключенный гейт поле молча игнорирует.
+    let invite = null;
+    if (invitesEnforced()) {
+      const inv = checkInviteCode(payload.invite);
+      if (inv.error) {
+        sendWhoami(ws, { ok: false, reason: "invite" });
+        send(ws, EV.INFO, reasonText("invite"));
+        return;
+      }
+      invite = inv.invite;
+    }
     const out = await createAccount(payload.login, payload.pass, payload.name);
     if (out.error) {
       sendWhoami(ws, { ok: false, reason: out.error });
       send(ws, EV.INFO, reasonText(out.error));
       return;
     }
+    // Захват кода — ТОЛЬКО после успешного createAccount: отказ 'taken'
+    // не сжигает валидный код, повторная регистрация им же невозможна.
+    if (invite) claimInvite(invite, out.account);
     const token = createSession(out.account.id);
     bindAccount(ws, out.account, token);
     sendWhoami(ws, whoamiBody(ws, { token }));
@@ -594,11 +618,28 @@ async function handleAuthHttp(req, res) {
         return true;
       }
       const body = await readJson(req);
+      // Инвайт-гейт (server/invites.js): при включённом enforcement код
+      // валидируется ДО createAccount, отказ — 400 { ok:false, reason:
+      // 'invite' } (клиентские тексты — по reason, как у taken/weak).
+      // Выключенный гейт поле invite молча игнорирует — обратная
+      // совместимость старого клиента без поля.
+      let invite = null;
+      if (invitesEnforced()) {
+        const inv = checkInviteCode(body.invite);
+        if (inv.error) {
+          json(res, 400, { ok: false, reason: "invite" });
+          return true;
+        }
+        invite = inv.invite;
+      }
       const out = await createAccount(body.login, body.pass, body.name);
       if (out.error) {
         json(res, 400, { ok: false, reason: out.error });
         return true;
       }
+      // Захват кода — после успешного createAccount (занятый логин не
+      // сжигает валидный код).
+      if (invite) claimInvite(invite, out.account);
       const token = createSession(out.account.id);
       // Элизия — cookie-only: токен в теле HTTP-ответа не выдаётся (кука та же).
       // local — прежнее поведение, тесты и dev завязаны на токен в теле.
