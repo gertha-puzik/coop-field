@@ -149,7 +149,37 @@ try {
       const corruptCode=`import fs from 'node:fs';import {withTestLocation,TEST_WIDTH} from './server/testmap.js';import {locationCatalogue} from './server/location-world.js';import{join}from'./server/room.js';import{findByLogin,activeCharacter}from'./server/accounts.js';import{rememberCat}from'./server/persist.js';const list=locationCatalogue();if(list[0].name!=='Долина'||TEST_WIDTH!==12)throw Error('corrupt neighbor blocked Valley');for(let i=0;i<2;i++){let failed=false;try{withTestLocation(2,()=>{})}catch{failed=true}if(!failed||TEST_WIDTH!==12)throw Error('failed scope poisoned cache');}const account=findByLogin('brokenactor');rememberCat({login:activeCharacter(account).name,locationId:2,fm:1,fx:2,fy:5,x:3,y:6});const replies=[],ws={account,readyState:1,send:text=>replies.push(JSON.parse(text))};join(ws,{room:'test',resume:true});if(!replies.some(f=>f[0]==='field'&&f[1].room==='test'))throw Error('resume must recover in Valley');if(fs.readFileSync(process.env.DATA_DIR+'/location-2.json','utf8')!=='{broken')throw Error('corrupt map overwritten');`;
       const corrupt=spawnSync(process.execPath,['--input-type=module','-e',corruptCode],{env:{...process.env,DATA_DIR:bad},encoding:'utf8'});assert.equal(corrupt.status,0,corrupt.stderr);
     }finally{fs.rmSync(bad,{recursive:true,force:true});}
-    console.log('PASS: location schema parity; distinct 12×11/10×10 maps, rooms, files and geometry; guest/forged/outside/battle denial; real passage travel, reverse arrival, reconnect/resume, nested scope restoration and corrupt-neighbor isolation');
+    // Admin create: next free ID, blank 10×10, catalogue broadcast, join works.
+    const createDenied = await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(createDenied.status, 401);
+    const created = await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Новый луг' }) });
+    const createdText = await created.text();
+    assert.equal(created.status, 200, createdText);
+    const createdBody = JSON.parse(createdText);
+    assert.equal(createdBody.place.id, 3);
+    assert.equal(createdBody.place.name, 'Новый луг');
+    assert.equal(createdBody.room, 'test-loc-3');
+    assert.equal(createdBody.locations.length, 3);
+    const disk3 = JSON.parse(fs.readFileSync(path.join(dir, 'location-3.json'), 'utf8'));
+    assert.equal(disk3.cols, 10);
+    assert.equal(disk3.rows, 10);
+    assert.equal(disk3.place.id, 3);
+    assert(disk3.paint && disk3.paint.startsWith('iVBORw0KGgo'), 'new location has grass paint');
+    const index = JSON.parse(fs.readFileSync(path.join(dir, 'locations-index.json'), 'utf8'));
+    assert.deepEqual(index.ids, [1, 2, 3]);
+    const catalogueHttp = await fetch(origin + '/locations');
+    assert.equal(catalogueHttp.status, 200);
+    const catalogueBody = await catalogueHttp.json();
+    assert.equal(catalogueBody.locations.length, 3);
+    assert.deepEqual(catalogueBody.rooms, ['test', 'test-loc-2', 'test-loc-3']);
+    const c = await client(cookie);
+    c.send('join', { room: 'test-loc-3', login: 'World C' });
+    const third = await c.wait(f => f[0] === 'field');
+    assert.equal(third.width, 10);
+    assert.equal(third.height, 10);
+    assert.equal(third.map.place.name, 'Новый луг');
+    assert.equal(third.locations.length, 3);
+    console.log('PASS: location schema parity; distinct 12×11/10×10 maps, rooms, files and geometry; guest/forged/outside/battle denial; real passage travel, reverse arrival, reconnect/resume, nested scope restoration, corrupt-neighbor isolation and admin create ID 3');
 }
 finally {
     for (const ws of clients)

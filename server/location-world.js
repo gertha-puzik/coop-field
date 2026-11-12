@@ -6,13 +6,47 @@ import { DATA_DIR } from './config.js';
 import { writeFileAtomic } from './atomic-file.js';
 import { EV, MAX_PLAYERS } from './protocol.js';
 import { testMap, TEST_OBST_BODIES, withTestLocation, sanitizeTestMap } from './testmap.js';
-import { rooms, roomOf, spawnCell, join, send, occupied } from './room.js';
+import { rooms, roomOf, spawnCell, join, send, occupied, broadcast } from './room.js';
 import { testPointInIsland, testWalkable } from './world.js';
-export const LOCATION_IDS = [1, 2];
+import { sessionFromRequest } from './auth.js';
+import { json, readJson, setCors } from './runtime-config.js';
+
+const INDEX_FILE = path.join(DATA_DIR, 'locations-index.json');
+const MAX_LOCATIONS = 64;
+/** Mutable registry: seed 1+2, then index file + location-N.json discovery. */
+function discoverLocationIds() {
+    const ids = new Set([1, 2]);
+    try {
+        for (const entry of fs.readdirSync(DATA_DIR)) {
+            const m = /^location-(\d+)\.json$/.exec(entry);
+            if (m) {
+                const id = Number(m[1]);
+                if (Number.isSafeInteger(id) && id >= 1 && id <= 9999) ids.add(id);
+            }
+        }
+    } catch { /* empty DATA_DIR on first boot */ }
+    try {
+        const raw = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+        if (Array.isArray(raw?.ids)) {
+            for (const value of raw.ids) {
+                const id = Number(value);
+                if (Number.isSafeInteger(id) && id >= 1 && id <= 9999) ids.add(id);
+            }
+        }
+    } catch { /* missing index = seed only */ }
+    return [...ids].sort((a, b) => a - b);
+}
+export const LOCATION_IDS = discoverLocationIds();
+function persistLocationIds() {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    writeFileAtomic(INDEX_FILE, JSON.stringify({ v: 1, ids: [...LOCATION_IDS] }, null, 2));
+}
 export function defaultPlace(id = 1) {
-    return { id, name: id === 2 ? 'Редколесье' : 'Долина', zoneId: 1, zoneName: 'Средиземье' };
+    const name = id === 1 ? 'Долина' : id === 2 ? 'Редколесье' : `Локация ${id}`;
+    return { id, name, zoneId: 1, zoneName: 'Средиземье' };
 }
 export const locationRoom = (id) => id === 1 ? 'test' : `test-loc-${id}`;
+export const locationRooms = () => LOCATION_IDS.map(locationRoom);
 export function locationFromRoom(room) {
     if (room === 'test')
         return 1;
@@ -99,6 +133,99 @@ export function locationCatalogue() {
         try{const place=withTestLocation(id,()=>placeOf(testMap,id));catalogueErrors.delete(id);return place;}
         catch(error){if(!catalogueErrors.has(id)){console.warn(`location ${id} unavailable:`,error.message);catalogueErrors.add(id);}return defaultPlace(id);}
     });
+}
+export function broadcastLocationCatalogue() {
+    const catalogue = locationCatalogue();
+    for (const room of rooms.values()) {
+        if (room.fmt === 'test') broadcast(room, EV.LOCATIONS, catalogue);
+    }
+    return catalogue;
+}
+/** Admin create: next free id after max(LOCATION_IDS), blank 10×10 grass map. */
+export function createLocation(opts = {}) {
+    if (LOCATION_IDS.length >= MAX_LOCATIONS)
+        return { error: `локаций не больше ${MAX_LOCATIONS}` };
+    const id = LOCATION_IDS.reduce((max, value) => Math.max(max, value), 0) + 1;
+    if (id > 9999)
+        return { error: 'исчерпан диапазон ID локаций' };
+    const file = locationFile(id);
+    if (fs.existsSync(file))
+        return { error: `файл локации ${id} уже существует` };
+    const place = { ...defaultPlace(id), name: name(opts.name, defaultPlace(id).name) };
+    const raw = {
+        v: 2, cols: 10, rows: 10, margin: .5, seed: `location-${id}`, place,
+        zones: [], objects: [], spawns: [{ c: 2, r: 5 }], passages: [], paint: grassPng(),
+    };
+    const checked = sanitizeTestMap(raw);
+    if (!checked.map)
+        return { error: checked.error || 'карта не прошла проверку' };
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    writeFileAtomic(file, JSON.stringify(checked.map, null, 2));
+    LOCATION_IDS.push(id);
+    LOCATION_IDS.sort((a, b) => a - b);
+    persistLocationIds();
+    try { withTestLocation(id, () => {}); }
+    catch (error) {
+        console.warn(`location ${id} warm-up failed:`, error.message);
+    }
+    const locations = broadcastLocationCatalogue();
+    return { place: locations.find(p => p.id === id) ?? place, locations };
+}
+function locationsAdminGate(req, res) {
+    const session = sessionFromRequest(req);
+    if (!session) {
+        json(res, 401, { ok: false, reason: 'auth_required', message: 'Нужен вход в аккаунт администратора.' });
+        return null;
+    }
+    if (session.account?.role !== 'admin') {
+        json(res, 403, { ok: false, reason: 'forbidden', message: 'Раздел открыт только администраторам.' });
+        return null;
+    }
+    return session;
+}
+/** GET /locations (catalogue) + POST /admin/locations (create blank 10×10). */
+export async function handleLocationsHttp(req, res) {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const p = url.pathname;
+    if (p === '/locations') {
+        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+        if (req.method !== 'GET') {
+            json(res, 405, { ok: false, reason: 'method_not_allowed' });
+            return true;
+        }
+        json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });
+        return true;
+    }
+    if (p !== '/admin/locations') return false;
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+    if (!locationsAdminGate(req, res)) return true;
+    if (req.method === 'GET') {
+        json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });
+        return true;
+    }
+    if (req.method !== 'POST') {
+        json(res, 405, { ok: false, reason: 'method_not_allowed' });
+        return true;
+    }
+    let body = {};
+    try { body = await readJson(req); }
+    catch {
+        json(res, 400, { ok: false, reason: 'json', message: 'Тело запроса не читается как JSON.' });
+        return true;
+    }
+    const extra = Object.keys(body).filter(k => k !== 'name');
+    if (extra.length) {
+        json(res, 400, { ok: false, reason: 'unexpected_fields', unexpected: extra, expected: ['name'] });
+        return true;
+    }
+    const result = createLocation({ name: body.name });
+    if (result.error) {
+        json(res, 400, { ok: false, reason: 'invalid', message: result.error });
+        return true;
+    }
+    json(res, 200, { ok: true, place: result.place, locations: result.locations, room: locationRoom(result.place.id) });
+    return true;
 }
 const direction = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 function freeArrival(room, x, y) {

@@ -77,6 +77,7 @@ import { ApplyPreview } from './cfg-apply-preview';
 // Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
+import { TexturesTab } from './textures-tab';
 // Пересводка W2 (2026-11-08): ThemeSelect из шапки панели убран — селект темы
 // несёт общая шапка сайта (SiteHeader), дублей быть не должно.
 // Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
@@ -99,7 +100,7 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
  *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
  *  «пункт, который мы смотрели», сохраняется между визитами. */
 const TAB_KEY = 'elyria-admin-tab';
-const TAB_IDS = ['cfg', 'field', 'armor', 'sprites'] as const;
+const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures'] as const;
 const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'cfg';
 
 /** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
@@ -554,6 +555,7 @@ export default function CfgDashboard() {
         ) : null,
     },
     { id: 'sprites', title: 'Спрайты', render: () => <SpritesTab /> },
+    { id: 'textures', title: 'Текстуры', render: () => <TexturesTab /> },
   ];
 
   const activeTab = tabs.find((t) => t.id === tab) ?? null;

@@ -49,7 +49,8 @@
     "test:stone": "node scripts/test-stone-platform.mjs",
     "test:editor-save": "node scripts/test-editor-save.mjs",
     "test:atomic-file": "node scripts/test-atomic-file.mjs",
-    "test:locations": "node scripts/test-locations.mjs"
+    "test:locations": "node scripts/test-locations.mjs",
+    "test:textures": "node scripts/test-textures.mjs"
   },
   "engines": {
     "node": ">=18"
