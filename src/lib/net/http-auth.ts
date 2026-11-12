@@ -5,7 +5,12 @@
  * dev/legacy — origin сокета.
  *
  * Контракты сервера (server/auth.js handleAuthHttp):
- *   POST /auth/register {login,pass,name?} → 200 {ok, accountId…} | 400 {ok:false,reason} | 429 rate
+ *   POST /auth/register {login,pass,name?,invite?} → 200 {ok, accountId…}
+ *     | 400 {ok:false,reason} | 429 rate. Инвайты: регистрация закрытого
+ *     сайта — по кодам-приглашениям админов (XXXX-XXXX, живут 24 часа);
+ *     поле invite НЕобязательное поле тела — старые серверы его не знают и
+ *     регистрируют как раньше. Невалидный/просроченный/использованный код →
+ *     400 {ok:false, reason:'invite'}.
  *   POST /auth/login    {login,pass} → 200 {ok, accountId…} | 401 {ok:false,reason:'bad'} | 429 rate
  *   POST /auth/logout           → 200 {ok:true, role:'guest'} + Set-Cookie deleted
  *   GET  /auth/me               → 200 {ok:true, role:'guest'} | 200 {ok, accountId…}
@@ -70,11 +75,16 @@ async function post(path: string, body: Record<string, unknown>): Promise<CoopWh
   return out;
 }
 
-/** Имя на поле отправляем ТОЛЬКО заданным и непустым: без поля сервер зовёт
- *  игрока логином (register v2, контракт {login, pass, name?}). */
-export async function httpRegister(login: string, pass: string, name?: string): Promise<CoopWhoami> {
+/** Имя на поле и код приглашения отправляем ТОЛЬКО заданными и непустыми:
+ *  без поля сервер зовёт игрока логином (register v2), а старые серверы без
+ *  инвайта регистрируют как раньше (контракт {login, pass, name?, invite?}). */
+export async function httpRegister(login: string, pass: string, name?: string, invite?: string): Promise<CoopWhoami> {
   const display = (name ?? "").trim();
-  return post(authRoute("register"), display ? { login, pass, name: display } : { login, pass });
+  const code = (invite ?? "").trim();
+  const body: Record<string, unknown> = { login, pass };
+  if (display) body.name = display;
+  if (code) body.invite = code;
+  return post(authRoute("register"), body);
 }
 
 export async function httpLogin(login: string, pass: string): Promise<CoopWhoami> {

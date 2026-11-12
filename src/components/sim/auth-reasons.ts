@@ -10,7 +10,9 @@
  * алфавит, опционально (мусор → 'badname'); пароль — от 8; занятое имя →
  * 'taken', короткие поля старых форм → 'short'/'weak', неверные данные
  * входа → 'bad' (вход старых логинов с пробелами/кириллицей жив), флуд →
- * 'rate' (429), реестр полон → 'full'. Сервер отвечает кодом в теле —
+ * 'rate' (429), реестр полон → 'full'. Инвайты: регистрация закрытого сайта —
+ * только по кодам-приглашениям админов (XXXX-XXXX, 24 часа); неверный/
+ * просроченный/использованный код → 'invite'. Сервер отвечает кодом в теле —
  * русский текст для пользователя живёт здесь.
  */
 
@@ -25,6 +27,7 @@ export const REASON_TEXTS: Record<string, string> = {
   full: 'Регистрация закрыта: места для новых аккаунтов закончились.',
   rate: 'Слишком часто. Подождите немного и попробуйте снова.',
   bad: 'Неверный логин или пароль.',
+  invite: 'Код приглашения неверный или устарел. Попросите новый у администрации.',
   error: 'Не получилось: сервер не принял запрос. Попробуйте ещё раз.',
 };
 
@@ -81,11 +84,19 @@ export function localFieldNameError(fieldName: string): string | null {
   return cp >= 2 && cp <= 24 ? null : REASON_TEXTS.badname;
 }
 
+/** Код приглашения при регистрации (закрытый сайт): обязателен и непуст после
+ * trim (форма канона — XXXX-XXXX, финальный арбитр всё равно сервер).
+ *  null — ок; строка — показать у формы. */
+export function localInviteError(invite: string): string | null {
+  return String(invite || '').trim() ? null : 'Введите код приглашения — регистрация только по приглашениям.';
+}
+
 /**
  * Та же проверка для гейтовой формы с повтором пароля (регистрация): подписи
  * полей другие («Логин»), но правила — те же контракты сервера. null — можно
- * отправлять; строка — показать у формы. В register-режиме проверяет и формат
- * нового логина, и имя на поле (арбитр всё равно сервер — это быстрая отсечка).
+ * отправлять; строка — показать у формы. В register-режиме проверяет формат
+ * нового логина, имя на поле и непустой код приглашения (арбитр всё равно
+ * сервер — это быстрая отсечка).
  */
 export function localGateError(
   mode: 'login' | 'register',
@@ -93,6 +104,7 @@ export function localGateError(
   pass: string,
   pass2?: string,
   fieldName?: string,
+  invite?: string,
 ): string | null {
   const loginClean = login.trim();
   if (!loginClean) return 'Введите логин — без него не войти.';
@@ -107,6 +119,8 @@ export function localGateError(
   if (mode === 'register') {
     const fieldErr = localFieldNameError(fieldName ?? '');
     if (fieldErr) return fieldErr;
+    const inviteErr = localInviteError(invite ?? '');
+    if (inviteErr) return inviteErr;
     if (pass2 !== pass) return 'Пароли не совпадают.';
   }
   return null;
