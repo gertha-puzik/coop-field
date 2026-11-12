@@ -47,6 +47,67 @@ Recommended additions so regressions cannot sneak past the wave:
 - [ ] `Preview комментарий (маркер/бейджи/шапка)` — marker-comment contract.
 - [ ] `Прод-переключатель www (транзакция)` — production switch contract.
 
+## 3b. Production nginx: texture + locations API prefixes (owner, root)
+
+`/admin` stays static (try_files). New room APIs from the locations/textures
+wave must be proxied by **exact** prefixes — same pattern as `/admin/sprites`.
+Without them the admin «Текстуры» tab loads HTML and shows
+«Не удалось загрузить каталог текстур», and `GET/POST /locations` never reaches Node.
+
+On the Elysiae production vhost (and the grotto vhost if it should serve
+`/tex/catalog` for the engine), add and `nginx -t && systemctl reload nginx`:
+
+```nginx
+location /admin/tex {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /tex/catalog {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+location /tex/file {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+location /locations {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /admin/locations {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+```
+
+Do **not** add a broad `location /tex` or `location /admin` — builtin
+`/tex/<id>.png` and the `/admin` page must stay on try_files. Preview
+fragments get the same prefixes from `preview-apply.sh` after this lands on
+`main` (workflow_run always reads apply from main).
+
+- [ ] Add the blocks above to production Elysiae (and grotto if needed) nginx
+- [ ] `curl -sI https://phainonsmilk.ru/admin/tex` → JSON/`401`, not `text/html`
+- [ ] `curl -sI https://phainonsmilk.ru/tex/catalog` → JSON/`200`
+- [ ] `curl -sI https://phainonsmilk.ru/locations` → JSON/`200`
+
 ## 4. VPS one-time prerequisites (root, once)
 
 The production flow needs **no new** rights beyond what

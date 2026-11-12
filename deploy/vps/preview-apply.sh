@@ -336,6 +336,49 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
+    # Текстуры редактора (server/textures.js): CRUD /admin/tex* → Node;
+    # страница /admin остаётся статикой (как /admin/sprites).
+    location /admin/tex {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    # Публичный каталог текстур редактора (замены + кастомные src).
+    location /tex/catalog {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    # PNG замен/кастомных текстур; builtin /tex/<id>.png остаётся статикой root.
+    location /tex/file {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    # Каталог локаций мира + admin create (POST /locations); алиас /admin/locations.
+    location /locations {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
+    location /admin/locations {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
     # Личные окрасы игроков (#83: POST/GET/DELETE /sprites/mine* — сессия,
     # unsafe-cookie Origin-щит и Host-гейт решает комната). Cookie обязателен:
     # зона сессионная, как /profiles; без прокси изолированный билд отдал бы
