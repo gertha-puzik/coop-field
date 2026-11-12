@@ -53,6 +53,11 @@ function authRoute(kind: "register" | "login" | "logout" | "me"): string {
 
 let meMemo: Promise<CoopWhoami> | null = null;
 
+/** Потолок ожидания GET /auth/me: без него при рестарте комнаты после
+ *  деплоя браузерный fetch может висеть минутами, а вкладка держит гостевой
+ *  экран с «Готовим ваш профиль» (owner report 2026-11-12). */
+const ME_TIMEOUT_MS = 8000;
+
 function emitMe(row: CoopWhoami): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(ME_EVENT, { detail: row }));
@@ -98,9 +103,21 @@ export async function httpLogout(): Promise<CoopWhoami> {
 /** Сырой ходок GET /auth/me (использован только httpMe-кэшем). */
 async function meRequest(): Promise<CoopWhoami> {
   try {
-    const res = await fetch(`${httpOrigin()}${authRoute("me")}`, { credentials: "include" });
-    const row = (await res.json().catch(() => null)) as unknown;
-    return isCoopWhoami(row) ? row : { ok: false, reason: "error" };
+    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer =
+      ac && typeof setTimeout === "function"
+        ? setTimeout(() => ac.abort(), ME_TIMEOUT_MS)
+        : null;
+    try {
+      const res = await fetch(`${httpOrigin()}${authRoute("me")}`, {
+        credentials: "include",
+        signal: ac?.signal,
+      });
+      const row = (await res.json().catch(() => null)) as unknown;
+      return isCoopWhoami(row) ? row : { ok: false, reason: "error" };
+    } finally {
+      if (timer != null) clearTimeout(timer);
+    }
   } catch {
     return { ok: false, reason: "error" };
   }
@@ -110,9 +127,17 @@ async function meRequest(): Promise<CoopWhoami> {
  * Снимок сессии (восстановление после перезагрузки страницы). Кэш на вкладку:
  * повторные вызовы (AuthGate + шапки «Мой профиль» + каталог/админка одной
  * страницы) получают один и тот же промис — второй запрос не отправляется.
+ * Сетевой/таймаут-сбой мемо НЕ травит: следующий вызов пробует снова (после
+ * деплоя комната поднимается — повторный httpMe должен увидеть куку).
  */
 export function httpMe(): Promise<CoopWhoami> {
-  meMemo ??= meRequest();
+  if (!meMemo) {
+    const pending = meRequest().then((row) => {
+      if (!row.ok && row.reason === "error" && meMemo === pending) meMemo = null;
+      return row;
+    });
+    meMemo = pending;
+  }
   return meMemo;
 }
 
