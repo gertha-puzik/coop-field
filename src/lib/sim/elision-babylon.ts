@@ -232,8 +232,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const g = dyn.getContext() as CanvasRenderingContext2D;
       g.imageSmoothingEnabled = false;
       const dirty = frame.paintDirty;
-      const live = frame.paintLive;
-      const ov = frame.paintOverlay;
       const uploadFull = () => {
         g.clearRect(0, 0, tw, th);
         g.drawImage(src, 0, 0);
@@ -271,22 +269,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       };
       if (needNew || groundAtlas !== src) {
         uploadFull();
-      } else if (revChanged && live && live.length && dirty && dirty.w > 0 && dirty.h > 0) {
-        // Новые мазки поверх старых — без clear и без копии атласа.
-        for (const b of live) {
-          if (b.erase) {
-            g.save();
-            g.globalCompositeOperation = 'destination-out';
-            g.drawImage(b.tip, b.x, b.y, b.w, b.h);
-            g.restore();
-          } else {
-            g.drawImage(b.tip, b.x, b.y, b.w, b.h);
-          }
-        }
-        if (ov) g.drawImage(ov, dirty.x, dirty.y, dirty.w, dirty.h, dirty.x, dirty.y, dirty.w, dirty.h);
-        uploadDynRect(dirty);
       } else if (revChanged && dirty && dirty.w > 0 && dirty.h > 0) {
-        // Фоллбек без live-списка: один dirty-blit (редко).
+        // Mid-stroke: атлас уже содержит мировой паттерн в dirty — без tip-blit.
         g.clearRect(dirty.x, dirty.y, dirty.w, dirty.h);
         g.drawImage(src, dirty.x, dirty.y, dirty.w, dirty.h, dirty.x, dirty.y, dirty.w, dirty.h);
         uploadDynRect(dirty);

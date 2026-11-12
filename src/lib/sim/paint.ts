@@ -79,9 +79,6 @@ function paintPatternFor(ctx: CanvasRenderingContext2D, mat: string): CanvasPatt
   return '#42582c';
 }
 
-/** Штамп кисти по черновому холсту (канонические px мира). Круг — по курсору;
- *  прямоугольные пресеты — свободные области с центром под курсором.
- *  Промежутки между событиями мыши соединяются непрерывным росчерком. */
 /** Множитель размера кисти от PointerEvent.pressure.
  *  Только перо планшета (`pointerType === 'pen'`): 1 = полный диаметр слайдера,
  *  лёгкое касание → тонкая линия (пол PRESSURE_MIN). Мышь/тач — всегда 1,
@@ -125,78 +122,12 @@ export function takePaintDirty(canvasW: number, canvasH: number): PaintDirtyRect
 
 export function clearPaintDirty(): void {
   strokeDirty = null;
-  liveBlits = [];
 }
 
-/** Штамп поверх уже залитой ground-текстуры (без копирования старых пикселей). */
-export type PaintLiveBlit = {
-  tip: HTMLCanvasElement;
-  x: number;
-  y: number;
-  erase: boolean;
-};
-let liveBlits: PaintLiveBlit[] = [];
-
-export function takePaintLiveBlits(): PaintLiveBlit[] {
-  const out = liveBlits;
-  liveBlits = [];
-  return out;
-}
-
-/** Кэш кончика: fill(arc+pattern) на Ø280 дорого повторять вдоль сегмента. */
-const tipCache = new Map<string, HTMLCanvasElement>();
-const TIP_CACHE_MAX = 64;
-
-function rememberTip(key: string, cv: HTMLCanvasElement): HTMLCanvasElement {
-  if (tipCache.size >= TIP_CACHE_MAX) {
-    const first = tipCache.keys().next().value;
-    if (first !== undefined) tipCache.delete(first);
-  }
-  tipCache.set(key, cv);
-  return cv;
-}
-
-function roundBrushTip(mat: string, diameter: number): HTMLCanvasElement {
-  const d = Math.max(1, Math.round(diameter));
-  const key = `r|${mat}|${d}`;
-  const hit = tipCache.get(key);
-  if (hit) return hit;
-  const cv = document.createElement('canvas');
-  cv.width = d;
-  cv.height = d;
-  const g = cv.getContext('2d');
-  if (g) {
-    g.imageSmoothingEnabled = false;
-    g.fillStyle = mat === 'erase' ? '#000' : ((paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string);
-    g.beginPath();
-    g.arc(d / 2, d / 2, d / 2, 0, Math.PI * 2);
-    g.fill();
-  }
-  return rememberTip(key, cv);
-}
-
-function rectBrushTip(mat: string, bw: number, bh: number): HTMLCanvasElement {
-  const w = Math.max(1, Math.round(bw));
-  const h = Math.max(1, Math.round(bh));
-  const key = `q|${mat}|${w}x${h}`;
-  const hit = tipCache.get(key);
-  if (hit) return hit;
-  const cv = document.createElement('canvas');
-  cv.width = w;
-  cv.height = h;
-  const g = cv.getContext('2d');
-  if (g) {
-    g.imageSmoothingEnabled = false;
-    g.fillStyle = mat === 'erase' ? '#000' : ((paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string);
-    g.fillRect(0, 0, w, h);
-  }
-  return rememberTip(key, cv);
-}
-
-function pushLiveBlit(tip: HTMLCanvasElement, x: number, y: number, erase: boolean): void {
-  liveBlits.push({ tip, x, y, erase });
-}
-
+/** Штамп кисти по черновому холсту (канонические px мира). Круг — по курсору;
+ *  прямоугольные пресеты — свободные области с центром под курсором.
+ *  Паттерн материала выравнивается по миру (fill/stroke на холсте), как в #142:
+ *  tip-кэш с локальным узором давал «змейки» одинаковых цветков вдоль мазка. */
 export function stampPaintBrush(
   d: EditorDraft,
   mat: string,
@@ -214,8 +145,13 @@ export function stampPaintBrush(
   if (!g) return;
   const cx = (mx / cellW) * PAINT_CELL_W;
   const cy = (my / cellH) * PAINT_CELL_H;
-  const erase = mat === 'erase';
   g.save();
+  if (mat === 'erase') {
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = 'rgba(0,0,0,1)';
+  } else {
+    g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
+  }
   g.imageSmoothingEnabled = false;
   const factor = paintPressureFactor(pointerType, pressure);
   const base = paintBrushSize(d);
@@ -223,34 +159,50 @@ export function stampPaintBrush(
   const previous = d.paintLast?.mat === mat ? d.paintLast : null;
   let dirtyPad = Math.max(size.w, size.h) / 2 + 2;
   if (d.pshape === 'round') {
-    // Интерполяция диаметра вдоль сегмента — давление меняется плавно, без
-    // «палки» постоянной толщины между двумя точками разной силы.
     const r = Math.max(0.5, size.w / 2);
-    const prevR = previous ? Math.max(0.5, previous.w / 2) : r;
+    const prevR = previous ? Math.max(0.5, (previous.w ?? size.w) / 2) : r;
     dirtyPad = Math.max(r, prevR) + 2;
-    const dist = previous ? Math.hypot(cx - previous.x, cy - previous.y) : 0;
-    // Крупной кисти меньше перекрытия: tip drawImage дешевле, чем fill+pattern.
-    const step = Math.max(1, Math.min(r, prevR) * 0.4);
-    const steps = previous ? Math.max(1, Math.ceil(dist / step)) : 1;
-    if (erase) g.globalCompositeOperation = 'destination-out';
-    for (let i = previous ? 1 : 0; i <= steps; i++) {
-      const t = previous ? i / steps : 1;
-      const x = previous ? previous.x + (cx - previous.x) * t : cx;
-      const y = previous ? previous.y + (cy - previous.y) * t : cy;
-      const rr = previous ? prevR + (r - prevR) * t : r;
-      const tip = roundBrushTip(mat, rr * 2);
-      const dx = x - tip.width / 2;
-      const dy = y - tip.height / 2;
-      g.drawImage(tip, dx, dy);
-      pushLiveBlit(tip, dx, dy, erase);
+    // Постоянный радиус (мышь / ровное перо): один stroke как в #142 — бесшовный
+    // узор и дёшево. Смена давления — круги с мировым паттерном вдоль сегмента.
+    if (!previous || Math.abs(r - prevR) < 0.5) {
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.fill();
+      if (previous) {
+        g.strokeStyle = g.fillStyle as CanvasPattern | string;
+        g.lineWidth = r * 2;
+        g.lineCap = 'round';
+        g.beginPath();
+        g.moveTo(previous.x, previous.y);
+        g.lineTo(cx, cy);
+        g.stroke();
+      }
+    } else {
+      const dist = Math.hypot(cx - previous.x, cy - previous.y);
+      const step = Math.max(1, Math.min(r, prevR) * 0.5);
+      const steps = Math.max(1, Math.ceil(dist / step));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const x = previous.x + (cx - previous.x) * t;
+        const y = previous.y + (cy - previous.y) * t;
+        const rr = prevR + (r - prevR) * t;
+        g.beginPath();
+        g.arc(x, y, rr, 0, Math.PI * 2);
+        g.fill();
+      }
     }
   } else {
-    if (erase) g.globalCompositeOperation = 'destination-out';
     const prevW = previous?.w ?? size.w;
     const prevH = previous?.h ?? size.h;
     dirtyPad = Math.max(size.w, size.h, prevW, prevH) / 2 + 2;
     const steps = previous
-      ? Math.max(1, Math.ceil(Math.hypot(cx - previous.x, cy - previous.y) / Math.max(1, Math.min(size.w, size.h, prevW, prevH) / 3)))
+      ? Math.max(
+          1,
+          Math.ceil(
+            Math.hypot(cx - previous.x, cy - previous.y) /
+              Math.max(1, Math.min(size.w, size.h, prevW, prevH) / 3),
+          ),
+        )
       : 1;
     for (let i = 1; i <= steps; i++) {
       const t = previous ? i / steps : 1;
@@ -258,11 +210,7 @@ export function stampPaintBrush(
       const y = previous ? previous.y + (cy - previous.y) * t : cy;
       const w = previous ? prevW + (size.w - prevW) * t : size.w;
       const h = previous ? prevH + (size.h - prevH) * t : size.h;
-      const tip = rectBrushTip(mat, w, h);
-      const dx = x - tip.width / 2;
-      const dy = y - tip.height / 2;
-      g.drawImage(tip, dx, dy);
-      pushLiveBlit(tip, dx, dy, erase);
+      g.fillRect(x - w / 2, y - h / 2, w, h);
     }
   }
   if (previous) {

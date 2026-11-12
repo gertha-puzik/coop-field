@@ -65,10 +65,6 @@ export type ElisionFrame = {
   paintRev: number;
   /** Кусок атласа, тронутый мазком (px атласа). Без поля — полная заливка GPU. */
   paintDirty?: { x: number; y: number; w: number; h: number } | null;
-  /** Mid-stroke: новые штампы поверх уже залитой dyn-текстуры (не копия атласа). */
-  paintLive?: { tip: HTMLCanvasElement; x: number; y: number; w: number; h: number; erase: boolean }[] | null;
-  /** Кэш оверлея (тропинки/зоны/сетка) — кладётся поверх live-штампов в dirty. */
-  paintOverlay?: HTMLCanvasElement | null;
 };
 
 export interface ElisionView {
