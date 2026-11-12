@@ -235,6 +235,11 @@ export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean)
     cellClipFull = null;
   }
 }
+/** Только версия слоя для WebGL/атласа — без getImageData. На каждый
+ *  pointermove кисти: кадр перерисует paint поверх кэша оверлеев. */
+export function bumpPaintVisual(): void {
+  paintLayerVersion++;
+}
 
 /* ---------- клипы клеток рельефа: дешёвая замена полного контура ---------- */
 
