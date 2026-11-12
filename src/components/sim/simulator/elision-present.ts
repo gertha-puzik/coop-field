@@ -105,37 +105,46 @@ let paintRev = 0;
 let surfaceEditor = false;
 let surfaceGrid=false;
 let surfaceLayer=-1;
+/** Оверлей поверх кисти (тропинка/зоны/сетка/декор) — не зависит от мазков;
+ *  mid-stroke атлас = drawImage(paint) + drawImage(overlay), без пересборки. */
+let overlay: HTMLCanvasElement | null = null;
+let overlayKey = '';
 
-/** Полный атлас поверхности: кисть/трава, покрытия, заходы и сетка на всех уровнях. */
-function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false) {
-  const map = currentTestMap();
-  const real = paintCanvas();
-  const revision = packRevision(),layerRevision=paintLayerRevision();
+function pathSigOf(map: ReturnType<typeof currentTestMap>): string {
+  return (map.objects ?? [])
+    .filter((o) => o.kind === 'path')
+    .map((o) => `${o.c},${o.r}`)
+    .sort()
+    .join(';');
+}
+
+function buildOverlay(
+  cols: number,
+  rows: number,
+  cellW: number,
+  cellH: number,
+  editor: boolean,
+  grid: boolean,
+  map: ReturnType<typeof currentTestMap>,
+  revision: number,
+  hasPaint: boolean,
+): HTMLCanvasElement | null {
   const w = Math.max(1, Math.round(cols * cellW));
   const h = Math.max(1, Math.round(rows * cellH));
-  if (!surface) surface = document.createElement('canvas');
-  if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
-      surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid===grid && surfaceLayer===layerRevision) {
-    return { paint: surface, paintRev };
-  }
-  surfaceEditor = editor;surfaceGrid=grid;surfaceLayer=layerRevision;
-  surfaceMap = map;
-  surfacePaint = real;
-  surfacePack = revision;
-  surface.width = w;
-  surface.height = h;
-  const g = surface.getContext('2d');
-  if (!g) return { paint: null, paintRev };
+  const key = `${w}x${h}|${editor}|${grid}|${revision}|${pathSigOf(map)}|${hasPaint ? 1 : 0}|${Object.keys(map.elev ?? {}).length}|${map.zones.length}|${(map.objects ?? []).length}`;
+  if (overlay && overlayKey === key && overlay.width === w && overlay.height === h) return overlay;
+  if (!overlay) overlay = document.createElement('canvas');
+  overlay.width = w;
+  overlay.height = h;
+  overlayKey = key;
+  const g = overlay.getContext('2d');
+  if (!g) return null;
+  g.clearRect(0, 0, w, h);
   g.imageSmoothingEnabled = false;
   const geo = testFieldGeometry(cellW, cellH);
-  if (real) g.drawImage(real, 0, 0, w, h);
-  else {
-    g.fillStyle = grassPattern(g) ?? '#2a461c';
-    g.fill(geo.path);
-  }
   g.save();
-  if(!editor||!real)g.clip(geo.path);
-  if (!real) {
+  if (!editor || !hasPaint) g.clip(geo.path);
+  if (!hasPaint) {
     for (const o of map.objects ?? []) {
       if (o.kind === 'ground') drawGroundCover(g, o, cellW, cellH);
       if (o.kind === 'dirt') {
@@ -145,13 +154,11 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
       }
     }
   }
-  // Тропинка не запекается в кисть — рисуется поверх зон/paint, клип по кромке.
   if (geo.pathGeo) {
     drawPathSurface(g, geo.pathGeo.path, geo.pathGeo.tufts, cellW, cellH);
   }
-  // Soft level tint: every higher surface is lighter, without covering the texture.
-  for (const b of terrainTiles(effectiveElevRecord(map),cols,rows)) {
-    if(!b.level)continue;
+  for (const b of terrainTiles(effectiveElevRecord(map), cols, rows)) {
+    if (!b.level) continue;
     g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
     g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
@@ -166,14 +173,14 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     if (o.kind === 'entry' && o.dir)
       drawEntryMark(g, cellW, cellH, (o.c + 0.5) * cellW, (o.r + 0.5) * cellH, o.dir);
   }
-  if (!real) {
+  if (!hasPaint) {
     for (const decor of geo.decor) drawTestDecorItem(g, decor, cellW, cellH);
   }
   g.fillStyle = 'rgba(250, 214, 80, 0.1)';
   g.strokeStyle = 'rgba(233, 196, 61, 0.8)';
   g.lineWidth = 1;
-  for (const key of battle) {
-    const [c, r] = key.split(',').map(Number);
+  for (const keyB of battle) {
+    const [c, r] = keyB.split(',').map(Number);
     g.fillRect(c * cellW, r * cellH, cellW, cellH);
     g.strokeRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
   }
@@ -181,11 +188,48 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     g.strokeStyle = 'rgba(240,255,235,.2)';
     g.lineWidth = 1;
     g.beginPath();
-    for (let c = 0; c <= cols; c++) { g.moveTo(c*cellW,0); g.lineTo(c*cellW,h); }
-    for (let r = 0; r <= rows; r++) { g.moveTo(0,r*cellH); g.lineTo(w,r*cellH); }
+    for (let c = 0; c <= cols; c++) { g.moveTo(c * cellW, 0); g.lineTo(c * cellW, h); }
+    for (let r = 0; r <= rows; r++) { g.moveTo(0, r * cellH); g.lineTo(w, r * cellH); }
     g.stroke();
   }
   g.restore();
+  return overlay;
+}
+
+/** Полный атлас поверхности: кисть/трава + кэшируемый оверлей сверху. */
+function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false) {
+  const map = currentTestMap();
+  const real = paintCanvas();
+  const revision = packRevision(), layerRevision = paintLayerRevision();
+  const w = Math.max(1, Math.round(cols * cellW));
+  const h = Math.max(1, Math.round(rows * cellH));
+  if (!surface) surface = document.createElement('canvas');
+  if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
+      surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid && surfaceLayer === layerRevision) {
+    return { paint: surface, paintRev };
+  }
+  const baseSame = surfaceMap === map && surfacePaint === real && surfacePack === revision &&
+    surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid;
+  surfaceEditor = editor; surfaceGrid = grid; surfaceLayer = layerRevision;
+  surfaceMap = map;
+  surfacePaint = real;
+  surfacePack = revision;
+  if (!baseSame) {
+    surface.width = w;
+    surface.height = h;
+  }
+  const g = surface.getContext('2d');
+  if (!g) return { paint: null, paintRev };
+  g.imageSmoothingEnabled = false;
+  if (baseSame) g.clearRect(0, 0, w, h);
+  const geo = testFieldGeometry(cellW, cellH);
+  if (real) g.drawImage(real, 0, 0, w, h);
+  else {
+    g.fillStyle = grassPattern(g) ?? '#2a461c';
+    g.fill(geo.path);
+  }
+  const ov = buildOverlay(cols, rows, cellW, cellH, editor, grid, map, revision, !!real);
+  if (ov) g.drawImage(ov, 0, 0);
   paintRev += 1;
   return { paint: surface, paintRev };
 }

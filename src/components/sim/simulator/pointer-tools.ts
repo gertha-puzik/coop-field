@@ -19,7 +19,7 @@ import { bfsPath } from '@/lib/sim/settings';
 import { createCoopClient } from '@/lib/net/coop';
 import { dummiesOf, dummyIsDrawn, othersOf, type CharRef } from '@/lib/sim/targeting';
 import { ensureDraftPaint, fillPaintArea, stampPaintBrush } from '@/lib/sim/paint';
-import { groundPointAtWorld, setPaintOverride, testBattleRouteBlocked, testEntryAt, testEntryStrict, testPeaceBattleBlocked, testPointInCellsZone, testPointInIsland, testWalkableCell } from '@/lib/sim/test-field';
+import { bumpPaintVisual, groundPointAtWorld, setPaintOverride, testBattleRouteBlocked, testEntryAt, testEntryStrict, testPeaceBattleBlocked, testPointInCellsZone, testPointInIsland, testWalkableCell } from '@/lib/sim/test-field';
 import { peaceHalfBox, screenToWorld, spriteBoxOf } from '@/lib/sim/geometry';
 
 export interface PointerToolsDeps {
@@ -58,8 +58,6 @@ export interface PointerToolsDeps {
   mainSavedRef: RefObject<{ col: number; row: number; angle: number } | null>;
   netRef: RefObject<ReturnType<typeof createCoopClient> | null>;
   paintStrokeRef: RefObject<boolean>;
-  /** React-флаг «идёт мазок» — прячет WebGL на время росчерка. */
-  setPaintStrokeLive?: (live: boolean) => void;
   skipClickRef: RefObject<boolean>;
   spritesRef: RefObject<Partial<Record<SpriteId, HTMLImageElement>>>;
   settingsRef: RefObject<SimSettings>;
@@ -110,7 +108,6 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     mainSavedRef,
     netRef,
     paintStrokeRef,
-    setPaintStrokeLive,
     skipClickRef,
     spritesRef,
     settingsRef,
@@ -135,6 +132,15 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     dragEditorSelection,
     dropEditorSelection,
   } = deps;
+  /** Один bumpPaintVisual на кадр: WebGL-атлас подтянет мазки без getImageData. */
+  let paintBumpRaf = 0;
+  const schedulePaintVisualBump = () => {
+    if (paintBumpRaf) return;
+    paintBumpRaf = requestAnimationFrame(() => {
+      paintBumpRaf = 0;
+      bumpPaintVisual();
+    });
+  };
   const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement> | React.PointerEvent<HTMLCanvasElement>) => {
     const cv = canvasRef.current!;
     const rect = cv.getBoundingClientRect();
@@ -255,6 +261,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         if (paintStrokeRef.current && ed.tool === 'paint' && ed.pcv) {
           if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
           else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
+          schedulePaintVisualBump();
         }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {
@@ -413,9 +420,9 @@ export function buildPointerTools(deps: PointerToolsDeps) {
           setPaintOverride(ed.pcv,true);ed.dirty=true;refreshEditorPreview();syncEditorView();ev.preventDefault();return;
         }
         paintStrokeRef.current = true;
-        setPaintStrokeLive?.(true);
         stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
         if (ed.pcv) setPaintOverride(ed.pcv, false);
+        schedulePaintVisualBump();
         ed.dirty = true;
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
@@ -582,7 +589,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     // Мазок кисти закончен: пересчитываем контур локации по обновлённой маске.
     if (paintStrokeRef.current) {
       paintStrokeRef.current = false;
-      setPaintStrokeLive?.(false);
+      if (paintBumpRaf) { cancelAnimationFrame(paintBumpRaf); paintBumpRaf = 0; }
       if (ed?.pcv) {setPaintOverride(ed.pcv, true);refreshEditorPreview();}
     }
     if (editorOpenRef.current && ed) {
