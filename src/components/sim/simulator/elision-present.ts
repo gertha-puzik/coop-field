@@ -12,7 +12,7 @@ import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { spriteAspectOf } from '@/lib/sim/sprite-aspect';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
-import { takePaintDirty } from '@/lib/sim/paint';
+import { takePaintDirty, takePaintLiveBlits } from '@/lib/sim/paint';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { drawPathSurface } from '@/lib/sim/path-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
@@ -197,9 +197,17 @@ function buildOverlay(
   return overlay;
 }
 
+type FramePaintOut = {
+  paint: HTMLCanvasElement | null;
+  paintRev: number;
+  paintDirty: { x: number; y: number; w: number; h: number } | null;
+  paintLive: { tip: HTMLCanvasElement; x: number; y: number; w: number; h: number; erase: boolean }[] | null;
+  paintOverlay: HTMLCanvasElement | null;
+};
+
 /** Полный атлас поверхности: кисть/трава + кэшируемый оверлей сверху.
- *  Mid-stroke: только dirty AABB кисти → атлас и GPU без полного clear+upload. */
-function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false) {
+ *  Mid-stroke: атлас не копируем — только live-штампы поверх dyn + dirty upload. */
+function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false): FramePaintOut {
   const map = currentTestMap();
   const real = paintCanvas();
   const revision = packRevision(), layerRevision = paintLayerRevision();
@@ -208,12 +216,13 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
   if (!surface) surface = document.createElement('canvas');
   if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
       surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid && surfaceLayer === layerRevision) {
-    return { paint: surface, paintRev, paintDirty: null as { x: number; y: number; w: number; h: number } | null };
+    return { paint: surface, paintRev, paintDirty: null, paintLive: null, paintOverlay: overlay };
   }
   const baseSame = surfaceMap === map && surfacePaint === real && surfacePack === revision &&
     surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid;
   const layerOnly = baseSame && surfaceLayer !== layerRevision;
   const brushDirty = real ? takePaintDirty(real.width, real.height) : null;
+  const liveRaw = takePaintLiveBlits();
   surfaceEditor = editor; surfaceGrid = grid; surfaceLayer = layerRevision;
   surfaceMap = map;
   surfacePaint = real;
@@ -223,11 +232,11 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     surface.height = h;
   }
   const g = surface.getContext('2d');
-  if (!g) return { paint: null, paintRev, paintDirty: null };
+  if (!g) return { paint: null, paintRev, paintDirty: null, paintLive: null, paintOverlay: null };
   g.imageSmoothingEnabled = false;
   const ov = buildOverlay(cols, rows, cellW, cellH, editor, grid, map, revision, !!real);
-  // Мазок: перерисовать только тронутый прямоугольник (кисть + оверлей сверху).
-  if (layerOnly && real && brushDirty) {
+  // Мазок: не пересобираем атлас — WebGL штампует tip поверх уже залитой текстуры.
+  if (layerOnly && real && brushDirty && liveRaw.length) {
     const sx = real.width > 0 ? w / real.width : 1;
     const sy = real.height > 0 ? h / real.height : 1;
     const dx = Math.max(0, Math.floor(brushDirty.x * sx));
@@ -237,15 +246,22 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     const dw = dx1 - dx;
     const dh = dy1 - dy;
     if (dw > 0 && dh > 0) {
-      const srcX = Math.max(0, Math.floor(brushDirty.x));
-      const srcY = Math.max(0, Math.floor(brushDirty.y));
-      const srcW = Math.min(real.width - srcX, Math.ceil(brushDirty.w));
-      const srcH = Math.min(real.height - srcY, Math.ceil(brushDirty.h));
-      g.clearRect(dx, dy, dw, dh);
-      if (srcW > 0 && srcH > 0) g.drawImage(real, srcX, srcY, srcW, srcH, dx, dy, dw, dh);
-      if (ov) g.drawImage(ov, dx, dy, dw, dh, dx, dy, dw, dh);
+      const paintLive = liveRaw.map((b) => ({
+        tip: b.tip,
+        x: b.x * sx,
+        y: b.y * sy,
+        w: b.tip.width * sx,
+        h: b.tip.height * sy,
+        erase: b.erase,
+      }));
       paintRev += 1;
-      return { paint: surface, paintRev, paintDirty: { x: dx, y: dy, w: dw, h: dh } };
+      return {
+        paint: surface,
+        paintRev,
+        paintDirty: { x: dx, y: dy, w: dw, h: dh },
+        paintLive,
+        paintOverlay: ov,
+      };
     }
   }
   if (baseSame) g.clearRect(0, 0, w, h);
@@ -257,7 +273,7 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
   }
   if (ov) g.drawImage(ov, 0, 0);
   paintRev += 1;
-  return { paint: surface, paintRev, paintDirty: null as { x: number; y: number; w: number; h: number } | null };
+  return { paint: surface, paintRev, paintDirty: null, paintLive: null, paintOverlay: ov };
 }
 
 function pushActor(out: ElisionActor[], actor: ElisionActor | null) {
@@ -430,5 +446,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     paint: painted.paint,
     paintRev: painted.paintRev,
     paintDirty: painted.paintDirty,
+    paintLive: painted.paintLive,
+    paintOverlay: painted.paintOverlay,
   };
 }

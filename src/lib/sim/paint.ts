@@ -125,15 +125,40 @@ export function takePaintDirty(canvasW: number, canvasH: number): PaintDirtyRect
 
 export function clearPaintDirty(): void {
   strokeDirty = null;
+  liveBlits = [];
 }
 
-/** Кэш круглого кончика: fill(arc+pattern) на Ø280 дорого повторять вдоль сегмента. */
+/** Штамп поверх уже залитой ground-текстуры (без копирования старых пикселей). */
+export type PaintLiveBlit = {
+  tip: HTMLCanvasElement;
+  x: number;
+  y: number;
+  erase: boolean;
+};
+let liveBlits: PaintLiveBlit[] = [];
+
+export function takePaintLiveBlits(): PaintLiveBlit[] {
+  const out = liveBlits;
+  liveBlits = [];
+  return out;
+}
+
+/** Кэш кончика: fill(arc+pattern) на Ø280 дорого повторять вдоль сегмента. */
 const tipCache = new Map<string, HTMLCanvasElement>();
-const TIP_CACHE_MAX = 48;
+const TIP_CACHE_MAX = 64;
+
+function rememberTip(key: string, cv: HTMLCanvasElement): HTMLCanvasElement {
+  if (tipCache.size >= TIP_CACHE_MAX) {
+    const first = tipCache.keys().next().value;
+    if (first !== undefined) tipCache.delete(first);
+  }
+  tipCache.set(key, cv);
+  return cv;
+}
 
 function roundBrushTip(mat: string, diameter: number): HTMLCanvasElement {
   const d = Math.max(1, Math.round(diameter));
-  const key = `${mat}|${d}`;
+  const key = `r|${mat}|${d}`;
   const hit = tipCache.get(key);
   if (hit) return hit;
   const cv = document.createElement('canvas');
@@ -142,21 +167,34 @@ function roundBrushTip(mat: string, diameter: number): HTMLCanvasElement {
   const g = cv.getContext('2d');
   if (g) {
     g.imageSmoothingEnabled = false;
-    if (mat === 'erase') {
-      g.fillStyle = '#000';
-    } else {
-      g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
-    }
+    g.fillStyle = mat === 'erase' ? '#000' : ((paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string);
     g.beginPath();
     g.arc(d / 2, d / 2, d / 2, 0, Math.PI * 2);
     g.fill();
   }
-  if (tipCache.size >= TIP_CACHE_MAX) {
-    const first = tipCache.keys().next().value;
-    if (first !== undefined) tipCache.delete(first);
+  return rememberTip(key, cv);
+}
+
+function rectBrushTip(mat: string, bw: number, bh: number): HTMLCanvasElement {
+  const w = Math.max(1, Math.round(bw));
+  const h = Math.max(1, Math.round(bh));
+  const key = `q|${mat}|${w}x${h}`;
+  const hit = tipCache.get(key);
+  if (hit) return hit;
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  const g = cv.getContext('2d');
+  if (g) {
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = mat === 'erase' ? '#000' : ((paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string);
+    g.fillRect(0, 0, w, h);
   }
-  tipCache.set(key, cv);
-  return cv;
+  return rememberTip(key, cv);
+}
+
+function pushLiveBlit(tip: HTMLCanvasElement, x: number, y: number, erase: boolean): void {
+  liveBlits.push({ tip, x, y, erase });
 }
 
 export function stampPaintBrush(
@@ -176,6 +214,7 @@ export function stampPaintBrush(
   if (!g) return;
   const cx = (mx / cellW) * PAINT_CELL_W;
   const cy = (my / cellH) * PAINT_CELL_H;
+  const erase = mat === 'erase';
   g.save();
   g.imageSmoothingEnabled = false;
   const factor = paintPressureFactor(pointerType, pressure);
@@ -193,22 +232,20 @@ export function stampPaintBrush(
     // Крупной кисти меньше перекрытия: tip drawImage дешевле, чем fill+pattern.
     const step = Math.max(1, Math.min(r, prevR) * 0.4);
     const steps = previous ? Math.max(1, Math.ceil(dist / step)) : 1;
-    if (mat === 'erase') g.globalCompositeOperation = 'destination-out';
+    if (erase) g.globalCompositeOperation = 'destination-out';
     for (let i = previous ? 1 : 0; i <= steps; i++) {
       const t = previous ? i / steps : 1;
       const x = previous ? previous.x + (cx - previous.x) * t : cx;
       const y = previous ? previous.y + (cy - previous.y) * t : cy;
       const rr = previous ? prevR + (r - prevR) * t : r;
       const tip = roundBrushTip(mat, rr * 2);
-      g.drawImage(tip, x - tip.width / 2, y - tip.height / 2);
+      const dx = x - tip.width / 2;
+      const dy = y - tip.height / 2;
+      g.drawImage(tip, dx, dy);
+      pushLiveBlit(tip, dx, dy, erase);
     }
   } else {
-    if (mat === 'erase') {
-      g.globalCompositeOperation = 'destination-out';
-      g.fillStyle = 'rgba(0,0,0,1)';
-    } else {
-      g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
-    }
+    if (erase) g.globalCompositeOperation = 'destination-out';
     const prevW = previous?.w ?? size.w;
     const prevH = previous?.h ?? size.h;
     dirtyPad = Math.max(size.w, size.h, prevW, prevH) / 2 + 2;
@@ -221,7 +258,11 @@ export function stampPaintBrush(
       const y = previous ? previous.y + (cy - previous.y) * t : cy;
       const w = previous ? prevW + (size.w - prevW) * t : size.w;
       const h = previous ? prevH + (size.h - prevH) * t : size.h;
-      g.fillRect(x - w / 2, y - h / 2, w, h);
+      const tip = rectBrushTip(mat, w, h);
+      const dx = x - tip.width / 2;
+      const dy = y - tip.height / 2;
+      g.drawImage(tip, dx, dy);
+      pushLiveBlit(tip, dx, dy, erase);
     }
   }
   if (previous) {
