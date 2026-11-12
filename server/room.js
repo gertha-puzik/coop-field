@@ -84,7 +84,18 @@ function objCell(pos) {
 
 function occupied(room, x, y, exceptId) {
   for (const cat of room.cats.values()) {
-    if (cat.id !== exceptId && cat.x === x && cat.y === y) return true;
+    if (cat.id === exceptId) continue;
+    // Мирный freemove: клетка занятости — пол под лапами (fx/fy+foot), а не
+    // устаревшие cat.x/y. Без боевых клеток рядом nearestTestCell не двигает
+    // discrete coords, и площадка у прохода «залипала» занятой после ухода кота.
+    if (room.fmt === 'test' && cat.fm === 1 && Number.isFinite(cat.fx) && Number.isFinite(cat.fy)) {
+      const foot = cat.freeFoot || { dx: 0.45, dy: 0.95 };
+      const cx = Math.floor(cat.fx + (Number.isFinite(foot.dx) ? foot.dx : 0.45)) + 1;
+      const cy = Math.floor(cat.fy + (Number.isFinite(foot.dy) ? foot.dy : 0.95)) + 1;
+      if (cx === x && cy === y) return true;
+      continue;
+    }
+    if (cat.x === x && cat.y === y) return true;
   }
   // Предметы комнаты — физические препятствия: на их клетки нельзя ступать и там нельзя спавниться.
   // В «тесте» манекена и мишени нет — проверки не нужны.

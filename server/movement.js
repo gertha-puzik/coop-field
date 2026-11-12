@@ -199,6 +199,12 @@ function freeMove(ws, payload = {}) {
   if (cell) {
     cat.x = cell.x;
     cat.y = cell.y;
+  } else {
+    // Нет боевых клеток рядом — всё равно двигаем discrete coords по лапам,
+    // иначе occupied/arrivalPad видят «призрака» на клетке прибытия.
+    const foot = cat.freeFoot || { dx: 0.45, dy: 0.95 };
+    cat.x = Math.floor(cat.fx + (Number.isFinite(foot.dx) ? foot.dx : 0.45)) + 1;
+    cat.y = Math.floor(cat.fy + (Number.isFinite(foot.dy) ? foot.dy : 0.95)) + 1;
   }
   const now = Date.now();
   rememberCat(cat); // позиция в книге (на диск — общим сливом, не чаще 3 с)

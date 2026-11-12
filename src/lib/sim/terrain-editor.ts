@@ -27,6 +27,39 @@ function cellPath(g: CanvasRenderingContext2D, frame: ElisionFrame, c: number, r
   g.closePath();
 }
 
+/** Призма высоты: верх + видимые стенки — чтобы насыпь/блок сразу читались
+ *  объёмом в оверлее редактора, а не плоским пятном на траве. */
+function elevPrism(g: CanvasRenderingContext2D, frame: ElisionFrame, c: number, r: number, level: number, w=1, d=1, fillTop?: string, fillWall?: string) {
+  if (level <= 0) {
+    cellPath(g, frame, c, r, 0, w, d);
+    if (fillTop) { g.fillStyle = fillTop; g.fill(); }
+    return;
+  }
+  const lift = level * frame.terrainLiftStep;
+  const top = [[c, r], [c + w, r], [c + w, r + d], [c, r + d]].map(([x, y]) =>
+    terrainScreenPoint(frame, x * frame.cellW, y * frame.cellH, lift));
+  const base = [[c, r], [c + w, r], [c + w, r + d], [c, r + d]].map(([x, y]) =>
+    terrainScreenPoint(frame, x * frame.cellW, y * frame.cellH, 0));
+  // Южная и восточная стенки (читаются при yaw редактора).
+  for (const edge of [[1, 2], [2, 3]] as const) {
+    const [i, j] = edge;
+    g.beginPath();
+    g.moveTo(base[i].x, base[i].y);
+    g.lineTo(base[j].x, base[j].y);
+    g.lineTo(top[j].x, top[j].y);
+    g.lineTo(top[i].x, top[i].y);
+    g.closePath();
+    g.fillStyle = fillWall ?? 'rgba(90,70,45,.55)';
+    g.fill();
+    g.stroke();
+  }
+  g.beginPath();
+  top.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+  g.closePath();
+  if (fillTop) { g.fillStyle = fillTop; g.fill(); }
+  g.stroke();
+}
+
 function label(g: CanvasRenderingContext2D, x: number, y: number, text: string, fill = '#eafbe7') {
   const w = g.measureText(text).width + 14;
   g.fillStyle = 'rgba(12,24,19,.82)';
@@ -154,13 +187,15 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     const b = clampBrush(d.elevBrush,d.cols,d.rows);
     const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(frame.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : {...terrainBrushBounds(hover.c,hover.r,b.width,b.depth,d.cols,d.rows),snapped:false};
     const level=terrainAt(frame.elev,rect.x+rect.w/2,rect.y+rect.d/2);
-    g.lineWidth=2;g.strokeStyle=rect.snapped?'#ffdc85':'#baffd0';g.fillStyle='rgba(118,255,169,.18)';
-    cellPath(g,frame,rect.x,rect.y,level,rect.w,rect.d);g.fill();g.stroke();
+    const previewLevel = d.tool === 'height' ? b.level : d.tool === 'raise' ? Math.min(TERRAIN_MAX_LEVEL, level + 1) : d.tool === 'lower' ? Math.max(0, level - 1) : level;
+    g.lineWidth=2;g.strokeStyle=rect.snapped?'#ffdc85':'#baffd0';
+    elevPrism(g,frame,rect.x,rect.y,Math.max(level, previewLevel),rect.w,rect.d,'rgba(118,255,169,.22)','rgba(70,95,55,.5)');
     if(d.tool==='height'&&b.level!==level){
-      g.save();g.setLineDash([5,3]);g.strokeStyle='#ffe6a8';g.fillStyle='rgba(255,227,153,.07)';
-      cellPath(g,frame,rect.x,rect.y,b.level,rect.w,rect.d);g.fill();g.stroke();g.restore();
+      g.save();g.setLineDash([5,3]);g.strokeStyle='#ffe6a8';
+      elevPrism(g,frame,rect.x,rect.y,b.level,rect.w,rect.d,'rgba(255,227,153,.12)','rgba(140,110,55,.45)');
+      g.restore();
     }
-    const p=terrainScreenPoint(frame,(rect.x+rect.w/2)*frame.cellW,(rect.y+rect.d/2)*frame.cellH,level*frame.terrainLiftStep);
+    const p=terrainScreenPoint(frame,(rect.x+rect.w/2)*frame.cellW,(rect.y+rect.d/2)*frame.cellH,Math.max(level,previewLevel)*frame.terrainLiftStep);
     label(g,p.x,p.y-23,`Высота: ${hoveredLevel} · ${rect.snapped?'Магнит · ':''}${b.width}×${b.depth}${d.tool==='height'?` → ${b.level}`:''}`,'#baffd0');
   } else if (hover && (d.tool === 'paint'||d.tool==='fill') && d.terrainCursor) {
     const cursor=d.terrainCursor,level=terrainAt(frame.elev,cursor.x,cursor.y);
