@@ -13,6 +13,11 @@
  *                                  спавна → 200 {ok, room, login, x, y, sprite};
  *   POST /admin/players/promote  — {login} логин АККАУНТА → роль admin
  *                                  (idempotent already).
+ * Инвайты (регистрация закрытого сайта — только по кодам от админов, код
+ * канона XXXX-XXXX живёт 24 часа):
+ *   GET  /admin/invites          — все записи с вычисляемым статусом;
+ *   POST /admin/invites/generate — {count 1..10, note?} → новые коды;
+ *   POST /admin/invites/revoke   — {code} отзыв действующего кода.
  * Отказы 4xx: {ok:false, reason, message} — message от сервера уже
  * человекочитаемый. Гейты: сессия (401), роль admin (403), CSRF-щит apiZone.
  */
@@ -151,6 +156,125 @@ export async function httpAdminPlayerPromote(login: string): Promise<AdminPromot
       message: asText(row.message, `«${login}» теперь администратор.`),
     };
   }
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/* ===== Инвайты (коды приглашений для регистрации закрытого сайта) ===== */
+
+/** Статус кода — вычисляется сервером (поле status DTO). */
+export type AdminInviteStatus = "active" | "used" | "expired" | "revoked";
+
+/** Запись кода приглашения (DTO /admin/invites): код канона XXXX-XXXX,
+ *  живёт 24 часа; null-поля — «пока не применимо». */
+export type AdminInviteRow = {
+  /** Код канонического вида XXXX-XXXX. */
+  code: string;
+  /** Время создания (ISO-строка сервера). */
+  createdAt: string;
+  /** Срок жизни (ISO-строка): createdAt + 24 часа. */
+  expiresAt: string;
+  /** Заметка админа «кому/для чего» (до 80 симв.; null — не указана). */
+  note: string | null;
+  /** Логин зарегистрировавшегося по коду (null — код ещё не использован). */
+  claimedByLogin: string | null;
+  /** Момент использования (ISO-строка; null — не использован). */
+  claimedAt: string | null;
+  /** Момент отзыва (ISO-строка; null — код не отозван). */
+  revokedAt: string | null;
+  /** Жизненный статус: действует / использован / истёк / отозван. */
+  status: AdminInviteStatus;
+};
+
+/** Ответ списка приглашений (GET /admin/invites). */
+export type AdminInvitesAction =
+  | { ok: true; invites: AdminInviteRow[] }
+  | AdminFieldError;
+
+/** Ответ генерации кодов (POST /admin/invites/generate): свежие записи. */
+export type AdminInvitesGenerateAction =
+  | { ok: true; invites: AdminInviteRow[] }
+  | AdminFieldError;
+
+/** Ответ отзыва кода (POST /admin/invites/revoke). */
+export type AdminInviteRevokeAction =
+  | { ok: true; code: string }
+  | AdminFieldError;
+
+/** Строка DTO или null (пустая строка тоже null — «не применимо»). */
+const asTextOrNull = (v: unknown): string | null => {
+  const s = asText(v);
+  return s ? s : null;
+};
+
+function parseInviteStatus(v: unknown): AdminInviteStatus {
+  return v === "used" || v === "expired" || v === "revoked" ? v : "active";
+}
+
+/** Разбор записи кода: доверяем только прочитанным полям DTO. */
+function parseInvite(row: ApiRow): AdminInviteRow {
+  return {
+    code: asText(row.code),
+    createdAt: asText(row.createdAt),
+    expiresAt: asText(row.expiresAt),
+    note: asTextOrNull(row.note),
+    claimedByLogin: asTextOrNull(row.claimedByLogin),
+    claimedAt: asTextOrNull(row.claimedAt),
+    revokedAt: asTextOrNull(row.revokedAt),
+    status: parseInviteStatus(row.status),
+  };
+}
+
+/** Разбор массива invites из тела; битые строки выбрасываем. */
+function parseInvites(row: ApiRow | null): AdminInviteRow[] {
+  if (!row || !Array.isArray(row.invites)) return [];
+  const out: AdminInviteRow[] = [];
+  for (const raw of row.invites) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = parseInvite(raw as ApiRow);
+    if (item.code) out.push(item);
+  }
+  return out;
+}
+
+/** Список всех кодов приглашений (GET /admin/invites). */
+export async function httpAdminInvites(): Promise<AdminInvitesAction> {
+  const { status, row } = await apiFetch("/admin/invites");
+  if (status === 200 && row?.ok === true) return { ok: true, invites: parseInvites(row) };
+  return {
+    ok: false,
+    reason: row?.reason === "auth_required" ? "auth_required" : row?.reason === "forbidden" ? "forbidden" : "error",
+    message: asText(row?.message),
+  };
+}
+
+/** Генерация кодов (POST /admin/invites/generate {count 1..10, note?}). */
+export async function httpAdminInvitesGenerate(count: number, note?: string): Promise<AdminInvitesGenerateAction> {
+  const clean = note?.trim();
+  const { status, row, text } = await apiFetch("/admin/invites/generate", {
+    method: "POST",
+    body: clean ? { count, note: clean } : { count },
+  });
+  if (status === 200 && row?.ok === true) return { ok: true, invites: parseInvites(row) };
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/** Отзыв действующего кода (POST /admin/invites/revoke {code}). */
+export async function httpAdminInviteRevoke(code: string): Promise<AdminInviteRevokeAction> {
+  const { status, row, text } = await apiFetch("/admin/invites/revoke", {
+    method: "POST",
+    body: { code },
+  });
+  if (status === 200 && row?.ok === true) return { ok: true, code: asText(row.code, code) };
   return {
     ok: false,
     reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),

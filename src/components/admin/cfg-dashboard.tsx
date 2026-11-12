@@ -78,6 +78,9 @@ import { ApplyPreview } from './cfg-apply-preview';
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
 import { TexturesTab } from './textures-tab';
+// Вкладка «Коды приглашений»: генерация/отзыв инвайтов регистрации
+// закрытого сайта (ходоки /admin/invites* — http-admin-ops.ts).
+import { InvitesTab } from './invites-tab';
 // Пересводка W2 (2026-11-08): ThemeSelect из шапки панели убран — селект темы
 // несёт общая шапка сайта (SiteHeader), дублей быть не должно.
 // Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
@@ -100,7 +103,7 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
  *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
  *  «пункт, который мы смотрели», сохраняется между визитами. */
 const TAB_KEY = 'elyria-admin-tab';
-const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures'] as const;
+const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures', 'invites'] as const;
 const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'cfg';
 
 /** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
@@ -556,6 +559,7 @@ export default function CfgDashboard() {
     },
     { id: 'sprites', title: 'Спрайты', render: () => <SpritesTab /> },
     { id: 'textures', title: 'Текстуры', render: () => <TexturesTab /> },
+    { id: 'invites', title: 'Коды приглашений', render: () => <InvitesTab /> },
   ];
 
   const activeTab = tabs.find((t) => t.id === tab) ?? null;
