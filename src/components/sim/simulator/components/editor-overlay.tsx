@@ -21,6 +21,12 @@ import styles from './editor-workspace.module.css';
 export interface EditorOverlayProps {
   worldPanel?:ReactNode; passagePanel?:ReactNode;
   rotateCamera: (direction: -1 | 1) => void;
+  /** Текущий множитель зума редактора (1 = подогнать мир в кадр). */
+  editorZoom: number;
+  /** ±1 шаг зума (кнопки / колесо дублируют тот же диапазон). */
+  zoomCamera: (direction: -1 | 1) => void;
+  /** Сброс зума и панорамы к обзору всей карты. */
+  resetCameraZoom: () => void;
   editorRef: RefObject<EditorDraft | null>;
   syncEditorView: () => void;
   editorView: EditorDraft;
@@ -231,15 +237,18 @@ export function EditorOverlay(p:EditorOverlayProps){
          <div className={styles.two}><NumberField label="Ширина мира" value={world.cols} min={TEST_MAP_LIMITS.colsMin} max={TEST_MAP_LIMITS.colsMax} onChange={cols=>setWorld({...world,cols})}/><NumberField label="Длина мира" value={world.rows} min={TEST_MAP_LIMITS.rowsMin} max={TEST_MAP_LIMITS.rowsMax} onChange={rows=>setWorld({...world,rows})}/></div>
          <Button variant="outline" className={styles.wide} onClick={()=>p.resizeEditorWorld(world.cols,world.rows)}>Применить размер</Button>
          <h3>Обзор</h3><div className={styles.two}><button type="button" onClick={()=>p.rotateCamera(-1)}>↶ Повернуть влево</button><button type="button" onClick={()=>p.rotateCamera(1)}>↷ Повернуть вправо</button></div>
+         <h3>Масштаб <span>{Math.round(p.editorZoom*100)}%</span></h3>
+         <div className={styles.two}><button type="button" aria-label="Отдалить" onClick={()=>p.zoomCamera(-1)}>− Отдалить</button><button type="button" aria-label="Приблизить" onClick={()=>p.zoomCamera(1)}>＋ Приблизить</button></div>
+         <button type="button" className={styles.wide} onClick={p.resetCameraZoom}>Сбросить масштаб (100%)</button>
          <label className={styles.check}><input type="checkbox" checked={d.showGrid??false} onChange={e=>update({showGrid:e.target.checked})}/>Сетка высот</label>
-         <button type="button" className={styles.wide} onClick={()=>update({pan:{x:0,y:0,reset:true}})}>Вернуть карту в центр</button>
+         <button type="button" className={styles.wide} onClick={()=>{p.resetCameraZoom();update({pan:{x:0,y:0,reset:true}});}}>Вернуть карту в центр</button>
          <h3>Архив локации</h3>
          <button type="button" className={styles.wide} disabled={archiveBusy||!!p.editorSave} onClick={async()=>{setArchiveBusy(true);try{await p.exportEditorMap();}finally{setArchiveBusy(false);}}}>Скачать архив ZIP</button>
          <label className={styles.field}>Применить архив ZIP<input type="file" accept=".zip,application/zip" aria-label="Применить архив локации" disabled={archiveBusy||!!p.editorSave} onChange={async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;setArchiveBusy(true);try{await p.importEditorMap(file);}finally{setArchiveBusy(false);}}}/></label>
          <p className={styles.hint}>Архив содержит рисунок, размеры, объекты, высоты и зоны. Загрузка заменяет черновик; действие можно отменить.</p>
          <details className={styles.details}><summary>Полная очистка</summary><p className={styles.hint}>Удаляет все объекты, высоты, зоны, точки появления и рисунок. Останется ровное травяное поле. Изменения попадут на общую карту после сохранения.</p>{clearPending?<><button type="button" disabled={archiveBusy||!!p.editorSave} onClick={()=>{p.clearEditorMap();setClearPending(false);}}>Да, очистить всю локацию</button><button type="button" onClick={()=>setClearPending(false)}>Отмена</button></>:<button type="button" disabled={archiveBusy||!!p.editorSave} onClick={()=>setClearPending(true)}>Очистить всю локацию</button>}</details>
          <details className={styles.details}><summary>Восстановление</summary><p className={styles.hint}>Вернуть последнюю сохранённую карту. Действие можно отменить.</p><button type="button" onClick={p.resetEditor}>Вернуть сохранённую локацию</button></details>
-         <p className={styles.hint}>Колесо — масштаб. Пробел + перетаскивание — перемещение карты. [ и ] — поворот камеры.</p>
+         <p className={styles.hint}>Колесо или кнопки ± — масштаб (в редакторе шире, чем в игре). Пробел + перетаскивание — перемещение карты. [ и ] — поворот камеры. Alt+колесо — размер кисти.</p>
        </>}
        {section==='history'&&<>
          <h3>История изменений <span>{d.undo.length}/40</span></h3>
@@ -256,7 +265,7 @@ export function EditorOverlay(p:EditorOverlayProps){
    </aside>
    <div className={styles.toolbar} role="toolbar" aria-label="Быстрые инструменты">
      <div className={styles.segment}>{tools.filter(t=>['cursor','paint'].includes(t.id)).map(toolButton)}<button type="button" aria-label="Ластик" title="Ластик · E" aria-pressed={d.tool==='paint'&&d.pmat==='erase'} onClick={erase}><Icon name="eraser"/><span>Ластик</span></button>{tools.filter(t=>['path','fill','select','pan'].includes(t.id)).map(toolButton)}</div>
-     <div className={styles.toolbarEnd}><button type="button" aria-label="Отменить" title="Отменить · Ctrl+Z" disabled={!d.undo.length} onClick={()=>p.undoEditor()}><Icon name="undo"/></button><button type="button" aria-label="Повторить" title="Повторить · Ctrl+Shift+Z" disabled={!d.redo?.length} onClick={()=>p.redoEditor()}><Icon name="redo"/></button><span className={styles.separator}/><button type="button" aria-label="Повернуть камеру влево" onClick={()=>p.rotateCamera(-1)}>↶</button><button type="button" aria-label="Повернуть камеру вправо" onClick={()=>p.rotateCamera(1)}>↷</button></div>
+     <div className={styles.toolbarEnd}><button type="button" aria-label="Отменить" title="Отменить · Ctrl+Z" disabled={!d.undo.length} onClick={()=>p.undoEditor()}><Icon name="undo"/></button><button type="button" aria-label="Повторить" title="Повторить · Ctrl+Shift+Z" disabled={!d.redo?.length} onClick={()=>p.redoEditor()}><Icon name="redo"/></button><span className={styles.separator}/><button type="button" aria-label="Отдалить" title="Отдалить · колесо вниз" onClick={()=>p.zoomCamera(-1)}>−</button><span className={styles.zoomLabel} aria-live="polite">{Math.round(p.editorZoom*100)}%</span><button type="button" aria-label="Приблизить" title="Приблизить · колесо вверх" onClick={()=>p.zoomCamera(1)}>＋</button><span className={styles.separator}/><button type="button" aria-label="Повернуть камеру влево" onClick={()=>p.rotateCamera(-1)}>↶</button><button type="button" aria-label="Повернуть камеру вправо" onClick={()=>p.rotateCamera(1)}>↷</button></div>
    </div>
    <footer className={styles.footer}>
      <div className={styles.selection}><small>ВЫБРАНО</small>{d.sel.length?d.zones.filter(z=>d.sel.includes(z.id)).slice(0,3).map(z=><button type="button" key={z.id} onClick={()=>{setSection('zones');setCollapsed(false);}}><i data-kind={z.kind}/>{z.name}</button>):<span>{current?.label??'Кисть'}{d.tool==='paint'?` · ${PAINT_MATS.find(m=>m.id===d.pmat)?.label??''}`:''}</span>}</div>

@@ -29,6 +29,8 @@ import type { DirectionWindow, DummyConfig, SlowdownTier, SimSettings, SpriteId,
 import {
   ARROW_ANCHOR_F,
   ARROW_TIP_SHADE,
+  CAM_EDITOR_ZOOM_MAX,
+  CAM_EDITOR_ZOOM_MIN,
   CAM_USER_ZOOM_MAX,
   CAM_USER_ZOOM_MIN,
   CAM_USER_ZOOM_STEP,
@@ -368,6 +370,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    *  Меняется колесом над полем «теста» (в том числе в редакторе локации), сам
    *  плавно догоняется камерой (kz). */
   const camUserZoomRef = useRef(1);
+  /** Подпись зума в панели редактора (колесо / кнопки ± / сброс). */
+  const [editorZoom, setEditorZoom] = useState(1);
+  const editorZoomUiRef = useRef<((z: number) => void) | null>(null);
+  useEffect(() => { editorZoomUiRef.current = setEditorZoom; }, []);
   /** Якорь «зума к курсору» в редакторе: мировая точка под курсором и её экранная
    *  позиция на момент щелчка колеса. Пока зум колеса > 1, кадр держит эту точку
    *  под тем же местом экрана; ≤1 — обзор всей карты без панорамирования. */
@@ -1452,8 +1458,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         if(editorRef.current)editorRef.current.pan={x:0,y:0};
       }
       const dir = ev.deltaY < 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
-      const next = Math.min(CAM_USER_ZOOM_MAX, Math.max(CAM_USER_ZOOM_MIN, camUserZoomRef.current * dir));
+      const zMin = editorOpenRef.current ? CAM_EDITOR_ZOOM_MIN : CAM_USER_ZOOM_MIN;
+      const zMax = editorOpenRef.current ? CAM_EDITOR_ZOOM_MAX : CAM_USER_ZOOM_MAX;
+      const next = Math.min(zMax, Math.max(zMin, camUserZoomRef.current * dir));
       camUserZoomRef.current = next;
+      if (editorOpenRef.current) editorZoomUiRef.current?.(next);
     };
     cv.addEventListener('wheel', onWheelZoom, { passive: false });
 
@@ -2257,7 +2266,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const cellH = s.field.cellH;
         const kz = 1 - Math.exp(-dt / CAMZOOM_TAU_MS);
         if (editorOn) {
-          if(editorRef.current?.pan?.reset){camUserZoomRef.current=1;editorPanRef.current=null;editorRef.current.pan.reset=false;}
+          if(editorRef.current?.pan?.reset){
+            camUserZoomRef.current=1;editorPanRef.current=null;editorRef.current.pan.reset=false;
+            editorZoomUiRef.current?.(1);
+          }
           // Редактор: базовый зум — весь мир целиком (авто-подгонка, вид сверху).
           // Колесо масштабирует вид с якорем под курсором на любом увеличении.
           // Editing paint changes its visible bounding box; the camera must
@@ -2266,7 +2278,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const pad = 90;
           const rotated = elisionRotatedSize(bbE.x1-bbE.x0, bbE.y1-bbE.y0, camYawRef.current);
           const fitZ = Math.max(0.1, Math.min(1.15, Math.min(vw/(rotated.w+pad), vh/(rotated.h+pad))));
-          const zT = Math.max(0.1, Math.min(1.15 * CAM_USER_ZOOM_MAX, fitZ * camUserZoomRef.current));
+          // Множитель camUserZoomRef: в редакторе шире (CAM_EDITOR_ZOOM_*),
+          // чтобы крупные локации и мелкие мазки кисти было удобно править.
+          const zT = Math.max(
+            fitZ * CAM_EDITOR_ZOOM_MIN,
+            Math.min(fitZ * CAM_EDITOR_ZOOM_MAX, fitZ * camUserZoomRef.current),
+          );
           const viewKey=`${vw},${vh},${s.field.cols},${s.field.rows}`;
           if(!camRef.current.init||editorViewport!==viewKey)camFxRef.current.z=zT;
           else camFxRef.current.z += (zT - camFxRef.current.z) * kz;
@@ -4781,7 +4798,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onClick={onClick}
           pixiRef={pixiRef}
           elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
-          showElisionView={mode === 'elision'}
+          /* В редакторе — только 2D: WebGL-атлас кисти иначе отстаёт на весь
+             росчерк (пересчёт маски/атласа на pointermove и был источником
+             подвисаний). После закрытия редактора слот снова монтируется. */
+          showElisionView={mode === 'elision' && !editorOpen}
           hudRef={hudRef}
           battleHint={battleHint}
           mapLoading={mapLoading}
@@ -4802,6 +4822,23 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         worldPanel={editorView?<LocationEditorPanel draft={editorView} places={world.places} change={changeLocationDraft} sync={syncEditorView} switchLocation={world.switchEditor}/>:null}
         passagePanel={editorView?<PassageEditorPanel draft={editorRef.current??editorView} places={world.places} change={changeLocationDraft} sync={syncEditorView} switchLocation={world.switchEditor}/>:null}
                 rotateCamera={(direction) => { camYawTargetRef.current += direction*Math.PI/2; }}
+                editorZoom={editorZoom}
+                zoomCamera={(direction) => {
+                  const step = direction > 0 ? CAM_USER_ZOOM_STEP : 1 / CAM_USER_ZOOM_STEP;
+                  const next = Math.min(
+                    CAM_EDITOR_ZOOM_MAX,
+                    Math.max(CAM_EDITOR_ZOOM_MIN, camUserZoomRef.current * step),
+                  );
+                  camUserZoomRef.current = next;
+                  setEditorZoom(next);
+                }}
+                resetCameraZoom={() => {
+                  camUserZoomRef.current = 1;
+                  editorPanRef.current = null;
+                  if (editorRef.current) editorRef.current.pan = { x: 0, y: 0, reset: true };
+                  setEditorZoom(1);
+                  syncEditorView();
+                }}
                 editorRef={editorRef}
                 syncEditorView={syncEditorView}
                 editorView={editorView}
@@ -4826,7 +4863,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 editorCover={editorCover}
                 setEditorCover={setEditorCover}
                 editorMsg={editorMsg}
-                closeEditor={closeEditor}
+                closeEditor={() => {
+                  camUserZoomRef.current = 1;
+                  editorPanRef.current = null;
+                  setEditorZoom(1);
+                  closeEditor();
+                }}
               />
             ) : null
           }
