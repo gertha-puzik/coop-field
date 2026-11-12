@@ -26,7 +26,7 @@ export interface FieldStageProps {
   fieldW: number;
   fieldH: number;
   canvasRef: RefObject<HTMLCanvasElement | null>;
-  onMove: (ev: MouseEvent<HTMLCanvasElement>) => void;
+  onMove: (ev: PointerEvent<HTMLCanvasElement>) => void;
   onPointerDown: (ev: PointerEvent<HTMLCanvasElement>) => void;
   onUp: (ev: PointerEvent<HTMLCanvasElement>) => void;
   onLeave: () => void;

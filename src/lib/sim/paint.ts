@@ -82,6 +82,17 @@ function paintPatternFor(ctx: CanvasRenderingContext2D, mat: string): CanvasPatt
 /** Штамп кисти по черновому холсту (канонические px мира). Круг — по курсору;
  *  прямоугольные пресеты — свободные области с центром под курсором.
  *  Промежутки между событиями мыши соединяются непрерывным росчерком. */
+/** Множитель размера кисти от PointerEvent.pressure.
+ *  Только перо планшета (`pointerType === 'pen'`): 1 = полный диаметр слайдера,
+ *  лёгкое касание → тонкая линия (пол PRESSURE_MIN). Мышь/тач — всегда 1,
+ *  у мыши pressure фиктивно 0.5 и не должен менять размер. */
+export const PAINT_PRESSURE_MIN = 0.08;
+export function paintPressureFactor(pointerType: string, pressure: number): number {
+  if (pointerType !== 'pen') return 1;
+  if (!Number.isFinite(pressure) || pressure <= 0) return PAINT_PRESSURE_MIN;
+  return Math.min(1, Math.max(PAINT_PRESSURE_MIN, pressure));
+}
+
 export function stampPaintBrush(
   d: EditorDraft,
   mat: string,
@@ -89,6 +100,9 @@ export function stampPaintBrush(
   my: number,
   cellW: number,
   cellH: number,
+  /** Сила нажатия пера 0..1 (PointerEvent.pressure); без пера не передавать. */
+  pressure = 1,
+  pointerType = 'mouse',
 ): void {
   const cv = d.pcv;
   if (!cv) return;
@@ -104,19 +118,43 @@ export function stampPaintBrush(
     g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
   }
   g.imageSmoothingEnabled = false;
-  const size=paintBrushSize(d),previous=d.paintLast?.mat===mat?d.paintLast:null;
-  if(d.pshape==='round'){
-    const r=Math.max(.5,d.psize/2);
-    g.beginPath();g.arc(cx,cy,r,0,Math.PI*2);g.fill();
-    if(previous){g.strokeStyle=g.fillStyle;g.lineWidth=r*2;g.lineCap='round';g.beginPath();g.moveTo(previous.x,previous.y);g.lineTo(cx,cy);g.stroke();}
-  }else{
-    const steps=previous?Math.max(1,Math.ceil(Math.hypot(cx-previous.x,cy-previous.y)/Math.max(1,Math.min(size.w,size.h)/3))):1;
-    for(let i=1;i<=steps;i++){
-      const x=previous?previous.x+(cx-previous.x)*i/steps:cx,y=previous?previous.y+(cy-previous.y)*i/steps:cy;
-      g.fillRect(x-size.w/2,y-size.h/2,size.w,size.h);
+  const factor = paintPressureFactor(pointerType, pressure);
+  const base = paintBrushSize(d);
+  const size = { w: Math.max(1, base.w * factor), h: Math.max(1, base.h * factor) };
+  const previous = d.paintLast?.mat === mat ? d.paintLast : null;
+  if (d.pshape === 'round') {
+    // Интерполяция диаметра вдоль сегмента — давление меняется плавно, без
+    // «палки» постоянной толщины между двумя точками разной силы.
+    const r = Math.max(0.5, size.w / 2);
+    const prevR = previous ? Math.max(0.5, previous.w / 2) : r;
+    const dist = previous ? Math.hypot(cx - previous.x, cy - previous.y) : 0;
+    const step = Math.max(0.5, Math.min(r, prevR) / 2);
+    const steps = previous ? Math.max(1, Math.ceil(dist / step)) : 1;
+    for (let i = previous ? 1 : 0; i <= steps; i++) {
+      const t = previous ? i / steps : 1;
+      const x = previous ? previous.x + (cx - previous.x) * t : cx;
+      const y = previous ? previous.y + (cy - previous.y) * t : cy;
+      const rr = previous ? prevR + (r - prevR) * t : r;
+      g.beginPath();
+      g.arc(x, y, rr, 0, Math.PI * 2);
+      g.fill();
+    }
+  } else {
+    const prevW = previous?.w ?? size.w;
+    const prevH = previous?.h ?? size.h;
+    const steps = previous
+      ? Math.max(1, Math.ceil(Math.hypot(cx - previous.x, cy - previous.y) / Math.max(1, Math.min(size.w, size.h, prevW, prevH) / 3)))
+      : 1;
+    for (let i = 1; i <= steps; i++) {
+      const t = previous ? i / steps : 1;
+      const x = previous ? previous.x + (cx - previous.x) * t : cx;
+      const y = previous ? previous.y + (cy - previous.y) * t : cy;
+      const w = previous ? prevW + (size.w - prevW) * t : size.w;
+      const h = previous ? prevH + (size.h - prevH) * t : size.h;
+      g.fillRect(x - w / 2, y - h / 2, w, h);
     }
   }
-  d.paintLast={x:cx,y:cy,mat};
+  d.paintLast = { x: cx, y: cy, mat, w: size.w, h: size.h };
   g.restore();
   d.pdirty = true;
 }
