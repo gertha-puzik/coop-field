@@ -110,12 +110,14 @@ function ensureStarted(): void {
   }
 }
 
-/** Подтянуть каталог замен с комнаты и перезагрузить изменившиеся PNG.
+/** Подтянуть каталог (замены + кастомные) с комнаты и перезагрузить PNG.
  *  HTTP-клиент тянется динамически — unit-харнесс без `@/`-резолвера не ломается. */
 export async function refreshTexCatalog(): Promise<void> {
   const { httpTexCatalog } = await import('@/lib/net/http-tex');
   const items = await httpTexCatalog();
   if (!items) return;
+  const { applyTexCatalog } = await import('./tex-live');
+  applyTexCatalog(items);
   let changed = false;
   for (const item of items) {
     const next = texAssetUrl(item.src);

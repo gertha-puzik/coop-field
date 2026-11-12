@@ -10,6 +10,7 @@ import { defaultPlace, locationRoom, passageContains, type LocationPlace, type L
 import type { Engine } from './simulator/sim-model';
 import styles from './world-locations.module.css';
 import editorStyles from './simulator/components/editor-workspace.module.css';
+import { LocationCreatePanel } from './location-create-panel';
 const LOAD_MIN_MS=10000;
 
 type Phase = 'idle' | 'walk' | 'fade' | 'loading' | 'arrive';
@@ -289,27 +290,7 @@ type EditorProps = {
 };
 export function LocationEditorPanel({ draft, places, change, switchLocation }: EditorProps) {
     const p = draft.place ?? defaultPlace(), [name, setName] = useState(p.name), [next, setNext] = useState(String(p.id));
-    const [createName, setCreateName] = useState(''), [createBusy, setCreateBusy] = useState(false), [createMsg, setCreateMsg] = useState<string | null>(null);
     useEffect(() => { setName(p.name); setNext(String(p.id)); }, [p.id, p.name]);
-    const createLocation = async () => {
-        if (createBusy) return;
-        setCreateBusy(true); setCreateMsg(null);
-        try {
-            const { httpCreateLocation } = await import('@/lib/net/http-admin-locations');
-            const res = await httpCreateLocation(createName);
-            if (!res.ok) {
-                setCreateMsg(res.message || 'Не удалось создать локацию.');
-                return;
-            }
-            setCreateMsg(`Создана «${res.place.name}» · ID ${res.place.id} (10×10). Открываем…`);
-            setCreateName('');
-            switchLocation(res.place.id);
-        } catch {
-            setCreateMsg('Сервер недоступен — попробуйте позже.');
-        } finally {
-            setCreateBusy(false);
-        }
-    };
     const nextIdHint = places.reduce((max, loc) => Math.max(max, loc.id), 0) + 1;
     return <div className={editorStyles.zoneList}>
     <h3>Локация мира · ID {p.id}</h3>
@@ -319,11 +300,7 @@ export function LocationEditorPanel({ draft, places, change, switchLocation }: E
     <p className={editorStyles.hint}>Зона: {p.zoneName} · ID {p.zoneId}. Название записывается вместе с сохранением локации.</p>
     <label className={editorStyles.field}>Переключиться на другую локацию<Dropdown aria-label="Другая локация" value={next} onChange={setNext} options={places.map(l => ({ value: String(l.id), label: `${l.name} · ID ${l.id}` }))}/></label>
     <Button onClick={() => switchLocation(Number(next))} disabled={Number(next) === p.id}>Открыть локацию в редакторе</Button>
-    <h3>Новая локация · ID {nextIdHint}</h3>
-    <label className={editorStyles.field}>Название новой локации<input aria-label="Название новой локации" maxLength={64} placeholder={`Локация ${nextIdHint}`} value={createName} onChange={e => setCreateName(e.target.value)} disabled={createBusy}/></label>
-    <Button onClick={() => void createLocation()} disabled={createBusy}>{createBusy ? 'Создаём…' : 'Создать локацию 10×10'}</Button>
-    <p className={editorStyles.hint}>ID назначается следующим свободным числом после текущих локаций. Стартовая карта — ровное поле 10×10.</p>
-    {createMsg && <p className={editorStyles.hint} role="status">{createMsg}</p>}
+    <LocationCreatePanel nextIdHint={nextIdHint} onCreated={switchLocation}/>
   </div>;
 }
 export function PassageEditorPanel({ draft, places, change, sync }: EditorProps) {

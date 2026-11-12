@@ -3,8 +3,10 @@
  * «Текстуры» дашборда /admin. Изоляция сайтов: модуль только в бандле /admin.
  *
  *   GET    /admin/tex           — {ok, items, categories}
+ *   POST   /admin/tex           — multipart create {file,label,category,group?}
  *   POST   /admin/tex/:id       — multipart {file} → замена PNG
- *   DELETE /admin/tex/:id       — вернуть builtin
+ *   PATCH  /admin/tex/:id       — JSON {label?,category?,group?} (только custom)
+ *   DELETE /admin/tex/:id       — custom: удалить; builtin: вернуть PNG
  *   GET    /tex/catalog         — публичный список src (для движка)
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
@@ -16,6 +18,7 @@ export type AdminTexItem = {
   label: string;
   category: string;
   group: string | null;
+  custom: boolean;
   src: string;
   replaced: boolean;
   replacedAt: number;
@@ -31,7 +34,7 @@ export type AdminTexListAction =
   | { ok: true; items: AdminTexItem[]; categories: AdminTexCategory[] }
   | AdminTexError;
 export type AdminTexMutationAction =
-  | { ok: true; item?: AdminTexItem; id?: string; restored?: boolean }
+  | { ok: true; item?: AdminTexItem; id?: string; restored?: boolean; deleted?: boolean }
   | AdminTexError;
 
 const asNum = (v: unknown, fallback: number): number =>
@@ -43,6 +46,7 @@ function parseItem(row: ApiRow, id?: string): AdminTexItem {
     label: asText(row.label, asText(row.id, id || "")),
     category: asText(row.category),
     group: asText(row.group) || null,
+    custom: row.custom === true,
     src: texAssetUrl(asText(row.src) || `/tex/${asText(row.id, id || "")}.png`),
     replaced: row.replaced === true,
     replacedAt: asNum(row.replacedAt, 0),
@@ -107,6 +111,24 @@ async function postMultipart(path: string, form: FormData): Promise<{ status: nu
   }
 }
 
+export async function httpAdminTexCreate(input: {
+  file: File;
+  label: string;
+  category: string;
+  group?: string;
+}): Promise<AdminTexMutationAction> {
+  const form = new FormData();
+  form.append("file", input.file, input.file.name || "tex.png");
+  form.append("label", input.label);
+  form.append("category", input.category);
+  if (input.group) form.append("group", input.group);
+  const { status, row } = await postMultipart("/admin/tex", form);
+  if (status === 200 && row?.ok === true && row.item && typeof row.item === "object") {
+    return { ok: true, item: parseItem(row.item as ApiRow) };
+  }
+  return parseError(row, status, "create_failed");
+}
+
 export async function httpAdminTexReplace(id: string, file: File): Promise<AdminTexMutationAction> {
   const form = new FormData();
   form.append("file", file, file.name || `${id}.png`);
@@ -117,9 +139,24 @@ export async function httpAdminTexReplace(id: string, file: File): Promise<Admin
   return parseError(row, status, "upload_failed");
 }
 
+export async function httpAdminTexPatch(
+  id: string,
+  patch: { label?: string; category?: string; group?: string | null },
+): Promise<AdminTexMutationAction> {
+  const { status, row } = await apiFetch(`/admin/tex/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+  if (status === 200 && row?.ok === true && row.item && typeof row.item === "object") {
+    return { ok: true, item: parseItem(row.item as ApiRow, id) };
+  }
+  return parseError(row, status, "patch_failed");
+}
+
 export async function httpAdminTexRestore(id: string): Promise<AdminTexMutationAction> {
   const { status, row } = await apiFetch(`/admin/tex/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (status === 200 && row?.ok === true) {
+    if (row.deleted === true) return { ok: true, id: asText(row.id, id), deleted: true };
     const item =
       row.item && typeof row.item === "object" ? parseItem(row.item as ApiRow, id) : undefined;
     return { ok: true, id: asText(row.id, id), restored: row.restored === true, item };

@@ -114,17 +114,24 @@ export type GroundCover = (typeof GROUND_COVER_OPTS)[number]['id'];
 const TREE_SPRITE_IDS = new Set<string>(TREE_SPRITE_OPTS.map((t) => t.id));
 const ROCK_SPRITE_IDS = new Set<string>(ROCK_SPRITE_OPTS.map((t) => t.id));
 const GROUND_COVER_IDS = new Set<string>(GROUND_COVER_OPTS.map((t) => t.id));
+/** Кастомные id из админ-каталога (/tex/catalog) — наполняет tex-live.applyTexCatalog. */
+export const EXTRA_TREE_IDS = new Set<string>();
+export const EXTRA_ROCK_IDS = new Set<string>();
+export const EXTRA_PLANT_IDS = new Set<string>();
+export const EXTRA_COVER_IDS = new Set<string>();
 
 /** Спрайт объекта: заданный в конфиге или дефолт по виду (старые конфиги без spr). */
 export function objectSprite(o: Pick<TestMapObject, 'kind' | 'spr'>): TreeSpr | RockSpr | string {
-  if(o.kind==='plant')return PLANT_SPRITE_IDS.has(o.spr??'')?o.spr!:'plant-001';
-  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as TreeSpr) : 'tree-1';
-  return ROCK_SPRITE_IDS.has(o.spr ?? '') ? (o.spr as RockSpr) : 'rock-1';
+  const spr = o.spr ?? '';
+  if (o.kind === 'plant') return PLANT_SPRITE_IDS.has(spr) || EXTRA_PLANT_IDS.has(spr) ? spr : 'plant-001';
+  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(spr) || EXTRA_TREE_IDS.has(spr) ? (spr as TreeSpr) : 'tree-1';
+  return ROCK_SPRITE_IDS.has(spr) || EXTRA_ROCK_IDS.has(spr) ? (spr as RockSpr) : 'rock-1';
 }
 
 /** Покрытие клетки: заданное в конфиге или дефолт (цветы 1). */
 export function groundCoverOf(o: Pick<TestMapObject, 'cv'>): GroundCover {
-  return GROUND_COVER_IDS.has(o.cv ?? '') ? (o.cv as GroundCover) : 'flower-1';
+  const cv = o.cv ?? '';
+  return GROUND_COVER_IDS.has(cv) || EXTRA_COVER_IDS.has(cv) ? (cv as GroundCover) : 'flower-1';
 }
 
 /** Пределы масштаба и поворота объектов в редакторе. */

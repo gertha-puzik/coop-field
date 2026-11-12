@@ -73,6 +73,9 @@ function paintPatternFor(ctx: CanvasRenderingContext2D, mat: string): CanvasPatt
   if (mat === 'erase') return null;
   if (mat === 'dirt') return paintDirtPattern(ctx) ?? '#58422c';
   if (GROUND_COVER_IDS.has(mat)) return coverPattern(ctx, mat as GroundCover) ?? '#42582c';
+  // Кастомные покрытия/поверхности из live-каталога (ещё не попали в Set до refresh).
+  const pat = coverPattern(ctx, mat as GroundCover);
+  if (pat) return pat;
   return '#42582c';
 }
 

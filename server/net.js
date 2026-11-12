@@ -237,6 +237,8 @@ export function startServer() {
         // (как /cfg/admin): и чтение, и запись отвечают «не существует».
         p === "/cfg/rooms" ||
         p.startsWith("/cfg/rooms/") ||
+        // Создание локаций: GET /locations публичен, POST — только Элизия/local.
+        (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS" && p === "/locations") ||
         (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
       if (hidden) {
         notFoundJson(res);
@@ -259,8 +261,8 @@ export function startServer() {
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
       // в зону попадают API-пути (list/reset/promote), не HTML дашборда.
       p === "/admin/players" || p.startsWith("/admin/players/") ||
-      // Создание локаций мира (POST /admin/locations) — тот же CSRF-щит.
-      p === "/admin/locations" || p.startsWith("/admin/locations/") ||
+      // Создание локаций мира (POST /locations и алиас /admin/locations).
+      p === "/locations" || p === "/admin/locations" || p.startsWith("/admin/locations/") ||
       // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
       // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
       // и в зоне не нуждается: безопасный метод, сессию не несёт).

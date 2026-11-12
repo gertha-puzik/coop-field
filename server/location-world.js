@@ -183,20 +183,8 @@ function locationsAdminGate(req, res) {
     }
     return session;
 }
-/** GET /locations (catalogue) + POST /admin/locations (create blank 10×10). */
-export async function handleLocationsHttp(req, res) {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    const p = url.pathname;
-    if (p === '/locations') {
-        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
-        if (req.method !== 'GET') {
-            json(res, 405, { ok: false, reason: 'method_not_allowed' });
-            return true;
-        }
-        json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });
-        return true;
-    }
-    if (p !== '/admin/locations') return false;
+/** Создать локацию (admin): общий обработчик POST /locations и POST /admin/locations. */
+async function handleCreateLocationHttp(req, res) {
     setCors(req, res);
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
     if (!locationsAdminGate(req, res)) return true;
@@ -226,6 +214,22 @@ export async function handleLocationsHttp(req, res) {
     }
     json(res, 200, { ok: true, place: result.place, locations: result.locations, room: locationRoom(result.place.id) });
     return true;
+}
+/** GET /locations (catalogue) + POST /locations|/admin/locations (create blank 10×10). */
+export async function handleLocationsHttp(req, res) {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const p = url.pathname;
+    if (p === '/locations') {
+        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+        if (req.method === 'GET') {
+            json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });
+            return true;
+        }
+        // Admin create without /admin/ in the client bundle (A1 grotto gate).
+        return handleCreateLocationHttp(req, res);
+    }
+    if (p !== '/admin/locations') return false;
+    return handleCreateLocationHttp(req, res);
 }
 const direction = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 function freeArrival(room, x, y) {

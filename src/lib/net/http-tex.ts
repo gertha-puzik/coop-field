@@ -9,9 +9,13 @@ export type TexCatalogItem = {
   id: string;
   label: string;
   category: string;
+  group: string | null;
+  custom: boolean;
   src: string;
   replaced: boolean;
   replacedAt: number;
+  w: number;
+  h: number;
 };
 
 export async function httpTexCatalog(): Promise<TexCatalogItem[] | null> {
@@ -25,9 +29,13 @@ export async function httpTexCatalog(): Promise<TexCatalogItem[] | null> {
       id,
       label: asText(entry.label, id),
       category: asText(entry.category),
+      group: asText(entry.group) || null,
+      custom: entry.custom === true,
       src: texAssetUrl(asText(entry.src) || `/tex/${id}.png`),
       replaced: entry.replaced === true,
       replacedAt: typeof entry.replacedAt === "number" ? entry.replacedAt : 0,
+      w: typeof entry.w === "number" ? entry.w : 0,
+      h: typeof entry.h === "number" ? entry.h : 0,
     });
   }
   return out.length ? out : null;

@@ -150,9 +150,10 @@ try {
       const corrupt=spawnSync(process.execPath,['--input-type=module','-e',corruptCode],{env:{...process.env,DATA_DIR:bad},encoding:'utf8'});assert.equal(corrupt.status,0,corrupt.stderr);
     }finally{fs.rmSync(bad,{recursive:true,force:true});}
     // Admin create: next free ID, blank 10×10, catalogue broadcast, join works.
-    const createDenied = await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
+    const createDenied = await fetch(origin + '/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(createDenied.status, 401);
-    const created = await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Новый луг' }) });
+    assert.equal((await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+    const created = await fetch(origin + '/locations', { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Новый луг' }) });
     const createdText = await created.text();
     assert.equal(created.status, 200, createdText);
     const createdBody = JSON.parse(createdText);

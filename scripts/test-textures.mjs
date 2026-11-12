@@ -171,7 +171,73 @@ try {
   assert.equal(restoredBody.item.src, "/tex/tree-1.png");
   assert.equal((await fetch(origin + "/tex/file/tree-1.png")).status, 404);
 
-  console.log("PASS: tex catalog, admin replace/restore, file serve, CSRF and validation gates");
+  function multipartCreate(fileBuf, fields) {
+    const boundary = "----cooptexcreate";
+    const chunks = [];
+    for (const [name, value] of Object.entries(fields)) {
+      chunks.push(Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+      ));
+    }
+    chunks.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="custom.png"\r\nContent-Type: image/png\r\n\r\n`,
+    ));
+    chunks.push(fileBuf);
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    return {
+      body: Buffer.concat(chunks),
+      contentType: `multipart/form-data; boundary=${boundary}`,
+    };
+  }
+
+  const createdForm = multipartCreate(tinyPng(16, 20), {
+    label: "Дуб свой",
+    category: "trees",
+    group: "Мои",
+  });
+  const created = await fetch(origin + "/admin/tex", {
+    method: "POST",
+    headers: { Origin: origin, Cookie: cookie, "Content-Type": createdForm.contentType },
+    body: createdForm.body,
+  });
+  const createdText = await created.text();
+  assert.equal(created.status, 200, createdText);
+  const createdBody = JSON.parse(createdText);
+  assert.equal(createdBody.item.custom, true);
+  assert.equal(createdBody.item.category, "trees");
+  assert.equal(createdBody.item.label, "Дуб свой");
+  assert.equal(createdBody.item.group, "Мои");
+  assert.match(createdBody.item.id, /^x-/);
+  assert.equal(createdBody.item.w, 16);
+  assert.equal(createdBody.item.h, 20);
+  const customId = createdBody.item.id;
+
+  const catAfter = await (await fetch(origin + "/tex/catalog")).json();
+  assert.equal(catAfter.items.length, EXPECTED + 1);
+  assert(catAfter.items.some((i) => i.id === customId));
+
+  const patched = await fetch(origin + "/admin/tex/" + customId, {
+    method: "PATCH",
+    headers: { Origin: origin, Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ label: "Дуб переименован", category: "rocks", group: "Камни мои" }),
+  });
+  assert.equal(patched.status, 200);
+  const patchedBody = await patched.json();
+  assert.equal(patchedBody.item.label, "Дуб переименован");
+  assert.equal(patchedBody.item.category, "rocks");
+  assert.equal(patchedBody.item.group, "Камни мои");
+
+  const deleted = await fetch(origin + "/admin/tex/" + customId, {
+    method: "DELETE",
+    headers: { Origin: origin, Cookie: cookie },
+  });
+  assert.equal(deleted.status, 200);
+  const deletedBody = await deleted.json();
+  assert.equal(deletedBody.deleted, true);
+  assert.equal((await (await fetch(origin + "/tex/catalog")).json()).items.length, EXPECTED);
+  assert.equal((await fetch(origin + "/tex/file/" + customId + ".png")).status, 404);
+
+  console.log("PASS: tex catalog, replace/restore, custom CRUD, file serve, CSRF and validation gates");
 } finally {
   if (server) {
     server.kill("SIGTERM");
