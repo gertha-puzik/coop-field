@@ -1,6 +1,7 @@
 /**
- * Публичный каталог текстур редактора (GET /tex/catalog). Общий граф —
- * симулятор подтягивает src замен без админ-модуля.
+ * Публичный каталог текстур редактора (GET /cfg/tex-catalog; алиас /tex/catalog).
+ * Общий граф — симулятор подтягивает src замен без админ-модуля.
+ * /cfg/… — обход: на проде nginx уже шлёт весь /cfg в комнату.
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 import { texAssetUrl } from "@/lib/sim/tex-asset";
@@ -19,7 +20,7 @@ export type TexCatalogItem = {
 };
 
 export async function httpTexCatalog(): Promise<TexCatalogItem[] | null> {
-  const { status, row } = await apiFetch("/tex/catalog");
+  const { status, row } = await apiFetch("/cfg/tex-catalog");
   if (status !== 200 || row?.ok !== true || !Array.isArray(row.items)) return null;
   const out: TexCatalogItem[] = [];
   for (const entry of row.items as ApiRow[]) {

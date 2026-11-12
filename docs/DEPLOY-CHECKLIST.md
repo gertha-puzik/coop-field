@@ -49,10 +49,15 @@ Recommended additions so regressions cannot sneak past the wave:
 
 ## 3b. Production nginx: texture + locations API prefixes (owner, root)
 
-`/admin` stays static (try_files). New room APIs from the locations/textures
-wave must be proxied by **exact** prefixes — same pattern as `/admin/sprites`.
-Without them the admin «Текстуры» tab loads HTML and shows
-«Не удалось загрузить каталог текстур», and `GET/POST /locations` never reaches Node.
+**Workaround shipped:** clients talk to `/cfg/tex`, `/cfg/tex-catalog`,
+`/cfg/tex-file/*`, `/cfg/locations` — the existing `location /cfg` proxy is
+enough, so textures/locations work **without** new nginx blocks after that
+front+room deploy. Exact `/admin/tex` and `/tex/*` locations below remain
+recommended for clarity and for any non-`/cfg` callers.
+
+`/admin` stays static (try_files). Optional exact prefixes — same pattern as
+`/admin/sprites`. Without `/cfg` (or these blocks) the admin «Текстуры» tab
+loads HTML and shows «Не удалось загрузить каталог текстур».
 
 On the Elysiae production vhost (and the grotto vhost if it should serve
 `/tex/catalog` for the engine), add and `nginx -t && systemctl reload nginx`:

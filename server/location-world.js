@@ -215,11 +215,12 @@ async function handleCreateLocationHttp(req, res) {
     json(res, 200, { ok: true, place: result.place, locations: result.locations, room: locationRoom(result.place.id) });
     return true;
 }
-/** GET /locations (catalogue) + POST /locations|/admin/locations (create blank 10×10). */
+/** GET /locations|/cfg/locations + POST create (алиасы /admin/locations).
+ *  /cfg/locations — обход без exact nginx location: прод уже проксирует весь /cfg. */
 export async function handleLocationsHttp(req, res) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const p = url.pathname;
-    if (p === '/locations') {
+    if (p === '/locations' || p === '/cfg/locations') {
         if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
         if (req.method === 'GET') {
             json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });

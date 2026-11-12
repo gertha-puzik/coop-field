@@ -150,10 +150,10 @@ try {
       const corrupt=spawnSync(process.execPath,['--input-type=module','-e',corruptCode],{env:{...process.env,DATA_DIR:bad},encoding:'utf8'});assert.equal(corrupt.status,0,corrupt.stderr);
     }finally{fs.rmSync(bad,{recursive:true,force:true});}
     // Admin create: next free ID, blank 10×10, catalogue broadcast, join works.
-    const createDenied = await fetch(origin + '/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
+    const createDenied = await fetch(origin + '/cfg/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(createDenied.status, 401);
     assert.equal((await fetch(origin + '/admin/locations', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
-    const created = await fetch(origin + '/locations', { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Новый луг' }) });
+    const created = await fetch(origin + '/cfg/locations', { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Новый луг' }) });
     const createdText = await created.text();
     assert.equal(created.status, 200, createdText);
     const createdBody = JSON.parse(createdText);
@@ -168,8 +168,9 @@ try {
     assert(disk3.paint && disk3.paint.startsWith('iVBORw0KGgo'), 'new location has grass paint');
     const index = JSON.parse(fs.readFileSync(path.join(dir, 'locations-index.json'), 'utf8'));
     assert.deepEqual(index.ids, [1, 2, 3]);
-    const catalogueHttp = await fetch(origin + '/locations');
+    const catalogueHttp = await fetch(origin + '/cfg/locations');
     assert.equal(catalogueHttp.status, 200);
+    assert.equal((await fetch(origin + '/locations')).status, 200);
     const catalogueBody = await catalogueHttp.json();
     assert.equal(catalogueBody.locations.length, 3);
     assert.deepEqual(catalogueBody.rooms, ['test', 'test-loc-2', 'test-loc-3']);

@@ -1,13 +1,16 @@
 /**
- * Админ-текстуры редактора (/admin/tex*, server/textures.js) — клиент вкладки
- * «Текстуры» дашборда /admin. Изоляция сайтов: модуль только в бандле /admin.
+ * Админ-текстуры редактора (server/textures.js) — клиент вкладки «Текстуры».
+ * Изоляция сайтов: модуль только в бандле /admin.
  *
- *   GET    /admin/tex           — {ok, items, categories}
- *   POST   /admin/tex           — multipart create {file,label,category,group?}
- *   POST   /admin/tex/:id       — multipart {file} → замена PNG
- *   PATCH  /admin/tex/:id       — JSON {label?,category?,group?} (только custom)
- *   DELETE /admin/tex/:id       — custom: удалить; builtin: вернуть PNG
- *   GET    /tex/catalog         — публичный список src (для движка)
+ * Канон клиента — /cfg/tex* (прод nginx уже проксирует весь /cfg в Node;
+ * exact /admin/tex на проде может отсутствовать). Сервер держит и /admin/tex*.
+ *
+ *   GET    /cfg/tex             — {ok, items, categories}
+ *   POST   /cfg/tex             — multipart create {file,label,category,group?}
+ *   POST   /cfg/tex/:id         — multipart {file} → замена PNG
+ *   PATCH  /cfg/tex/:id         — JSON {label?,category?,group?} (только custom)
+ *   DELETE /cfg/tex/:id         — custom: удалить; builtin: вернуть PNG
+ *   GET    /cfg/tex-catalog     — публичный список src (для движка)
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 import { httpOrigin } from "./coop";
@@ -74,7 +77,7 @@ function parseError(row: ApiRow | null, status: number, fallback: string): Admin
 }
 
 export async function httpAdminTextures(): Promise<AdminTexListAction> {
-  const { status, row } = await apiFetch("/admin/tex");
+  const { status, row } = await apiFetch("/cfg/tex");
   if (status === 200 && row?.ok === true && Array.isArray(row.items)) {
     const categories = Array.isArray(row.categories)
       ? (row.categories as ApiRow[])
@@ -122,7 +125,7 @@ export async function httpAdminTexCreate(input: {
   form.append("label", input.label);
   form.append("category", input.category);
   if (input.group) form.append("group", input.group);
-  const { status, row } = await postMultipart("/admin/tex", form);
+  const { status, row } = await postMultipart("/cfg/tex", form);
   if (status === 200 && row?.ok === true && row.item && typeof row.item === "object") {
     return { ok: true, item: parseItem(row.item as ApiRow) };
   }
@@ -132,7 +135,7 @@ export async function httpAdminTexCreate(input: {
 export async function httpAdminTexReplace(id: string, file: File): Promise<AdminTexMutationAction> {
   const form = new FormData();
   form.append("file", file, file.name || `${id}.png`);
-  const { status, row } = await postMultipart(`/admin/tex/${encodeURIComponent(id)}`, form);
+  const { status, row } = await postMultipart(`/cfg/tex/${encodeURIComponent(id)}`, form);
   if (status === 200 && row?.ok === true && row.item && typeof row.item === "object") {
     return { ok: true, item: parseItem(row.item as ApiRow, id) };
   }
@@ -143,7 +146,7 @@ export async function httpAdminTexPatch(
   id: string,
   patch: { label?: string; category?: string; group?: string | null },
 ): Promise<AdminTexMutationAction> {
-  const { status, row } = await apiFetch(`/admin/tex/${encodeURIComponent(id)}`, {
+  const { status, row } = await apiFetch(`/cfg/tex/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: patch,
   });
@@ -154,7 +157,7 @@ export async function httpAdminTexPatch(
 }
 
 export async function httpAdminTexRestore(id: string): Promise<AdminTexMutationAction> {
-  const { status, row } = await apiFetch(`/admin/tex/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const { status, row } = await apiFetch(`/cfg/tex/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (status === 200 && row?.ok === true) {
     if (row.deleted === true) return { ok: true, id: asText(row.id, id), deleted: true };
     const item =

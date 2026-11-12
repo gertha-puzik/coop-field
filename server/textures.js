@@ -197,10 +197,12 @@ function pngSize(buf) {
   return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
 }
 
+/** Файлы замен/кастомных — под /cfg/tex-file (префикс /cfg уже проксирует nginx на проде).
+ *  Старые /tex/file/* оставляем алиасом для localhost и будущих exact-location. */
 function srcOf(meta) {
-  if (meta.custom) return `/tex/file/${meta.id}.png?v=${meta.replacedAt || meta.createdAt || 0}`;
+  if (meta.custom) return `/cfg/tex-file/${meta.id}.png?v=${meta.replacedAt || meta.createdAt || 0}`;
   const ov = overrides[meta.id];
-  if (ov) return `/tex/file/${meta.id}.png?v=${ov.replacedAt || 0}`;
+  if (ov) return `/cfg/tex-file/${meta.id}.png?v=${ov.replacedAt || 0}`;
   return `/tex/${meta.id}.png`;
 }
 
@@ -264,43 +266,66 @@ function adminGate(req, res) {
   return session;
 }
 
-function isTexPath(p) {
-  return p === "/tex/catalog" || p === "/tex/file" || p.startsWith("/tex/file/");
+/** Публичный каталог/файлы: /tex/* и обходной /cfg/tex-* (прод nginx уже шлёт весь /cfg в Node). */
+function isPublicTexPath(p) {
+  return (
+    p === "/tex/catalog" ||
+    p === "/cfg/tex-catalog" ||
+    p === "/tex/file" ||
+    p.startsWith("/tex/file/") ||
+    p === "/cfg/tex-file" ||
+    p.startsWith("/cfg/tex-file/")
+  );
+}
+
+/** Админ CRUD: /admin/tex* и обходной /cfg/tex* (без пересечения с tex-catalog/tex-file). */
+function adminTexMatch(p) {
+  if (p === "/admin/tex" || p === "/cfg/tex") return { root: true, id: "" };
+  const m = /^\/(?:admin|cfg)\/tex\/([^/]+)$/.exec(p);
+  if (!m) return null;
+  return { root: false, id: decodeURIComponent(m[1] || "") };
+}
+
+function serveTexFile(res, id) {
+  const meta = id ? itemById(id) : null;
+  const allowed = meta && (meta.custom || overrides[id]);
+  if (!id || !allowed) {
+    json(res, 404, { ok: false, reason: "not_found" });
+    return true;
+  }
+  try {
+    const data = fs.readFileSync(fileOf(id));
+    res.writeHead(200, {
+      "content-type": "image/png",
+      "content-length": String(data.length),
+      "cache-control": "public, max-age=60",
+    });
+    res.end(data);
+  } catch {
+    json(res, 404, { ok: false, reason: "not_found" });
+  }
+  return true;
 }
 
 export function handleTexturesHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const p = url.pathname;
-  const adminRoot = p === "/admin/tex";
-  const adminMatch = adminRoot ? ["", ""] : /^\/admin\/tex\/([^/]+)$/.exec(p);
-  if (!isTexPath(p) && !adminMatch && !adminRoot) return false;
+  const admin = adminTexMatch(p);
+  if (!isPublicTexPath(p) && !admin) return false;
 
-  if (!adminMatch && !adminRoot) {
-    if (p === "/tex/catalog" && req.method === "GET") {
+  if (!admin) {
+    if ((p === "/tex/catalog" || p === "/cfg/tex-catalog") && req.method === "GET") {
       json(res, 200, { ok: true, items: texCatalogItems() });
       return true;
     }
-    if (p.startsWith("/tex/file/") && req.method === "GET") {
-      const idMatch = /^\/tex\/file\/([a-z0-9-]{1,48})\.png$/.exec(p);
-      const id = idMatch?.[1];
-      const meta = id ? itemById(id) : null;
-      const allowed = meta && (meta.custom || overrides[id]);
-      if (!id || !allowed) {
-        json(res, 404, { ok: false, reason: "not_found" });
+    if (p.startsWith("/tex/file/") || p.startsWith("/cfg/tex-file/")) {
+      if (req.method !== "GET") {
+        res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, reason: "method_not_allowed" }));
         return true;
       }
-      try {
-        const data = fs.readFileSync(fileOf(id));
-        res.writeHead(200, {
-          "content-type": "image/png",
-          "content-length": String(data.length),
-          "cache-control": "public, max-age=60",
-        });
-        res.end(data);
-      } catch {
-        json(res, 404, { ok: false, reason: "not_found" });
-      }
-      return true;
+      const idMatch = /^\/(?:tex\/file|cfg\/tex-file)\/([a-z0-9-]{1,48})\.png$/.exec(p);
+      return serveTexFile(res, idMatch?.[1]);
     }
     res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ ok: false, reason: "method_not_allowed" }));
@@ -315,7 +340,7 @@ export function handleTexturesHttp(req, res) {
   }
   if (!adminGate(req, res)) return true;
 
-  const id = adminRoot ? "" : decodeURIComponent(adminMatch[1] || "");
+  const id = admin.root ? "" : admin.id;
 
   if (req.method === "GET" && !id) {
     json(res, 200, {

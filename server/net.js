@@ -261,14 +261,17 @@ export function startServer() {
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
       // в зону попадают API-пути (list/reset/promote), не HTML дашборда.
       p === "/admin/players" || p.startsWith("/admin/players/") ||
-      // Создание локаций мира (POST /locations и алиас /admin/locations).
-      p === "/locations" || p === "/admin/locations" || p.startsWith("/admin/locations/") ||
+      // Создание локаций мира (POST /locations|/cfg/locations и алиас /admin/locations).
+      p === "/locations" || p === "/cfg/locations" ||
+      p === "/admin/locations" || p.startsWith("/admin/locations/") ||
       // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
       // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
       // и в зоне не нуждается: безопасный метод, сессию не несёт).
       p === "/admin/sprites" || p.startsWith("/admin/sprites/") ||
-      // Замена текстур редактора (POST/DELETE /admin/tex*): тот же Origin-щит.
+      // Текстуры редактора: /admin/tex* и обходной /cfg/tex* (прод /cfg уже в Node).
       p === "/admin/tex" || p.startsWith("/admin/tex/") ||
+      p === "/cfg/tex" || p.startsWith("/cfg/tex/") ||
+      p === "/cfg/tex-catalog" || p === "/cfg/tex-file" || p.startsWith("/cfg/tex-file/") ||
       // Личные окрасы (#83): POST/DELETE несут cookie-сессию — тот же
       // unsafe-cookie Origin-щит и CORS-надзор (GET /sprites/mine безопасен,
       // но пусть зона вся живёт под одной политикой, как /profiles).
@@ -326,9 +329,14 @@ export function startServer() {
         if (opsHit) return;
       return Promise.resolve(handleLocationsHttp(req, res)).then((locHit) => {
         if (locHit) return;
-      // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ: глобальный
-      // /cfg-хендлер заявляет всё /cfg-подпространство (fetch фолбэк-404),
-      // а room-роуты отвечают false на всё, что не /cfg/rooms*.
+      // Текстуры ДО /cfg: на проде nginx уже шлёт весь /cfg в Node, а
+      // handleCfgHttp заявляет всё подпространство (фолбэк-404). Обходные
+      // /cfg/tex* и /cfg/tex-catalog|/cfg/tex-file должны попасть сюда раньше.
+      return Promise.resolve(handleTexturesHttp(req, res)).then((texHit) => {
+        if (texHit) return;
+      // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ среди cfg:
+      // глобальный /cfg-хендлер заявляет всё /cfg-подпространство, а room-роуты
+      // отвечают false на всё, что не /cfg/rooms*.
       return Promise.resolve(handleRoomCfgHttp(req, res)).then((roomCfgHit) => {
         if (roomCfgHit) return;
         return Promise.resolve(handleCfgHttp(req, res)).then((cfgHit) => {
@@ -350,15 +358,13 @@ export function startServer() {
                 // отдаёт сам домен.
                 return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
                   if (spritesHit) return;
-                  return Promise.resolve(handleTexturesHttp(req, res)).then((texHit) => {
-                    if (texHit) return;
-                    serveStatic(req, res, url);
-                  });
+                  serveStatic(req, res, url);
                 });
               });
             });
           });
         });
+      });
       });
       });
       });

@@ -56,9 +56,9 @@ export function locationsErrorOf(row: ApiRow | null, status: number, fallback: s
   };
 }
 
-/** Публичный каталог локаций (GET /locations). */
+/** Публичный каталог локаций (GET /cfg/locations; алиас /locations). */
 export async function httpLocations(): Promise<LocationsListAction> {
-  const { status, row } = await apiFetch("/locations");
+  const { status, row } = await apiFetch("/cfg/locations");
   if (status === 200 && row?.ok === true) {
     return { ok: true, locations: parseLocationPlaces(row.locations), rooms: parseRooms(row.rooms) };
   }
@@ -69,10 +69,10 @@ export type LocationCreateAction =
   | { ok: true; place: LocationPlace; locations: LocationPlace[]; room: string }
   | LocationsError;
 
-/** Создать локацию (POST /locations, admin). Без литерала /admin/ — безопасно для grotto-бандла. */
+/** Создать локацию (POST /cfg/locations, admin). Без литерала /admin/ — безопасно для grotto-бандла. */
 export async function httpCreateLocation(name?: string): Promise<LocationCreateAction> {
   const body = name && name.trim() ? { name: name.trim() } : {};
-  const { status, row } = await apiFetch("/locations", { method: "POST", body });
+  const { status, row } = await apiFetch("/cfg/locations", { method: "POST", body });
   if (status === 200 && row?.ok === true) {
     const place = asLocationPlace(row.place && typeof row.place === "object" ? (row.place as ApiRow) : null);
     if (!place) return locationsErrorOf(row, status, "invalid");
