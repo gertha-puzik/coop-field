@@ -26,4 +26,11 @@ assert.equal(paintPressureFactor('pen', 1.5), 1, 'выше 1 — clamp');
 clearPaintDirty();
 assert.equal(takePaintDirty(100, 100), null, 'без штампа dirty пуст');
 
+// tip-blit API снят: мировое выравнивание паттерна (#142) — только dirty-rect.
+assert.equal(
+  typeof (await import('../src/lib/sim/paint.ts')).takePaintLiveBlits,
+  'undefined',
+  'takePaintLiveBlits удалён — tip-кэш ломал узор текстур',
+);
+
 console.log('ok: paint pressure factor');
