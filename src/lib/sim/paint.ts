@@ -127,6 +127,38 @@ export function clearPaintDirty(): void {
   strokeDirty = null;
 }
 
+/** Кэш круглого кончика: fill(arc+pattern) на Ø280 дорого повторять вдоль сегмента. */
+const tipCache = new Map<string, HTMLCanvasElement>();
+const TIP_CACHE_MAX = 48;
+
+function roundBrushTip(mat: string, diameter: number): HTMLCanvasElement {
+  const d = Math.max(1, Math.round(diameter));
+  const key = `${mat}|${d}`;
+  const hit = tipCache.get(key);
+  if (hit) return hit;
+  const cv = document.createElement('canvas');
+  cv.width = d;
+  cv.height = d;
+  const g = cv.getContext('2d');
+  if (g) {
+    g.imageSmoothingEnabled = false;
+    if (mat === 'erase') {
+      g.fillStyle = '#000';
+    } else {
+      g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
+    }
+    g.beginPath();
+    g.arc(d / 2, d / 2, d / 2, 0, Math.PI * 2);
+    g.fill();
+  }
+  if (tipCache.size >= TIP_CACHE_MAX) {
+    const first = tipCache.keys().next().value;
+    if (first !== undefined) tipCache.delete(first);
+  }
+  tipCache.set(key, cv);
+  return cv;
+}
+
 export function stampPaintBrush(
   d: EditorDraft,
   mat: string,
@@ -145,12 +177,6 @@ export function stampPaintBrush(
   const cx = (mx / cellW) * PAINT_CELL_W;
   const cy = (my / cellH) * PAINT_CELL_H;
   g.save();
-  if (mat === 'erase') {
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = 'rgba(0,0,0,1)';
-  } else {
-    g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
-  }
   g.imageSmoothingEnabled = false;
   const factor = paintPressureFactor(pointerType, pressure);
   const base = paintBrushSize(d);
@@ -164,18 +190,25 @@ export function stampPaintBrush(
     const prevR = previous ? Math.max(0.5, previous.w / 2) : r;
     dirtyPad = Math.max(r, prevR) + 2;
     const dist = previous ? Math.hypot(cx - previous.x, cy - previous.y) : 0;
-    const step = Math.max(0.5, Math.min(r, prevR) / 2);
+    // Крупной кисти меньше перекрытия: tip drawImage дешевле, чем fill+pattern.
+    const step = Math.max(1, Math.min(r, prevR) * 0.4);
     const steps = previous ? Math.max(1, Math.ceil(dist / step)) : 1;
+    if (mat === 'erase') g.globalCompositeOperation = 'destination-out';
     for (let i = previous ? 1 : 0; i <= steps; i++) {
       const t = previous ? i / steps : 1;
       const x = previous ? previous.x + (cx - previous.x) * t : cx;
       const y = previous ? previous.y + (cy - previous.y) * t : cy;
       const rr = previous ? prevR + (r - prevR) * t : r;
-      g.beginPath();
-      g.arc(x, y, rr, 0, Math.PI * 2);
-      g.fill();
+      const tip = roundBrushTip(mat, rr * 2);
+      g.drawImage(tip, x - tip.width / 2, y - tip.height / 2);
     }
   } else {
+    if (mat === 'erase') {
+      g.globalCompositeOperation = 'destination-out';
+      g.fillStyle = 'rgba(0,0,0,1)';
+    } else {
+      g.fillStyle = (paintPatternFor(g, mat) ?? '#42582c') as CanvasPattern | string;
+    }
     const prevW = previous?.w ?? size.w;
     const prevH = previous?.h ?? size.h;
     dirtyPad = Math.max(size.w, size.h, prevW, prevH) / 2 + 2;
