@@ -681,7 +681,10 @@ function setMap(ws, payload = {}) {
  * nested field/catalog calls. Never hold this scope across an await.
  */
 const locationWorlds=new Map();
-const captureWorld=()=>({testMap,TEST_WIDTH,TEST_HEIGHT,TEST_ISLAND,TEST_CELLS,TEST_OBST_CELLS,TEST_OBST_BODIES,TEST_PAINT});
+/** Снимок мира для кэша локаций. testMap — structuredClone (elev/zones/objects
+ *  не делят ссылки между локациями); геометрия/paint — по ссылке: они
+ *  пересобираются целиком в rebuildTestGeometry, а не мутируются in-place. */
+const captureWorld=()=>({testMap:structuredClone(testMap),TEST_WIDTH,TEST_HEIGHT,TEST_ISLAND,TEST_CELLS,TEST_OBST_CELLS,TEST_OBST_BODIES,TEST_PAINT});
 function restoreWorld(s){({testMap,TEST_WIDTH,TEST_HEIGHT,TEST_ISLAND,TEST_CELLS,TEST_OBST_CELLS,TEST_OBST_BODIES,TEST_PAINT}=s);}
 export function withTestLocation(id,fn){
   id=Number(id)||1;if(id===activeLocationId)return fn();

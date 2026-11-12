@@ -160,8 +160,9 @@ function buildOverlay(
   }
   for (const b of terrainTiles(effectiveElevRecord(map), cols, rows)) {
     if (!b.level) continue;
-    // Лёгкая подсветка плато на 2D-оверлее (WebGL даёт объём обрывами).
-    g.fillStyle = `rgba(255, 245, 200, ${Math.min(.35, 0.08 + b.level * .06)})`;
+    // Лёгкая подсветка плато: формула #151 (0.08+0.06·L) слишком высветляла
+    // атлас земли в WebGL — возвращаем мягкий коэффициент до #151.
+    g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
     g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
   const battle = new Set<string>();
