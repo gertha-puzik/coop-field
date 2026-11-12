@@ -49,6 +49,9 @@ export const CAMZOOM_TAU_MS = 350;
  *  режимом). Колесо вверх — ближе, вниз — дальше; работает и в мирном виде, и в бою. */
 export const CAM_USER_ZOOM_MIN = 0.55;
 export const CAM_USER_ZOOM_MAX = 2;
+/** В редакторе локации зум шире — удобно править крупные карты и мелкие детали. */
+export const CAM_EDITOR_ZOOM_MIN = 0.35;
+export const CAM_EDITOR_ZOOM_MAX = 5;
 /** Шаг зума на один щелчок колеса (множитель, вверх/вниз). */
 export const CAM_USER_ZOOM_STEP = 1.12;
 /** Множитель спринта в мирном режиме: зажатый Shift даёт ×1,5 скорости. */

@@ -196,31 +196,36 @@ export function ensurePaintDecoded(): Promise<boolean> {
 /**
  * Подмена активного рисунка готовым канвасом (редактор рисует мазки прямо в
  * свой черновой холст — картинка на поле обновляется без декодирования PNG).
- * rebuild=false — во время мазка: маска обновляется, контур пересчитается по
- * окончании мазка (марширующие квадраты на весь мир каждый кадр — дорого).
+ * rebuild=false — только подключить холст (мазки идут в тот же canvas; 2D
+ * кадр читает пиксели напрямую). Полный getImageData+маска+контур — только
+ * на rebuild=true (конец мазка / заливка / сохранение): иначе каждый
+ * pointermove читал миллионы пикселей и рвал росчерк.
  */
 let paintLayerVersion=0;
 export function paintRevision():number{return paintLayerVersion;}
+function rebuildPaintMask(cv: HTMLCanvasElement): void {
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  if (!g) { paintMask = null; return; }
+  try {
+    const data = g.getImageData(0, 0, cv.width, cv.height).data;
+    const mask = new Uint8Array(cv.width * cv.height);
+    for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
+    paintMask = mask;
+  } catch {
+    paintMask = null;
+  }
+}
 export function setPaintOverride(cv: HTMLCanvasElement | null, rebuild: boolean): void {
   paintLayerVersion++;
   paintDecodeRevision++;paintPending=null;
   paintCv = cv;
   paintW = cv?.width ?? 0;
   paintH = cv?.height ?? 0;
-  if (cv) {
-    const g = cv.getContext('2d', { willReadFrequently: true });
-    if (g) {
-      try {
-        const data = g.getImageData(0, 0, cv.width, cv.height).data;
-        const mask = new Uint8Array(cv.width * cv.height);
-        for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
-        paintMask = mask;
-      } catch {
-        paintMask = null;
-      }
-    }
-  } else {
+  if (!cv) {
     paintMask = null;
+  } else if (rebuild || !paintMask || paintMask.length !== paintW * paintH) {
+    // Маску строим при полном пересчёте или когда её ещё нет / размер сменился.
+    rebuildPaintMask(cv);
   }
   if (rebuild) {
     islandPoly = null;

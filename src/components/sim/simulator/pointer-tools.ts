@@ -245,13 +245,12 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         if (dirtPaintingRef.current && isElevationTool(ed.tool) && ev.buttons & 1) {
           applyElevBrush(ed.tool, c, r);
         }
-        // мазок кисти локации: ЛКМ — материал, ПКМ — ластик; холст черновика
-        // становится активным рисунком сразу (маска обновляется, контур — по
-        // окончании росчерка, см. onUp)
+        // мазок кисти локации: ЛКМ — материал, ПКМ — ластик. Пишем только в
+        // черновой холст (он уже подключён на pointerdown); полный
+        // setPaintOverride на каждом move рвал росчерк (getImageData на весь мир).
         if (paintStrokeRef.current && ed.tool === 'paint' && ed.pcv) {
           if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH);
           else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH);
-          setPaintOverride(ed.pcv, false);
         }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {

@@ -93,6 +93,7 @@
 .toolbar .segment button[aria-pressed=true]{background:#edc4851a;border-color:#edc48566;}
 .toolbarEnd{display:flex;align-items:center;gap:4px;}
 .toolbarEnd button{width:30px;min-height:30px;display:grid;place-items:center;background:transparent;font-size:18px;border-color:transparent;}
+.zoomLabel{min-width:42px;text-align:center;font-size:11px;color:var(--ed-muted);font-variant-numeric:tabular-nums;}
 .separator{height:20px;width:1px;background:var(--ed-line);margin:0 4px;}
 .footer{position:absolute;left:0;right:0;bottom:0;min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:linear-gradient(110deg,#252130,var(--ed-bg));border-top:1px solid var(--ed-line);pointer-events:auto;}
 .selection{display:flex;align-items:center;gap:8px;min-width:0;}
