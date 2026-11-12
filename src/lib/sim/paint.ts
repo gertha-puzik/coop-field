@@ -93,6 +93,40 @@ export function paintPressureFactor(pointerType: string, pressure: number): numb
   return Math.min(1, Math.max(PAINT_PRESSURE_MIN, pressure));
 }
 
+/** AABB мазка в px холста кисти — WebGL заливает только этот кусок, не весь мир. */
+export type PaintDirtyRect = { x: number; y: number; w: number; h: number };
+let strokeDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
+
+function markStrokeDirty(x0: number, y0: number, x1: number, y1: number): void {
+  if (!strokeDirty) {
+    strokeDirty = { x0, y0, x1, y1 };
+    return;
+  }
+  strokeDirty.x0 = Math.min(strokeDirty.x0, x0);
+  strokeDirty.y0 = Math.min(strokeDirty.y0, y0);
+  strokeDirty.x1 = Math.max(strokeDirty.x1, x1);
+  strokeDirty.y1 = Math.max(strokeDirty.y1, y1);
+}
+
+/** Забрать накопленный dirty с прошлого штампа (null — полный пересбор атласа). */
+export function takePaintDirty(canvasW: number, canvasH: number): PaintDirtyRect | null {
+  if (!strokeDirty || canvasW < 1 || canvasH < 1) {
+    strokeDirty = null;
+    return null;
+  }
+  const x = Math.max(0, Math.floor(strokeDirty.x0));
+  const y = Math.max(0, Math.floor(strokeDirty.y0));
+  const x1 = Math.min(canvasW, Math.ceil(strokeDirty.x1));
+  const y1 = Math.min(canvasH, Math.ceil(strokeDirty.y1));
+  strokeDirty = null;
+  if (x1 <= x || y1 <= y) return null;
+  return { x, y, w: x1 - x, h: y1 - y };
+}
+
+export function clearPaintDirty(): void {
+  strokeDirty = null;
+}
+
 export function stampPaintBrush(
   d: EditorDraft,
   mat: string,
@@ -122,11 +156,13 @@ export function stampPaintBrush(
   const base = paintBrushSize(d);
   const size = { w: Math.max(1, base.w * factor), h: Math.max(1, base.h * factor) };
   const previous = d.paintLast?.mat === mat ? d.paintLast : null;
+  let dirtyPad = Math.max(size.w, size.h) / 2 + 2;
   if (d.pshape === 'round') {
     // Интерполяция диаметра вдоль сегмента — давление меняется плавно, без
     // «палки» постоянной толщины между двумя точками разной силы.
     const r = Math.max(0.5, size.w / 2);
     const prevR = previous ? Math.max(0.5, previous.w / 2) : r;
+    dirtyPad = Math.max(r, prevR) + 2;
     const dist = previous ? Math.hypot(cx - previous.x, cy - previous.y) : 0;
     const step = Math.max(0.5, Math.min(r, prevR) / 2);
     const steps = previous ? Math.max(1, Math.ceil(dist / step)) : 1;
@@ -142,6 +178,7 @@ export function stampPaintBrush(
   } else {
     const prevW = previous?.w ?? size.w;
     const prevH = previous?.h ?? size.h;
+    dirtyPad = Math.max(size.w, size.h, prevW, prevH) / 2 + 2;
     const steps = previous
       ? Math.max(1, Math.ceil(Math.hypot(cx - previous.x, cy - previous.y) / Math.max(1, Math.min(size.w, size.h, prevW, prevH) / 3)))
       : 1;
@@ -153,6 +190,16 @@ export function stampPaintBrush(
       const h = previous ? prevH + (size.h - prevH) * t : size.h;
       g.fillRect(x - w / 2, y - h / 2, w, h);
     }
+  }
+  if (previous) {
+    markStrokeDirty(
+      Math.min(previous.x, cx) - dirtyPad,
+      Math.min(previous.y, cy) - dirtyPad,
+      Math.max(previous.x, cx) + dirtyPad,
+      Math.max(previous.y, cy) + dirtyPad,
+    );
+  } else {
+    markStrokeDirty(cx - dirtyPad, cy - dirtyPad, cx + dirtyPad, cy + dirtyPad);
   }
   d.paintLast = { x: cx, y: cy, mat, w: size.w, h: size.h };
   g.restore();

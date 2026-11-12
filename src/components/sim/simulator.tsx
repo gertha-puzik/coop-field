@@ -4800,8 +4800,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onClick={onClick}
           pixiRef={pixiRef}
           elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
-          /* WebGL всегда: mid-stroke атлас обновляется через bumpPaintVisual +
-             DynamicTexture.update (без getImageData и без demount слоя). */
+          /* WebGL всегда: mid-stroke — dirty атлас + texSubImage2D без mipmaps
+             (полный generateMipmap на мир давал ~10 fps на мазке). */
           showElisionView={mode === 'elision'}
           hudRef={hudRef}
           battleHint={battleHint}
