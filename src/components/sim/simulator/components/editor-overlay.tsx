@@ -199,7 +199,7 @@ export function EditorOverlay(p:EditorOverlayProps){
          <h3>Материал <span>{PAINT_MATS.find(m=>m.id===d.pmat)?.label}</span></h3>
          <div className={styles.filters}>{[['all','Все'],['nature','Природа'],['stone','Камень']].map(([id,name])=><button type="button" key={id} aria-pressed={filter===id} onClick={()=>setFilter(id)}>{name}</button>)}</div>
          <div className={styles.materials}>{mats.map(m=><button type="button" key={m.id} title={m.label} aria-pressed={d.pmat===m.id} onClick={()=>material(m.id,m.label)}><span className={styles.swatch} style={{backgroundImage:m.id==='dirt'?'linear-gradient(135deg,#776044,#493a2b)':`url(${texSrc(m.id)})`}}/><span>{m.label}</span></button>)}</div>
-         <p className={styles.hint}>Свободный мазок без привязки к клеткам. ПКМ стирает. Заливка заменяет материал в связной области.</p>
+         <p className={styles.hint}>Свободный мазок без привязки к клеткам. ПКМ стирает. Заливка заменяет материал в связной области. Перо планшета: сила нажатия меняет диаметр (значение слайдера — максимум при полном нажатии).</p>
        </>}
        {section==='objects'&&<>
          <div className={styles.toolGrid}>{tools.filter(t=>['cursor','plant','tree','stone'].includes(t.id)).map(toolButton)}</div>

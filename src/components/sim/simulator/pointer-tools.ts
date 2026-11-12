@@ -58,6 +58,8 @@ export interface PointerToolsDeps {
   mainSavedRef: RefObject<{ col: number; row: number; angle: number } | null>;
   netRef: RefObject<ReturnType<typeof createCoopClient> | null>;
   paintStrokeRef: RefObject<boolean>;
+  /** React-флаг «идёт мазок» — прячет WebGL на время росчерка. */
+  setPaintStrokeLive?: (live: boolean) => void;
   skipClickRef: RefObject<boolean>;
   spritesRef: RefObject<Partial<Record<SpriteId, HTMLImageElement>>>;
   settingsRef: RefObject<SimSettings>;
@@ -108,6 +110,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     mainSavedRef,
     netRef,
     paintStrokeRef,
+    setPaintStrokeLive,
     skipClickRef,
     spritesRef,
     settingsRef,
@@ -132,7 +135,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     dragEditorSelection,
     dropEditorSelection,
   } = deps;
-  const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement>) => {
+  const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement> | React.PointerEvent<HTMLCanvasElement>) => {
     const cv = canvasRef.current!;
     const rect = cv.getBoundingClientRect();
     // Хит проецируется в МИР поля (cols×cellW), а не в буфер канваса: в grid-формате
@@ -180,7 +183,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     return null;
   };
 
-  const onMove = (ev: React.MouseEvent<HTMLCanvasElement>) => {
+  // pointermove (не mousemove): у пера планшета есть pressure/pointerType.
+  const onMove = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     const s = settingsRef.current;
     const e = engineRef.current;
     const testMode = fieldFormatRef.current === 'test';
@@ -249,8 +253,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         // черновой холст (он уже подключён на pointerdown); полный
         // setPaintOverride на каждом move рвал росчерк (getImageData на весь мир).
         if (paintStrokeRef.current && ed.tool === 'paint' && ed.pcv) {
-          if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH);
-          else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH);
+          if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
+          else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
         }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {
@@ -409,7 +413,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
           setPaintOverride(ed.pcv,true);ed.dirty=true;refreshEditorPreview();syncEditorView();ev.preventDefault();return;
         }
         paintStrokeRef.current = true;
-        stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH);
+        setPaintStrokeLive?.(true);
+        stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
         if (ed.pcv) setPaintOverride(ed.pcv, false);
         ed.dirty = true;
         ev.currentTarget.setPointerCapture(ev.pointerId);
@@ -577,6 +582,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     // Мазок кисти закончен: пересчитываем контур локации по обновлённой маске.
     if (paintStrokeRef.current) {
       paintStrokeRef.current = false;
+      setPaintStrokeLive?.(false);
       if (ed?.pcv) {setPaintOverride(ed.pcv, true);refreshEditorPreview();}
     }
     if (editorOpenRef.current && ed) {

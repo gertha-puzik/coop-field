@@ -96,7 +96,8 @@ export type EditorDraft = {
   psize: number;
   pwidth?: number;
   pheight?: number;
-  paintLast?: {x:number;y:number;mat:string};
+  /** Последняя точка мазка: w/h — эффективный размер штампа с учётом давления пера. */
+  paintLast?: {x:number;y:number;mat:string;w:number;h:number};
   spacePan?: boolean;
   pan?: {x:number;y:number;reset?:boolean};
   panDrag?: {sx:number;sy:number;x:number;y:number};
