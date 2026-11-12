@@ -252,7 +252,7 @@ function arrivalAt(room, sourceId, passage, foot) {
     const points = [];
     if (reverse.length) {
         const p = reverse[0], [dx, dy] = direction[p.direction], cx = p.x + p.w / 2, cy = p.y + p.h / 2;
-        for (const distance of [.4, .7, 1, 1.5, 2]) {
+        for (const distance of [.4, .7, 1, 1.5, 2, 2.5, 3, 4]) {
             points.push([cx - dx * (p.w / 2 + distance), cy - dy * (p.h / 2 + distance)]);
             points.push([p.x - distance, cy], [p.x + p.w + distance, cy], [cx, p.y - distance], [cx, p.y + p.h + distance]);
         }
@@ -266,6 +266,16 @@ function arrivalAt(room, sourceId, passage, foot) {
         if (!freeArrival(room, x, y) || (reverse.length && passageContains(reverse[0], x, y, .1)))
             continue;
         return { fx: x - foot.dx, fy: y - foot.dy, x: Math.floor(x) + 1, y: Math.floor(y) + 1, foot };
+    }
+    // Обратный проход есть, но кольцо у выхода забито — не soft-lock перехода:
+    // запасной спавн локации, вне триггера обратного прохода.
+    if (reverse.length) {
+        const spawn = spawnCell(room);
+        if (spawn) {
+            const x = spawn[0] - .5, y = spawn[1] - .2;
+            if (freeArrival(room, x, y) && !passageContains(reverse[0], x, y, .1))
+                return { fx: x - foot.dx, fy: y - foot.dy, x: Math.floor(x) + 1, y: Math.floor(y) + 1, foot };
+        }
     }
     return { error: reverse.length ? 'У обратного прохода нет свободной площадки для появления.' : 'В локации нет свободной точки появления.' };
 }

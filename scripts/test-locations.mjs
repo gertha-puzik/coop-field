@@ -128,7 +128,35 @@ try {
     const own = back.cats.find(c => c.id === ownId);
     assert(!clientModel.passageContains(changed.passages[0], own.fx + .45, own.fy + .95, .1), 'arrival is near, not inside, reverse trigger');
     assert(Math.hypot(own.fx + .45 - 2, own.fy + .95 - 4) < 4, 'arrival stays near reverse exit');
-    const position = { fx: own.fx, fy: own.fy };
+    // Ghost occupancy: без боевых клеток freemove раньше оставлял cat.x/y на
+    // клетке прибытия — второй путник получал «нет свободной площадки», хотя
+    // первый уже отошёл. Уходим далеко и пускаем второго.
+    a.send('freemove', { x: 8.2, y: 8.2, foot: { dx: .45, dy: .95 }, stop: true });
+    await sleep(3400); // книга точек: троттлинг 3 с — reconnect должен поднять 8.2
+    const reg2 = await fetch(origin + '/auth/register', {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'traveler2', pass: 'local-test-pass', name: 'Traveler2' }),
+    });
+    assert.equal(reg2.status, 200, await reg2.text());
+    const login2 = await fetch(origin + '/auth/login', {
+      method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'traveler2', pass: 'local-test-pass' }),
+    });
+    assert.equal(login2.status, 200);
+    const cookieTraveler = login2.headers.getSetCookie().map(s => s.split(';')[0]).join('; ');
+    const c2 = await client(cookieTraveler);
+    c2.send('join', { room: 'test', login: 'Traveler2' });
+    await c2.wait(f => f[0] === 'field' && f[1].room === 'test');
+    c2.send('freemove', { x: 2, y: 5, foot: { dx: .45, dy: .95 }, stop: true });
+    await sleep(1100);
+    n = c2.frames.length;
+    c2.send('join', { passageId: 'forest' });
+    const secondArrival = await c2.wait(f => f[0] === 'field' && f[1].room === 'test-loc-2', n);
+    assert.equal(secondArrival.room, 'test-loc-2', 'second traveler arrives while first freemoved away from pad');
+    assert(!String(c2.frames.slice(n).map(f => f[1]).join(' ')).includes('свободной площадки'), 'no pad-full refusal after freemove-away');
+    // Позиция для reconnect — после freemove-away (книга точек пишет её).
+    const position = { fx: 8.2, fy: 8.2 };
     a.ws.close();
     await sleep(100);
     const reconnect = await client(cookie);

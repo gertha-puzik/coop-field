@@ -107,6 +107,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   wallMat.diffuseTexture = wallTex;
   wallMat.emissiveColor = Color3.White();
   let paintKey = '';
+  /** Ключ рельефа: elev-правки в редакторе не меняют paintRev, но меши
+   *  плато/обрывов обязаны пересобираться сразу (иначе «плоские» блоки). */
+  let terrainKey = '';
   let groundMode: ElisionView['ground'] = 'boot';
   let lastCssW = 0;
   let lastCssH = 0;
@@ -148,6 +151,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     terrainFringe?.dispose(false, false);
     terrainTop = null;
     terrainWalls = null;
+    terrainFringe = null;
     const geo = elisionTerrainGeometry(frame.cols, frame.rows, frame.cellW, frame.cellH, frame.elev, frame.terrainLiftStep);
     const make = (name: string, part: typeof geo.tops, material: StandardMaterial) => {
       if (!part.positions.length) return null;
@@ -171,7 +175,24 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     wallMat.opacityTexture = groundDyn;
   };
 
+  const elevSig = (elev: ElisionFrame['elev']) => {
+    const keys = Object.keys(elev ?? {});
+    if (!keys.length) return '';
+    keys.sort();
+    return keys.map((k) => `${k}=${elev![k]}`).join(',');
+  };
+
+  const syncTerrainIfNeeded = (frame: ElisionFrame) => {
+    const next = `${frame.cols}x${frame.rows}:${frame.terrainLiftStep}:${elevSig(frame.elev)}`;
+    if (next === terrainKey) return;
+    terrainKey = next;
+    syncTerrain(frame);
+  };
+
   const syncGround = (frame: ElisionFrame) => {
+    // Рельеф отдельно от paintRev: насыпь/блок высоты в редакторе должны
+    // поднять плато и обрывы в том же кадре, без ожидания мазка кисти.
+    syncTerrainIfNeeded(frame);
     const worldW = Math.max(1, frame.cols * frame.cellW);
     const worldH = Math.max(1, frame.rows * frame.cellH);
     const src = frame.paint;
@@ -196,7 +217,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
-      syncTerrain(frame);
       return;
     }
     try {
@@ -280,13 +300,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       wallMat.opacityTexture = dyn;
       groundMode = 'paint';
       applyTint(true);
-      // Рельеф/стены — только при смене размера мира; mid-stroke их не трогаем.
-      if (sizeChanged) syncTerrain(frame);
     } catch {
       groundMode = 'unread';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
-      if (sizeChanged) syncTerrain(frame);
     }
   };
 
