@@ -8,7 +8,6 @@
  * screenToWorld (формулы — elision-scene.ts), поэтому клики не переезжают.
  */
 import { Engine } from '@babylonjs/core/Engines/engine';
-import type { ThinEngine } from '@babylonjs/core/Engines/thinEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import { Camera } from '@babylonjs/core/Cameras/camera';
@@ -88,10 +87,11 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   groundMat.backFaceCulling = false;
 
   let ground: ReturnType<typeof CreateGround> | null = null;
-  /** DynamicTexture поверх атласа surface: mid-stroke — dirty texSubImage2D,
-   *  без mipmaps (generateMipmap на весь мир давал ~10 fps на мазке). */
+  /** Свой CPU-холст DynamicTexture (не атлас!): общий canvas с атласом
+   *  уходил в GPU-backed и getImageData/readback ронял мазок до ~10 fps.
+   *  Mid-stroke: dirty blit атлас→dyn + update без mipmaps и без readback. */
   let groundDyn: DynamicTexture | null = null;
-  let groundSrc: HTMLCanvasElement | null = null;
+  let groundAtlas: HTMLCanvasElement | null = null;
   let terrainTop: Mesh | null = null;
   let terrainWalls: Mesh | null = null;
   let terrainFringe: Mesh | null = null;
@@ -193,7 +193,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       groundMat.opacityTexture = null;
       groundDyn?.dispose();
       groundDyn = null;
-      groundSrc = null;
+      groundAtlas = null;
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
@@ -203,60 +203,79 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     try {
       const tw = src.width;
       const th = src.height;
-      // Без mipmaps: иначе каждый update гоняет generateMipmap по всему миру.
-      // Атлас surface — сам canvas DynamicTexture (без второй полной копии).
       const needNew =
         !groundDyn ||
-        groundSrc !== src ||
         groundDyn.getSize().width !== tw ||
         groundDyn.getSize().height !== th;
       if (needNew) {
         groundDyn?.dispose();
+        // Свой холст — атлас остаётся CPU; иначе shared canvas + readback.
         groundDyn = new DynamicTexture(
           'elision-ground',
-          src,
+          { width: tw, height: th },
           scene,
           false,
           Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
           Constants.TEXTUREFORMAT_RGBA,
           false,
         );
-        groundSrc = src;
         groundDyn.hasAlpha = true;
-        groundDyn.anisotropicFilteringLevel = 8;
+        groundDyn.anisotropicFilteringLevel = 4;
         groundDyn.wrapU = groundDyn.wrapV = Texture.CLAMP_ADDRESSMODE;
         groundMat.diffuseTexture = groundDyn;
         groundMat.opacityTexture = groundDyn;
         groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
         groundMat.alphaCutOff = 0.15;
-        groundDyn.update(false);
-      } else if (revChanged) {
-        const dyn = groundDyn;
-        if (!dyn) throw new Error('no groundDyn');
-        const dirty = frame.paintDirty;
-        const area = dirty ? dirty.w * dirty.h : tw * th;
-        const internal = dyn.getInternalTexture();
-        // Малый dirty — texSubImage2D; крупный/полный — обычный update.
-        if (dirty && internal && area > 0 && area <= tw * th * 0.25) {
-          const ctx = src.getContext('2d');
-          if (!ctx) throw new Error('no atlas ctx');
-          const img = ctx.getImageData(dirty.x, dirty.y, dirty.w, dirty.h);
-          (scene.getEngine() as ThinEngine).updateTextureData(
-            internal,
-            img.data,
-            dirty.x,
-            dirty.y,
-            dirty.w,
-            dirty.h,
-            0,
-            0,
-            false,
-          );
-        } else {
-          dyn.update(false);
-        }
+        groundAtlas = null;
       }
-      wallMat.opacityTexture = groundDyn;
+      const dyn = groundDyn;
+      if (!dyn) throw new Error('no groundDyn');
+      const g = dyn.getContext() as CanvasRenderingContext2D;
+      g.imageSmoothingEnabled = false;
+      const dirty = frame.paintDirty;
+      const uploadFull = () => {
+        g.clearRect(0, 0, tw, th);
+        g.drawImage(src, 0, 0);
+        groundAtlas = src;
+        dyn.update(false);
+      };
+      /** WebGL2: texSubImage2D с UNPACK_SKIP — без CPU-readback и без полного texImage2D. */
+      const uploadDirty = (rect: { x: number; y: number; w: number; h: number }) => {
+        const internal = dyn.getInternalTexture();
+        const eng = scene.getEngine() as {
+          _gl?: WebGL2RenderingContext;
+          _bindTextureDirectly?: (t: number, tex: unknown, f?: boolean) => boolean;
+          _unpackFlipY?: (v: boolean) => void;
+        };
+        const gl = eng._gl;
+        if (!internal || !gl?.UNPACK_ROW_LENGTH || !eng._bindTextureDirectly || !eng._unpackFlipY) {
+          dyn.update(false);
+          return;
+        }
+        const canvas = g.canvas as HTMLCanvasElement;
+        g.clearRect(rect.x, rect.y, rect.w, rect.h);
+        g.drawImage(src, rect.x, rect.y, rect.w, rect.h, rect.x, rect.y, rect.w, rect.h);
+        const wasBound = eng._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
+        eng._unpackFlipY(false);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, canvas.width);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, rect.x);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, rect.y);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h,
+          gl.RGBA, gl.UNSIGNED_BYTE, canvas,
+        );
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+        if (!wasBound) eng._bindTextureDirectly(gl.TEXTURE_2D, null);
+      };
+      if (needNew || groundAtlas !== src || !dirty || dirty.w < 1 || dirty.h < 1) {
+        uploadFull();
+      } else if (revChanged) {
+        uploadDirty(dirty);
+      }
+      wallMat.opacityTexture = dyn;
       groundMode = 'paint';
       applyTint(true);
       // Рельеф/стены — только при смене размера мира; mid-stroke их не трогаем.
