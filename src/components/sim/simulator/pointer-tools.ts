@@ -18,7 +18,7 @@ import { DUMMY_EMIT_MS, DUMMY_ID, DUMMY_SCALE, round2 } from '@/lib/sim/engine-c
 import { bfsPath } from '@/lib/sim/settings';
 import { createCoopClient } from '@/lib/net/coop';
 import { dummiesOf, dummyIsDrawn, othersOf, type CharRef } from '@/lib/sim/targeting';
-import { ensureDraftPaint, fillPaintArea, stampPaintBrush } from '@/lib/sim/paint';
+import { clearPaintDirty, ensureDraftPaint, fillPaintArea, stampPaintBrush } from '@/lib/sim/paint';
 import { bumpPaintVisual, groundPointAtWorld, setPaintOverride, testBattleRouteBlocked, testEntryAt, testEntryStrict, testPeaceBattleBlocked, testPointInCellsZone, testPointInIsland, testWalkableCell } from '@/lib/sim/test-field';
 import { peaceHalfBox, screenToWorld, spriteBoxOf } from '@/lib/sim/geometry';
 
@@ -132,13 +132,54 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     dragEditorSelection,
     dropEditorSelection,
   } = deps;
-  /** Один bumpPaintVisual на кадр: WebGL-атлас подтянет мазки без getImageData. */
-  let paintBumpRaf = 0;
-  const schedulePaintVisualBump = () => {
-    if (paintBumpRaf) return;
-    paintBumpRaf = requestAnimationFrame(() => {
-      paintBumpRaf = 0;
-      bumpPaintVisual();
+  /** Штамп + bump атласа не чаще 1×/кадр: десятки pointermove с большим
+   *  диаметром иначе съедают кадр раньше WebGL. Интерполяция stampPaintBrush
+   *  тянет сегмент от paintLast → последняя точка кадра. */
+  let paintStampRaf = 0;
+  let paintStampPending: {
+    mat: string;
+    mx: number;
+    my: number;
+    cellW: number;
+    cellH: number;
+    pressure: number;
+    pointerType: string;
+  } | null = null;
+  const flushPaintStamp = () => {
+    if (paintStampRaf) {
+      cancelAnimationFrame(paintStampRaf);
+      paintStampRaf = 0;
+    }
+    const pending = paintStampPending;
+    paintStampPending = null;
+    const ed = editorRef.current;
+    if (!pending || !ed?.pcv) return;
+    stampPaintBrush(
+      ed,
+      pending.mat,
+      pending.mx,
+      pending.my,
+      pending.cellW,
+      pending.cellH,
+      pending.pressure,
+      pending.pointerType,
+    );
+    bumpPaintVisual();
+  };
+  const schedulePaintStamp = (
+    mat: string,
+    mx: number,
+    my: number,
+    cellW: number,
+    cellH: number,
+    pressure: number,
+    pointerType: string,
+  ) => {
+    paintStampPending = { mat, mx, my, cellW, cellH, pressure, pointerType };
+    if (paintStampRaf) return;
+    paintStampRaf = requestAnimationFrame(() => {
+      paintStampRaf = 0;
+      flushPaintStamp();
     });
   };
   const canvasPoint = (ev: React.MouseEvent<HTMLCanvasElement> | React.PointerEvent<HTMLCanvasElement>) => {
@@ -259,9 +300,11 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         // черновой холст (он уже подключён на pointerdown); полный
         // setPaintOverride на каждом move рвал росчерк (getImageData на весь мир).
         if (paintStrokeRef.current && ed.tool === 'paint' && ed.pcv) {
-          if (ev.buttons & 2) stampPaintBrush(ed, 'erase', mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
-          else if (ev.buttons & 1) stampPaintBrush(ed, ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
-          schedulePaintVisualBump();
+          if (ev.buttons & 2) {
+            schedulePaintStamp('erase', mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
+          } else if (ev.buttons & 1) {
+            schedulePaintStamp(ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
+          }
         }
         const pG = editorPlaceRef.current;
         if (pG && !pG.anchored) {
@@ -422,7 +465,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         paintStrokeRef.current = true;
         stampPaintBrush(ed, ev.button === 2 ? 'erase' : ed.pmat, mx, my, s.field.cellW, s.field.cellH, ev.pressure, ev.pointerType);
         if (ed.pcv) setPaintOverride(ed.pcv, false);
-        schedulePaintVisualBump();
+        bumpPaintVisual();
         ed.dirty = true;
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
@@ -589,7 +632,8 @@ export function buildPointerTools(deps: PointerToolsDeps) {
     // Мазок кисти закончен: пересчитываем контур локации по обновлённой маске.
     if (paintStrokeRef.current) {
       paintStrokeRef.current = false;
-      if (paintBumpRaf) { cancelAnimationFrame(paintBumpRaf); paintBumpRaf = 0; }
+      flushPaintStamp();
+      clearPaintDirty();
       if (ed?.pcv) {setPaintOverride(ed.pcv, true);refreshEditorPreview();}
     }
     if (editorOpenRef.current && ed) {

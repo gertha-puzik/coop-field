@@ -12,6 +12,7 @@ import { RAB_SPRITE, SPRITES } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { spriteAspectOf } from '@/lib/sim/sprite-aspect';
 import { dummyIsDrawn } from '@/lib/sim/targeting';
+import { takePaintDirty } from '@/lib/sim/paint';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { drawPathSurface } from '@/lib/sim/path-field';
 import { grassPattern, packRevision } from '@/lib/sim/textures';
@@ -196,7 +197,8 @@ function buildOverlay(
   return overlay;
 }
 
-/** Полный атлас поверхности: кисть/трава + кэшируемый оверлей сверху. */
+/** Полный атлас поверхности: кисть/трава + кэшируемый оверлей сверху.
+ *  Mid-stroke: только dirty AABB кисти → атлас и GPU без полного clear+upload. */
 function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false) {
   const map = currentTestMap();
   const real = paintCanvas();
@@ -206,10 +208,12 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
   if (!surface) surface = document.createElement('canvas');
   if (surfaceMap === map && surfacePaint === real && surfacePack === revision &&
       surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid && surfaceLayer === layerRevision) {
-    return { paint: surface, paintRev };
+    return { paint: surface, paintRev, paintDirty: null as { x: number; y: number; w: number; h: number } | null };
   }
   const baseSame = surfaceMap === map && surfacePaint === real && surfacePack === revision &&
     surface.width === w && surface.height === h && surfaceEditor === editor && surfaceGrid === grid;
+  const layerOnly = baseSame && surfaceLayer !== layerRevision;
+  const brushDirty = real ? takePaintDirty(real.width, real.height) : null;
   surfaceEditor = editor; surfaceGrid = grid; surfaceLayer = layerRevision;
   surfaceMap = map;
   surfacePaint = real;
@@ -219,8 +223,31 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     surface.height = h;
   }
   const g = surface.getContext('2d');
-  if (!g) return { paint: null, paintRev };
+  if (!g) return { paint: null, paintRev, paintDirty: null };
   g.imageSmoothingEnabled = false;
+  const ov = buildOverlay(cols, rows, cellW, cellH, editor, grid, map, revision, !!real);
+  // Мазок: перерисовать только тронутый прямоугольник (кисть + оверлей сверху).
+  if (layerOnly && real && brushDirty) {
+    const sx = real.width > 0 ? w / real.width : 1;
+    const sy = real.height > 0 ? h / real.height : 1;
+    const dx = Math.max(0, Math.floor(brushDirty.x * sx));
+    const dy = Math.max(0, Math.floor(brushDirty.y * sy));
+    const dx1 = Math.min(w, Math.ceil((brushDirty.x + brushDirty.w) * sx));
+    const dy1 = Math.min(h, Math.ceil((brushDirty.y + brushDirty.h) * sy));
+    const dw = dx1 - dx;
+    const dh = dy1 - dy;
+    if (dw > 0 && dh > 0) {
+      const srcX = Math.max(0, Math.floor(brushDirty.x));
+      const srcY = Math.max(0, Math.floor(brushDirty.y));
+      const srcW = Math.min(real.width - srcX, Math.ceil(brushDirty.w));
+      const srcH = Math.min(real.height - srcY, Math.ceil(brushDirty.h));
+      g.clearRect(dx, dy, dw, dh);
+      if (srcW > 0 && srcH > 0) g.drawImage(real, srcX, srcY, srcW, srcH, dx, dy, dw, dh);
+      if (ov) g.drawImage(ov, dx, dy, dw, dh, dx, dy, dw, dh);
+      paintRev += 1;
+      return { paint: surface, paintRev, paintDirty: { x: dx, y: dy, w: dw, h: dh } };
+    }
+  }
   if (baseSame) g.clearRect(0, 0, w, h);
   const geo = testFieldGeometry(cellW, cellH);
   if (real) g.drawImage(real, 0, 0, w, h);
@@ -228,10 +255,9 @@ function framePaint(cols: number, rows: number, cellW: number, cellH: number, ed
     g.fillStyle = grassPattern(g) ?? '#2a461c';
     g.fill(geo.path);
   }
-  const ov = buildOverlay(cols, rows, cellW, cellH, editor, grid, map, revision, !!real);
   if (ov) g.drawImage(ov, 0, 0);
   paintRev += 1;
-  return { paint: surface, paintRev };
+  return { paint: surface, paintRev, paintDirty: null as { x: number; y: number; w: number; h: number } | null };
 }
 
 function pushActor(out: ElisionActor[], actor: ElisionActor | null) {
@@ -403,5 +429,6 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     controlledId: input.controlled,
     paint: painted.paint,
     paintRev: painted.paintRev,
+    paintDirty: painted.paintDirty,
   };
 }

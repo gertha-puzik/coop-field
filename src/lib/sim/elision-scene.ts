@@ -63,6 +63,8 @@ export type ElisionFrame = {
   paint: HTMLCanvasElement | null;
   /** Растёт, когда пиксели paint сменились (тот же холст могли перерисовать). */
   paintRev: number;
+  /** Кусок атласа, тронутый мазком (px атласа). Без поля — полная заливка GPU. */
+  paintDirty?: { x: number; y: number; w: number; h: number } | null;
 };
 
 export interface ElisionView {
