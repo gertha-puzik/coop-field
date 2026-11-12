@@ -642,6 +642,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const dirtPaintingRef = useRef(false);
   /** Идёт мазок кисти локации (протяжка с зажатой кнопкой). */
   const paintStrokeRef = useRef(false);
+  /** Пока идёт мазок кисти — прячем WebGL, чтобы был виден живой 2D-холст.
+   *  Вне мазка WebGL остаётся и в редакторе: иначе пропадает тропинка
+   *  (она в атласе поверхности, 2D-клип по маске кисти её срезал). */
+  const [paintStrokeLive, setPaintStrokeLive] = useState(false);
   /** Запрос прыжка из обработчика клавиш: отпускание Пробела с зарядом.
    *  Игровой цикл забирает его раз в кадр (charge 0.15..1 — как у «выстрела»). */
   const leapRequestRef = useRef<number | null>(null);
@@ -2853,10 +2857,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           ctx.restore();
         }
         // тропинка: объединённый неровный контур + травинки по краю (кэш в geo).
-        // Не запекается в кисть — рисуется поверх paint/зон, режется клипом кромки.
+        // Не запекается в кисть — рисуется поверх paint. С рисунком кисти клип
+        // по острову-маске срезал тропинку (контур path чуть выходит за альфу
+        // и/или evenodd-дыры); без paint клип по зонам оставляем.
         if (geo.pathGeo) {
           ctx.save();
-          ctx.clip(geo.path);
+          if (!pcvG) ctx.clip(geo.path);
           drawPathSurface(ctx, geo.pathGeo.path, geo.pathGeo.tufts, s.field.cellW, s.field.cellH);
           ctx.restore();
         }
@@ -4298,6 +4304,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     mainSavedRef,
     netRef,
     paintStrokeRef,
+    setPaintStrokeLive,
     skipClickRef,
     spritesRef,
     settingsRef,
@@ -4798,10 +4805,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onClick={onClick}
           pixiRef={pixiRef}
           elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
-          /* В редакторе — только 2D: WebGL-атлас кисти иначе отстаёт на весь
-             росчерк (пересчёт маски/атласа на pointermove и был источником
-             подвисаний). После закрытия редактора слот снова монтируется. */
-          showElisionView={mode === 'elision' && !editorOpen}
+          /* WebGL гасим только на время мазка кисти (живой 2D-росчерк).
+             Если гасить весь редактор — из атласа пропадает тропинка. */
+          showElisionView={mode === 'elision' && !paintStrokeLive}
           hudRef={hudRef}
           battleHint={battleHint}
           mapLoading={mapLoading}
@@ -4867,6 +4873,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                   camUserZoomRef.current = 1;
                   editorPanRef.current = null;
                   setEditorZoom(1);
+                  paintStrokeRef.current = false;
+                  setPaintStrokeLive(false);
                   closeEditor();
                 }}
               />
