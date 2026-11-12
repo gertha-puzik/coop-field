@@ -20,6 +20,7 @@ import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Material } from '@babylonjs/core/Materials/material';
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import {
@@ -86,7 +87,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   groundMat.backFaceCulling = false;
 
   let ground: ReturnType<typeof CreateGround> | null = null;
-  let groundTex: RawTexture | null = null;
+  /** DynamicTexture: mid-stroke upload с canvas без getImageData (RawTexture
+   *  каждый paintRev создавал новую GPU-текстуру и рвал росчерк). */
+  let groundDyn: DynamicTexture | null = null;
   let terrainTop: Mesh | null = null;
   let terrainWalls: Mesh | null = null;
   let terrainFringe: Mesh | null = null;
@@ -164,70 +167,77 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     terrainTop = make('elision-plateau-tops', geo.tops, groundMat);
     terrainWalls = make('elision-cliff-walls', geo.walls, wallMat);
     terrainFringe = make('elision-grass-fringe', geo.fringe, groundMat);
-    wallMat.opacityTexture = groundTex;
+    wallMat.opacityTexture = groundDyn;
   };
 
   const syncGround = (frame: ElisionFrame) => {
     const worldW = Math.max(1, frame.cols * frame.cellW);
     const worldH = Math.max(1, frame.rows * frame.cellH);
     const src = frame.paint;
-    const key = `${worldW}x${worldH}:${src ? `${src.width}x${src.height}` : 'flat'}:${frame.paintRev}`;
+    const sizeKey = `${worldW}x${worldH}:${src ? `${src.width}x${src.height}` : 'flat'}`;
+    const key = `${sizeKey}:${frame.paintRev}`;
     if (key === paintKey && ground) {
       applyTint(groundMat.diffuseTexture != null);
       return;
     }
+    const sizeChanged = !paintKey.startsWith(sizeKey + ':') || !ground;
     paintKey = key;
-    placeGround(worldW, worldH);
-    wallMat.opacityTexture = null;
-    groundTex?.dispose();
-    groundTex = null;
-    groundMat.emissiveTexture = null;
-    groundMat.diffuseTexture = null;
-    groundMat.opacityTexture = null;
-    let pixels: Uint8ClampedArray | null = null;
-    if (src && src.width >= 2 && src.height >= 2) {
-      try {
-        const copy = document.createElement('canvas');
-        copy.width = src.width;
-        copy.height = src.height;
-        const g = copy.getContext('2d', { willReadFrequently: true });
-        if (!g) throw new Error('no 2d');
-        g.imageSmoothingEnabled = false;
-        g.drawImage(src, 0, 0);
-        pixels = g.getImageData(0, 0, copy.width, copy.height).data;
-      } catch {
-        pixels = null;
-        groundMode = 'unread';
-      }
-    }
-    if (!pixels || !src) {
+    if (sizeChanged) placeGround(worldW, worldH);
+    if (!src || src.width < 2 || src.height < 2) {
+      wallMat.opacityTexture = null;
+      groundMat.emissiveTexture = null;
+      groundMat.diffuseTexture = null;
+      groundMat.opacityTexture = null;
+      groundDyn?.dispose();
+      groundDyn = null;
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
       syncTerrain(frame);
       return;
     }
-    groundMode = 'paint';
-    // У CreateGround v=0 на z=0: ImageData загружаем без invertY,
-    // иначе рисунок зеркалится по вертикали относительно объектов и коллизий.
-    groundTex = RawTexture.CreateRGBATexture(
-      new Uint8Array(pixels),
-      src.width,
-      src.height,
-      scene,
-      version >= 2,
-      false,
-      version >= 2 ? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE : Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
-    );
-    groundTex.hasAlpha = true;
-    groundTex.anisotropicFilteringLevel = 8;
-    groundTex.wrapU = groundTex.wrapV = Texture.CLAMP_ADDRESSMODE;
-    groundMat.diffuseTexture = groundTex;
-    groundMat.opacityTexture = groundTex;
-    groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
-    groundMat.alphaCutOff = 0.15;
-    applyTint(true);
-    syncTerrain(frame);
+    try {
+      const tw = src.width;
+      const th = src.height;
+      const needNew = !groundDyn || groundDyn.getSize().width !== tw || groundDyn.getSize().height !== th;
+      if (needNew) {
+        groundDyn?.dispose();
+        // invertY=false — как у прежнего RawTexture: CreateGround v=0 на z=0.
+        groundDyn = new DynamicTexture(
+          'elision-ground',
+          { width: tw, height: th },
+          scene,
+          version >= 2,
+          version >= 2 ? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE : Constants.TEXTURE_BILINEAR_SAMPLINGMODE,
+          Constants.TEXTUREFORMAT_RGBA,
+          false,
+        );
+        groundDyn.hasAlpha = true;
+        groundDyn.anisotropicFilteringLevel = 8;
+        groundDyn.wrapU = groundDyn.wrapV = Texture.CLAMP_ADDRESSMODE;
+        groundMat.diffuseTexture = groundDyn;
+        groundMat.opacityTexture = groundDyn;
+        groundMat.transparencyMode = Material.MATERIAL_ALPHATEST;
+        groundMat.alphaCutOff = 0.15;
+      }
+      const dyn = groundDyn;
+      if (!dyn) throw new Error('no groundDyn');
+      const g = dyn.getContext() as CanvasRenderingContext2D;
+      g.imageSmoothingEnabled = false;
+      g.clearRect(0, 0, tw, th);
+      g.drawImage(src, 0, 0);
+      dyn.update(false);
+      wallMat.opacityTexture = dyn;
+      groundMode = 'paint';
+      applyTint(true);
+      // Рельеф/стены — только при смене размера мира; mid-stroke их не трогаем.
+      if (sizeChanged) syncTerrain(frame);
+    } catch {
+      groundMode = 'unread';
+      groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
+      applyTint(false);
+      if (sizeChanged) syncTerrain(frame);
+    }
   };
 
   const noteTextureAspect = (tex: Texture, url: string, image?: HTMLCanvasElement) => {
@@ -393,7 +403,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       decals.clear();
       for (const tex of textures.values()) tex.dispose();
       textures.clear();
-      groundTex?.dispose();
+      groundDyn?.dispose();
       ground?.dispose(false, false);
       terrainTop?.dispose(false, false);
       terrainWalls?.dispose(false, false);

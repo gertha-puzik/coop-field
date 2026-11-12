@@ -642,10 +642,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const dirtPaintingRef = useRef(false);
   /** Идёт мазок кисти локации (протяжка с зажатой кнопкой). */
   const paintStrokeRef = useRef(false);
-  /** Пока идёт мазок кисти — прячем WebGL, чтобы был виден живой 2D-холст.
-   *  Вне мазка WebGL остаётся и в редакторе: иначе пропадает тропинка
-   *  (она в атласе поверхности, 2D-клип по маске кисти её срезал). */
-  const [paintStrokeLive, setPaintStrokeLive] = useState(false);
   /** Запрос прыжка из обработчика клавиш: отпускание Пробела с зарядом.
    *  Игровой цикл забирает его раз в кадр (charge 0.15..1 — как у «выстрела»). */
   const leapRequestRef = useRef<number | null>(null);
@@ -4304,7 +4300,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     mainSavedRef,
     netRef,
     paintStrokeRef,
-    setPaintStrokeLive,
     skipClickRef,
     spritesRef,
     settingsRef,
@@ -4805,9 +4800,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onClick={onClick}
           pixiRef={pixiRef}
           elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
-          /* WebGL гасим только на время мазка кисти (живой 2D-росчерк).
-             Если гасить весь редактор — из атласа пропадает тропинка. */
-          showElisionView={mode === 'elision' && !paintStrokeLive}
+          /* WebGL всегда: mid-stroke атлас обновляется через bumpPaintVisual +
+             DynamicTexture.update (без getImageData и без demount слоя). */
+          showElisionView={mode === 'elision'}
           hudRef={hudRef}
           battleHint={battleHint}
           mapLoading={mapLoading}
@@ -4874,7 +4869,6 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                   editorPanRef.current = null;
                   setEditorZoom(1);
                   paintStrokeRef.current = false;
-                  setPaintStrokeLive(false);
                   closeEditor();
                 }}
               />
