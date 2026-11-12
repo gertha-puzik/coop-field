@@ -139,9 +139,26 @@ try {
     const resume=await client(cookie);resume.send('join',{room:'test',resume:true});const resumed=await resume.wait(f=>f[0]==='field');assert.equal(resumed.room,'test-loc-2','fresh world entry resumes the latest location');
     const explicit=await client(cookie);explicit.send('join',{room:'test'});assert.equal((await explicit.wait(f=>f[0]==='field')).room,'test','explicit Valley room still opens Valley');
     // Cached world scopes must restore after nesting and after exceptions.
-    const scopeCode = `import {withTestLocation,testMap,TEST_WIDTH} from './server/testmap.js';import{testElev}from'./server/world.js';import{roomOf}from'./server/room.js';if(roomOf('test-loc-02')!==roomOf('test-loc-2'))throw Error('aliases split the world');const a=TEST_WIDTH;if(a!==12)throw Error('base');withTestLocation(2,()=>{if(TEST_WIDTH!==10||testElev(7,7)!==3)throw Error('forest geometry');withTestLocation(1,()=>{if(TEST_WIDTH!==12||testElev(9,9)!==2)throw Error('nested valley');});if(TEST_WIDTH!==10)throw Error('nested restore');});try{withTestLocation(2,()=>{throw Error('expected')});}catch{}if(TEST_WIDTH!==12)throw Error('exception restore');console.log('scopes OK');`;
+    // Elev objects of two locations must not alias: in-place mutate of Valley
+    // must not leak into Редколесье (regression: cliff strips after reconnect).
+    const scopeCode = `import {withTestLocation,testMap,TEST_WIDTH} from './server/testmap.js';import{testElev}from'./server/world.js';import{roomOf}from'./server/room.js';if(roomOf('test-loc-02')!==roomOf('test-loc-2'))throw Error('aliases split the world');const a=TEST_WIDTH;if(a!==12)throw Error('base');withTestLocation(2,()=>{if(TEST_WIDTH!==10||testElev(7,7)!==3)throw Error('forest geometry');const forestElev=testMap.elev;withTestLocation(1,()=>{if(TEST_WIDTH!==12||testElev(9,9)!==2)throw Error('nested valley');if(testMap.elev===forestElev)throw Error('elev aliased across locations');testMap.elev['99,99']=7;});if(TEST_WIDTH!==10)throw Error('nested restore');if(testMap.elev?.['99,99'])throw Error('valley elev leaked into forest');if(testElev(7,7)!==3)throw Error('forest elev after nest');});try{withTestLocation(2,()=>{throw Error('expected')});}catch{}if(TEST_WIDTH!==12)throw Error('exception restore');if(testMap.elev?.['99,99']!==7)throw Error('valley elev lost after forest scope');console.log('scopes OK');`;
     const scoped = spawnSync(process.execPath, ['--input-type=module', '-e', scopeCode], { env, encoding: 'utf8' });
     assert.equal(scoped.status, 0, scoped.stderr);
+    // Expand Редколесье without elev while Valley has relief; disk must stay clean.
+    // Paint dropped (size tied to cols×rows); green zone keeps spawn valid.
+    await sleep(10500); // setmap throttle 10 s/socket
+    const grow = {
+      ...JSON.parse(fs.readFileSync(path.join(dir, 'location-2.json'), 'utf8')),
+      cols: 16, rows: 14,
+      zones: [{ id: 'grass', kind: 'green', name: 'Трава', c0: 0, r0: 0, c1: 15, r1: 13 }],
+    };
+    delete grow.elev;
+    delete grow.paint;
+    n = b.frames.length;
+    b.send('setmap', { map: grow });
+    await b.wait(f => f[0] === 'info' && f[1] === 'Редактор: сохранено.', n);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'location-2.json'), 'utf8')).elev, undefined, 'expand forest must not absorb valley elev');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'test-map.json'), 'utf8')).elev, fixture.elev, 'valley elev stays on disk');
     const bad=fs.mkdtempSync(path.join(os.tmpdir(),'coop-location-corrupt-'));
     try{
       fs.writeFileSync(path.join(bad,'test-map.json'),JSON.stringify(fixture));fs.writeFileSync(path.join(bad,'location-2.json'),'{broken');

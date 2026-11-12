@@ -107,6 +107,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   wallMat.diffuseTexture = wallTex;
   wallMat.emissiveColor = Color3.White();
   let paintKey = '';
+  /** Ссылка на elev последнего syncTerrain — смена локации/черновика
+   *  без смены размера мира иначе оставляла клифы чужой карты. */
+  let lastElevRef: Record<string, number> | null = null;
   let groundMode: ElisionView['ground'] = 'boot';
   let lastCssW = 0;
   let lastCssH = 0;
@@ -175,16 +178,24 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     const worldW = Math.max(1, frame.cols * frame.cellW);
     const worldH = Math.max(1, frame.rows * frame.cellH);
     const src = frame.paint;
+    const elevRef = frame.elev;
+    const elevChanged = elevRef !== lastElevRef;
     const sizeKey = `${worldW}x${worldH}:${src ? `${src.width}x${src.height}` : 'flat'}`;
     const key = `${sizeKey}:${frame.paintRev}`;
     if (key === paintKey && ground) {
       applyTint(groundMat.diffuseTexture != null);
+      // Атлас тот же, но elev мог смениться (другая локация / правка рельефа).
+      if (elevChanged) {
+        lastElevRef = elevRef;
+        syncTerrain(frame);
+      }
       return;
     }
     const sizeChanged = !paintKey.startsWith(sizeKey + ':') || !ground;
     const revChanged = key !== paintKey;
     paintKey = key;
     if (sizeChanged) placeGround(worldW, worldH);
+    const refreshTerrain = sizeChanged || elevChanged;
     if (!src || src.width < 2 || src.height < 2) {
       wallMat.opacityTexture = null;
       groundMat.emissiveTexture = null;
@@ -196,7 +207,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       if (groundMode !== 'unread') groundMode = 'flat';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
-      syncTerrain(frame);
+      if (refreshTerrain) {
+        lastElevRef = elevRef;
+        syncTerrain(frame);
+      }
       return;
     }
     try {
@@ -280,13 +294,20 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       wallMat.opacityTexture = dyn;
       groundMode = 'paint';
       applyTint(true);
-      // Рельеф/стены — только при смене размера мира; mid-stroke их не трогаем.
-      if (sizeChanged) syncTerrain(frame);
+      // Клифы — при смене размера ИЛИ elev (смена локации / правка рельефа).
+      // Mid-stroke кисти elev не трогает — elevRef стабилен, sync не зовём.
+      if (refreshTerrain) {
+        lastElevRef = elevRef;
+        syncTerrain(frame);
+      }
     } catch {
       groundMode = 'unread';
       groundMat.transparencyMode = Material.MATERIAL_OPAQUE;
       applyTint(false);
-      if (sizeChanged) syncTerrain(frame);
+      if (refreshTerrain) {
+        lastElevRef = elevRef;
+        syncTerrain(frame);
+      }
     }
   };
 
