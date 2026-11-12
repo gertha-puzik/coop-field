@@ -87,9 +87,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   groundMat.backFaceCulling = false;
 
   let ground: ReturnType<typeof CreateGround> | null = null;
-  /** Свой CPU-холст DynamicTexture (не атлас!): общий canvas с атласом
-   *  уходил в GPU-backed и getImageData/readback ронял мазок до ~10 fps.
-   *  Mid-stroke: dirty blit атлас→dyn + update без mipmaps и без readback. */
+  /** Свой CPU-холст DynamicTexture. Mid-stroke: tip-штампы поверх уже залитого
+   *  содержимого (без clear+копии атласа); полный atlas→dyn только вне мазка. */
   let groundDyn: DynamicTexture | null = null;
   let groundAtlas: HTMLCanvasElement | null = null;
   let terrainTop: Mesh | null = null;
@@ -233,14 +232,16 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const g = dyn.getContext() as CanvasRenderingContext2D;
       g.imageSmoothingEnabled = false;
       const dirty = frame.paintDirty;
+      const live = frame.paintLive;
+      const ov = frame.paintOverlay;
       const uploadFull = () => {
         g.clearRect(0, 0, tw, th);
         g.drawImage(src, 0, 0);
         groundAtlas = src;
         dyn.update(false);
       };
-      /** WebGL2: texSubImage2D с UNPACK_SKIP — без CPU-readback и без полного texImage2D. */
-      const uploadDirty = (rect: { x: number; y: number; w: number; h: number }) => {
+      /** WebGL2: залить в GPU только dirty-прямоугольник dyn (уже с новыми мазками). */
+      const uploadDynRect = (rect: { x: number; y: number; w: number; h: number }) => {
         const internal = dyn.getInternalTexture();
         const eng = scene.getEngine() as {
           _gl?: WebGL2RenderingContext;
@@ -253,8 +254,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
           return;
         }
         const canvas = g.canvas as HTMLCanvasElement;
-        g.clearRect(rect.x, rect.y, rect.w, rect.h);
-        g.drawImage(src, rect.x, rect.y, rect.w, rect.h, rect.x, rect.y, rect.w, rect.h);
         const wasBound = eng._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
         eng._unpackFlipY(false);
         gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
@@ -270,10 +269,29 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
         if (!wasBound) eng._bindTextureDirectly(gl.TEXTURE_2D, null);
       };
-      if (needNew || groundAtlas !== src || !dirty || dirty.w < 1 || dirty.h < 1) {
+      if (needNew || groundAtlas !== src) {
         uploadFull();
+      } else if (revChanged && live && live.length && dirty && dirty.w > 0 && dirty.h > 0) {
+        // Новые мазки поверх старых — без clear и без копии атласа.
+        for (const b of live) {
+          if (b.erase) {
+            g.save();
+            g.globalCompositeOperation = 'destination-out';
+            g.drawImage(b.tip, b.x, b.y, b.w, b.h);
+            g.restore();
+          } else {
+            g.drawImage(b.tip, b.x, b.y, b.w, b.h);
+          }
+        }
+        if (ov) g.drawImage(ov, dirty.x, dirty.y, dirty.w, dirty.h, dirty.x, dirty.y, dirty.w, dirty.h);
+        uploadDynRect(dirty);
+      } else if (revChanged && dirty && dirty.w > 0 && dirty.h > 0) {
+        // Фоллбек без live-списка: один dirty-blit (редко).
+        g.clearRect(dirty.x, dirty.y, dirty.w, dirty.h);
+        g.drawImage(src, dirty.x, dirty.y, dirty.w, dirty.h, dirty.x, dirty.y, dirty.w, dirty.h);
+        uploadDynRect(dirty);
       } else if (revChanged) {
-        uploadDirty(dirty);
+        uploadFull();
       }
       wallMat.opacityTexture = dyn;
       groundMode = 'paint';
