@@ -27,9 +27,8 @@ const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
  * grotto спрашивает гроты и голодные игры, elyria — комнату Элизии.
  * Код закрытой комнаты (test) в grotto на сервер не уходит вовсе.
  */
-const ROOM_IDS = IS_ELYRIA
-  ? (['test'] as const)
-  : (['grot-1', 'grot-2', 'grot-3', 'hunger'] as const);
+const GROTTO_ROOM_IDS = ['grot-1', 'grot-2', 'grot-3', 'hunger'] as const;
+const ELYRIA_SEED_ROOMS = ['test', 'test-loc-2'] as const;
 
 type Preview = 'combat' | 'hunger' | 'elision';
 
@@ -69,7 +68,7 @@ const ELYRIA_WORLDS: readonly WorldCard[] = [
     name: 'Wanderpaws: Elysiae',
     blurb: 'Твой путь начинается здесь',
     italic: true,
-    ids: ['test','test-loc-2'],
+    ids: [...ELYRIA_SEED_ROOMS],
     preview: 'elision',
   },
 ];
@@ -110,6 +109,19 @@ function legacyRoomHref(): string | null {
 function useLiveCounts() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [online, setOnline] = useState(false);
+  const [roomIds, setRoomIds] = useState<string[]>(
+    IS_ELYRIA ? [...ELYRIA_SEED_ROOMS] : [...GROTTO_ROOM_IDS],
+  );
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    let dead = false;
+    void import('@/lib/net/http-locations').then(async ({ httpLocations }) => {
+      const res = await httpLocations();
+      if (dead || !res.ok || !res.rooms.length) return;
+      setRoomIds(res.rooms);
+    });
+    return () => { dead = true; };
+  }, []);
   useEffect(() => {
     let ws: WebSocket | null = null;
     let poll = 0;
@@ -117,7 +129,7 @@ function useLiveCounts() {
     let dead = false;
     const ask = () => {
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(['rooms', { ids: ROOM_IDS }]));
+        ws.send(JSON.stringify(['rooms', { ids: roomIds.slice(0, 32) }]));
       }
     };
     const open = () => {
@@ -163,8 +175,8 @@ function useLiveCounts() {
         /* сокет уже закрыт */
       }
     };
-  }, []);
-  return { counts, online };
+  }, [roomIds]);
+  return { counts, online, roomIds };
 }
 
 function sumCounts(counts: Record<string, number>, ids: readonly string[], online: boolean): number | null {
@@ -275,7 +287,7 @@ function WorldPreview({ kind }: { kind: Preview }) {
 
 /** Главное меню: небо, трава, три окна миров и живой счётчик. */
 export function WanderMenu() {
-  const { counts, online } = useLiveCounts();
+  const { counts, online, roomIds } = useLiveCounts();
   useEffect(() => {
     const href = legacyRoomHref();
     if (href) window.location.replace(href);
@@ -288,7 +300,8 @@ export function WanderMenu() {
       </header>
       <div className="wander-worlds">
         {WORLDS.map((world) => {
-          const n = sumCounts(counts, world.ids, online);
+          const ids = IS_ELYRIA && world.preview === 'elision' ? roomIds : world.ids;
+          const n = sumCounts(counts, ids, online);
           return (
             <a key={world.href} className="wander-window" href={world.href}>
               <span className="wander-dots" aria-hidden>

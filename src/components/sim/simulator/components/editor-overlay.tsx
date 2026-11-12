@@ -1,13 +1,21 @@
 /** Location workspace: tool rail, contextual inspector, canvas toolbar and
  * persistent save tray. Editing data remains in the existing draft/operations.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { RefObject, ReactNode } from 'react';
 import { Button, Dropdown, EditorShell } from '@/components/ui';
 import type { EditorDraft, EditorPlace, EditorTool } from '@/lib/sim/editor-model';
 import { PAINT_MATS } from '@/lib/sim/paint';
 import { clampBrush, isElevationTool } from '@/lib/sim/terrain-editor';
-import { TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, TREE_SPRITE_OPTS, ROCK_SPRITE_OPTS, PLANT_SPRITE_OPTS, type GroundCover, type TestMapEntryDir } from '@/lib/sim/test-map';
+import { TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, type GroundCover, type TestMapEntryDir } from '@/lib/sim/test-map';
+import {
+  getPlantSpriteOpts,
+  getRockSpriteOpts,
+  getTreeSpriteOpts,
+  subscribeTexLive,
+  texLiveRevision,
+} from '@/lib/sim/tex-live';
+import { texSrc, refreshTexCatalog } from '@/lib/sim/textures';
 import type { EditorSaveState } from '../editor-ops';
 import styles from './editor-workspace.module.css';
 export interface EditorOverlayProps {
@@ -107,6 +115,11 @@ export function EditorOverlay(p:EditorOverlayProps){
  const [elapsed,setElapsed]=useState(0);
  const [clearPending,setClearPending]=useState(false);
  const [archiveBusy,setArchiveBusy]=useState(false);
+ useSyncExternalStore(subscribeTexLive, texLiveRevision, () => 0);
+ const TREE_SPRITE_OPTS = getTreeSpriteOpts();
+ const ROCK_SPRITE_OPTS = getRockSpriteOpts();
+ const PLANT_SPRITE_OPTS = getPlantSpriteOpts();
+ useEffect(() => { void refreshTexCatalog(); }, []);
  useEffect(()=>setWorld({cols:d.cols,rows:d.rows}),[d.cols,d.rows]);
  useEffect(()=>{if(window.matchMedia('(max-width:800px)').matches)setCollapsed(true);},[]);
  const update=(patch:Partial<EditorDraft>)=>{if(p.editorRef.current)Object.assign(p.editorRef.current,patch);p.syncEditorView();};
@@ -179,14 +192,14 @@ export function EditorOverlay(p:EditorOverlayProps){
          {d.pshape==='round'?<><label className={styles.range}>Диаметр <b>{d.psize} px</b><input aria-label="Размер кисти" type="range" min="4" max="600" value={d.psize} onChange={e=>update({psize:Number(e.target.value)})}/></label></>:<div className={styles.two}><NumberField label="Ширина кисти, px" value={d.pwidth??150} min={1} max={2000} onChange={pwidth=>update({pwidth,pshape:'rect'})}/><NumberField label="Высота кисти, px" value={d.pheight??100} min={1} max={2000} onChange={pheight=>update({pheight,pshape:'rect'})}/></div>}
          <h3>Материал <span>{PAINT_MATS.find(m=>m.id===d.pmat)?.label}</span></h3>
          <div className={styles.filters}>{[['all','Все'],['nature','Природа'],['stone','Камень']].map(([id,name])=><button type="button" key={id} aria-pressed={filter===id} onClick={()=>setFilter(id)}>{name}</button>)}</div>
-         <div className={styles.materials}>{mats.map(m=><button type="button" key={m.id} title={m.label} aria-pressed={d.pmat===m.id} onClick={()=>material(m.id,m.label)}><span className={styles.swatch} style={{backgroundImage:m.id==='dirt'?'linear-gradient(135deg,#776044,#493a2b)':`url(/tex/${m.id}.png)`}}/><span>{m.label}</span></button>)}</div>
+         <div className={styles.materials}>{mats.map(m=><button type="button" key={m.id} title={m.label} aria-pressed={d.pmat===m.id} onClick={()=>material(m.id,m.label)}><span className={styles.swatch} style={{backgroundImage:m.id==='dirt'?'linear-gradient(135deg,#776044,#493a2b)':`url(${texSrc(m.id)})`}}/><span>{m.label}</span></button>)}</div>
          <p className={styles.hint}>Свободный мазок без привязки к клеткам. ПКМ стирает. Заливка заменяет материал в связной области.</p>
        </>}
        {section==='objects'&&<>
          <div className={styles.toolGrid}>{tools.filter(t=>['cursor','plant','tree','stone'].includes(t.id)).map(toolButton)}</div>
          <h3>{d.tool==='plant'?'Растения':d.tool==='tree'?'Деревья':'Камни'}</h3>
-         {d.tool==='plant'&&<label className={styles.field}>Группа растений<Dropdown aria-label="Группа растений" value={plantGroup} onChange={v=>setPlantGroup(v)} className="w-auto" options={[{value:'all',label:'Все растения (75)'},...Array.from(new Set(PLANT_SPRITE_OPTS.map(p=>p.group))).map(group=>({value:group,label:group}))]}/></label>}
-         <div className={styles.objects}>{(d.tool==='plant'?PLANT_SPRITE_OPTS.filter(p=>plantGroup==='all'||p.group===plantGroup):d.tool==='tree'?TREE_SPRITE_OPTS:ROCK_SPRITE_OPTS).map(o=><button type="button" key={o.id} aria-pressed={p.editorPlace?.spr===o.id} onClick={()=>{choose(d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone');p.patchEditorPlace({kind:d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone',spr:o.id,anchored:false,pickId:null});}}><img loading="lazy" src={`/tex/${o.id}.png`} alt=""/><span>{o.label}</span></button>)}</div>
+         {d.tool==='plant'&&<label className={styles.field}>Группа растений<Dropdown aria-label="Группа растений" value={plantGroup} onChange={v=>setPlantGroup(v)} className="w-auto" options={[{value:'all',label:`Все растения (${PLANT_SPRITE_OPTS.length})`},...Array.from(new Set(PLANT_SPRITE_OPTS.map(pl=>pl.group).filter(Boolean) as string[])).map(group=>({value:group,label:group}))]}/></label>}
+         <div className={styles.objects}>{(d.tool==='plant'?PLANT_SPRITE_OPTS.filter(pl=>plantGroup==='all'||pl.group===plantGroup):d.tool==='tree'?TREE_SPRITE_OPTS:ROCK_SPRITE_OPTS).map(o=><button type="button" key={o.id} aria-pressed={p.editorPlace?.spr===o.id} onClick={()=>{choose(d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone');p.patchEditorPlace({kind:d.tool==='plant'?'plant':d.tool==='tree'?'tree':'stone',spr:o.id,anchored:false,pickId:null});}}><img loading="lazy" src={texSrc(o.id)} alt=""/><span>{o.label}</span></button>)}</div>
          {p.editorPlace&&<>
            <div className={styles.two}><NumberField label="Масштаб" min={OBJECT_SCALE_MIN} max={OBJECT_SCALE_MAX} step={.1} value={p.editorPlace.s} onChange={s=>p.patchEditorPlace({s})}/><NumberField label="Поворот, °" min={0} max={359} step={15} value={p.editorPlace.rot} onChange={rot=>p.patchEditorPlace({rot})}/></div>
            <button type="button" className={styles.wide} aria-pressed={p.editorPlace.mir===1} onClick={()=>p.patchEditorPlace({mir:p.editorPlace?.mir===1?0:1})}>⇋ Отразить по горизонтали</button>

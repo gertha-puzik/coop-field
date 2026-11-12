@@ -14,9 +14,13 @@
  * привязан к нему. Тайлы покрытий уже увеличены ×3 (NEAREST) — тайл 16 px
  * превращён в 48 px мира, пол 32 px — в 96 px: заливка идёт 1:1 в мировых
  * пикселях без DOMMatrix.
+ *
+ * Админские замены (DATA_DIR/tex) подмешиваются через GET /tex/catalog:
+ * src уходит на /tex/file/<id>.png?v=…, builtin остаётся /tex/<id>.png.
  */
 
 import { GROUND_COVER_OPTS, type GroundCover } from './test-map';
+import { texAssetUrl } from './tex-asset';
 
 /** Имена доступных спрайтов пака. */
 export type PackName =
@@ -69,38 +73,76 @@ for (const c of GROUND_COVER_OPTS) SRC[c.id] = `/tex/${c.id}.png`;
 for (let i = 0; i < PACK_TUFT_COUNT; i++) SRC[`tuft-${String(i).padStart(2, '0')}`] = `/tex/tuft-${String(i).padStart(2, '0')}.png`;
 
 const imgs = new Map<string, HTMLImageElement>();
-let started = false;
-
-function ensureStarted(): void {
-  if (started || typeof document === 'undefined') return;
-  started = true;
-  for (const [name, src] of Object.entries(SRC)) {
-    const img = new Image();
-    // onload до src: закэшированный PNG может «загрузиться» синхронно
-    img.onload = () => {
-      imgs.set(name, img);
-    };
-    img.src = src;
-    if (img.complete && img.naturalWidth > 0) imgs.set(name, img);
-  }
-}
-
-/** Спрайт пака или null, пока не догрузился (рисовалка тогда идёт вектором). */
-const requestedPlants=new Set<string>();
-export function packImg(name: PackName): HTMLImageElement | null {
-  ensureStarted();
-  if(name.startsWith('plant-')&&!requestedPlants.has(name)&&typeof Image!=='undefined'){
-    requestedPlants.add(name);const image=new Image();image.onload=()=>imgs.set(name,image);image.src=`/tex/${name}.png`;
-  }
-  return imgs.get(name) ?? null;
-}
-
+const requestedPlants = new Set<string>();
 type PatEntry = {
   grass?: CanvasPattern | null;
   stone?: CanvasPattern | null;
   covers?: Map<string, CanvasPattern | null>;
 };
-const patCache = new WeakMap<CanvasRenderingContext2D, PatEntry>();
+let patCache = new WeakMap<CanvasRenderingContext2D, PatEntry>();
+let started = false;
+let catalogStarted = false;
+let revisionExtra = 0;
+
+/** Актуальный URL текстуры (с учётом админской замены). */
+export function texSrc(id: string): string {
+  return texAssetUrl(SRC[id] || `/tex/${id}.png`);
+}
+
+function loadOne(name: string, src: string): void {
+  if (typeof Image === 'undefined') return;
+  const img = new Image();
+  img.onload = () => {
+    imgs.set(name, img);
+    revisionExtra += 1;
+  };
+  img.src = src;
+  if (img.complete && img.naturalWidth > 0) imgs.set(name, img);
+}
+
+function ensureStarted(): void {
+  if (started || typeof document === 'undefined') return;
+  started = true;
+  for (const [name, src] of Object.entries(SRC)) loadOne(name, texAssetUrl(src));
+  if (!catalogStarted) {
+    catalogStarted = true;
+    void refreshTexCatalog();
+  }
+}
+
+/** Подтянуть каталог (замены + кастомные) с комнаты и перезагрузить PNG.
+ *  HTTP-клиент тянется динамически — unit-харнесс без `@/`-резолвера не ломается. */
+export async function refreshTexCatalog(): Promise<void> {
+  const { httpTexCatalog } = await import('@/lib/net/http-tex');
+  const items = await httpTexCatalog();
+  if (!items) return;
+  const { applyTexCatalog } = await import('./tex-live');
+  applyTexCatalog(items);
+  let changed = false;
+  for (const item of items) {
+    const next = texAssetUrl(item.src);
+    if (SRC[item.id] === next) continue;
+    SRC[item.id] = next;
+    imgs.delete(item.id);
+    if (item.id.startsWith('plant-')) requestedPlants.delete(item.id);
+    loadOne(item.id, next);
+    changed = true;
+  }
+  if (changed) {
+    patCache = new WeakMap();
+    revisionExtra += 1;
+  }
+}
+
+/** Спрайт пака или null, пока не догрузился (рисовалка тогда идёт вектором). */
+export function packImg(name: PackName): HTMLImageElement | null {
+  ensureStarted();
+  if (name.startsWith('plant-') && !requestedPlants.has(name) && typeof Image !== 'undefined') {
+    requestedPlants.add(name);
+    loadOne(name, texSrc(name));
+  }
+  return imgs.get(name) ?? null;
+}
 
 function patEntry(ctx: CanvasRenderingContext2D): PatEntry {
   let e = patCache.get(ctx);
@@ -143,5 +185,5 @@ export function coverPattern(ctx: CanvasRenderingContext2D, name: GroundCover): 
 /** Меняется при догрузке пака: кэш атласа WebGL повторяет отрисовку после загрузки тайлов. */
 export function packRevision(): number {
   ensureStarted();
-  return imgs.size;
+  return imgs.size + revisionExtra;
 }

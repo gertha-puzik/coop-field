@@ -1,5 +1,5 @@
 import { withTestLocation } from "./testmap.js";
-import { locationFromRoom, travel } from "./location-world.js";
+import { locationFromRoom, travel, handleLocationsHttp } from "./location-world.js";
 /**
  * Transport (W4 carve, behavior-preserving): the `[event, payload]` inbound
  * dispatcher, the health/static HTTP server, the WebSocket accept path
@@ -54,6 +54,7 @@ import { handleMineSpritesHttp } from "./my-sprites.js";
 // безопасный метод без сессии, читается обоим сайтам).
 import { handleAvatarsHttp } from "./avatars.js";
 import { handleProfilesHttp } from "./profiles.js";
+import { handleTexturesHttp } from "./textures.js";
 
 function onMessage(ws,raw){
   try{return withTestLocation(locationFromRoom(ws.room?.code??""),()=>dispatchMessage(ws,raw));}
@@ -236,6 +237,8 @@ export function startServer() {
         // (как /cfg/admin): и чтение, и запись отвечают «не существует».
         p === "/cfg/rooms" ||
         p.startsWith("/cfg/rooms/") ||
+        // Создание локаций: GET /locations публичен, POST — только Элизия/local.
+        (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS" && p === "/locations") ||
         (req.method === "POST" && (p === "/cfg" || p.startsWith("/cfg/")));
       if (hidden) {
         notFoundJson(res);
@@ -258,10 +261,14 @@ export function startServer() {
       // (unsafe + cookie ⇒ Origin) и CORS-надзор; страница /admin — статика,
       // в зону попадают API-пути (list/reset/promote), не HTML дашборда.
       p === "/admin/players" || p.startsWith("/admin/players/") ||
+      // Создание локаций мира (POST /locations и алиас /admin/locations).
+      p === "/locations" || p === "/admin/locations" || p.startsWith("/admin/locations/") ||
       // Менеджер спрайтов: админские POST/PATCH/DELETE /admin/sprites* —
       // unsafe-cookie ⇒ тот же Origin-щит (GET-каталог /sprites/* публичный
       // и в зоне не нуждается: безопасный метод, сессию не несёт).
       p === "/admin/sprites" || p.startsWith("/admin/sprites/") ||
+      // Замена текстур редактора (POST/DELETE /admin/tex*): тот же Origin-щит.
+      p === "/admin/tex" || p.startsWith("/admin/tex/") ||
       // Личные окрасы (#83): POST/DELETE несут cookie-сессию — тот же
       // unsafe-cookie Origin-щит и CORS-надзор (GET /sprites/mine безопасен,
       // но пусть зона вся живёт под одной политикой, как /profiles).
@@ -317,6 +324,8 @@ export function startServer() {
       // а вот эти API-пути живой домен room.js должен перехватить.
       return handleAdminOpsHttp(req, res).then((opsHit) => {
         if (opsHit) return;
+      return Promise.resolve(handleLocationsHttp(req, res)).then((locHit) => {
+        if (locHit) return;
       // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ: глобальный
       // /cfg-хендлер заявляет всё /cfg-подпространство (fetch фолбэк-404),
       // а room-роуты отвечают false на всё, что не /cfg/rooms*.
@@ -341,12 +350,16 @@ export function startServer() {
                 // отдаёт сам домен.
                 return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
                   if (spritesHit) return;
-                  serveStatic(req, res, url);
+                  return Promise.resolve(handleTexturesHttp(req, res)).then((texHit) => {
+                    if (texHit) return;
+                    serveStatic(req, res, url);
+                  });
                 });
               });
             });
           });
         });
+      });
       });
       });
     }).catch(() => {

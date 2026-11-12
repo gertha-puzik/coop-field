@@ -16,6 +16,7 @@ import {
   OBJECT_SCALE_MIN, OBJECT_SCALE_MAX, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS,
 } from "./config.js";
 import { EV, GROUND_COVER_IDS, TERRAIN_MAX_LEVEL, TEST_MAP_LIMITS } from "./protocol.js";
+import { texSpriteOk, texCoverOk } from "./textures.js";
 import { writeFileAtomic } from "./atomic-file.js";
 import {
   decodePaintPng, paintPxMask, paintCellCoverageMask,
@@ -336,11 +337,16 @@ function sanitizeTestMap(raw) {
         s = Number.isFinite(sn) ? Math.min(OBJECT_SCALE_MAX, Math.max(OBJECT_SCALE_MIN, Math.round(sn * 100) / 100)) : undefined;
         const rn = Math.round(Number(o.rot));
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
-        spr = kind === 'plant' ? (PLANT_SPRITE_IDS.has(o.spr)?o.spr:'plant-001') : kind === 'tree' ? (TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1') : ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+        spr = kind === 'plant'
+          ? (texSpriteOk('plant', o.spr) || PLANT_SPRITE_IDS.has(o.spr) ? o.spr : 'plant-001')
+          : kind === 'tree'
+            ? (texSpriteOk('tree', o.spr) || TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1')
+            : (texSpriteOk('stone', o.spr) || ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1');
         mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
-        cv = GROUND_COVER_IDS.includes(String(o.cv)) ? String(o.cv) : 'flower-1';
+        const cover = String(o.cv);
+        cv = texCoverOk(cover) || GROUND_COVER_IDS.includes(cover) ? cover : 'flower-1';
       }
       // Земля/покрытие/заход — по клетке на объект; камень и дерево стоят свободно.
       if (kind !== 'stone' && kind !== 'tree' && kind !== 'plant') {

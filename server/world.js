@@ -11,6 +11,7 @@ import { terrainAt, terrainBodyContact } from "./testmap.js";
  */
 import zlib from "node:zlib";
 import { TEST_ROOM, OBJECT_DIMS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, PLANT_SPRITE_IDS } from "./config.js";
+import { texSpriteOk, texDimsOf } from "./textures.js";
 import { testMap, TEST_ISLAND, TEST_CELLS, TEST_WIDTH, TEST_HEIGHT, TEST_PAINT } from "./testmap.js";
 import {
   ELEV_STEP_MAX,
@@ -561,9 +562,9 @@ function objectBase(o) {
 }
 
 function objectSprite(o) {
-  if(o.kind==='plant')return PLANT_SPRITE_IDS.has(o.spr)?o.spr:'plant-001';
-  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1';
-  return ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
+  if (o.kind === 'plant') return texSpriteOk('plant', o.spr) || PLANT_SPRITE_IDS.has(o.spr) ? o.spr : 'plant-001';
+  if (o.kind === 'tree') return texSpriteOk('tree', o.spr) || TREE_SPRITE_IDS.has(o.spr) ? o.spr : 'tree-1';
+  return texSpriteOk('stone', o.spr) || ROCK_SPRITE_IDS.has(o.spr) ? o.spr : 'rock-1';
 }
 
 function objectScale(o) {
@@ -578,7 +579,7 @@ function objectRotDeg(o) {
  *  [полуширина, высота вверх] до масштаба. */
 function obstacleBodyPx(o) {
   if (o.kind === 'tree') return { hw: 14, h: 16 };
-  const dims = OBJECT_DIMS[objectSprite(o)] || [57, 42];
+  const dims = texDimsOf(objectSprite(o)) || OBJECT_DIMS[objectSprite(o)] || [57, 42];
   return { hw: dims[0] * 0.38, h: dims[1] * 0.32 };
 }
 

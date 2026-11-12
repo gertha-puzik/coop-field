@@ -10,6 +10,7 @@ import { defaultPlace, locationRoom, passageContains, type LocationPlace, type L
 import type { Engine } from './simulator/sim-model';
 import styles from './world-locations.module.css';
 import editorStyles from './simulator/components/editor-workspace.module.css';
+import { LocationCreatePanel } from './location-create-panel';
 const LOAD_MIN_MS=10000;
 
 type Phase = 'idle' | 'walk' | 'fade' | 'loading' | 'arrive';
@@ -290,6 +291,7 @@ type EditorProps = {
 export function LocationEditorPanel({ draft, places, change, switchLocation }: EditorProps) {
     const p = draft.place ?? defaultPlace(), [name, setName] = useState(p.name), [next, setNext] = useState(String(p.id));
     useEffect(() => { setName(p.name); setNext(String(p.id)); }, [p.id, p.name]);
+    const nextIdHint = places.reduce((max, loc) => Math.max(max, loc.id), 0) + 1;
     return <div className={editorStyles.zoneList}>
     <h3>Локация мира · ID {p.id}</h3>
     <label className={editorStyles.field}>Название локации<input aria-label="Название локации" maxLength={64} value={name} onChange={e => setName(e.target.value)}/></label>
@@ -298,6 +300,7 @@ export function LocationEditorPanel({ draft, places, change, switchLocation }: E
     <p className={editorStyles.hint}>Зона: {p.zoneName} · ID {p.zoneId}. Название записывается вместе с сохранением локации.</p>
     <label className={editorStyles.field}>Переключиться на другую локацию<Dropdown aria-label="Другая локация" value={next} onChange={setNext} options={places.map(l => ({ value: String(l.id), label: `${l.name} · ID ${l.id}` }))}/></label>
     <Button onClick={() => switchLocation(Number(next))} disabled={Number(next) === p.id}>Открыть локацию в редакторе</Button>
+    <LocationCreatePanel nextIdHint={nextIdHint} onCreated={switchLocation}/>
   </div>;
 }
 export function PassageEditorPanel({ draft, places, change, sync }: EditorProps) {

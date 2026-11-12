@@ -19,9 +19,11 @@ export type LocationPassage = {
     link: string;
     direction: 'left' | 'right' | 'up' | 'down';
 };
+/** Seed IDs; live catalogue comes from field.locations / GET /locations. */
 export const LOCATION_IDS = [1, 2] as const;
 export function defaultPlace(id = 1): LocationPlace {
-    return { id, name: id === 2 ? 'Редколесье' : 'Долина', zoneId: 1, zoneName: 'Средиземье' };
+    const name = id === 1 ? 'Долина' : id === 2 ? 'Редколесье' : `Локация ${id}`;
+    return { id, name, zoneId: 1, zoneName: 'Средиземье' };
 }
 export const locationRoom = (id: number) => id === 1 ? 'test' : `test-loc-${id}`;
 export function locationFromRoom(room: string): number {
