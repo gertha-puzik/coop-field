@@ -120,18 +120,21 @@ export const EXTRA_ROCK_IDS = new Set<string>();
 export const EXTRA_PLANT_IDS = new Set<string>();
 export const EXTRA_COVER_IDS = new Set<string>();
 
+/** Кастомный id админ-каталога (server/textures freeCustomId → x-…). */
+const isCustomTexId = (id: string) => /^x-[a-z0-9-]{1,46}$/.test(id);
+
 /** Спрайт объекта: заданный в конфиге или дефолт по виду (старые конфиги без spr). */
 export function objectSprite(o: Pick<TestMapObject, 'kind' | 'spr'>): TreeSpr | RockSpr | string {
   const spr = o.spr ?? '';
-  if (o.kind === 'plant') return PLANT_SPRITE_IDS.has(spr) || EXTRA_PLANT_IDS.has(spr) ? spr : 'plant-001';
-  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(spr) || EXTRA_TREE_IDS.has(spr) ? (spr as TreeSpr) : 'tree-1';
-  return ROCK_SPRITE_IDS.has(spr) || EXTRA_ROCK_IDS.has(spr) ? (spr as RockSpr) : 'rock-1';
+  if (o.kind === 'plant') return PLANT_SPRITE_IDS.has(spr) || EXTRA_PLANT_IDS.has(spr) || isCustomTexId(spr) ? spr : 'plant-001';
+  if (o.kind === 'tree') return TREE_SPRITE_IDS.has(spr) || EXTRA_TREE_IDS.has(spr) || isCustomTexId(spr) ? (spr as TreeSpr) : 'tree-1';
+  return ROCK_SPRITE_IDS.has(spr) || EXTRA_ROCK_IDS.has(spr) || isCustomTexId(spr) ? (spr as RockSpr) : 'rock-1';
 }
 
 /** Покрытие клетки: заданное в конфиге или дефолт (цветы 1). */
 export function groundCoverOf(o: Pick<TestMapObject, 'cv'>): GroundCover {
   const cv = o.cv ?? '';
-  return GROUND_COVER_IDS.has(cv) || EXTRA_COVER_IDS.has(cv) ? (cv as GroundCover) : 'flower-1';
+  return GROUND_COVER_IDS.has(cv) || EXTRA_COVER_IDS.has(cv) || isCustomTexId(cv) ? (cv as GroundCover) : 'flower-1';
 }
 
 /** Пределы масштаба и поворота объектов в редакторе. */
@@ -613,11 +616,16 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
         const rn = Math.round(Number(o.rot));
         rot = Number.isFinite(rn) ? ((rn % 360) + 360) % 360 : undefined;
         const raw = typeof o.spr === 'string' ? o.spr : '';
-        spr = kind === 'plant' ? (PLANT_SPRITE_IDS.has(raw)?raw:'plant-001') : kind === 'tree' ? (TREE_SPRITE_IDS.has(raw) ? raw : 'tree-1') : ROCK_SPRITE_IDS.has(raw) ? raw : 'rock-1';
+        // Builtin ∪ EXTRA_* ∪ x-* (кастом до прихода /cfg/tex-catalog).
+        const allow = kind === 'plant' ? PLANT_SPRITE_IDS : kind === 'tree' ? TREE_SPRITE_IDS : ROCK_SPRITE_IDS;
+        const extra = kind === 'plant' ? EXTRA_PLANT_IDS : kind === 'tree' ? EXTRA_TREE_IDS : EXTRA_ROCK_IDS;
+        const fallback = kind === 'plant' ? 'plant-001' : kind === 'tree' ? 'tree-1' : 'rock-1';
+        spr = allow.has(raw) || extra.has(raw) || isCustomTexId(raw) ? raw : fallback;
         mir = o.mir === 1 ? 1 : undefined;
       }
       if (kind === 'ground') {
-        cv = GROUND_COVER_IDS.has(String(o.cv)) ? String(o.cv) : 'flower-1';
+        const rawCv = String(o.cv ?? '');
+        cv = GROUND_COVER_IDS.has(rawCv) || EXTRA_COVER_IDS.has(rawCv) || isCustomTexId(rawCv) ? rawCv : 'flower-1';
       }
       // Земля/покрытие/заход/боевая клетка — по клетке на объект; камень и дерево
       // стоят свободно и на клетку не «схлопываются».

@@ -58,6 +58,15 @@ assert(restoredTree?.spr === 'tree-1', 'снятая модель станови
 assert(restoredTree?.x === 2.5 && restoredTree?.y === 3 && restoredTree?.s === 1.2 && restoredTree?.rot === 37, 'дерево сохраняет позицию и трансформации');
 assert(objectSprite({kind:'tree',spr:'tree3d-001'}) === 'tree-1', 'сырой старый ID также имеет видимый fallback');
 
+const customTreeMap = structuredClone(TEST_MAP_DEFAULT);
+customTreeMap.objects = [
+  { id: 'pine', kind: 'tree', spr: 'x-sosna-test', c: 2, r: 2, x: 2.5, y: 2.8, s: 1, rot: 0 },
+  { id: 'cover', kind: 'ground', cv: 'x-my-grass', c: 3, r: 3 },
+];
+const customKept = sanitizeTestMap(customTreeMap).map;
+assert(customKept?.objects?.find((o) => o.kind === 'tree')?.spr === 'x-sosna-test', 'кастомный x-* spr переживает клиентский sanitize без каталога');
+assert(customKept?.objects?.find((o) => o.kind === 'ground')?.cv === 'x-my-grass', 'кастомный x-* cover переживает клиентский sanitize');
+
 const highAt=(c:number,r:number)=>c===4&&r===3?2:0;
 const rx=.28,ry=28/150;
 for(const [x,y] of [[3.72,3.5],[5.28,3.5],[4.5,3-ry],[4.5,4+ry]])
