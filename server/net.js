@@ -41,6 +41,10 @@ import { handleAdminOpsHttp } from "./admin-ops.js";
 // GET/POST /admin/invites* (гейты — в самом домене, как admin-ops.js;
 // host-гейт ниже прячет /admin ЦЕЛИКОМ на public, apiZone — CSRF-щит).
 import { handleInvitesHttp } from "./invites.js";
+// Статусы игроков на поле (/admin/statuses*): каталог + назначения аккаунтам
+// (гейты — в самом домене, как invites/admin-ops; host-гейт прячет /admin
+// на public, apiZone — CSRF-щит).
+import { handleStatusesHttp, bootStatuses } from "./statuses.js";
 // Менеджер спрайтов (server/sprites.js): публичный каталог + файлы загруженных
 // (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
 // админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
@@ -113,6 +117,8 @@ function dispatchMessage(ws, raw) {
   }
 }
 export function startServer() {
+  // Статусы на поле: сид Тестер/Глав. Админ после полной загрузки accounts.
+  bootStatuses();
   // §5 fail-closed: первым делом — инстанс-класс и запрет выключенного CSRF
   // на production/preview. До любого listen и регистрации колбэков.
   assertStartupSecurity();
@@ -268,6 +274,8 @@ export function startServer() {
       // Инвайт-коды регистрации (/admin/invites*): тот же CSRF-щит
       // (unsafe + cookie ⇒ Origin) и CORS-надзор, что у «Игроков на поле».
       p === "/admin/invites" || p.startsWith("/admin/invites/") ||
+      // Статусы на поле (/admin/statuses*): каталог + assign — тот же CSRF.
+      p === "/admin/statuses" || p.startsWith("/admin/statuses/") ||
       // Создание локаций мира (POST /locations|/cfg/locations и алиас /admin/locations).
       p === "/locations" || p === "/cfg/locations" ||
       p === "/admin/locations" || p.startsWith("/admin/locations/") ||
@@ -338,6 +346,8 @@ export function startServer() {
       // статики, гейт (сессия + role=admin) домен проверяет сам.
       return handleInvitesHttp(req, res).then((invHit) => {
         if (invHit) return;
+      return handleStatusesHttp(req, res).then((stHit) => {
+        if (stHit) return;
       return Promise.resolve(handleLocationsHttp(req, res)).then((locHit) => {
         if (locHit) return;
       // Текстуры ДО /cfg: на проде nginx уже шлёт весь /cfg в Node, а
@@ -380,6 +390,7 @@ export function startServer() {
       });
       });
       });
+      });
     }).catch(() => {
       res.writeHead(500);
       res.end();
@@ -405,14 +416,22 @@ export function startServer() {
 
   /**
    * Heartbeat: обрыв без FIN (мобильная сеть, уход вкладки в сон) иначе держал бы
-   * клетку и слот комнаты до таймаута nginx. Пинг раз в 30 с; если pong не пришёл
-   * с прошлого пинга — terminate(), его close-обработчик вызовет leave() и освободит клетку.
+   * клетку и слот комнаты до таймаута nginx. Пинг раз в 30 с; AFK/фоновые вкладки
+   * часто отвечают с задержкой — рвём только после 3 промахов (~90 с), иначе
+   * соседи видят «исчез → появился через 5–10 с» при каждом фоновом terminate.
    */
+  const HB_MISS_MAX = 3;
   const hb = setInterval(() => {
     for (const ws of wss.clients) {
+      const misses = Number(ws.hbMisses) || 0;
       if (ws.isAlive === false) {
-        ws.terminate();
-        continue;
+        if (misses + 1 >= HB_MISS_MAX) {
+          ws.terminate();
+          continue;
+        }
+        ws.hbMisses = misses + 1;
+      } else {
+        ws.hbMisses = 0;
       }
       ws.isAlive = false;
       ws.ping();
@@ -422,6 +441,7 @@ export function startServer() {
 
   wss.on("connection", (ws, req) => {
     ws.isAlive = true;
+    ws.hbMisses = 0;
     handshake(ws, req); // назначает ws.clientIp (loopback+XFF → реальный адрес)
     const ip = ws.clientIp || String(req.socket.remoteAddress || "0");
     let counted = false;
@@ -448,6 +468,7 @@ export function startServer() {
     }
     ws.on("pong", () => {
       ws.isAlive = true;
+      ws.hbMisses = 0;
     });
     console.log(`ws open ${req.socket.remoteAddress || "?"} origin=${req.headers.origin || "-"}`);
     ws.on("message", (raw) => onMessage(ws, raw));

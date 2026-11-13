@@ -50,7 +50,8 @@
     "test:editor-save": "node scripts/test-editor-save.mjs",
     "test:atomic-file": "node scripts/test-atomic-file.mjs",
     "test:locations": "node scripts/test-locations.mjs",
-    "test:textures": "node scripts/test-textures.mjs"
+    "test:textures": "node scripts/test-textures.mjs",
+    "test:statuses": "node scripts/test-statuses.mjs"
   },
   "engines": {
     "node": ">=18"

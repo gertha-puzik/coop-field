@@ -294,9 +294,15 @@ export function catToDummy(cat: CoopCat): DummyConfig {
   // Чужой/личный окрас → FIELD_SPRITES + предзагрузка: иначе WebGL берёт URL
   // текстуры, а aspect остаётся дефолтным 2/3 до появления img в spritesRef.
   ensureFieldSprite(sprite);
+  const accountLogin =
+    typeof cat.accountLogin === "string" && cat.accountLogin.trim() ? cat.accountLogin.trim() : undefined;
+  const statusLabel =
+    typeof cat.status === "string" && cat.status.trim() ? cat.status.trim() : undefined;
   return {
     id: `p${cat.id}`,
     name: cat.login || `#${cat.id}`,
+    accountLogin,
+    statusLabel,
     sprite,
     col: Math.max(0, (cat.x || 1) - 1),
     row: Math.max(0, (cat.y || 1) - 1),
@@ -360,6 +366,17 @@ export function createCoopClient(handlers: CoopHandlers) {
     sock.onmessage = null;
     sock.onclose = null;
     sock.onerror = null;
+  };
+
+  /** Вкладка снова видима — сразу чиним связь (без backoff 5–30 с), иначе
+   *  после фонового обрыва соседи «пропадают» до позднего reconnect. */
+  const bumpVisibleReconnect = () => {
+    if (manualClose || !joinParams) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    attempt = 0;
+    clearReconnect();
+    openSocket();
   };
 
   const openSocket = () => {
@@ -542,6 +559,10 @@ export function createCoopClient(handlers: CoopHandlers) {
     };
   };
 
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", bumpVisibleReconnect);
+  }
+
   const connect = (join: { room?: string; login?: string; sprite?: string; resume?:boolean; size?: number } | null) => {
     joinParams = join?prepareJoin(join):null;
     manualClose = false;
@@ -600,6 +621,9 @@ export function createCoopClient(handlers: CoopHandlers) {
     close() {
       manualClose = true;
       clearReconnect();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", bumpVisibleReconnect);
+      }
       if (ws) {
         detach(ws);
         try {

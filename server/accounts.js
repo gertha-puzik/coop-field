@@ -45,6 +45,8 @@ const LOGIN_MAX = 24;
 
 let store = loadStore();
 let dirty = false;
+/** Резолвер подписи статуса (statuses.bootStatuses). Объект — без TDZ в цикле импортов. */
+const statusLabelState = { hook: null };
 
 function emptyStore() {
   return { v: 1, accounts: {} };
@@ -90,6 +92,11 @@ function normalizeAccount(row, id) {
     createdAt: Number(row.createdAt) || Date.now(),
     profile: {
       displayName: String(row.profile?.displayName || login),
+      // statusId нормализует statuses.js (дефолт tester); здесь только строка.
+      statusId:
+        typeof row.profile?.statusId === "string" && /^[a-z0-9-]{2,40}$/.test(row.profile.statusId)
+          ? row.profile.statusId
+          : "tester",
     },
     characters,
     activeCharacterId: active,
@@ -224,15 +231,40 @@ function visibleSprite(sprite) {
 function publicAccount(acc) {
   if (!acc) return null;
   const ch = activeCharacter(acc);
+  const statusId =
+    typeof acc.profile?.statusId === "string" && acc.profile.statusId ? acc.profile.statusId : "tester";
   return {
     accountId: acc.id,
     login: acc.login,
     role: acc.role,
-    profile: { displayName: acc.profile?.displayName || acc.login },
+    profile: {
+      displayName: acc.profile?.displayName || acc.login,
+      statusId,
+      statusLabel: statusLabelLazy(statusId),
+    },
     characters: acc.characters.map((c) => ({ id: c.id, name: c.name, sprite: visibleSprite(c.sprite), size: c.size })),
     activeCharacterId: acc.activeCharacterId,
     character: ch ? { id: ch.id, name: ch.name, sprite: visibleSprite(ch.sprite), size: ch.size } : null,
   };
+}
+
+/** Подпись статуса: hook из statuses.js; до регистрации — «Тестер». */
+function statusLabelLazy(statusId) {
+  try {
+    return statusLabelState.hook ? statusLabelState.hook(statusId) : "Тестер";
+  } catch {
+    return "Тестер";
+  }
+}
+
+/** statuses.js регистрирует резолвер подписи после своей загрузки. */
+export function setStatusLabelResolver(fn) {
+  statusLabelState.hook = typeof fn === "function" ? fn : null;
+}
+
+/** Живой стор аккаунтов (для сида статусов — не читать loadStore() заново). */
+export function accountsStore() {
+  return store;
 }
 
 /**
@@ -256,12 +288,16 @@ function publicProfile(acc) {
   const wanted = acc.profile?.avatarCharacterId;
   const avatar =
     typeof wanted === "string" && chars.some((c) => c && c.id === wanted) ? wanted : null;
+  const statusId =
+    typeof acc.profile?.statusId === "string" && acc.profile.statusId ? acc.profile.statusId : "tester";
   return {
     displayName: acc.profile?.displayName || acc.login,
     bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
     birthday: birthdayOf(acc),
     avatarCharacterId: avatar,
     avatar: avatarUrlOf(acc),
+    statusId,
+    statusLabel: statusLabelLazy(statusId),
     characters: chars.map((c) => ({
       id: c.id,
       name: c.name,
@@ -372,7 +408,7 @@ async function createAccount(rawLogin, rawPass, rawName) {
     pass: await hashPassword(P.pass),
     role: "registered",
     createdAt: Date.now(),
-    profile: { displayName },
+    profile: { displayName, statusId: "tester" },
     characters: [newCharacter(displayName)],
     activeCharacterId: null,
   };

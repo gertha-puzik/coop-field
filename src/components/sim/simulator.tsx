@@ -247,7 +247,8 @@ import {
 } from '@/lib/sim/settings';
 import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
 import { useBootSignal } from './simulator/hooks/use-boot-signal';
-import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget } from './simulator/hud-canvas';
+import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget, drawElisionNameplates } from './simulator/hud-canvas';
+import { drawNameplate } from '@/lib/sim/nameplate';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
@@ -550,6 +551,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   /** Живые соседи с сервера: если кто-то ещё в комнате — рисуем их, иначе локальные
    *  манекены. Всё в refs, не в модуле: два экземпляра Simulator не делят состояние. */
   const liveRemotesRef = useRef<DummyConfig[]>([]);
+  /** Своя подпись на поле (имя/логин/статус) — из you/update cat. */
+  const selfPlateRef = useRef<{ id: string; name: string; accountLogin?: string; statusLabel?: string } | null>(null);
   /** Плавный угол чужой стрелы: d.angle — последний сетевой угол, на кадре рисуем display. */
   const remoteAimRef = useRef(new Map<string, RemoteAim>());
   /** Экранная дорисовка чужих клеток: за кадр не больше одного шага. */
@@ -1117,6 +1120,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     inZonePrevRef,
     jellyRef,
     liveRemotesRef,
+    selfPlateRef,
     meIdRef,
     netMovesRef,
     netRef,
@@ -3571,7 +3575,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             ctx.fillStyle = 'rgba(255,255,255,0.35)';
             ctx.fill();
           }
-          if (liveRemotesRef.current.length > 0) {
+          {
             const th0 = (s.field.cellH - 10) * (d.scale / 100);
             const ny = tp.y;
             const nameX = sprT ? tp.x + (sprT.width / sprT.height) * th0 * 0.5 : tp.x + s.field.cellW / 2;
@@ -3579,13 +3583,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             ctx.translate(nameX, ny + th0);
             if (testMode) ctx.rotate(-camYawRef.current);
             ctx.translate(-nameX, -(ny + th0));
-            ctx.font = 'bold 12px Inter, system-ui, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillText(d.name, nameX + 1, ny - 16);
-            ctx.fillStyle = '#f4f4f5';
-            ctx.fillText(d.name, nameX, ny - 17);
+            drawNameplate(ctx, nameX, ny - 4, {
+              charName: d.name,
+              accountLogin: d.accountLogin,
+              statusLabel: d.statusLabel,
+            });
             ctx.restore();
           }
         }, tpD.x, yD);
@@ -3626,6 +3628,24 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             selfId === 'main',
             selfFree ? e.face : 1,
           );
+          {
+            const plate = selfPlateRef.current;
+            if (plate?.name) {
+              const th0s = (s.field.cellH - 10) * (s.character.spriteScale / 100);
+              const tws = th0s * (spr.width / spr.height);
+              const nameX = cellX + tws / 2;
+              ctx.save();
+              ctx.translate(nameX, cellY + th0s);
+              if (testMode) ctx.rotate(-camYawRef.current);
+              ctx.translate(-nameX, -(cellY + th0s));
+              drawNameplate(ctx, nameX, cellY - 4, {
+                charName: plate.name,
+                accountLogin: plate.accountLogin,
+                statusLabel: plate.statusLabel,
+              });
+              ctx.restore();
+            }
+          }
         // Значок блока (замок) у основания стрелы своего кота — его видит только сам
         // игрок: рисуем только из локального состояния движка, по сети не ходит.
         // Замок висит по центру точки закрепления стрелы (ARROW_ANCHOR_F), а стрела
@@ -4185,6 +4205,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             elision?.frame(frame);
             drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
               atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
+            drawElisionNameplates(hudRef.current, frame, liveRemotesRef.current, selfPlateRef.current);
             drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
             const draft = editorRef.current;
