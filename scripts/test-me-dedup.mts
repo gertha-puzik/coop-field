@@ -114,6 +114,21 @@ try {
 assert(!threw, "meRequest catches network errors (no unhandled rejection)");
 assert((await fresh.httpMe()).ok === false, "a network failure resolves to {ok:false}");
 
+/* ---------- сетевой сбой не травит мемо: следующий httpMe шлёт новый GET ---------- */
+
+spy.meError = true;
+globalThis.fetch = spy;
+const retryMod = await import("../src/lib/net/http-auth.ts?variant=elyria&net=retry");
+const failCallsBefore = meCalls(spy);
+const failed = await retryMod.httpMe();
+assert(failed.ok === false, "fresh module surfaces network failure as {ok:false}");
+assert(meCalls(spy) === failCallsBefore + 1, "failed /auth/me sent exactly once");
+spy.meError = false;
+const recovered = retryMod.httpMe();
+assert(recovered !== failed, "error snapshot is not sticky in meMemo");
+assert((await recovered).ok === true, "after a network blip httpMe retries and restores the session row");
+assert(meCalls(spy) === failCallsBefore + 2, "one failed GET + one recovery GET, no spam");
+
 /* ---------- Grotto-вариант: литералы «/auth/…» умирают в мёртвой ветке ---------- */
 
 delete process.env.NEXT_PUBLIC_SITE;

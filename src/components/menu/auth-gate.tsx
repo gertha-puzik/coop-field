@@ -131,6 +131,19 @@ export function AuthGate({
   const confirmedGuest = checked && !inAccount;
   const open = confirmedGuest || welcome !== null;
 
+  // Изолированная страница: пока /auth/me в полёте (или пока деплой
+  // держит upstream), не монтируем симулятор под «пустым» гейтом — иначе
+  // мелькает entry с «Готовим ваш профиль» до ответа (2026-11-12).
+  if (!live && !checked) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#070b18] p-6 text-center">
+        <p className="text-sm font-semibold text-[#f4f0ff]" role="status">
+          Проверяем сессию…
+        </p>
+      </div>
+    );
+  }
+
   const sessionBar = chrome && checked && inAccount ? (
     <div className="fixed right-3 top-3 z-40 flex items-center gap-3 rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 py-2 text-[13px] text-[#f4f0ff] shadow-[0_10px_26px_rgba(0,0,0,0.28)] backdrop-blur-[8px]">
       <span className="max-w-[38vw] truncate font-semibold sm:max-w-none">{me?.login}</span>

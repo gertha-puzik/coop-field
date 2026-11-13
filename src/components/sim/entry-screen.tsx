@@ -17,10 +17,9 @@ import {
 import { RoomPicker, type RoomRow } from './room-picker';
 import { AuthPanel } from './auth-panel';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import { httpMyProfile } from '@/lib/net/http-profiles';
-import type { ProfileMe } from '@/lib/net/http-profiles';
 import { MODE_COPY, namedRoom, type PlayMode } from '@/lib/net/modes';
 import type { Universes } from '@/lib/net/cfg-live';
+import { useElyriaEntryProfile } from './use-elyria-entry-profile';
 
 /**
  * Compile-time вариант сайта (P3, спек §2A): сворачивается сборщиком —
@@ -197,69 +196,11 @@ export function EntryScreen({
    *  раз при открытии экрана — дальше ползунки живут своей жизнью. */
   const prevSpRef = useRef({ speed: Math.round(periodSec * 10) / 10, damage: damageLevel, armor: armorLevel });
 
-  /** Профиль по cookie (только Элизия): записи без аккаунта не храним, чужой
-   *  аккаунт после выхода не светит — валиден только совпавший accountId.
-   *  Динамический импорт внутри свёрнутой IS_ELYRIA-ветки: /profiles-код в
-   *  grotto-бандл не попадает (изоляция сайтов, §10.4). */
-  const [me, setMe] = useState<{ accountId: string; profile: ProfileMe } | null>(null);
-  const [meFailed, setMeFailed] = useState(false);
-  const meProfile = IS_ELYRIA && me && whoami?.ok && whoami.accountId && me.accountId === whoami.accountId
-    ? me.profile
-    : null;
-  const applyRef = useRef({ onApplySpeed, onApplyDamage, onApplyArmor });
-  applyRef.current = { onApplySpeed, onApplyDamage, onApplyArmor };
-
-  /**
-   * Тихое применение СП из профиля (только Элизия): экран входа за гейтом,
-   * вход уже аутентифицирован — берем /profiles/me тем же fetch, что и
-   * страница профиля. Пока ответ не пришёл — живут локальные дефолты;
-   * пришёл — применяем ОДИН раз на аккаунт (переприменение при чужих
-   * перерисовках не нужно). Флоу входа фетч не ждёт: имя и выбор комнаты
-   * доступны сразу. Выйденный аккаунт — fetch не делаем вовсе.
-   */
-  useEffect(() => {
-    if (!IS_ELYRIA) return;
-    if (!whoami?.ok || !whoami.accountId) return;
-    let dead = false;
-    setMeFailed(false);
-    void (async () => {
-      // Динамический import здесь НЕДОПУСТИМ: turbopack-карта ссылалась на
-      // чанк, которого не было в выкладке (404 → молчаливый reject → вечная
-      // «Готовим ваш профиль», owner report 2026-11-08). Модуль импортируется
-      // статически; литералы его маршрутов вырезаются env-DCE (канон P3).
-      // Любой сбой путём отдаёт meFailed — выбор комнаты не висит никогда.
-      let profile: ProfileMe | null = null;
-      try {
-        const res = await httpMyProfile();
-        if (dead) return;
-        // Фетч не удался — профиль не держит игрока на входе: выбор комнаты
-        // открывается на стартовых значениях движка (внешность применит
-        // сервер по сессии, пустой скин профиля не перезапишет).
-        if (!res.ok || !res.profile) {
-          setMeFailed(true);
-          return;
-        }
-        profile = res.profile;
-        setMe({ accountId: whoami.accountId!, profile });
-      } catch {
-        if (!dead) setMeFailed(true);
-        return;
-      }
-      if (dead || !profile) return;
-      const sp = profile.sp;
-      if (!sp) return;
-      const { onApplySpeed: applySpeed, onApplyDamage: applyDamage, onApplyArmor: applyArmor } =
-        applyRef.current;
-      if (typeof sp.periodSec === 'number' && Number.isFinite(sp.periodSec)) {
-        applySpeed(Math.round(sp.periodSec * 10) / 10);
-      }
-      if (typeof sp.damageLevel === 'number') applyDamage(sp.damageLevel);
-      if (typeof sp.armorLevel === 'number') applyArmor(sp.armorLevel);
-    })();
-    return () => {
-      dead = true;
-    };
-  }, [whoami?.ok, whoami?.accountId]);
+  const { meProfile, meFailed } = useElyriaEntryProfile(whoami, {
+    onApplySpeed,
+    onApplyDamage,
+    onApplyArmor,
+  });
 
   /** «Использовать предыдущие СП»: подтягивает сохранённый выбор и подтверждает
    *  все три пункта разом — каждый раз тыкать одно и то же не нужно. */
@@ -341,11 +282,13 @@ export function EntryScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileComplete, whoami?.ok, whoami?.accountId, elyRoomId]);
 
-  // Элизия: СП и внешность применяются молча из профиля — ручных блоков нет;
-  // комнаты ждут профиль (миллисекунды того же fetch), фетч не удался — не
-  // держим игрока. Гроты — прежний флоу с тремя подтверждениями.
+  // Элизия: комнаты открываются только после живой сессии + профиль (или
+  // честный сбой/таймаут профиля). ?name= из URL больше НЕ считается «ник
+  // готов» — иначе гость видит «Готовим ваш профиль» вместо «войдите».
+  // Гроты — прежний флоу с тремя подтверждениями.
+  const elySignedIn = !!(IS_ELYRIA && whoami?.ok && whoami.accountId);
   const roomsOpen = IS_ELYRIA
-    ? !!trimmed && (meProfile !== null || meFailed)
+    ? elySignedIn && (meProfile !== null || meFailed)
     : !!trimmed && doneCount === 3;
 
   /* --- карусель скинов: колонки-персонажи («общее имя» → спрайты), крутится в стороны.
@@ -778,12 +721,12 @@ export function EntryScreen({
           <div className="rounded-xl border border-dashed border-[var(--sim-line-strong)] bg-[var(--sim-inset)] px-4 py-6 text-center">
             <p className="text-sm font-semibold text-[var(--sim-text-soft)]">Выбор комнаты пока закрыт</p>
             <p className="mt-1 text-xs text-[var(--sim-text-faint)]" role="status">
-              {!trimmed
-                ? IS_ELYRIA
+              {IS_ELYRIA
+                ? !elySignedIn
                   ? 'Войдите в аккаунт — здесь появится выбор комнаты.'
-                  : 'Введите имя слева — без него на поле не пустят.'
-                : IS_ELYRIA
-                  ? 'Готовим ваш профиль — выбор комнаты откроется сразу.'
+                  : 'Готовим ваш профиль — выбор комнаты откроется сразу.'
+                : !trimmed
+                  ? 'Введите имя слева — без него на поле не пустят.'
                   : `Подтвердите три скрытых параметра справа (${doneCount} из 3) — здесь откроется выбор комнаты.`}
             </p>
           </div>
