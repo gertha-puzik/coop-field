@@ -101,7 +101,20 @@ location /admin/locations {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header Cookie $http_cookie;
 }
+location /admin/statuses {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
 ```
+
+**Statuses workaround:** the admin UI calls `/cfg/statuses*` (same pattern as
+`/cfg/tex*`), so the tab works after a room restart **without** waiting on
+the `/admin/statuses` nginx block. Keep the block above for the canonical
+path and non-`/cfg` callers.
 
 Do **not** add a broad `location /tex` or `location /admin` — builtin
 `/tex/<id>.png` and the `/admin` page must stay on try_files. Preview
@@ -112,6 +125,8 @@ fragments get the same prefixes from `preview-apply.sh` after this lands on
 - [ ] `curl -sI https://phainonsmilk.ru/admin/tex` → JSON/`401`, not `text/html`
 - [ ] `curl -sI https://phainonsmilk.ru/tex/catalog` → JSON/`200`
 - [ ] `curl -sI https://phainonsmilk.ru/locations` → JSON/`200`
+- [ ] `curl -sI https://phainonsmilk.ru/cfg/statuses` → JSON/`401`, not `text/html`
+- [ ] `curl -sI https://phainonsmilk.ru/admin/statuses` → JSON/`401` after nginx block
 
 ## 4. VPS one-time prerequisites (root, once)
 

@@ -176,32 +176,34 @@ try {
   const cookie = cookieOf(login);
   check(!!cookie, "session cookie");
 
-  const guestGet = await httpReq("GET", "/admin/statuses");
-  check(guestGet.status === 401 || guestGet.json?.reason === "auth_required", "GET statuses без сессии → 401");
+  const guestGet = await httpReq("GET", "/cfg/statuses");
+  check(guestGet.status === 401 || guestGet.json?.reason === "auth_required", "GET /cfg/statuses без сессии → 401");
+  const guestAdmin = await httpReq("GET", "/admin/statuses");
+  check(guestAdmin.status === 401 || guestAdmin.json?.reason === "auth_required", "GET /admin/statuses без сессии → 401");
 
-  const list = await httpReq("GET", "/admin/statuses", { cookie });
-  check(list.status === 200 && list.json?.ok === true, "GET /admin/statuses admin");
+  const list = await httpReq("GET", "/cfg/statuses", { cookie });
+  check(list.status === 200 && list.json?.ok === true, "GET /cfg/statuses admin");
   check(Array.isArray(list.json?.statuses) && list.json.statuses.length >= 2, "каталог ≥2");
   const plain = (list.json?.accounts || []).find((a) => a.accountId === "plain01");
   check(plain?.statusId === "tester", "snapshot: plain01 = tester");
   const chief = (list.json?.accounts || []).find((a) => a.accountId === "a34d8da4");
   check(chief?.statusId === "chief-admin", "snapshot: a34d8da4 = chief-admin");
 
-  const created = await httpReq("POST", "/admin/statuses", {
+  const created = await httpReq("POST", "/cfg/statuses", {
     cookie,
     body: { label: "Модератор" },
   });
-  check(created.status === 200 && created.json?.ok === true, "POST создать Модератор");
+  check(created.status === 200 && created.json?.ok === true, "POST /cfg/statuses создать Модератор");
   const modId = created.json?.status?.id;
   check(typeof modId === "string" && modId.length >= 2, "новый id статуса");
 
-  const assigned = await httpReq("POST", "/admin/statuses/assign", {
+  const assigned = await httpReq("POST", "/cfg/statuses/assign", {
     cookie,
     body: { accountId: "plain01", statusId: modId },
   });
   check(assigned.status === 200 && assigned.json?.statusId === modId, "assign Модератор → plain01");
 
-  const renamed = await httpReq("PATCH", `/admin/statuses/${modId}`, {
+  const renamed = await httpReq("PATCH", `/cfg/statuses/${modId}`, {
     cookie,
     body: { label: "Модер" },
   });
@@ -249,10 +251,10 @@ try {
   check(you?.[1]?.status === "Тестер", "you.status = Тестер (дефолт нового аккаунта)");
   check(typeof you?.[1]?.login === "string" && you[1].login.length > 0, "you.login = имя персонажа");
 
-  const delProt = await httpReq("DELETE", "/admin/statuses/tester", { cookie });
+  const delProt = await httpReq("DELETE", "/cfg/statuses/tester", { cookie });
   check(delProt.status === 400 && delProt.json?.reason === "protected", "DELETE tester запрещён");
 
-  const delMod = await httpReq("DELETE", `/admin/statuses/${modId}`, { cookie });
+  const delMod = await httpReq("DELETE", `/cfg/statuses/${modId}`, { cookie });
   check(delMod.status === 200 && delMod.json?.ok === true, "DELETE Модер");
   const afterDel = JSON.parse(readFileSync(path.join(DATA, "accounts.json"), "utf8"));
   check(afterDel.accounts.plain01.profile.statusId === "tester", "после удаления статуса → tester");

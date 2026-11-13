@@ -274,8 +274,9 @@ export function startServer() {
       // Инвайт-коды регистрации (/admin/invites*): тот же CSRF-щит
       // (unsafe + cookie ⇒ Origin) и CORS-надзор, что у «Игроков на поле».
       p === "/admin/invites" || p.startsWith("/admin/invites/") ||
-      // Статусы на поле (/admin/statuses*): каталог + assign — тот же CSRF.
+      // Статусы на поле (/admin/statuses* и обходной /cfg/statuses*): CSRF.
       p === "/admin/statuses" || p.startsWith("/admin/statuses/") ||
+      p === "/cfg/statuses" || p.startsWith("/cfg/statuses/") ||
       // Создание локаций мира (POST /locations|/cfg/locations и алиас /admin/locations).
       p === "/locations" || p === "/cfg/locations" ||
       p === "/admin/locations" || p.startsWith("/admin/locations/") ||
