@@ -27,10 +27,33 @@ const ID_RE = /^[a-z0-9-]{2,40}$/;
 /** Аккаунты с «Глав. Администратор» (мандат владелицы, 2026-11-13). */
 const CHIEF_ACCOUNT_IDS = Object.freeze(["a34d8da4", "a348fcd7", "ae960493"]);
 
+/** Канон /admin/statuses*; обходной /cfg/statuses* — прод nginx уже шлёт весь /cfg в Node
+ *  (как /cfg/tex*), пока на VPS нет отдельного location /admin/statuses. */
 const ROUTES = {
   ROOT: "/admin/statuses",
   ASSIGN: "/admin/statuses/assign",
+  CFG_ROOT: "/cfg/statuses",
+  CFG_ASSIGN: "/cfg/statuses/assign",
 };
+
+function isStatusesPath(p) {
+  return (
+    p === ROUTES.ROOT ||
+    p === ROUTES.ASSIGN ||
+    p.startsWith(ROUTES.ROOT + "/") ||
+    p === ROUTES.CFG_ROOT ||
+    p === ROUTES.CFG_ASSIGN ||
+    p.startsWith(ROUTES.CFG_ROOT + "/")
+  );
+}
+
+/** Нормализация пути: /cfg/statuses… → /admin/statuses… для единого разбора. */
+function canonPath(p) {
+  if (p === ROUTES.CFG_ROOT) return ROUTES.ROOT;
+  if (p === ROUTES.CFG_ASSIGN) return ROUTES.ASSIGN;
+  if (p.startsWith(ROUTES.CFG_ROOT + "/")) return ROUTES.ROOT + p.slice(ROUTES.CFG_ROOT.length);
+  return p;
+}
 
 let catalog = loadCatalog();
 let booted = false;
@@ -243,10 +266,8 @@ function notifyStatusLive(accountId, statusLabel) {
 
 export async function handleStatusesHttp(req, res) {
   const url = new URL(req.url || "/", "http://localhost");
-  const p = url.pathname;
-  if (p !== ROUTES.ROOT && p !== ROUTES.ASSIGN && !p.startsWith(ROUTES.ROOT + "/")) {
-    return false;
-  }
+  if (!isStatusesPath(url.pathname)) return false;
+  const p = canonPath(url.pathname);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

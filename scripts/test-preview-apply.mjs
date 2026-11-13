@@ -115,7 +115,7 @@ eq(
 // локациями. Спрайтовые: /sprites/catalog + /sprites/file; текстуры:
 // /tex/catalog + /tex/file (builtin /tex/<id>.png остаётся статикой root);
 // /locations — каталог мира + admin create.
-for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/admin/sprites", "/admin/tex", "/tex/catalog", "/tex/file", "/locations", "/admin/locations", "/sprites/catalog", "/sprites/file", "/ws"]) {
+for (const loc of ["/health", "/auth", "/cfg", "/profiles", "/admin/players", "/admin/invites", "/admin/statuses", "/admin/sprites", "/admin/tex", "/tex/catalog", "/tex/file", "/locations", "/admin/locations", "/sprites/catalog", "/sprites/file", "/ws"]) {
   eq(
     `both blocks proxy ${loc}`,
     blockFor(alphaFrag, "alpha.abnocw.phainonsmilk.ru").includes(`location ${loc} `) &&

@@ -47,6 +47,8 @@ function humanError(reason: string | undefined, fallback: string): string {
       return 'Сервер не понял запрос — проверьте поля.';
     case 'offline':
       return 'Сервер недоступен — проверьте соединение.';
+    case 'proxy_html':
+      return 'Запрос ушёл в статику, а не в комнату — обновите страницу после выкладки room-сервера.';
     default:
       return fallback;
   }
@@ -66,6 +68,9 @@ export function StatusesTab() {
       setAccounts(snap.accounts);
       return true;
     }
+    // Сбрасываем null-скелет «Загрузка…», иначе ошибка и спиннер висят вместе.
+    setStatuses((prev) => prev ?? []);
+    setAccounts((prev) => prev ?? []);
     setStatus({
       kind: 'err',
       text: humanError(snap.reason, snap.message || 'Не удалось загрузить статусы.'),

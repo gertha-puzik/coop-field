@@ -283,7 +283,11 @@ export async function httpAdminInviteRevoke(code: string): Promise<AdminInviteRe
   };
 }
 
-/* ========================= Статусы на поле (/admin/statuses*) ========================= */
+/* ========================= Статусы на поле =========================
+ * Клиент бьёт в /cfg/statuses* (прод nginx уже проксирует весь /cfg в Node).
+ * Канон /admin/statuses* остаётся на сервере + preview nginx после деплоя apply. */
+
+const STATUSES_API = "/cfg/statuses";
 
 /** Строка каталога статусов. */
 export type AdminStatusRow = { id: string; label: string; sort: number };
@@ -323,9 +327,9 @@ function parseStatusAccount(row: ApiRow): AdminStatusAccount | null {
   };
 }
 
-/** GET /admin/statuses — каталог + назначения. */
+/** GET — каталог + назначения. */
 export async function httpAdminStatuses(): Promise<AdminStatusesSnapshot> {
-  const { status, row } = await apiFetch("/admin/statuses");
+  const { status, row, text } = await apiFetch(STATUSES_API);
   if (status === 200 && row?.ok === true) {
     const statuses: AdminStatusRow[] = [];
     const accounts: AdminStatusAccount[] = [];
@@ -345,18 +349,20 @@ export async function httpAdminStatuses(): Promise<AdminStatusesSnapshot> {
     }
     return { ok: true, statuses, accounts };
   }
+  const htmlish = typeof text === "string" && /^\s*</.test(text);
   return {
     ok: false,
-    reason: row?.reason === "auth_required" ? "auth_required" : row?.reason === "forbidden" ? "forbidden" : "error",
+    reason: row?.reason === "auth_required" ? "auth_required" : row?.reason === "forbidden" ? "forbidden" : htmlish ? "proxy_html" : "error",
     message: asText(row?.message),
+    details: text,
   };
 }
 
-/** POST /admin/statuses {label, id?} — создать статус. */
+/** POST {label, id?} — создать статус. */
 export async function httpAdminStatusCreate(label: string, id?: string): Promise<AdminStatusesSnapshot> {
   const body: { label: string; id?: string } = { label };
   if (id?.trim()) body.id = id.trim();
-  const { status, row, text } = await apiFetch("/admin/statuses", { method: "POST", body });
+  const { status, row, text } = await apiFetch(STATUSES_API, { method: "POST", body });
   if (status === 200 && row?.ok === true) return httpAdminStatuses();
   return {
     ok: false,
@@ -366,9 +372,9 @@ export async function httpAdminStatusCreate(label: string, id?: string): Promise
   };
 }
 
-/** PATCH /admin/statuses/:id {label} — переименовать. */
+/** PATCH /:id {label} — переименовать. */
 export async function httpAdminStatusRename(id: string, label: string): Promise<AdminStatusesSnapshot> {
-  const { status, row, text } = await apiFetch(`/admin/statuses/${encodeURIComponent(id)}`, {
+  const { status, row, text } = await apiFetch(`${STATUSES_API}/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: { label },
   });
@@ -381,9 +387,9 @@ export async function httpAdminStatusRename(id: string, label: string): Promise<
   };
 }
 
-/** DELETE /admin/statuses/:id — удалить (назначения → Тестер). */
+/** DELETE /:id — удалить (назначения → Тестер). */
 export async function httpAdminStatusDelete(id: string): Promise<AdminStatusesSnapshot> {
-  const { status, row, text } = await apiFetch(`/admin/statuses/${encodeURIComponent(id)}`, {
+  const { status, row, text } = await apiFetch(`${STATUSES_API}/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (status === 200 && row?.ok === true) return httpAdminStatuses();
@@ -395,9 +401,9 @@ export async function httpAdminStatusDelete(id: string): Promise<AdminStatusesSn
   };
 }
 
-/** POST /admin/statuses/assign {accountId, statusId} — выдать статус. */
+/** POST /assign {accountId, statusId} — выдать статус. */
 export async function httpAdminStatusAssign(accountId: string, statusId: string): Promise<AdminStatusesSnapshot> {
-  const { status, row, text } = await apiFetch("/admin/statuses/assign", {
+  const { status, row, text } = await apiFetch(`${STATUSES_API}/assign`, {
     method: "POST",
     body: { accountId, statusId },
   });
