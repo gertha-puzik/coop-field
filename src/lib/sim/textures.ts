@@ -86,7 +86,10 @@ let revisionExtra = 0;
 
 /** Актуальный URL текстуры (с учётом админской замены). */
 export function texSrc(id: string): string {
-  return texAssetUrl(SRC[id] || `/tex/${id}.png`);
+  if (SRC[id]) return texAssetUrl(SRC[id]);
+  // Кастом до прихода каталога: /tex/<id>.png всегда 404 — сразу /cfg/tex-file.
+  if (/^x-[a-z0-9-]{1,46}$/.test(id)) return texAssetUrl(`/cfg/tex-file/${id}.png`);
+  return texAssetUrl(`/tex/${id}.png`);
 }
 
 function loadOne(name: string, src: string): void {

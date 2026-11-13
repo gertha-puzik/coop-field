@@ -15,7 +15,7 @@ import { dummyIsDrawn } from '@/lib/sim/targeting';
 import { takePaintDirty } from '@/lib/sim/paint';
 import { currentTestMap, drawDirtPatch, drawEntryMark, drawGroundCover, drawTestDecorItem, effectiveElevRecord, elevLevelAt, terrainLevelAt, supportLevelAt, hashStr, paintCanvas, TERRAIN_LIFT_PX, testFieldGeometry } from '@/lib/sim/test-field';
 import { drawPathSurface } from '@/lib/sim/path-field';
-import { grassPattern, packRevision } from '@/lib/sim/textures';
+import { grassPattern, packRevision, texSrc } from '@/lib/sim/textures';
 import {
   OBJECT_DIMS,
   objectBase,
@@ -335,7 +335,8 @@ function propActor(o: TestMapObject, cellW: number, cellH: number): ElisionActor
     w,
     h,
     lift: terrainLevelAt(Math.floor(base.x), Math.floor(base.y)) * TERRAIN_LIFT_PX,
-    url: `/tex/${spr}.png`,
+    // Кастом/замена: /cfg/tex-file/<id>.png (не /tex/<id>.png — там 404).
+    url: texSrc(spr),
     mirror: objectMir(o) === 1,
     rot: objectRotDeg(o),
   };
