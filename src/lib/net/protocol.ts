@@ -173,6 +173,10 @@ export type CoopAtmoAnchor = CoopAtmo & {
 export type CoopCat = {
   id: number;
   login?: string;
+  /** Логин аккаунта (не имя персонажа на поле); гость — нет. */
+  accountLogin?: string;
+  /** Подпись статуса на поле (из каталога /admin/statuses). */
+  status?: string;
   color?: string;
   sprite?: string;
   x: number;

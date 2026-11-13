@@ -66,6 +66,7 @@ export interface SimNetDeps {
   inZonePrevRef: RefObject<boolean>;
   jellyRef: RefObject<Record<string, number>>;
   liveRemotesRef: RefObject<DummyConfig[]>;
+  selfPlateRef: RefObject<{ id: string; name: string; accountLogin?: string; statusLabel?: string } | null>;
   meIdRef: RefObject<number | null>;
   netMovesRef: RefObject<{ server: { col: number; row: number } | null; pending: { col: number; row: number }[] }>;
   netRef: RefObject<ReturnType<typeof createCoopClient> | null>;
@@ -123,6 +124,7 @@ export function useSimNet(deps: SimNetDeps) {
     inZonePrevRef,
     jellyRef,
     liveRemotesRef,
+    selfPlateRef,
     meIdRef,
     netMovesRef,
     netRef,
@@ -199,6 +201,12 @@ export function useSimNet(deps: SimNetDeps) {
             return { ...s, character: { ...s.character, sprite, spriteScale } };
           });
         }
+        selfPlateRef.current = {
+          id: 'main',
+          name: cat.login || `#${cat.id}`,
+          accountLogin: typeof cat.accountLogin === 'string' && cat.accountLogin ? cat.accountLogin : undefined,
+          statusLabel: typeof cat.status === 'string' && cat.status ? cat.status : undefined,
+        };
         setNetReady(true);
         freshJoinRef.current = true;
         const e = engineRef.current;
@@ -346,6 +354,17 @@ export function useSimNet(deps: SimNetDeps) {
         // Режим чужого кота (fm из publicCat): 1 — мирный (без стрелы), 0 — боевой.
         if (typeof cat.fm === 'number') remoteFmRef.current.set(`p${cat.id}`, cat.fm === 1 ? 1 : 0);
         if (cat.id === meIdRef.current) {
+          const prevSelf = selfPlateRef.current;
+          selfPlateRef.current = {
+            id: 'main',
+            name: (typeof cat.login === 'string' && cat.login) || prevSelf?.name || `#${cat.id}`,
+            accountLogin:
+              typeof cat.accountLogin === 'string' && cat.accountLogin
+                ? cat.accountLogin
+                : prevSelf?.accountLogin,
+            statusLabel:
+              typeof cat.status === 'string' && cat.status ? cat.status : prevSelf?.statusLabel,
+          };
           if (typeof cat.x === 'number' && typeof cat.y === 'number') {
             const col = Math.max(0, cat.x - 1);
             const row = Math.max(0, cat.y - 1);
@@ -381,6 +400,8 @@ export function useSimNet(deps: SimNetDeps) {
         const dummy = catToDummy({
           id: cat.id,
           login: cat.login || prev?.name,
+          accountLogin: cat.accountLogin ?? prev?.accountLogin,
+          status: cat.status ?? prev?.statusLabel,
           sprite: cat.sprite || prev?.sprite,
           x: typeof cat.x === 'number' ? cat.x : (prev?.col ?? 0) + 1,
           y: typeof cat.y === 'number' ? cat.y : (prev?.row ?? 0) + 1,
@@ -407,6 +428,8 @@ export function useSimNet(deps: SimNetDeps) {
             prev.name = dummy.name;
             prev.sprite = dummy.sprite;
             prev.angle = dummy.angle;
+            if (dummy.accountLogin !== undefined) prev.accountLogin = dummy.accountLogin;
+            if (dummy.statusLabel !== undefined) prev.statusLabel = dummy.statusLabel;
             // Рост — как в боевом ходе ниже: только когда он реально приехал в пакете.
             if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;
           } else {
@@ -438,6 +461,8 @@ export function useSimNet(deps: SimNetDeps) {
           prev.angle = dummy.angle;
           prev.name = dummy.name;
           prev.sprite = dummy.sprite;
+          if (dummy.accountLogin !== undefined) prev.accountLogin = dummy.accountLogin;
+          if (dummy.statusLabel !== undefined) prev.statusLabel = dummy.statusLabel;
           // Рост обновляем только когда он реально пришёл в пакете (иначе сбросили бы
           // выбранный при спавне размер до дефолта).
           if (typeof cat.size === 'number' && Number.isFinite(Number(cat.size))) prev.scale = dummy.scale;

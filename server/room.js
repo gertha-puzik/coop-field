@@ -20,6 +20,7 @@ import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 // инициализация глобальным слоем, поведение неизменно).
 import { initialRoomAtmo } from "./room-config.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
+import { statusLabelOf, defaultStatusId } from "./statuses.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
 import { locationFromRoom, locationRoom, knownLocation, placeOf, locationCatalogue } from "./location-world.js";
@@ -198,6 +199,13 @@ function publicCat(cat, room) {
     blocking: !!cat.blocking,
     sq: cat.spaceHold ? 1 : 0,
   };
+  // Подписи на поле: логин аккаунта + статус (гость → пустые строки).
+  if (typeof cat.accountLogin === "string" && cat.accountLogin) {
+    base.accountLogin = cat.accountLogin;
+  }
+  if (typeof cat.statusLabel === "string" && cat.statusLabel) {
+    base.status = cat.statusLabel;
+  }
   // Комната «тест»: режим свободной ходьбы и позиция в клеточных долях —
   // новичкам и после переподключения (иначе свободный кот замрёт на клетке).
   if (room?.fmt === 'test') {
@@ -208,6 +216,24 @@ function publicCat(cat, room) {
     base.fy = Math.round(fy * 100) / 100;
   }
   return base;
+}
+
+/**
+ * Live-обновление подписи статуса у всех живых котов аккаунта (admin assign).
+ * Не расширяет EV: шлёт обычный «update cat» с обновлённым status.
+ */
+function broadcastAccountStatus(accountId, statusLabel) {
+  const id = String(accountId || "");
+  const label = String(statusLabel || "");
+  if (!id) return;
+  for (const room of rooms.values()) {
+    for (const [ws, cat] of room.sockets.entries()) {
+      if (!cat || !ws?.account || String(ws.account.id) !== id) continue;
+      cat.statusLabel = label || statusLabelOf(defaultStatusId());
+      const payload = publicCat(cat, room);
+      for (const peer of room.sockets.keys()) send(peer, EV.UPDATE_CAT, payload);
+    }
+  }
 }
 
 function fieldPayload(room){return withTestLocation(locationFromRoom(room.code),()=>fieldPayloadInWorld(room));}
@@ -371,10 +397,17 @@ function joinInWorld(ws, payload = {},options={}) {
   // Вне диапазона/не число — 100% (обычный рост).
   const sizeRaw = Number(payload.size ?? fromAccount?.size);
   const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
+  const accountLogin = ws.account ? String(ws.account.login || "") : "";
+  const statusId =
+    typeof ws.account?.profile?.statusId === "string" && ws.account.profile.statusId
+      ? ws.account.profile.statusId
+      : defaultStatusId();
   const cat = {
     id: nextId++,
     locationId: locationFromRoom(room.code)||undefined,
     login,
+    accountLogin,
+    statusLabel: ws.account ? statusLabelOf(statusId) : "",
     color: PALETTE[slot % PALETTE.length],
     sprite: savedSprite || pickSprite(payload, slot),
     x: cell[0],
@@ -620,4 +653,5 @@ function resetPlayerPosition(rawRoom, rawLogin) {
 export {
   rooms, roomOf, spawnCell, send, broadcast, normalizeRoomCode, occupied, publicCat, fieldPayload,
   leave, join, setSprite, block, space, roomsInfo, adminOccupancy, resetPlayerPosition,
+  broadcastAccountStatus,
 };

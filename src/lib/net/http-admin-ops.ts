@@ -282,3 +282,147 @@ export async function httpAdminInviteRevoke(code: string): Promise<AdminInviteRe
     details: text,
   };
 }
+
+/* ========================= Статусы на поле (/admin/statuses*) ========================= */
+
+/** Строка каталога статусов. */
+export type AdminStatusRow = { id: string; label: string; sort: number };
+
+/** Назначение статуса аккаунту. */
+export type AdminStatusAccount = {
+  accountId: string;
+  login: string;
+  displayName: string;
+  statusId: string;
+  statusLabel: string;
+  role: "admin" | "registered";
+};
+
+export type AdminStatusesSnapshot =
+  | { ok: true; statuses: AdminStatusRow[]; accounts: AdminStatusAccount[] }
+  | AdminFieldError;
+
+function parseStatus(row: ApiRow): AdminStatusRow | null {
+  const id = asText(row.id);
+  const label = asText(row.label);
+  if (!id || !label) return null;
+  return { id, label, sort: asNum(row.sort, 0) };
+}
+
+function parseStatusAccount(row: ApiRow): AdminStatusAccount | null {
+  const accountId = asText(row.accountId);
+  const login = asText(row.login);
+  if (!accountId || !login) return null;
+  return {
+    accountId,
+    login,
+    displayName: asText(row.displayName, login),
+    statusId: asText(row.statusId, "tester"),
+    statusLabel: asText(row.statusLabel, "Тестер"),
+    role: parseRole(row.role) === "admin" ? "admin" : "registered",
+  };
+}
+
+/** GET /admin/statuses — каталог + назначения. */
+export async function httpAdminStatuses(): Promise<AdminStatusesSnapshot> {
+  const { status, row } = await apiFetch("/admin/statuses");
+  if (status === 200 && row?.ok === true) {
+    const statuses: AdminStatusRow[] = [];
+    const accounts: AdminStatusAccount[] = [];
+    if (Array.isArray(row.statuses)) {
+      for (const raw of row.statuses) {
+        if (!raw || typeof raw !== "object") continue;
+        const s = parseStatus(raw as ApiRow);
+        if (s) statuses.push(s);
+      }
+    }
+    if (Array.isArray(row.accounts)) {
+      for (const raw of row.accounts) {
+        if (!raw || typeof raw !== "object") continue;
+        const a = parseStatusAccount(raw as ApiRow);
+        if (a) accounts.push(a);
+      }
+    }
+    return { ok: true, statuses, accounts };
+  }
+  return {
+    ok: false,
+    reason: row?.reason === "auth_required" ? "auth_required" : row?.reason === "forbidden" ? "forbidden" : "error",
+    message: asText(row?.message),
+  };
+}
+
+/** POST /admin/statuses {label, id?} — создать статус. */
+export async function httpAdminStatusCreate(label: string, id?: string): Promise<AdminStatusesSnapshot> {
+  const body: { label: string; id?: string } = { label };
+  if (id?.trim()) body.id = id.trim();
+  const { status, row, text } = await apiFetch("/admin/statuses", { method: "POST", body });
+  if (status === 200 && row?.ok === true) return httpAdminStatuses();
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/** PATCH /admin/statuses/:id {label} — переименовать. */
+export async function httpAdminStatusRename(id: string, label: string): Promise<AdminStatusesSnapshot> {
+  const { status, row, text } = await apiFetch(`/admin/statuses/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { label },
+  });
+  if (status === 200 && row?.ok === true) return httpAdminStatuses();
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/** DELETE /admin/statuses/:id — удалить (назначения → Тестер). */
+export async function httpAdminStatusDelete(id: string): Promise<AdminStatusesSnapshot> {
+  const { status, row, text } = await apiFetch(`/admin/statuses/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (status === 200 && row?.ok === true) return httpAdminStatuses();
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/** POST /admin/statuses/assign {accountId, statusId} — выдать статус. */
+export async function httpAdminStatusAssign(accountId: string, statusId: string): Promise<AdminStatusesSnapshot> {
+  const { status, row, text } = await apiFetch("/admin/statuses/assign", {
+    method: "POST",
+    body: { accountId, statusId },
+  });
+  if (status === 200 && row?.ok === true) {
+    if (Array.isArray(row.accounts) && Array.isArray(row.statuses)) {
+      const statuses: AdminStatusRow[] = [];
+      const accounts: AdminStatusAccount[] = [];
+      for (const raw of row.statuses) {
+        if (!raw || typeof raw !== "object") continue;
+        const s = parseStatus(raw as ApiRow);
+        if (s) statuses.push(s);
+      }
+      for (const raw of row.accounts) {
+        if (!raw || typeof raw !== "object") continue;
+        const a = parseStatusAccount(raw as ApiRow);
+        if (a) accounts.push(a);
+      }
+      if (statuses.length) return { ok: true, statuses, accounts };
+    }
+    return httpAdminStatuses();
+  }
+  return {
+    ok: false,
+    reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}

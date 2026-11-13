@@ -1,7 +1,8 @@
 /** Canvas HUD above WebGL: rotating four-season-of-day dial, weather satellite and jump overlays. */
 import { elisionActorFoot, type ElisionFrame, type ElisionSpace } from '@/lib/sim/elision-scene';
 import { jumpFillOf } from '@/lib/sim/test-map';
-import { type WeatherKind } from '@/lib/sim/settings';
+import { type DummyConfig, type WeatherKind } from '@/lib/sim/settings';
+import { drawNameplate } from '@/lib/sim/nameplate';
 
 const TAU = Math.PI*2;
 const WEATHER_LABEL: Record<WeatherKind,string> = {sun:'Солнечно',cloud:'Облачно',rain:'Дождь'};
@@ -120,5 +121,46 @@ export function drawElisionJumpHud(cv: HTMLCanvasElement | null, frame: ElisionF
   g.fillStyle=fill>=1?'#f6e7a1':fill>=0.5?'#8ef0b0':'#e7c48a';g.fillRect(bx,by+h*(1-fill),w,h*fill);
   g.strokeStyle='rgba(255,255,255,0.9)';g.lineWidth=1;
   g.strokeRect(bx-1,by-1,w+2,h+2);g.beginPath();g.moveTo(bx-2,by+h/2);g.lineTo(bx+w+2,by+h/2);g.stroke();
+  g.restore();
+}
+
+/**
+ * Подписи игроков поверх WebGL: ‹имя› / логин / статус. Мишени (rab) и
+ * редактор не подписываем. self — свой кот (id «main» или controlled).
+ */
+export function drawElisionNameplates(
+  cv: HTMLCanvasElement | null,
+  frame: ElisionFrame,
+  remotes: DummyConfig[],
+  self?: { id: string; name: string; accountLogin?: string; statusLabel?: string } | null,
+) {
+  if (!cv || frame.editor) return;
+  const g = cv.getContext('2d');
+  if (!g) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  g.save();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const plates: { id: string; name: string; accountLogin?: string; statusLabel?: string }[] = [];
+  if (self?.name) plates.push(self);
+  for (const d of remotes) {
+    if (!d.present || !d.visible || d.id === frame.controlledId) continue;
+    plates.push(d);
+  }
+  for (const plate of plates) {
+    const actor = frame.decals.find((a) => a.id === plate.id);
+    if (!actor || actor.isProp) continue;
+    const f = elisionActorFoot(actor);
+    const dx = f.x - frame.camX;
+    const dy = f.z - frame.camY;
+    const x = frame.viewW / 2 + (dx * Math.cos(frame.yaw) - dy * Math.sin(frame.yaw)) * frame.zoom;
+    const footY =
+      frame.viewH / 2 + (dx * Math.sin(frame.yaw) + dy * Math.cos(frame.yaw) - f.y) * frame.zoom;
+    const headY = footY - actor.h * frame.zoom - 6;
+    drawNameplate(g, x, headY, {
+      charName: plate.name,
+      accountLogin: plate.accountLogin,
+      statusLabel: plate.statusLabel,
+    });
+  }
   g.restore();
 }
