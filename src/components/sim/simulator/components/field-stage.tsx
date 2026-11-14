@@ -17,6 +17,7 @@ import styles from './editor-workspace.module.css';
  * in simulator.tsx — FieldStage only provides the geometric anchor.
  */
 import type { MouseEvent, PointerEvent, RefObject, ReactNode } from 'react';
+import { KeyHint } from './key-hint';
 
 export interface FieldStageProps {
   worldOverlay?:ReactNode;
@@ -153,6 +154,8 @@ export function FieldStage(props: FieldStageProps) {
                 Загрузка локации…
               </div>
             ) : null}
+            {/* Подсказка по клавишам при первом входе (#124); в редакторе не нужна. */}
+            {editorOverlay ? null : <KeyHint />}
           {editorOverlay}
           </div>
         </div>
