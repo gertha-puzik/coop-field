@@ -75,7 +75,7 @@ try {
   try { cfg.assertStartupSecurity(); } catch { threw = true; }
   check(threw, "(4) preview + AUTH_CSRF_STRICT='off' → throw");
 
-  // (5) preview через маркер preview-apply (PREVIEW_SITES_MODE), без явного класса.
+  // (5) preview через легаси-маркер превью (PREVIEW_SITES_MODE), без явного класса.
   setEnv({ PREVIEW_SITES_MODE: "dual", AUTH_CSRF_STRICT: "false" });
   check(cfg.instanceEnvClass() === "preview", "(5a) PREVIEW_SITES_MODE-маркер → класс preview");
   threw = false;

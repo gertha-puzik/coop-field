@@ -36,8 +36,8 @@
 4. **CI-гейт артефактов (A1):** `npm run check:variants` после сборки — www-grotto без НИ
    ОДНОГО маркера Элизии (включая латиницу `elisium`: кириллический греп «Элизи» НЕ
    достаточен), www-elyria без снятых `/combat/`+`/hunger/` и СО следами живой Элизии,
-   ссылки на чанки цельны. В preview-build.yml — шаг «Изоляция вариантов (A1)» после
-   сборки обоих корней, до упаковки артефакта.
+   ссылки на чанки цельны. В deploy-frontend.yml — шаг «Изоляция вариантов (A1)» после
+   сборки обоих корней, до выкладки.
 
 ## 2. Три сущности (не путать)
 
@@ -280,29 +280,12 @@ reset/restore с подтверждением.
   name/sprite/size активного персонажа).
 - Карта Элизии и бэкапы не мигрируют: формат тот же. Гость в гроты — как раньше.
 
-## 10. Preview (dual-host)
+## 10. Preview (сняты)
 
-Один VPS с продом, каталог `/opt/coop-field-preview/pr-<N>/`, один room-инстанс
-(порт `41000 + PR%1000`), **два** сайта:
-
-- `https://pr-<N>.abnocw.phainonsmilk.ru` → `…/pr-N/www-grotto/` (публичные гроты);
-- `https://pr-<N>.elysiae.phainonsmilk.ru` → `…/pr-N/www-elyria/` (Элизия).
-
-Оба хоста проксируются в один инстанс; Host-классы разруливает сервер (env `PUBLIC_HOSTS` /
-`ELYRIA_HOSTS` пишет preview-apply). Конвейер из двух workflow: `preview-build.yml`
-(pull_request, без секретов, артефакт с ОБОИМИ корнями; шаг «Изоляция вариантов (A1)» —
-`npm run check:variants` — гоняется ПОСЛЕ сборки обоих корней и ДО упаковки артефакта) и
-`preview-deploy.yml` (workflow_run — исполняется из main, держит `PREVIEW_SSH_KEY`).
-TLS per-host (root-cron, первый apply до ~5 минут на http). Снос на closed/merged; лимит
-8 живых превью. Полная механика и проверки доверия —
-[PREVIEW-ENVIRONMENTS.md](PREVIEW-ENVIRONMENTS.md).
-
-Инфраструктура dual-host (nginx-фрагмент с двумя server-блоками, per-host TLS-cron,
-bootstrap юнита/sudoers, preview-apply) живёт в отдельной ветке
-`feature/preview-dual-host-infra` и до её влития (отдельный инфра-PR; изменения VPS —
-только по явному «ок» владелицы) превью-деплой остаётся на действующем пайплайне из
-main; репо-часть конвейера в этой ветке — только preview-build.yml,
-включая шаг изоляции A1.
+PR-превью (`pr-<N>.*`) сняты 2026-11-14 по решению владелицы: ими не пользовались, а их сертификаты выбирали недельный лимит Let's Encrypt на `phainonsmilk.ru`.
+Серверный класс инстанса `preview` в `server/config.js` остался (мягкие лимиты
+регистрации); новых preview-инстансов не создаётся. Прежняя механика — в истории git
+(`docs/PREVIEW-ENVIRONMENTS.md` до 2026-11-14).
 
 ## 11. Карта платформенных модулей (лимит 800 строк)
 

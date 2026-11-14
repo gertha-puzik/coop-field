@@ -68,7 +68,7 @@ jobs:
           npm run build
           test -f out/index.html
       - name: Сборка вариантов сайта (гроты + Элизия)
-        # Контракт preview-build.yml («Сборка обоих вариантов сайта»): скрипт
+        # Контракт build:variants («Сборка обоих вариантов сайта»): скрипт
         # build:variants оставляет в корне репо www-grotto/ и www-elyria/
         # с index.html в каждом и обрезкой чужих для варианта маршрутов.
         # Ванильный out/ собран и проверен шагом выше; build:variants дважды
@@ -155,7 +155,7 @@ jobs:
         # by scripts/test-prod-switch.mjs (failure injection included).
         #
         # Trust: main-owned VPS tooling, changed only via merged PRs (same
-        # rule as preview-apply.sh). Node binary: the prod unit path
+        # rule as the retired preview-apply.sh). Node binary: the prod unit path
         # /opt/coop-field/.node/bin/node — the deploy user's non-interactive
         # shell has no node in PATH.
         env:

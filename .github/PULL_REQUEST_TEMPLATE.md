@@ -1,11 +1,5 @@
-<!-- PR description contract (AGENTS.md §Publishing item 8, owner directive 2026-11-08):
-     every agent-opened PR must carry BOTH preview links (the bot fills the marker block
-     below on the first successful deploy) and a bulleted Added/Changed summary with
-     verification notes. -->
-
-<!-- coop-field-preview-link -->
-(preview pipeline fills both links here after the first successful deploy)
-<!-- /coop-field-preview-link -->
+<!-- PR description contract (AGENTS.md §Publishing item 8): a bulleted Added/Changed
+     summary with verification notes. PR previews (pr-<N>.*) were retired 2026-11-14. -->
 
 ## Added
 - (what this PR introduces — bullet list)
@@ -15,4 +9,4 @@
 
 ## Verification
 - Gates run: (typecheck / arch:check / check:variants / battery items …)
-- Live checks on the preview: (what was opened and verified on pr-<N>.abnocw.phainonsmilk.ru and pr-<N>.elysiae.phainonsmilk.ru)
+- Live checks: (what was run locally and how — dev server, browser, tests)

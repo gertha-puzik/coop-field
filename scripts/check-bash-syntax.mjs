@@ -128,7 +128,7 @@ function main() {
   process.exitCode = bad ? 1 : 0;
 }
 
-// Same realpath-equality pattern as preview-comment.mjs: importing this
+// Realpath-equality pattern: importing this
 // module from a future test must not fire the CLI main.
 const invoked = (() => {
   try {

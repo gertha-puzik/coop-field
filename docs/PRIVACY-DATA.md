@@ -152,11 +152,7 @@ Where that root lives per environment:
   in the systemd unit template ([deploy/vps/coop-field.service](../deploy/vps/coop-field.service)),
   so data lands in `/opt/coop-field/data` (the module default, gitignored).
   The instance declares `COOP_INSTANCE_CLASS=production` explicitly.
-- **PR preview** — `/opt/coop-field-preview/<slug>/data` (unit + `preview-apply.sh`
-  write `DATA_DIR=$APP/data`; the script **refuses** a `DATA_DIR` pointing at the
-  prod root). Preview instances get no prod secrets and
-  softened register limits (5s / 60 per hour). Whole tree is destroyed on PR
-  close/merge.
+- **PR preview** — retired 2026-11-14; no preview instances or preview data remain.
 - **Local dev** — repo `./data/` (gitignored, fails safe to empty).
 - **Tests/CI** — `mkdtempSync` sandboxes per run (`coop-auth-*`, `coop-cfg-*`,
   `coop-profiles-*`, `coop-sp-privacy-*`), killed and removed in `finally`.

@@ -20,7 +20,7 @@ function eq(label, actual, expected) {
   }
 }
 
-const gen = spawnSync("ssh-keygen", ["-t", "ed25519", "-f", join(root, "id"), "-N", "", "-C", "test-preview"], {
+const gen = spawnSync("ssh-keygen", ["-t", "ed25519", "-f", join(root, "id"), "-N", "", "-C", "test-key"], {
   encoding: "utf8",
 });
 if (gen.status !== 0) {

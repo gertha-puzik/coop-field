@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // P6 «build-варианты»: обрезка Next static-export (out/) под вариант сайта.
 // Вызывается из `npm run build:variants` ПОСЛЕ каждой вариантной сборки:
-// копирует out/ в вариантный корень в корне репо (контракт preview-build.yml —
+// копирует out/ в вариантный корень в корне репо (контракт build:variants / deploy-frontend.yml —
 // шаг «Сборка обоих вариантов сайта» ждёт www-grotto/index.html и
 // www-elyria/index.html), вырезая каталоги маршрутов чужого варианта.
 // _next/, index.html, 404.html и прочие корневые файлы копируются целиком.

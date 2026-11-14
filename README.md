@@ -11,11 +11,11 @@
 Один и тот же движок и один сервер комнаты собираются в два сайта (вариант задаётся при сборке,
 `NEXT_PUBLIC_SITE`):
 
-- **«Пивные гроты»** — `abnocw.phainonsmilk.ru` (превью-PR: `pr-<N>.abnocw.phainonsmilk.ru`). Публичный сайт:
+- **«Пивные гроты»** — `abnocw.phainonsmilk.ru`. Публичный сайт:
   меню, гроты «Пивной грот №1–3» на `/combat/` и заглушка «Голодных игр» на `/hunger/`.
   Заходят без аккаунта. Про Элизию сайт не знает вовсе: ни ссылок в меню, ни страниц, ни
   API (серверные зоны входа/профилей/админки на его домене отвечают «не найдено»).
-- **Элизия** — `phainonsmilk.ru` (превью-PR: `pr-<N>.elysiae.phainonsmilk.ru`). Закрытый сайт: регистрация
+- **Элизия** — `phainonsmilk.ru`. Закрытый сайт: регистрация
   и вход по аккаунту, рисованная локация `/game/` (вход только с сессией; старый адрес `/elision/` остаётся как пересылка), каталог игроков
   `/players` с карточками, панель админа `/admin` — реестр разрешённых настроек (уровни урона и
   брони, периоды оборота стрелы, длины суток и погоды).
@@ -103,11 +103,10 @@ npm run test:server-modules  # смоук серверных модулей (з�
 | «Проверки» (ci.yml) | push в `main`, PRы по путям кода | типы, юнит-тесты, гейт архитектуры (≥800 строк), версия `ws` в двух lockfile, очередь шагов, синхронизация и паритет протокола, актуальность доков, смоук модулей сервера, аккаунты, превью-гейты |
 | «Фронтенд на VPS» (deploy-frontend.yml) | изменения `src/`, `public/`, Next-конфига, зависимостей, `scripts/prune-export.mjs` | собирает оба варианта (`build:variants`) и льёт ДВЕ статики: `www-grotto/` → `/opt/coop-field/www` и `www-elyria/` → `/opt/coop-field/www-elyria` |
 | «Сервер комнаты на VPS» (deploy-backend.yml) | изменения `server.js`, `server/`, `scripts/`, `deploy/vps/` | rsync + `deploy/vps/apply.sh` (рестарт только если серверные файлы изменились, health-check после) |
-| «Preview PR» (preview-build.yml + preview-deploy.yml) | PR своего репо | тот же VPS, два сайта на PR: `pr-<N>.abnocw.phainonsmilk.ru` (гроты) + `pr-<N>.elysiae.phainonsmilk.ru` (Элизия), один инстанс комнаты; снос при close/merge; см. [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md) |
 
-Секреты в GitHub: `VPS_SSH_KEY`; для превью — `PREVIEW_SSH_KEY` (доступен только `preview-deploy.yml` на `main`). `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
+Секреты в GitHub: `VPS_SSH_KEY`. PR-превью (`pr-<N>.*`) сняты 2026-11-14 по решению владелицы: ими не пользовались, а их сертификаты выбирали недельный лимит Let's Encrypt на `phainonsmilk.ru`. `VERCEL_TOKEN` больше не используется. Значений в коде и логах нет.
 
-**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`phainonsmilk` и все превью) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08); требование закреплено в docs/PREVIEW-ENVIRONMENTS.md.
+**Trusted proxy (§6).** Сервер доверяет `X-Forwarded-For` только с loopback-сокета и берёт последнюю запись; каждый проксирующий nginx-vhost (прод `abnocw`/`phainonsmilk`) обязан слать `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — перезапись, не preserve (иначе rate-лимиты авторизации видят loopback и выключены). Прод-блоки уже настроены (2026-11-08).
 
 
 ## Для разработки — куда смотреть
@@ -116,7 +115,6 @@ npm run test:server-modules  # смоук серверных модулей (з�
 - Слои модулей, зеркала-константы клиент↔сервер, координаты — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - Аккаунт/профиль/персонаж, роли, хост-изоляция, реестр настроек админки — [docs/PLATFORM-ARCHITECTURE.md](docs/PLATFORM-ARCHITECTURE.md).
 - Что уже есть в продукте и что наращиваем — [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md).
-- Превью-окружения PR (dual-host, снос, bootstrap) — [docs/PREVIEW-ENVIRONMENTS.md](docs/PREVIEW-ENVIRONMENTS.md).
 
 ## Работа с ИИ
 
