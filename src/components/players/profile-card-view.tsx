@@ -143,6 +143,7 @@ export function ProfileCardView({
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
   const [activityTick, setActivityTick] = useState(0);
+  const [idCopied, setIdCopied] = useState(false);
 
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
   useEffect(() => {
@@ -370,10 +371,78 @@ export function ProfileCardView({
         <button type="button" className={styles.backLink} onClick={onClose}>
           ← Вернуться в каталог
         </button>
-        <span className={styles.footNum} title={card.accountId}>
-          Профиль {shortId}
+        <button
+          type="button"
+          className={card2.copyId}
+          title={`Скопировать ID: ${card.accountId}`}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(card.accountId);
+              setIdCopied(true);
+              window.setTimeout(() => setIdCopied(false), 2000);
+            } catch {
+              setIdCopied(false);
+            }
+          }}
+        >
+          Профиль {shortId} <span aria-hidden>⧉</span>
+        </button>
+        <span className={card2.copyStatus} role="status">
+          {idCopied ? 'ID скопирован' : ''}
         </span>
       </footer>
+    </main>
+  );
+}
+
+/** Скелетон загрузки в геометрии готовой карточки (из PR #169, под новую вёрстку). */
+export function ProfileCardSkeleton() {
+  const bar = (w: string | number, h: number) => <span className={styles.skel} style={{ display: 'block', width: w, height: h }} />;
+  return (
+    <main className={card2.page} aria-hidden="true">
+      <div className={card2.hero}>
+        <div className={`${card2.heroBanner} ${styles.skel}`}>
+          <div className={card2.heroInfo}>
+            <div className={card2.heroFace} />
+            <div className={card2.heroText}>
+              {bar(220, 36)}
+              {bar(160, 14)}
+              <div className={card2.heroPills}>
+                {bar(90, 26)}
+                {bar(180, 26)}
+                {bar(100, 26)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className={card2.tabs}>
+        <span className={`${card2.tab} ${card2.tabOn}`}>
+          <Icon name="paw" size={16} /> Профиль
+        </span>
+      </div>
+      <div className={card2.grid}>
+        <div className={card2.col}>
+          {(['Активный персонаж', 'Краткая статистика', 'О себе'] as const).map((t) => (
+            <section key={t} className={card2.card}>
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle}>{t}</h2>
+              </header>
+              {bar('100%', t === 'Активный персонаж' ? 220 : 80)}
+            </section>
+          ))}
+        </div>
+        <div className={card2.col}>
+          {(['Друзья', 'Последние действия'] as const).map((t) => (
+            <section key={t} className={card2.card}>
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle}>{t}</h2>
+              </header>
+              {bar('100%', t === 'Друзья' ? 96 : 140)}
+            </section>
+          ))}
+        </div>
+      </div>
     </main>
   );
 }

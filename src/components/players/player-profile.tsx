@@ -47,7 +47,7 @@ import {
   humanEditError,
   moonPath,
 } from './player-profile-ui';
-import { ProfileCardView } from './profile-card-view';
+import { ProfileCardView, ProfileCardSkeleton } from './profile-card-view';
 
 /** Латинский шрифт бренда один на обе страницы (Lilita One, только latin:
  *  русские заголовки — system-ui 600); инстанс переиспользуется каталогом. */
@@ -87,14 +87,14 @@ export function Starscape() {
   return <div aria-hidden>{stars}</div>;
 }
 
-/** Строка бренда над страницей («Wanderpaws: Elyria Eides», латиница — Lilita One). */
+/** Строка бренда над страницей («Wanderpaws: Elysiae Aedes», латиница — Lilita One). */
 export function BrandRow() {
   return (
     <header className={styles.brand} aria-label="Название игры">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
         <path d={moonPath} />
       </svg>
-      <span className={`${displayFont.className} ${styles.brandName}`}>Wanderpaws: Elyria Eides</span>
+      <span className={`${displayFont.className} ${styles.brandName}`}>Wanderpaws: Elysiae Aedes</span>
     </header>
   );
 }
@@ -585,46 +585,9 @@ export function ProfileSkeleton() {
     <div className={styles.sky} role="status" aria-label="Загружаем профиль">
       <Starscape />
       <SiteHeader />
-      <div className={styles.page}>
+      <div className={`${styles.page} ${styles.profilePage}`}>
         <BrandRow />
-        <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
-          <div className={`${styles.profileBanner} ${styles.profileBannerStar}`} />
-          <div className={styles.profileHero}>
-            <span className={`${styles.profileFaceWrap} ${styles.skel}`} />
-            <div className={styles.profileHeroMain}>
-              <h1 className={styles.profileName}>
-                <span className={styles.skel} style={{ width: 'min(58%, 260px)', height: '1.05em' }} />
-              </h1>
-              <div className={styles.profilePills}>
-                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 120, height: 24 }} />
-                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 88, height: 24 }} />
-              </div>
-            </div>
-          </div>
-          <div className={styles.profileTabs} aria-hidden>
-            <span className={styles.profileTab}>Профиль</span>
-            <span className={styles.profileTab}>Настройки</span>
-          </div>
-          <div className={styles.profileBody}>
-            <div className={styles.profileGrid}>
-              <figure className={styles.avatar}>
-                <span className={`${styles.avatarArt} ${styles.skel}`} />
-              </figure>
-              <div className={styles.profileAside}>
-                <h2 className={styles.secTitle}>Статистика</h2>
-                <span className={styles.skel} style={{ width: '70%', height: 14 }} />
-                <h2 className={styles.secTitle} style={{ marginTop: 18 }}>
-                  О себе
-                </h2>
-                <span className={styles.skel} style={{ width: '92%', height: 14 }} />
-              </div>
-            </div>
-          </div>
-          <footer className={styles.panelFoot}>
-            <span className={styles.skel} style={{ width: 172, height: 14 }} />
-            <span className={styles.skel} style={{ width: 92, height: 12, borderRadius: 7 }} />
-          </footer>
-        </main>
+        <ProfileCardSkeleton />
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">
             ← Главное меню
@@ -709,7 +672,7 @@ export default function PlayerProfile({
     <div className={styles.sky}>
       <Starscape />
       <SiteHeader />
-      <div className={styles.page}>
+      <div className={`${styles.page} ${styles.profilePage}`}>
         <BrandRow />
         <ProfileCardView
           card={card}

@@ -66,7 +66,7 @@ const GROTTO_WORLDS: readonly WorldCard[] = [
 const ELYRIA_WORLDS: readonly WorldCard[] = [
   {
     href: '/game/',
-    name: 'Wanderpaws: Elysiae',
+    name: 'Wanderpaws: Elysiae Aedes',
     blurb: 'Твой путь начинается здесь',
     italic: true,
     ids: [...ELYRIA_SEED_ROOMS],
@@ -341,7 +341,7 @@ export function WanderMenu() {
             {!IS_ELYRIA ? (
               <a className="wander-window" href="https://phainonsmilk.ru/">
                 <span className="wander-window-knob" aria-hidden />
-                <span className="wander-name">Wanderpaws: Elysiae</span>
+                <span className="wander-name">Wanderpaws: Elysiae Aedes</span>
                 <span className="wander-blurb">Закрытый мир — вход по аккаунту, отдельный сайт</span>
                 <span className="wander-count">отдельный сайт →</span>
               </a>

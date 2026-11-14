@@ -654,3 +654,23 @@
     font-size: 12px;
   }
 }
+
+.copyId {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted, #b9b3d9);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.copyId:hover,
+.copyId:focus-visible {
+  color: var(--gold, #f6d7a2);
+}
+
+.copyStatus {
+  color: var(--mint, #7dcaa0);
+  font-size: 12px;
+  min-width: 1px;
+}
