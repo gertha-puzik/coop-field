@@ -167,7 +167,10 @@ export function useSimNet(deps: SimNetDeps) {
       }
       lastMapSignature=signature;
       if(notify)setEditorMsg('Локация обновлена.');
-      applyTestMap(map);showMapLoading();
+      applyTestMap(map);
+      // Чип «Загрузка локации…» — только на live setmap (notify), не на первом
+      // field-входе: там уже полноэкранный LocationLoadingCover как между локациями.
+      if(notify)showMapLoading();
     };
     const client = createCoopClient({
       onWhoami: (row) => {

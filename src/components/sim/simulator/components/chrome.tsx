@@ -72,6 +72,8 @@ export interface SimulatorHeaderProps {
   closeEditor: () => void;
   openEditor: () => void;
   testField: boolean;
+  /** Элизия: не показывать полоску СП (она и так пропадает после fieldFormat=test). */
+  hideSp?: boolean;
   patchCharacter: (p: Partial<SimSettings['character']>) => void;
   toggleBattleMode: () => void;
   patchArrow: (p: Partial<SimSettings['arrow']>) => void;
@@ -105,6 +107,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
     closeEditor,
     openEditor,
     testField,
+    hideSp = false,
     patchCharacter,
     toggleBattleMode,
     patchArrow,
@@ -255,7 +258,9 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
         {settings.field.cols}×{settings.field.rows} · {roomCode ? roomTitle(roomCode) : 'комната не выбрана'} · {peerCount} на поле
       </p>
     </div>
-    {/* Панелька выбранных скрытых параметров (СП): живая, повторяет блок «Выбор СП» с экрана входа */}
+    {/* СП только в клеточных комнатах (гроты). На Элизии полоска прячется сразу,
+        даже пока fieldFormat ещё grid во время первой прогрузки. */}
+    {!hideSp ? (
     <div
       className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-inset-soft)] px-2.5 py-1 text-[11px]"
       aria-label="Выбранные скрытые параметры"
@@ -273,6 +278,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
         броня <b className="font-semibold text-[var(--sim-text)]">{damageLevelLabel(settings.combat.armorLevel)}</b>
       </span>
     </div>
+    ) : null}
     <div className="flex flex-wrap items-center gap-2 text-[11px]">
       <Button asChild size="sm" variant="outline" className="btn-neutral h-8 text-xs">
         <a href="/">Главное меню</a>
