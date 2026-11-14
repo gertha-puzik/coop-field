@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KNS Paint</title>
-<script>window.__errs = []; window.onerror = function (m, s, l, c) { window.__errs.push(m + ' @' + s + ':' + l + ':' + c); return false; };</script>
+<script>window.__errs = []; window.onerror = function (m, s, l, c) { window.__errs.push(m + ' @' + s + ':' + l + ':' + c); return false; }; window.addEventListener('unhandledrejection', function (ev) { window.__errs.push('REJ: ' + (ev.reason && ev.reason.message ? ev.reason.message + ' @' + (ev.reason.stack || '') : String(ev.reason))); });</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -97,6 +97,8 @@
     box-shadow: 0 10px 30px rgba(0,0,0,.5);
   }
   #work { display: block; width: 600px; height: 400px; max-width: 100%; cursor: crosshair; touch-action: none; border-radius: 4px; }
+  .cvwrap { position: relative; }
+  #over { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; touch-action: none; border-radius: 4px; }
   .stage .hint {
     position: absolute; left: 11px; bottom: 4px; color: #696c75; font-size: 10.5px;
     pointer-events: none; user-select: none;
@@ -281,7 +283,7 @@
   <header class="top">
     <div class="brand">&#128062; KNS Paint</div>
     <div class="tagline">краска не выходит за кота · контур всегда поверх рисунка</div>
-    <div class="keys"><b>1–4</b> инструменты · <b>B</b> сменить кисть · <b>Ctrl+Z</b> отмена</div>
+    <div class="keys"><b>1–6</b> инструменты · <b>L</b> лассо · <b>M</b> двигать слой · <b>B</b> кисть · <b>Ctrl+Z</b> отмена · <b>Ctrl+Shift+Z</b> повтор · <b>Ctrl+C</b>/<b>V</b> копировать/вставить · <b>Esc</b> снять выделение</div>
   </header>
 
   <div class="main">
@@ -298,12 +300,21 @@
       <button type="button" class="tbtn" id="toolPicker" title="Пипетка (4) — взять цвет с картинки">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 6.5l-6.1 6.1a2 2 0 0 0-.5 1l-.8 3 3-.8a2 2 0 0 0 1-.5l6.1-6.1"/><path d="M12.6 4.4l2.6-2.6a2.1 2.1 0 0 1 3 0l3.9 3.9a2.1 2.1 0 0 1 0 3l-2.6 2.6"/><path d="M9.5 9.5l5 5"/><path d="M12.6 4.4l6.9 6.9"/></svg>
       </button>
+      <button type="button" class="tbtn" id="toolLasso" title="Лассо (5/L) — обведи область: Ctrl+C копирует её, Ctrl+V вставит, Esc/Ctrl+D снимет">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10.5" cy="8" rx="7.5" ry="4.2" stroke-dasharray="3 2"/><path d="M18 8v3.5"/><path d="M18 11.5c0 3.6-2.9 6.5-6.5 6.5"/><path d="M11.5 18c-1.1 1-2.7 1.6-4.5 1.6"/></svg>
+      </button>
+      <button type="button" class="tbtn" id="toolMove" title="Движение (6/M) — перетащи активный слой, зажав кнопку мыши">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3"/><path d="M9 18l3 3 3-3"/><path d="M6 9L3 12l3 3"/><path d="M18 9l3 3-3 3"/></svg>
+      </button>
       <div class="div"></div>
       <button type="button" class="dbtn" id="btnUndo" title="Отменить (Ctrl/Cmd+Z)" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5L3 10l5 5"/><path d="M3 10h11a6 6 0 0 1 6 6v3"/></svg>
       </button>
       <button type="button" class="dbtn" id="btnRedo" title="Вернуть (Ctrl/Cmd+Shift+Z)" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 5l5 5-5 5"/><path d="M21 10H10a6 6 0 0 0-6 6v3"/></svg>
+      </button>
+      <button type="button" class="dbtn" id="btnSelClear" title="Снять выделение (Esc / Ctrl+D)" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2" stroke-dasharray="3 2"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></svg>
       </button>
     </nav>
 
@@ -355,7 +366,10 @@
       </div>
 
       <div class="stage">
-        <canvas id="work" width="300" height="200"></canvas>
+        <div class="cvwrap">
+          <canvas id="work" width="300" height="200"></canvas>
+          <canvas id="over" width="300" height="200"></canvas>
+        </div>
         <span class="hint">кот — оригинальный скетч 300×200</span>
       </div>
     </div>
@@ -431,7 +445,7 @@
 (function () {
 'use strict';
 /* ============================================================
-   KNS Paint v8 — кисть по коту с контрактом:
+   KNS Paint v8.2 — кисть по коту с контрактом:
    1) краска не выходит за силуэт кота И не плотнее скетча
       на АА-кромке (cap по альфе — нет артефактов у ушей/спины);
    2) контур кота (тёмные линии скетча) всегда ПОВЕРХ краски;
@@ -456,7 +470,12 @@
   10) мобильные: тач-рисование (pointer events + touch-action), цели
       нажатия крупнее, вёрстка колонкой до узких экранов;
   11) хоткеи по ФИЗИЧЕСКОМУ коду клавиши — ру-раскладка (z→я)
-      не отключает Ctrl+Z; табы палитр честно прячут панель.
+      не отключает Ctrl+Z; табы палитр честно прячут панель;
+  12) лассо-выделение (5/L) — Ctrl+C копирует ВЫДЕЛЕННОЕ активного
+      слоя (без выделения — весь слой), Ctrl+V вставляет НОВЫМ слоем
+      поверх и сразу включает «движение»; Esc/Ctrl+D снимают;
+  13) движение (6/M) — активный слой перетаскивается мышью, один
+      'px'-undo на перенос; повтор: Ctrl+Shift+Z / Ctrl+Y.
    ============================================================ */
 
 var D = window.PAINT_DATA || (typeof PAINT_DATA !== 'undefined' ? PAINT_DATA : null);
@@ -966,6 +985,138 @@ function pickAt(ax, ay) {
   return true;
 }
 
+/* ---------- ЛАССО + КОПИПАСТА + ПЕРЕНОС СЛОЯ (v8.2) ----------
+   Лассо (5/L): обводишь область — становится маской выделения
+   («муравьи» на overlay-канвасе поверх холста). Ctrl+C копирует
+   выделенную часть АКТИВНОГО слоя (без выделения — слой целиком),
+   Ctrl+V вставляет копию НОВЫМ слоем поверх и включает «движение»,
+   так что вставленное сразу можно тащить мышью. «Движение» (6/M)
+   переносит пиксели активного слоя за курсором — undo один 'px'-шаг
+   на весь перенос. Выделение НЕ ограничивает кисть: это область
+   для копипасты. Esc / Ctrl+D — снять выделение. */
+var over = $('over'), octx = over.getContext('2d');
+var sel = null, selDrag = null;      /* sel: { mask, maskCv, pts, n } */
+var antsReq = null, antsT = 0;
+var clipBuf = null;                  /* буфер Ctrl+C: канвас W×H «на своих местах» */
+var moveDrag = null;                  /* { sx, sy, cv, moved } */
+
+function selPath2D(pts, close) {
+  var p = new Path2D();
+  p.moveTo(pts[0].x, pts[0].y);
+  for (var i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
+  if (close) p.closePath();
+  return p;
+}
+function redrawSel() {
+  octx.clearRect(0, 0, W, H);
+  var pts = selDrag ? selDrag.pts : (sel ? sel.pts : null);
+  if (!pts || pts.length < 2) return;
+  octx.lineWidth = 1;
+  octx.setLineDash([4, 3]);
+  octx.strokeStyle = 'rgba(255,255,255,.95)';
+  octx.lineDashOffset = -antsT * 0.02;
+  octx.stroke(selPath2D(pts, !selDrag));
+  octx.strokeStyle = 'rgba(245,169,75,.9)';
+  octx.lineDashOffset = -antsT * 0.02 + 3.5;
+  octx.stroke(selPath2D(pts, !selDrag));
+  octx.setLineDash([]);
+}
+function antsLoop(ts) {
+  antsReq = null;
+  if (!sel && !selDrag) { octx.clearRect(0, 0, W, H); return; }
+  antsT = ts || antsT + 60;
+  redrawSel();
+  antsReq = requestAnimationFrame(antsLoop);
+}
+function ensureAnts() { if (antsReq === null) antsReq = requestAnimationFrame(antsLoop); }
+function updateSelUI() { $('btnSelClear').disabled = !sel; }
+function clearSel(silent) {
+  var had = !!sel;
+  sel = null; selDrag = null;
+  octx.clearRect(0, 0, W, H);
+  updateSelUI();
+  if (!silent && had) toast('выделение снято');
+}
+function setSelPath(pts) {
+  if (!pts || pts.length < 3) return;
+  var box = mkCv(), bc = ctx2d(box);
+  bc.fillStyle = '#000';
+  bc.fill(selPath2D(pts, true));
+  var md = bc.getImageData(0, 0, W, H).data;
+  var mask = new Uint8Array(W * H), n = 0;
+  for (var i = 0; i < W * H; i++) if (md[i * 4 + 3] > 8) { mask[i] = 1; n++; }
+  selDrag = null;
+  if (n < 8) { toast('выделение не получилось — обведи область покрупнее'); return; }
+  var mcv = mkCv(), mc = ctx2d(mcv);
+  var mimg = mc.createImageData(W, H);
+  for (var j = 0; j < W * H; j++) if (mask[j]) mimg.data[j * 4 + 3] = 255;
+  mc.putImageData(mimg, 0, 0);
+  sel = { mask: mask, maskCv: mcv, pts: pts.slice(), n: n };
+  updateSelUI();
+  ensureAnts();
+}
+function copySelArea() {
+  var buf = mkCv(), bc = buf.getContext('2d');
+  bc.drawImage(paintCv, 0, 0);
+  if (sel) {
+    bc.globalCompositeOperation = 'destination-in';
+    bc.drawImage(sel.maskCv, 0, 0);
+    bc.globalCompositeOperation = 'source-over';
+  }
+  var d = bc.getImageData(0, 0, W, H).data, n = 0;
+  for (var i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  if (!n) {
+    toast(sel ? 'в выделении нет краски — нечего копировать' : 'активный слой пуст — нечего копировать');
+    return false;
+  }
+  clipBuf = buf;
+  toast(sel ? ('скопировано ' + n + ' px — Ctrl+V вставит на новый слой')
+            : ('слой в буфере (' + n + ' px) — Ctrl+V продублирует его'));
+  return true;
+}
+function pasteFromBuf() {
+  if (liveStroke) liveEnd();
+  if (!clipBuf) { toast('сначала Ctrl+C: лассо (L) обводит область, без выделения копируется слой'); return false; }
+  pushStructUndo();
+  var L = mkLayer();
+  L.name = 'Вставка ' + L.id;
+  layers.splice(activeLy + 1, 0, L);
+  activeLy = activeLy + 1;
+  syncActiveAlias();
+  pctx.drawImage(clipBuf, 0, 0);
+  renderLayers(); composite(); schedulePersist();
+  setTool('move');
+  toast('вставлено на слой «' + L.name + '» — тащ мышью (M), Ctrl+Z вернёт как было');
+  return true;
+}
+function moveBegin(x, y) {
+  if (liveStroke) liveEnd();
+  var snap = mkCv();
+  snap.getContext('2d').drawImage(paintCv, 0, 0);
+  moveDrag = { sx: x, sy: y, cv: snap, moved: false };
+  work.style.cursor = 'grabbing';
+}
+function moveBy(dx, dy) {
+  if (!moveDrag) return;
+  if (!moveDrag.moved && (dx !== 0 || dy !== 0)) {
+    moveDrag.moved = true;
+    pushUndo();                /* пиксели активного слоя ДО переноса — один undo на drag */
+  }
+  pctx.clearRect(0, 0, W, H);
+  pctx.drawImage(moveDrag.cv, dx, dy);
+  /* кот = холст: подвинутое за силуэт не существует (клип как в restore/import) */
+  pctx.globalCompositeOperation = 'destination-in';
+  pctx.drawImage(baseCv, 0, 0);
+  pctx.globalCompositeOperation = 'source-over';
+  composite();
+}
+function moveEnd() {
+  if (!moveDrag) return;
+  var d = moveDrag; moveDrag = null;
+  work.style.cursor = (state.tool === 'move') ? 'grab' : 'crosshair';
+  if (d.moved) { renderLayers(); schedulePersist(); }
+}
+
 /* ---------- СЛОИ: управление и панель ---------- */
 var EYE_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
 var EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A11 11 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a17.9 17.9 0 0 1-3.2 3.9"/><path d="M6.6 6.6A17.4 17.4 0 0 0 2 12s3.6 6.5 10 6.5c1.4 0 2.7-.3 3.8-.7"/></svg>';
@@ -1258,9 +1409,11 @@ function tryRestore() {
 
 /* ---------- UI state ---------- */
 function setTool(t) {
+  if (liveStroke) liveEnd();
   state.tool = t;
-  var map = { brush: 'toolBrush', eraser: 'toolEraser', fill: 'toolFill', picker: 'toolPicker' };
+  var map = { brush: 'toolBrush', eraser: 'toolEraser', fill: 'toolFill', picker: 'toolPicker', lasso: 'toolLasso', move: 'toolMove' };
   for (var k in map) $(map[k]).classList.toggle('active', k === t);
+  work.style.cursor = (t === 'move') ? 'grab' : 'crosshair';
 }
 function setSize(s) {
   s = Math.max(1, Math.min(24, Math.round(s)));
@@ -1549,38 +1702,61 @@ work.addEventListener('pointerdown', function (e) {
     floodFillAt(Math.floor(p.x), Math.floor(p.y));
   } else if (state.tool === 'picker') {
     pickAt(Math.floor(p.x), Math.floor(p.y));
+  } else if (state.tool === 'lasso') {
+    activePtr = e.pointerId;
+    try { work.setPointerCapture(e.pointerId); } catch (err) { }
+    selDrag = { pts: [{ x: p.x, y: p.y }] };
+    ensureAnts();
+  } else if (state.tool === 'move') {
+    activePtr = e.pointerId;
+    try { work.setPointerCapture(e.pointerId); } catch (err) { }
+    moveBegin(p.x, p.y);
   }
 });
 work.addEventListener('pointermove', function (e) {
   if (activePtr !== e.pointerId) return;
   e.preventDefault();
   var evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+  var lastP = null;
   for (var i = 0; i < evs.length; i++) {
     var p = artPoint(evs[i]);
-    liveMove(p.x, p.y, penPr(evs[i]));
+    if (selDrag) {
+      var lp = selDrag.pts[selDrag.pts.length - 1];
+      if (Math.abs(p.x - lp.x) + Math.abs(p.y - lp.y) >= 0.75) selDrag.pts.push({ x: p.x, y: p.y });
+    } else if (moveDrag) {
+      lastP = p;
+    } else {
+      liveMove(p.x, p.y, penPr(evs[i]));
+    }
   }
+  if (selDrag) redrawSel();
+  else if (moveDrag && lastP) moveBy(lastP.x - moveDrag.sx, lastP.y - moveDrag.sy);
 });
-function ptrUp(e) {
+function finishPtr(e, cancel) {
   if (activePtr !== e.pointerId) return;
   activePtr = null;
-  liveEnd();
+  if (selDrag) {
+    var pts = selDrag.pts;
+    selDrag = null;
+    if (!cancel) setSelPath(pts); else redrawSel();
+  } else if (moveDrag) {
+    moveEnd();
+  } else {
+    liveEnd();
+  }
   if (penFlip) { penFlip = false; setTool(penPrevTool); }
 }
-work.addEventListener('pointerup', ptrUp);
-work.addEventListener('pointercancel', ptrUp);
-work.addEventListener('lostpointercapture', function (e) {
-  if (activePtr === e.pointerId) {
-    activePtr = null;
-    liveEnd();
-    if (penFlip) { penFlip = false; setTool(penPrevTool); }
-  }
-});
+work.addEventListener('pointerup', function (e) { finishPtr(e, false); });
+work.addEventListener('pointercancel', function (e) { finishPtr(e, true); });
+work.addEventListener('lostpointercapture', function (e) { finishPtr(e, true); });
 
 /* ---------- кнопки ---------- */
 $('toolBrush').onclick = function () { setTool('brush'); };
 $('toolEraser').onclick = function () { setTool('eraser'); };
 $('toolFill').onclick = function () { setTool('fill'); };
 $('toolPicker').onclick = function () { setTool('picker'); };
+$('toolLasso').onclick = function () { setTool('lasso'); };
+$('toolMove').onclick = function () { setTool('move'); };
 $('brushRound').onclick = function () { setBrush('round'); schedulePersist(); };
 $('brushFlat').onclick = function () { setBrush('flat'); schedulePersist(); };
 $('brushPencil').onclick = function () { setBrush('pencil'); schedulePersist(); };
@@ -1609,6 +1785,7 @@ $('penPress').addEventListener('change', function () {
 });
 $('btnUndo').onclick = doUndo;
 $('btnRedo').onclick = doRedo;
+$('btnSelClear').onclick = function () { if (sel || selDrag) clearSel(false); };
 $('btnClear').onclick = clearPaint;
 $('hexIn').addEventListener('input', function () { setColor(this.value); });
 $('hexIn').addEventListener('blur', function () { this.value = state.color; });
@@ -1623,19 +1800,36 @@ window.addEventListener('keydown', function (e) {
   var mod = e.ctrlKey || e.metaKey;
   var c = e.code || '';
   var numMatch = { Digit1: 'brush', Numpad1: 'brush', Digit2: 'eraser', Numpad2: 'eraser',
-                   Digit3: 'fill', Numpad3: 'fill', Digit4: 'picker', Numpad4: 'picker' };
+                   Digit3: 'fill', Numpad3: 'fill', Digit4: 'picker', Numpad4: 'picker',
+                   Digit5: 'lasso', Numpad5: 'lasso', Digit6: 'move', Numpad6: 'move' };
   if (mod && c === 'KeyZ') {
     e.preventDefault();
     if (e.shiftKey) doRedo(); else doUndo();
   } else if (mod && c === 'KeyY') {
     e.preventDefault();
     doRedo();
+  } else if (mod && c === 'KeyC') {
+    e.preventDefault();
+    copySelArea();
+  } else if (mod && c === 'KeyV') {
+    e.preventDefault();
+    pasteFromBuf();
+  } else if (mod && c === 'KeyD') {
+    e.preventDefault();
+    if (sel) clearSel(false);
+  } else if (c === 'Escape') {
+    if (selDrag) { selDrag = null; redrawSel(); }
+    else if (sel) clearSel(false);
   } else if (!mod && numMatch[c]) {
     setTool(numMatch[c]);
   } else if (!mod && (c === 'KeyB')) {
     var cyc = ['round', 'flat', 'pencil', 'spray'];
     var cur = cyc.indexOf(state.brush);
     setBrush(cyc[(cur + 1) % cyc.length]);
+  } else if (!mod && c === 'KeyL') {
+    setTool('lasso');
+  } else if (!mod && c === 'KeyM') {
+    setTool('move');
   }
 });
 
@@ -2302,6 +2496,140 @@ async function runSelfTestAsync() {
     ', screen ' + scrOk18 + ', селект=overlay ' + selOk18 + ', persist ' + per18 +
     '; мини: слоёв ' + th18.length + '/' + layers.length + ', зелень в верхнем ' + greenN18 + ' px, нижний нетронут ' + lowSame18 + ' (чернила ' + botInk18 + ')');
 
+  /* ST19: ЛАССО + КОПИПАСТА + ПЕРЕНОС СЛОЯ (v8.2) */
+  var mark19 = undoStack.length;
+  var nLy19 = layers.length;                    /* сколько слоёв было на входе — столько и должно остаться */
+  var A19 = snapPaint();
+  clearSel(true);
+  clipBuf = null;
+  strokeLine(BODY.x, BODY.y, BODY.x + 10, BODY.y, { size: 10, hardness: 100, color: '#ff00d0', opacity: 100 });
+  var P19 = snapPaint();
+  setSelPath([{ x: BODY.x - 5, y: BODY.y - 12 }, { x: BODY.x + 21, y: BODY.y - 12 },
+              { x: BODY.x + 21, y: BODY.y + 12 }, { x: BODY.x - 5, y: BODY.y + 12 }]);
+  var selOk19 = !!sel && sel.n > 200 &&
+    sel.mask[BODY.y * W + BODY.x + 4] === 1 &&
+    sel.mask[BODY.y * W + BODY.x + 30] === 0;
+  var selN19 = sel ? sel.n : 0;
+  var inSel19 = 0, pdd19 = P19.data;
+  for (var q19 = 0; q19 < W * H; q19++) if (pdd19[q19 * 4 + 3] > 0 && sel.mask[q19]) inSel19++;
+  var copyOk19 = copySelArea() === true && !!clipBuf;
+  var bufN19 = 0, bd19 = clipBuf ? clipBuf.getContext('2d').getImageData(0, 0, W, H).data : null;
+  if (bd19) for (var r19 = 3; r19 < bd19.length; r19 += 4) if (bd19[r19] > 0) bufN19++;
+  var bufOk19 = copyOk19 && bufN19 === inSel19 && bufN19 > 100;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyL', key: 'л', bubbles: true, cancelable: true }));
+  var hotL19 = state.tool === 'lasso';
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'ь', bubbles: true, cancelable: true }));
+  var hotM19 = state.tool === 'move';
+  clipBuf = null;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'с', ctrlKey: true, bubbles: true, cancelable: true }));
+  var cN19 = 0, cd19 = clipBuf ? clipBuf.getContext('2d').getImageData(0, 0, W, H).data : null;
+  if (cd19) for (var e19 = 3; e19 < cd19.length; e19 += 4) if (cd19[e19] > 0) cN19++;
+  var hotC19 = !!clipBuf && cN19 === bufN19;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'м', ctrlKey: true, bubbles: true, cancelable: true }));
+  var pasted19 = (layers.length === nLy19 + 1) ? layers[nLy19] : null;
+  var ppN19 = 0;
+  if (pasted19) {
+    var pp19 = pasted19.ctx.getImageData(0, 0, W, H).data;
+    for (var f19 = 3; f19 < pp19.length; f19 += 4) if (pp19[f19] > 0) ppN19++;
+  }
+  var dcp19 = pasted19 ? pasted19.ctx.getImageData(BODY.x + 4, BODY.y, 1, 1).data : null;
+  var pasteOk19 = !!pasted19 && activeLy === nLy19 && state.tool === 'move' &&
+    ppN19 === bufN19 && dcp19 && dcp19[3] > 200 && Math.abs(dcp19[0] - 255) < 20;
+  var undoV19 = doUndo() && layers.length === nLy19;      /* вставка снялась, актив вернулся на исходный слой */
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'я', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  var redoV19 = undoV19 && layers.length === nLy19 + 1;   /* Ctrl+Shift+Z вернул вставку */
+  if (redoV19) doUndo();                                   /* и снова снимаем — дальше работаем с исходным активным */
+  /* перенос активного слоя: пробы по снимку активного слоя, вектор больше радиуса кисти */
+  var PS19 = snapPaint();
+  moveBegin(BODY.x, BODY.y);
+  moveBy(-24, -9);
+  moveEnd();
+  var mv19 = snapPaint();
+  var o719 = ((BODY.y - 9) * W + BODY.x - 19) * 4;       /* сюда приехал центр мазка — посадка в тело, клипу не мешает */
+  var mvOk19 = mv19.data[o719 + 3] > 200 && Math.abs(mv19.data[o719] - 255) < 20 &&
+    mv19.data[(BODY.y * W + BODY.x + 4) * 4 + 3] === 0;   /* оттуда, где был мазок, — чисто */
+  var mvUndo19 = doUndo() && dataEqual(snapPaint(), PS19);
+  /* перенос мышью (синтетический pointer-drag по активному слою) */
+  setTool('move');
+  var rect19 = work.getBoundingClientRect();
+  var sx19 = rect19.left + rect19.width * ((BODY.x + 4) / W);
+  var sy19 = rect19.top + rect19.height * (BODY.y / H);
+  var prePtr19 = snapPaint();
+  work.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 501, pointerType: 'touch', clientX: sx19, clientY: sy19, isPrimary: true, bubbles: true }));
+  work.dispatchEvent(new PointerEvent('pointermove', { pointerId: 501, pointerType: 'touch', clientX: sx19 + 40, clientY: sy19 + 10, isPrimary: true, bubbles: true }));
+  work.dispatchEvent(new PointerEvent('pointerup', { pointerId: 501, isPrimary: true, bubbles: true }));
+  var postPtr19 = snapPaint();
+  var ptrMoved19 = 0;
+  for (var g19 = 0; g19 < W * H; g19++) if (diffPx(prePtr19, postPtr19, g19) > 0) ptrMoved19++;
+  var ptrUndo19 = doUndo() && dataEqual(snapPaint(), prePtr19);
+  setTool('lasso');
+  clearSel(true);
+  var sq19 = [[BODY.x - 20, BODY.y - 16], [BODY.x + 30, BODY.y - 16], [BODY.x + 30, BODY.y + 16],
+              [BODY.x - 20, BODY.y + 16], [BODY.x - 20, BODY.y - 16]];
+  function cssPt19(apt) {
+    return { x: rect19.left + rect19.width * (apt[0] / W), y: rect19.top + rect19.height * (apt[1] / H) };
+  }
+  var st019 = cssPt19(sq19[0]);
+  work.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 511, pointerType: 'touch', clientX: st019.x, clientY: st019.y, isPrimary: true, bubbles: true }));
+  for (var h19 = 1; h19 < sq19.length; h19++) {
+    var cpt19 = cssPt19(sq19[h19]);
+    work.dispatchEvent(new PointerEvent('pointermove', { pointerId: 511, pointerType: 'touch', clientX: cpt19.x, clientY: cpt19.y, isPrimary: true, bubbles: true }));
+  }
+  work.dispatchEvent(new PointerEvent('pointerup', { pointerId: 511, isPrimary: true, bubbles: true }));
+  var lassoPtrOk19 = !!sel && sel.n > 300;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', bubbles: true }));
+  var escOk19 = sel === null;
+  var roll19 = true;
+  while (undoStack.length > mark19 && undoStack.length > 0) roll19 = doUndo() && roll19;
+  setTool('brush');
+  clipBuf = null;
+  clearSel(true);
+  var clean19 = layers.length === nLy19 && dataEqual(snapPaint(), A19);
+  rec('ST19', selOk19 && bufOk19 && hotL19 && hotM19 && hotC19 && pasteOk19 && undoV19 && redoV19 &&
+    mvOk19 && mvUndo19 && ptrMoved19 > 100 && ptrUndo19 && lassoPtrOk19 && escOk19 && roll19 && clean19,
+    'лассо: маска ' + selN19 + 'px ' + (selOk19 ? 'ок' : 'FAIL') +
+    ', буфер ' + bufN19 + '/' + inSel19 + ' (копир ' + copyOk19 + ', хоткей ' + hotC19 + ')' +
+    ', L/M/C/V хоткеи ' + hotL19 + '/' + hotM19 + '/' + !!hotC19 +
+    ', вставка ' + pasteOk19 + ' (undo ' + undoV19 + ', redo-ру ' + redoV19 + ')' +
+    ', перенос ' + mvOk19 + '/undo ' + mvUndo19 + ', мышью ' + ptrMoved19 + 'px/undo ' + ptrUndo19 +
+    ', лассо-события ' + lassoPtrOk19 + ', Esc ' + escOk19 + ', откат ' + roll19 + '/' + clean19);
+
+  /* ST20: КОТ-ХОЛСТ ПРИ ПЕРЕНОСЕ + КНОПКА «СНЯТЬ ВЫДЕЛЕНИЕ» (v8.3) */
+  var mark20 = undoStack.length;
+  var nLy20 = layers.length;
+  var A20 = snapPaint();
+  clearSel(true);
+  strokeLine(BODY.x, BODY.y, BODY.x + 10, BODY.y, { size: 10, hardness: 100, color: '#ff00d0', opacity: 100 });
+  var P20 = snapPaint();
+  var inkA20 = 0, p20d = P20.data;
+  for (var a20 = 3; a20 < p20d.length; a20 += 4) if (p20d[a20] > 0) inkA20++;
+  /* увозим мазок вниз, в «воздух» под котом: без клипа краска висела бы за силуэтом */
+  moveBegin(BODY.x, BODY.y);
+  moveBy(0, 90);
+  moveEnd();
+  var M20 = snapPaint();
+  var out20 = 0, inkM20 = 0, md20 = M20.data;
+  for (var m20 = 0; m20 < W * H; m20++) {
+    if (md20[m20 * 4 + 3] > 0) { inkM20++; if (!silArr[m20]) out20++; }
+  }
+  var clipOk20 = inkM20 === 0 && out20 === 0;             /* краска за котом не пережила клип */
+  var mvUndo20 = doUndo() && dataEqual(snapPaint(), P20);
+  /* кнопка снятия выделения: активна при живом sel, клик снимает */
+  setSelPath([{ x: BODY.x - 5, y: BODY.y - 12 }, { x: BODY.x + 21, y: BODY.y - 12 },
+              { x: BODY.x + 21, y: BODY.y + 12 }, { x: BODY.x - 5, y: BODY.y + 12 }]);
+  var btn20 = $('btnSelClear');
+  var btnLive20 = !!sel && !btn20.disabled;
+  btn20.click();
+  var btnOk20 = sel === null && btn20.disabled;
+  var roll20 = true;
+  while (undoStack.length > mark20 && undoStack.length > 0) roll20 = doUndo() && roll20;
+  clearSel(true);
+  var clean20 = layers.length === nLy20 && dataEqual(snapPaint(), A20);
+  rec('ST20', clipOk20 && mvUndo20 && btnLive20 && btnOk20 && roll20 && clean20,
+    'кот-холст: мазок ' + inkA20 + 'px уехал вниз — осталось ' + inkM20 + ', вне кота ' + out20 + ' (жду 0/0)' +
+    ', undo ' + mvUndo20 + '; кнопка снятия: активна ' + btnLive20 + ', клик → sel null ' + btnOk20 +
+    ', откат ' + roll20 + '/' + clean20);
+
   /* финал: один чистый слой, стеки пусты */
   undoStack.length = 0; redoStack.length = 0;
   if (layers.length !== 1 || pctx.getImageData(0, 0, 1, 1).data[3] !== 0) {
@@ -2356,6 +2684,15 @@ window.PAINT = {
   layerModes: function () { return LAYER_MODES.map(function (m) { return m.slice(); }); },
   moveLayer: function (dir) { moveLayerUI(dir); },
   mergeDown: function () { mergeDownUI(); },
+  setSelPath: setSelPath,
+  clearSel: clearSel,
+  copySelArea: copySelArea,
+  pasteFromBuf: pasteFromBuf,
+  moveBegin: moveBegin,
+  moveBy: moveBy,
+  moveEnd: moveEnd,
+  selection: function () { return sel ? { n: sel.n, mask: sel.mask } : null; },
+  clipboard: function () { return clipBuf; },
   exportFlatCanvas: exportFlatCanvas,
   liveCanvas: function () { return liveCv; },
   baseImageData: function () { return baseImageData; },
@@ -2387,7 +2724,7 @@ window.PAINT = {
 </script>
 <!-- #84 (wave 2): шов моста профиля (game-bridge.js; в исходнике kns его нет и не будет —
      PAINT-ELYSIA-AGREEMENT «Редактор на сайте»). Единственная правка относительно
-     байт-в-байт копии KNS Paint v8.1.2; сверка исходника: scripts/check-paint-seam.mjs. -->
+     байт-в-байт копии KNS Paint v8.3; сверка исходника: scripts/check-paint-seam.mjs. -->
 <script src="game-bridge.js"></script>
 </body>
 </html>

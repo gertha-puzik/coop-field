@@ -3,13 +3,14 @@
  * Гейт шва моста «KNS Paint ↔ профиль Элизии» (#84, wave 2).
  *
  * public/paint-demo/index.html — байт-в-байт копия редактора KNS Paint
- * v8.1.2 из репо kns плюс ОДИН шов: подключение game-bridge.js перед
+ * v8.3 из репо kns плюс ОДИН шов: подключение game-bridge.js перед
  * </body> (контракт PAINT-ELYSIA-AGREEMENT «Синхронизация версий»:
  * копия обновляется при релизах KNS, мост меняется на coop-field).
  *
  * Проверяет, что текущий index.html == канонический исходник KNS +
  * ровно этот шов: исходник восстанавливается вырезанием шва, его
- * sha1 сверяется с эталоном (прод kns.phainonsmilk.ru/paint-demo/, PR#87).
+ * sha1 сверяется с эталоном (kns origin/main paint-demo/index.html @ 5a9dcff
+ * == корневой index.html после kns#54; v8.1.2 был зафиксирован в PR #87).
  * Провал = копию отредактировали сверх шва (или изменили сам шов) —
  * обнови эталон ТОЛЬКО при осознанном релизе KNS Paint (новый PR:
  * копия + таблица sha1, как в PR #87).
@@ -25,15 +26,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGE = path.join(ROOT, "public", "paint-demo", "index.html");
 const BRIDGE = path.join(ROOT, "public", "paint-demo", "game-bridge.js");
 
-/** Эталон исходника KNS Paint v8.1.2 (sha1 == прод kns.phainonsmilk.ru/paint-demo/,
- *  зафиксирован в PR #87: 114412 B). Меняется ТОЛЬКО при релизе KNS Paint. */
-const SOURCE_SHA1 = "b326a88bce32f6a4e7eb6c11f4500af277e03c71";
+/** Эталон исходника KNS Paint v8.3 (sha1 == kns 5a9dcff paint-demo/index.html,
+ *  133751 B; прежний v8.1.2 — PR #87). Меняется ТОЛЬКО при релизе KNS Paint. */
+const SOURCE_SHA1 = "82fe9806d3b91792d6172f96a6bf5ae284260131";
 
 /** Шов — ровно эти 4 строки (3 комментария + script), без хвостовых пробелов. */
 const SEAM = [
   '<!-- #84 (wave 2): шов моста профиля (game-bridge.js; в исходнике kns его нет и не будет —',
   '     PAINT-ELYSIA-AGREEMENT «Редактор на сайте»). Единственная правка относительно',
-  '     байт-в-байт копии KNS Paint v8.1.2; сверка исходника: scripts/check-paint-seam.mjs. -->',
+  '     байт-в-байт копии KNS Paint v8.3; сверка исходника: scripts/check-paint-seam.mjs. -->',
   '<script src="game-bridge.js"></script>',
 ].join("\n");
 
