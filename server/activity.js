@@ -37,11 +37,27 @@ function loadStore() {
   try {
     const raw = JSON.parse(fs.readFileSync(FILE, "utf8"));
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { v: 1, byAccount: {} };
-    const byAccount = raw.byAccount && typeof raw.byAccount === "object" ? raw.byAccount : {};
+    const src = raw.byAccount && typeof raw.byAccount === "object" && !Array.isArray(raw.byAccount) ? raw.byAccount : {};
+    const byAccount = {};
+    for (const [id, list] of Object.entries(src)) byAccount[id] = cleanList(list);
     return { v: 1, byAccount };
   } catch {
     return { v: 1, byAccount: {} };
   }
+}
+
+/** Только целые записи: объект, известный тип, конечное время (чужой/порченый журнал). */
+function cleanList(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((it) => it && typeof it === "object" && (TYPES.has(it.type) || it.type === "joined_site") && Number.isFinite(it.at))
+    .map((it) => ({
+      id: String(it.id || ""),
+      type: it.type,
+      at: it.at,
+      data: it.data && typeof it.data === "object" && !Array.isArray(it.data) ? it.data : {},
+    }))
+    .slice(0, MAX_PER_ACCOUNT);
 }
 
 function persist() {
@@ -54,12 +70,27 @@ function persist() {
 }
 
 function listOf(accountId) {
-  const list = store.byAccount[accountId];
-  return Array.isArray(list) ? list : [];
+  return cleanList(store.byAccount[accountId]);
 }
 
-/** Записать событие в ленту аккаунта (единственный писатель). */
+/** Записать событие в ленту аккаунта (единственный писатель). Никогда не
+ *  бросает: лента — украшение, она не должна ронять heartbeat/переход/дружбу. */
 export function pushActivity(accountId, type, data = {}) {
+  try {
+    writeActivity(accountId, type, data);
+  } catch (e) {
+    console.warn("activity push failed:", e?.message || e);
+  }
+}
+
+/** Одинаковые записи подряд схлопываются; друзья и переходы — по своему ключу. */
+function sameKey(a, type, payload) {
+  if (type === "moved") return a.data?.locationId === payload.locationId;
+  if (type === "friend_added") return a.data?.friendId === payload.friendId;
+  return true;
+}
+
+function writeActivity(accountId, type, data) {
   const id = String(accountId || "");
   if (!id || !TYPES.has(type)) return;
   const now = Date.now();
@@ -68,8 +99,7 @@ export function pushActivity(accountId, type, data = {}) {
   const same = list.find((it) => it.type === type);
   if (same) {
     if (type === "entered_game" && now - same.at < ENTER_GAP_MS) return;
-    const sameMove = type !== "moved" || same.data?.locationId === payload.locationId;
-    if (type !== "entered_game" && sameMove && now - same.at < COLLAPSE_MS) {
+    if (type !== "entered_game" && sameKey(same, type, payload) && now - same.at < COLLAPSE_MS) {
       list.splice(list.indexOf(same), 1);
       list.unshift({ ...same, at: now, data: payload });
       store.byAccount[id] = list;

@@ -244,6 +244,40 @@ async function main() {
   }
   check(lim?.n === 20 && lim?.first === 24, "journal keeps the newest 20");
   rmSync(LIM, { recursive: true, force: true });
+
+  /* ---- 7. разные друзья подряд не схлопываются; мусор в журнале не роняет писателя ---- */
+  const BAD = mkdtempSync(path.join(tmpdir(), "coop-activity-bad-"));
+  writeFileSync(
+    path.join(BAD, "activity.json"),
+    JSON.stringify({ v: 1, byAccount: { acc3: [null, { type: "moved" }, 7], acc4: "oops" } }),
+  );
+  const code2 = `
+    const m = await import(${JSON.stringify(path.join(ROOT, "server/activity.js"))});
+    const out = {};
+    m.pushActivity("acc2", "friend_added", { friendId: "b" });
+    m.pushActivity("acc2", "friend_added", { friendId: "c" });
+    out.friends = m.activityOf("acc2").map((it) => it.data.friendId);
+    try { m.pushActivity("acc3", "banner_changed"); m.pushActivity("acc4", "avatar_changed"); out.threw = false; }
+    catch (e) { out.threw = String(e); }
+    out.acc3 = m.activityOf("acc3").map((it) => it.type);
+    out.acc4 = m.activityOf("acc4").map((it) => it.type);
+    console.log(JSON.stringify(out));`;
+  const run2 = spawnSync(process.execPath, ["--input-type=module", "-e", code2], {
+    cwd: ROOT,
+    env: { ...process.env, DATA_DIR: BAD },
+    encoding: "utf8",
+  });
+  let r2 = null;
+  try {
+    r2 = JSON.parse(run2.stdout.trim().split("\n").pop());
+  } catch {
+    console.error(run2.stderr);
+  }
+  check(JSON.stringify(r2?.friends) === JSON.stringify(["c", "b"]), "two new friends within 2 min → two entries");
+  check(r2?.threw === false, "garbage items in activity.json never make pushActivity throw");
+  check(JSON.stringify(r2?.acc3) === JSON.stringify(["banner_changed"]), "garbage items dropped, new event kept");
+  check(JSON.stringify(r2?.acc4) === JSON.stringify(["avatar_changed"]), "non-array account list replaced");
+  rmSync(BAD, { recursive: true, force: true });
 }
 
 main()
