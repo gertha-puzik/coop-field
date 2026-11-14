@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useId, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { httpHomeNews, type HomeNewsItem } from '@/lib/net/http-home-news';
 
@@ -49,6 +50,48 @@ export function WanderNewsHotspot() {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // Модалка через portal на body: hotspot живёт в .wander-home-art (z=0),
+  // а окна миров — в .wander-stage (z=2); без portal диалог оказывается под карточками.
+  const modal =
+    open && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            className="wander-news-scrim"
+            role="presentation"
+            onClick={() => setOpen(false)}
+          >
+            <div
+              className="wander-news-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <header className="wander-news-head">
+                <h2 id={titleId}>Что нового?</h2>
+                <button
+                  type="button"
+                  className="wander-news-close"
+                  aria-label="Закрыть"
+                  onClick={() => setOpen(false)}
+                >
+                  ×
+                </button>
+              </header>
+              <ul className="wander-news-list">
+                {items.map((note) => (
+                  <li key={note.id} className="wander-news-card">
+                    <strong>{note.title}</strong>
+                    <p>{note.body}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <>
       <button
@@ -59,41 +102,7 @@ export function WanderNewsHotspot() {
         aria-expanded={open}
         onClick={() => setOpen(true)}
       />
-      {open ? (
-        <div
-          className="wander-news-scrim"
-          role="presentation"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="wander-news-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            onClick={(ev) => ev.stopPropagation()}
-          >
-            <header className="wander-news-head">
-              <h2 id={titleId}>Что нового?</h2>
-              <button
-                type="button"
-                className="wander-news-close"
-                aria-label="Закрыть"
-                onClick={() => setOpen(false)}
-              >
-                ×
-              </button>
-            </header>
-            <ul className="wander-news-list">
-              {items.map((note) => (
-                <li key={note.id} className="wander-news-card">
-                  <strong>{note.title}</strong>
-                  <p>{note.body}</p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      ) : null}
+      {modal}
     </>
   );
 }
