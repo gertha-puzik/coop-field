@@ -22,6 +22,9 @@ export const STORAGE_KEY = 'catwar-battle-sim-v4';
  */
 export const SPRITE_CATALOG_CACHE_KEY = 'catwar-sprite-catalog-v1';
 
+/** Ключ localStorage «подсказка по клавишам уже закрыта» (key-hint.tsx, #124). */
+export const KEY_HINT_SEEN_KEY = 'coop-field-key-hint-seen-v1';
+
 /** Поле может растягиваться сверх клеточного размера, чтобы занять весь кадр.
  *  Дальше 2× картинка начинает заметно мылить даже с dpr-рендером. */
 export const FIELD_MAX_UPSCALE = 2;

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { showKeyHintAgain } from './simulator/components/key-hint';
 import {
   CONSTANT_CARDS,
   MECHANIC_CARDS,
@@ -99,6 +100,7 @@ export function GertaHandbook() {
           Это справочник Герты: карточки собраны из кода, а не списаны руками. Встроенного
           ИИ-чата нет и не будет — Cursor читает эти же карточки и AGENTS.md.
         </p>
+        <button type="button" onClick={showKeyHintAgain} className="mt-1 text-[11px] text-[var(--sim-accent)] underline">Показать подсказку по клавишам снова</button>
       </div>
       <label className="block text-[11px] text-[var(--sim-text-faint)]">
         Поиск
