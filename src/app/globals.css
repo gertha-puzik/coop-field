@@ -458,13 +458,14 @@ option:disabled,
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
 
-/* Главная: авторский арт целиком (без crop), letterbox цветом скетча. */
+/* Главная: арт 16:9 покрывает viewport, обрезка ровно по центру (cover). */
 .wander-sky-home {
   --wander-home-void: #2a2440;
   background: var(--wander-home-void);
+  overflow: hidden;
 }
 
-/* Мягкий переход letterbox → арт: перо основным цветом фона по бокам. */
+/* Лёгкое перо по краям экрана — без letterbox-полос. */
 .wander-sky-home::before,
 .wander-sky-home::after {
   content: '';
@@ -472,7 +473,7 @@ option:disabled,
   top: 0;
   bottom: 0;
   z-index: 1;
-  width: max(72px, 9vw);
+  width: max(48px, 5vw);
   pointer-events: none;
 }
 
@@ -481,8 +482,7 @@ option:disabled,
   background: linear-gradient(
     90deg,
     var(--wander-home-void) 0%,
-    rgba(42, 36, 64, 0.82) 28%,
-    rgba(42, 36, 64, 0.35) 62%,
+    rgba(42, 36, 64, 0.55) 40%,
     rgba(42, 36, 64, 0) 100%
   );
 }
@@ -492,8 +492,7 @@ option:disabled,
   background: linear-gradient(
     270deg,
     var(--wander-home-void) 0%,
-    rgba(42, 36, 64, 0.82) 28%,
-    rgba(42, 36, 64, 0.35) 62%,
+    rgba(42, 36, 64, 0.55) 40%,
     rgba(42, 36, 64, 0) 100%
   );
 }
@@ -503,9 +502,9 @@ option:disabled,
   z-index: 0;
   left: 50%;
   top: 50%;
-  /* Ровно 16:9 внутри viewport — картинка не обрезается. */
-  width: min(100vw, calc(100dvh * 16 / 9));
-  height: min(100dvh, calc(100vw * 9 / 16));
+  /* Cover: рамка ≥ viewport, пропорция 16:9 — края обрезаются поровну. */
+  width: max(100vw, calc(100dvh * 16 / 9));
+  height: max(100dvh, calc(100vw * 9 / 16));
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -643,6 +642,11 @@ option:disabled,
   min-height: 0;
 }
 
+/* Элизия: одно окно — по центру снизу. */
+.wander-layout-art:has(.wander-window:only-child) {
+  justify-content: center;
+}
+
 .wander-layout-main {
   position: relative;
   z-index: 1;
@@ -650,6 +654,11 @@ option:disabled,
   width: min(640px, 100%);
   flex-direction: column;
   justify-content: flex-end;
+}
+
+.wander-layout-main:has(.wander-window:only-child) {
+  width: min(400px, 100%);
+  margin-inline: auto;
 }
 
 /* Hotspot лицевой плоскости доски (красная обводка на скетче):
@@ -894,6 +903,12 @@ option:disabled,
     grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: end;
   }
+
+  /* Одно окно (Элизия) не сжимать в треть сетки. */
+  .wander-stage-home .wander-worlds:has(> :only-child) {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
 }
 
 .wander-stage:not(.wander-stage-home) .wander-worlds {
@@ -934,7 +949,8 @@ option:disabled,
 }
 
 .wander-stage-home .wander-window:only-child {
-  max-width: 280px;
+  width: 100%;
+  max-width: 380px;
 }
 
 .wander-window:hover {

@@ -275,7 +275,7 @@ function NightSky({
   return (
     <div className={home ? 'wander-sky wander-sky-home' : 'wander-sky'}>
       {home ? (
-        // Рамка 16:9 без обрезки (contain): арт целиком + hotspot в тех же %.
+        // Рамка 16:9 cover: ровная обрезка по центру + hotspot в тех же %.
         <div className="wander-home-art">
           <img className="wander-home-bg" src="/menu/home-bg.jpg" alt="" />
           {boardHotspot}
