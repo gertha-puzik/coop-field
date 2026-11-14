@@ -200,6 +200,7 @@ npm run check:landmarks      # doc sizes == wc -l
 npm run test:auth            # accounts, cookies/CSRF, host gate
 npm run test:cfg             # config registry (80 checks: 6 keys, §4 playerSelectable + list mutations + S1 escalation cycle)
 npm run test:room-config     # F2 per-room layer (layers, atmoset gate, persistence/restore, 69 checks)
+npm run test:weather-rotation # weather rolls off rain on its own interval (sandbox, 8 s interval via loader hook, ~20 s)
 npm run test:cross-origin    # per-destination Origin/CSRF/CORS matrix (B1)
 npm run test:profiles        # HTTP profiles (catalog/patch)
 npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www-elyria/ (after npm run build:variants)

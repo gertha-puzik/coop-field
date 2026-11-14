@@ -1,12 +1,54 @@
 // Погода комнаты доезжает до конца: после дождя сервер возвращает солнце/облачно
 // и рассылает якорь всем — «наложение погоды» обязано исчезать, а не висеть вечно.
-// Сервер для теста — копия с коротким интервалом погоды (8 с вместо минут):
-//   PORT=3784 WS_PORT=3784 DATA_DIR=$(mktemp -d) node /tmp/weather-server.js
-//   WS_URL=ws://127.0.0.1:3784 node scripts/test-weather-rotation.mjs
+// Без WS_URL тест сам поднимает песочницу (mkdtemp DATA_DIR, свободный порт) с
+// коротким интервалом погоды: node --import scripts/lib/short-weather.mjs server.js
+// (WEATHER_TEST_MS=8000 вместо боевых минут; прод-код не меняется).
+// С WS_URL — ходит в уже запущенный сервер, как раньше.
+//   npm run test:weather-rotation
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { WebSocket } from "ws";
 
-const url = process.env.WS_URL || "ws://127.0.0.1:3784";
-const room = "test";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let sandbox = null;
+let sandboxLogs = "";
+async function startSandbox() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coop-weather-"));
+  const port = await new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => resolve(p));
+    });
+  });
+  sandbox = spawn(process.execPath, ["--import", "./scripts/lib/short-weather.mjs", "server.js"], {
+    env: { ...process.env, DATA_DIR: dir, PORT: String(port), HOST: "127.0.0.1", WEATHER_TEST_MS: "8000" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  sandbox.stdout.on("data", (x) => (sandboxLogs += x));
+  sandbox.stderr.on("data", (x) => (sandboxLogs += x));
+  for (let i = 0; i < 100; i++) {
+    try {
+      if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return `ws://127.0.0.1:${port}`;
+    } catch {}
+    await sleep(50);
+  }
+  sandbox.kill();
+  throw new Error(`песочница не поднялась:\n${sandboxLogs}`);
+}
+function stopSandbox() {
+  if (sandbox) sandbox.kill();
+}
+// Тест упал исключением (таймаут ожидания) — песочница не должна пережить процесс.
+process.on("exit", stopSandbox);
+
+const url = process.env.WS_URL || (await startSandbox());
+const origin = url.replace(/^ws/, "http");
+// Открытая комната (Элизия «test» теперь только для аккаунтов); погода у всех комнат общая механика.
+const room = process.env.WEATHER_ROOM || "demo";
 const rnd = Date.now().toString(36);
 let fails = 0;
 const ok = (cond, label) => {
@@ -16,7 +58,7 @@ const ok = (cond, label) => {
 
 function client(name) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { headers: { Origin: origin } });
     ws.inbox = [];
     ws.on("message", (raw) => ws.inbox.push(JSON.parse(String(raw))));
     ws.on("error", reject);
@@ -87,4 +129,6 @@ ok(!!rotated2, "погода продолжает сменяться по инт
 ok(lastAtmo(b) && lastAtmo(b)[1].w === (rotated2 || rotated).w, "сосед синхронно получил смену");
 
 console.log(fails === 0 ? "\nВСЕ ПРОВЕРКИ ПРОЙДЕНЫ" : `\nПРОВАЛОВ: ${fails}`);
+if (fails && sandbox) console.log(`--- лог песочницы ---\n${sandboxLogs}`);
+stopSandbox();
 process.exit(fails === 0 ? 0 : 1);
