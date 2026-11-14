@@ -1,6 +1,6 @@
 'use client';
 import { receiveEditorMap } from './simulator/map-receive';
-import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel } from './world-locations';
+import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
 import { drawRectTerrain } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
@@ -2751,6 +2751,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       const H = s.field.rows * s.field.cellH;
       const testMode = fieldFormatRef.current === 'test';
       const { on: editorOn, draft: ed } = editorState();
+      // Первый вход в Элизию: пока field ещё grid — не красим пивную сетку
+      // (жёлтый прямоугольник) под крышкой LocationLoadingCover.
+      if(mode==='elision'&&!testMode){
+        if(!legacyCleared){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cv.width,cv.height);legacyCleared=true;}
+        return;
+      }
       // The opaque WebGL scene owns the world. Keep only the input canvas,
       // not a second full map painter beneath it. While assets decode, show
       // the empty background instead of flashing the old zone-based island.
@@ -4745,6 +4751,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         closeEditor={closeEditor}
         openEditor={openEditor}
         testField={testField}
+        hideSp={mode === 'elision'}
         patchCharacter={patchCharacter}
         toggleBattleMode={toggleBattleMode}
         patchArrow={patchArrow}
@@ -4826,7 +4833,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           showElisionView={mode === 'elision'}
           hudRef={hudRef}
           battleHint={battleHint}
-          mapLoading={mapLoading}
+          mapLoading={mode === 'elision' && !testField ? false : mapLoading}
           touchControls={editorOpen ? null : (
             <TouchControls
               engineRef={engineRef}
@@ -4944,6 +4951,17 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       <footer className="relative z-10 shrink-0 pb-1 text-center">
         <p className="text-[10px] leading-tight text-[var(--sim-text-faint)]">{GAME_CREDITS}</p>
       </footer>
+
+      {/* Элизия: пока карта ещё не пришла (fieldFormat=grid) — тот же пейзаж,
+          что при переходе между локациями, вместо жёлтой клеточной сетки. */}
+      {mode === 'elision' && !testField ? (
+        <LocationLoadingCover
+          title={`Входим в «${roomCode ? roomTitle(roomCode) : 'локацию'}»…`}
+          progress={netReady ? 60 : 15}
+          detail={netReady ? 'Подготавливаем карту и изображения…' : 'Получаем данные локации…'}
+          label="Загрузка локации"
+        />
+      ) : null}
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
       {settingsOpen ? <SettingsPanelOverlay

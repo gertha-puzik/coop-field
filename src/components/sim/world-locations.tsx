@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Dropdown } from '@/components/ui';
 import type { createCoopClient } from '@/lib/net/coop';
@@ -12,6 +12,65 @@ import styles from './world-locations.module.css';
 import editorStyles from './simulator/components/editor-workspace.module.css';
 import { LocationCreatePanel } from './location-create-panel';
 const LOAD_MIN_MS=10000;
+const LOAD_TIP = 'Исследуй мир. В каждом его уголке есть свои секреты.';
+
+/** Панель загрузки локации — тот же пейзаж, что при переходе между локациями. */
+export function LocationLoadingPanel(props: {
+  title: string;
+  subtitle?: string;
+  progress: number;
+  detail: string;
+  tip?: string;
+  countdown?: ReactNode;
+  actions?: ReactNode;
+}) {
+  const { title, subtitle, progress, detail, tip = LOAD_TIP, countdown, actions } = props;
+  return (
+    <div className={styles.loading}>
+      <div className={styles.landscape} aria-hidden />
+      <div className={styles.loadingContent}>
+        <img src="/lapka.svg" width="36" height="36" alt="" />
+        <h1>Wanderpaws</h1>
+        <span className={styles.compass} aria-hidden>✧</span>
+        <h2>{title}</h2>
+        {subtitle ? <p>{subtitle}</p> : null}
+        <progress max="100" value={Math.max(0, Math.min(100, progress))} aria-label="Готовность локации" />
+        <p>{detail}</p>
+        {actions}
+        {countdown}
+        <i>{tip}</i>
+      </div>
+    </div>
+  );
+}
+
+/** Полноэкранная крышка первого входа / ожидания карты (портал на body). */
+export function LocationLoadingCover(props: {
+  title: string;
+  subtitle?: string;
+  progress: number;
+  detail: string;
+  label?: string;
+}) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      className={styles.lock}
+      data-phase="loading"
+      role="status"
+      aria-live="polite"
+      aria-label={props.label ?? props.title}
+    >
+      <LocationLoadingPanel
+        title={props.title}
+        subtitle={props.subtitle}
+        progress={props.progress}
+        detail={props.detail}
+      />
+    </div>,
+    document.body,
+  );
+}
 
 type Phase = 'idle' | 'walk' | 'fade' | 'loading' | 'arrive';
 type Options = {
@@ -265,19 +324,34 @@ export function WorldLocationOverlay({ world, editorOpen }: {
     </div>}
     {!busy && view.error && <div className={styles.notice} role="alert">{view.error}</div>}
     {busy && createPortal(<div className={styles.lock} data-phase={view.phase} role="status" aria-live="polite" aria-label={view.phase === 'walk' ? 'Идём в проход' : 'Переход между локациями'}>
-      {(view.phase === 'loading') && <div className={styles.loading}>
-        <div className={styles.landscape} aria-hidden/>
-        <div className={styles.loadingContent}>
-          <img src="/lapka.svg" width="36" height="36" alt=""/><h1>Wanderpaws</h1><span className={styles.compass} aria-hidden>✧</span>
-          <h2>Переход в «{destination?.name ?? `Локация ${view.target}`}»…</h2><p>{destination?.zoneName ?? ''}</p>
-          <progress max="100" value={view.ready ? 100 : view.mapReceived ? 60 : 10} aria-label="Готовность локации"/>
-          <p>{view.ready ? 'Локация готова' : view.error || (view.mapReceived ? 'Подготавливаем карту и изображения…' : 'Получаем данные локации…')}</p>
-          {view.ready && <button type="button" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', bubbles: true }))}><kbd>E</kbd> Продолжить сейчас</button>}
-          {!view.editor && <span className={styles.countdown}>Переход автоматически через {Math.max(0, Math.ceil((LOAD_MIN_MS - view.elapsed) / 1000))} с — когда карта будет готова</span>}
-          {view.elapsed > 30000 && !view.ready && <button type="button" onClick={() => window.location.reload()}>Перезагрузить локацию</button>}
-          <i>Исследуй мир. В каждом его уголке есть свои секреты.</i>
-        </div>
-      </div>}
+      {view.phase === 'loading' && (
+        <LocationLoadingPanel
+          title={`Переход в «${destination?.name ?? `Локация ${view.target}`}»…`}
+          subtitle={destination?.zoneName ?? ''}
+          progress={view.ready ? 100 : view.mapReceived ? 60 : 10}
+          detail={view.ready ? 'Локация готова' : view.error || (view.mapReceived ? 'Подготавливаем карту и изображения…' : 'Получаем данные локации…')}
+          countdown={!view.editor ? (
+            <span className={styles.countdown}>
+              Переход автоматически через {Math.max(0, Math.ceil((LOAD_MIN_MS - view.elapsed) / 1000))} с — когда карта будет готова
+            </span>
+          ) : null}
+          actions={
+            <>
+              {view.ready ? (
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', bubbles: true }))}
+                >
+                  <kbd>E</kbd> Продолжить сейчас
+                </button>
+              ) : null}
+              {view.elapsed > 30000 && !view.ready ? (
+                <button type="button" onClick={() => window.location.reload()}>Перезагрузить локацию</button>
+              ) : null}
+            </>
+          }
+        />
+      )}
     </div>,document.body)}
   </>;
 }
