@@ -67,6 +67,7 @@ import { handleBannersHttp } from "./banners.js";
 import { handlePresenceHttp, bindPresenceRooms, bindPlaceResolver, touchActivity, onAfkChange } from "./presence.js";
 import { defaultPlace, knownLocation, locationCatalogue } from "./location-world.js";
 import { handleFriendsHttp } from "./friends.js";
+import { handleActivityHttp } from "./activity.js";
 import { handleNotificationsHttp } from "./notifications.js";
 import { handleAnnouncementsHttp } from "./announcements.js";
 import { handleProfilesHttp } from "./profiles.js";
@@ -279,6 +280,8 @@ export function startServer() {
         p.startsWith("/presence/") ||
         p === "/friends" ||
         p.startsWith("/friends/") ||
+        p === "/activity" ||
+        p.startsWith("/activity/") ||
         p === "/notifications" ||
         p.startsWith("/notifications/") ||
         // /cfg-обходы тех же зон (клиент ходит сюда на проде): на public
@@ -289,6 +292,8 @@ export function startServer() {
         p.startsWith("/cfg/presence/") ||
         p === "/cfg/friends" ||
         p.startsWith("/cfg/friends/") ||
+        p === "/cfg/activity" ||
+        p.startsWith("/cfg/activity/") ||
         p === "/cfg/notifications" ||
         p.startsWith("/cfg/notifications/") ||
         p === "/cfg/announcements" ||
@@ -429,6 +434,8 @@ export function startServer() {
         if (presHit) return;
       return Promise.resolve(handleFriendsHttp(req, res)).then((frHit) => {
         if (frHit) return;
+      return Promise.resolve(handleActivityHttp(req, res)).then((acHit) => {
+        if (acHit) return;
       return Promise.resolve(handleNotificationsHttp(req, res)).then((ntHit) => {
         if (ntHit) return;
       return Promise.resolve(handleAnnouncementsHttp(req, res)).then((anHit) => {
@@ -461,6 +468,7 @@ export function startServer() {
             });
           });
         });
+      });
       });
       });
       });
