@@ -73,6 +73,8 @@ import {
 import { catSeenAt } from "./persist.js";
 import { spriteIdAllowed } from "./sprites.js";
 import { deleteOwnAccount } from "./account-delete.js";
+import { presenceSlice } from "./presence.js";
+import { friendsPreview } from "./friends.js";
 
 const NAME_MIN = 1;
 const NAME_MAX = 24;
@@ -173,7 +175,7 @@ function publicBirthday(full) {
  *  и пустоту не подменяем выдуманной комнатой. Источники только читаются:
  *  сессии (auth.js) и книга позиций (persist.js). Книга ключуется ИМЕНЕМ
  *  персонажа — одноимённые коты неразличимы, это честно отражает источник. */
-function card(acc, sessionSeen) {
+function card(acc, sessionSeen, viewerId = "", { withFriends = false } = {}) {
   const chars = Array.isArray(acc.characters) ? acc.characters : [];
   let catTs = 0;
   for (const ch of chars) {
@@ -183,11 +185,18 @@ function card(acc, sessionSeen) {
   }
   const seen = Math.max(catTs, sessionSeen.get(String(acc.id || "")) || 0);
   const pub = publicProfile(acc);
+  const slice = presenceSlice(acc);
+  const fr = friendsPreview(acc.id, viewerId);
   return {
     accountId: String(acc.id || ""),
     ...pub,
     birthday: publicBirthday(pub && pub.birthday),
     lastSeenAt: seen,
+    presence: slice.presence,
+    locationLabel: slice.locationLabel,
+    friendCount: fr.friendCount,
+    friendRelation: fr.relation,
+    ...(withFriends ? { friends: fr.friends } : {}),
   };
 }
 
@@ -513,8 +522,11 @@ export async function handleProfilesHttp(req, res) {
         json(res, 401, { ok: false, reason: "auth_required" });
         return true;
       }
-      // СП — только владельцу своей записи (см. spView и шапку модуля).
-      json(res, 200, { ok: true, ...publicProfile(session.account), sp: spView(session.account) });
+      // СП — только владельцу; presence/friends — тот же карточный срез.
+      const meCard = card(session.account, lastSeenByAccount(), session.account.id, {
+        withFriends: true,
+      });
+      json(res, 200, { ok: true, ...meCard, sp: spView(session.account) });
       return true;
     }
     if (req.method === "PATCH") {
@@ -667,13 +679,17 @@ export async function handleProfilesHttp(req, res) {
     // P5: карта «последний вход» считается один раз на запрос (read-only
     // сессии) и раздаётся карточкам.
     const seenMap = lastSeenByAccount();
+    const viewerId = String(sessionFromRequest(req)?.account?.id || "");
     let rows = [];
     try {
       rows = Object.values(loadStore().accounts || {});
     } catch {
       rows = [];
     }
-    let items = rows.filter(hasPublicProfile).map((acc) => card(acc, seenMap)).sort(bySeniority);
+    let items = rows
+      .filter(hasPublicProfile)
+      .map((acc) => card(acc, seenMap, viewerId))
+      .sort(bySeniority);
     if (q) {
       // Подстрока по нормализованным displayName: разница регистра,
       // декомпозиции и пробелов не влияет на результат (NFC+trim+lower —
@@ -700,7 +716,11 @@ export async function handleProfilesHttp(req, res) {
       }
       const acc = findById(rest);
       if (acc && hasPublicProfile(acc)) {
-        json(res, 200, { ok: true, ...card(acc, lastSeenByAccount()) });
+        const viewerId = String(sessionFromRequest(req)?.account?.id || "");
+        json(res, 200, {
+          ok: true,
+          ...card(acc, lastSeenByAccount(), viewerId, { withFriends: true }),
+        });
         return true;
       }
       // Не найден ИЛИ без публичного профиля: единый ответ без раскрытия

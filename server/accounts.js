@@ -281,6 +281,8 @@ export function accountsStore() {
  * строка-URL «/avatars/file/<accountId>.<png|jpg>?v=<avatarAt>» либо null
  * (строго из пары profile.avatarExt ∈ {png,jpg} и avatarAt > 0 — мусор в
  * полях не изворачивается в ссылку, файловый маршрут — server/avatars.js).
+ * banner — «/banners/file/<id>.<png|jpg|gif>?v=<bannerAt>» либо null.
+ * playtimeMs — накопленное время на игровом поле (мс, с момента учёта).
  */
 function publicProfile(acc) {
   if (!acc) return null;
@@ -290,12 +292,15 @@ function publicProfile(acc) {
     typeof wanted === "string" && chars.some((c) => c && c.id === wanted) ? wanted : null;
   const statusId =
     typeof acc.profile?.statusId === "string" && acc.profile.statusId ? acc.profile.statusId : "tester";
+  const playtimeMs = Math.max(0, Math.floor(Number(acc.profile?.playtimeMs) || 0));
   return {
     displayName: acc.profile?.displayName || acc.login,
     bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
     birthday: birthdayOf(acc),
     avatarCharacterId: avatar,
     avatar: avatarUrlOf(acc),
+    banner: bannerUrlOf(acc),
+    playtimeMs,
     statusId,
     statusLabel: statusLabelLazy(statusId),
     characters: chars.map((c) => ({
@@ -328,6 +333,16 @@ function avatarUrlOf(acc) {
   if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return null;
   if (ext !== "png" && ext !== "jpg") return null;
   return `/avatars/file/${acc.id}.${ext}?v=${at}`;
+}
+
+/** URL баннера: bannerExt ∈ {png,jpg,gif} и bannerAt > 0; иначе null. */
+function bannerUrlOf(acc) {
+  const p = acc?.profile;
+  const ext = p?.bannerExt;
+  const at = p?.bannerAt;
+  if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return null;
+  if (ext !== "png" && ext !== "jpg" && ext !== "gif") return null;
+  return `/banners/file/${acc.id}.${ext}?v=${at}`;
 }
 
 function activeCharacter(acc) {
@@ -530,6 +545,7 @@ export {
   publicAccount,
   publicProfile,
   avatarUrlOf,
+  bannerUrlOf,
   activeCharacter,
   createAccount,
   promoteToAdmin,

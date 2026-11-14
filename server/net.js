@@ -21,7 +21,7 @@ import {
   REQUIRE_ORIGIN, originAllowedHere, csrfDecision, siteClassOfRequest, WS_MAX_PER_IP,
   assertStartupSecurity,
 } from "./config.js";
-import { rooms, leave, join, setSprite, block, space, roomsInfo } from "./room.js";
+import { rooms, leave, join, setSprite, block, space, roomsInfo, publicCat, send } from "./room.js";
 import { move, freeMove, cellsync, jump } from "./movement.js";
 import { aim, strike, armor } from "./combat.js";
 import { chat } from "./sanitize.js";
@@ -63,8 +63,37 @@ import { handleMineSpritesHttp } from "./my-sprites.js";
 // (префикс, как /sprites/file: не спрятан и в apiZone не числится —
 // безопасный метод без сессии, читается обоим сайтам).
 import { handleAvatarsHttp } from "./avatars.js";
+import { handleBannersHttp } from "./banners.js";
+import { handlePresenceHttp, bindPresenceRooms, bindPlaceResolver, touchActivity, onAfkChange } from "./presence.js";
+import { defaultPlace, knownLocation, locationCatalogue } from "./location-world.js";
+import { handleFriendsHttp } from "./friends.js";
+import { handleNotificationsHttp } from "./notifications.js";
+import { handleAnnouncementsHttp } from "./announcements.js";
 import { handleProfilesHttp } from "./profiles.js";
 import { handleTexturesHttp } from "./textures.js";
+
+bindPresenceRooms(() => rooms);
+bindPlaceResolver((id) => {
+  const n = Number(id) || 1;
+  if (!knownLocation(n)) return defaultPlace(n);
+  try {
+    const hit = locationCatalogue().find((p) => Number(p.id) === n);
+    if (hit) return { name: String(hit.name || ""), zoneName: String(hit.zoneName || "") };
+  } catch { /* fallback */ }
+  return defaultPlace(n);
+});
+onAfkChange((accountId, afk) => {
+  const id = String(accountId || "");
+  if (!id) return;
+  for (const room of rooms.values()) {
+    for (const [ws, cat] of room.sockets.entries()) {
+      if (!cat || !ws?.account || String(ws.account.id) !== id) continue;
+      cat.afk = !!afk;
+      const payload = publicCat(cat, room);
+      for (const peer of room.sockets.keys()) send(peer, EV.UPDATE_CAT, payload);
+    }
+  }
+});
 
 function onMessage(ws,raw){
   try{return withTestLocation(locationFromRoom(ws.room?.code??""),()=>dispatchMessage(ws,raw));}
@@ -89,6 +118,8 @@ function dispatchMessage(ws, raw) {
   if (bytes > FRAME_LIMIT && event !== EV.SETMAP) return;
   // Общий потолок block/space/atmo/atmoset/dummy/rab: молча, без нового события.
   if (isFrameLimited(event) && !allowBroadcastFrame(ws)) return;
+  // Любой игровой кадр от сессии снимает AFK / обновляет активность.
+  if (ws?.account?.id) touchActivity(ws.account.id);
   const payload = Array.isArray(msg) ? msg[1] : msg;
   if (event === EV.JOIN){if(payload?.passageId)travel(ws,payload);else join(ws,payload||{});}
   else if (event === EV.MOVE) move(ws, payload || {});
@@ -242,6 +273,14 @@ export function startServer() {
         // ниже НЕ прячем — он публичен обоим классам, как /sprites/file).
         p === "/avatars/mine" ||
         p.startsWith("/avatars/mine/") ||
+        p === "/banners/mine" ||
+        p.startsWith("/banners/mine/") ||
+        p === "/presence" ||
+        p.startsWith("/presence/") ||
+        p === "/friends" ||
+        p.startsWith("/friends/") ||
+        p === "/notifications" ||
+        p.startsWith("/notifications/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
@@ -302,7 +341,12 @@ export function startServer() {
       // Аватарки: POST/DELETE /avatars/mine несут cookie-сессию — тот же
       // unsafe-cookie Origin-щит и CORS-надзор (GET /avatars/file —
       // безопасный метод, в зоне не нуждается, как /sprites/file).
-      p === "/avatars/mine" || p.startsWith("/avatars/mine/");
+      p === "/avatars/mine" || p.startsWith("/avatars/mine/") ||
+      p === "/banners/mine" || p.startsWith("/banners/mine/") ||
+      p === "/presence" || p.startsWith("/presence/") ||
+      p === "/friends" || p.startsWith("/friends/") ||
+      p === "/notifications" || p.startsWith("/notifications/") ||
+      p === "/admin/announcements" || p.startsWith("/admin/announcements/");
     if (apiZone) {
       if (originHeader) res.setHeader("Vary", "Origin");
       if (originAllowed) {
@@ -383,13 +427,26 @@ export function startServer() {
               // уходит в файловый 404 (тот же порядок, что у /sprites/*).
               return Promise.resolve(handleAvatarsHttp(req, res)).then((avatarsHit) => {
                 if (avatarsHit) return;
-                // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites/*
-                // разбираются ПОСЛЕДНИМИ до статики — статические /sprites/<id>.png
-                // в handler не попадают (маршруты длиннее и точнее), файловые 404
-                // отдаёт сам домен.
-                return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
-                  if (spritesHit) return;
-                  serveStatic(req, res, url);
+                return Promise.resolve(handleBannersHttp(req, res)).then((bannersHit) => {
+                  if (bannersHit) return;
+                  return Promise.resolve(handlePresenceHttp(req, res)).then((presHit) => {
+                    if (presHit) return;
+                    return Promise.resolve(handleFriendsHttp(req, res)).then((frHit) => {
+                      if (frHit) return;
+                      return Promise.resolve(handleNotificationsHttp(req, res)).then((ntHit) => {
+                        if (ntHit) return;
+                        return Promise.resolve(handleAnnouncementsHttp(req, res)).then((anHit) => {
+                          if (anHit) return;
+                          // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
+                          // — последними до статики.
+                          return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+                            if (spritesHit) return;
+                            serveStatic(req, res, url);
+                          });
+                        });
+                      });
+                    });
+                  });
                 });
               });
             });

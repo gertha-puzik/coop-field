@@ -21,6 +21,7 @@ import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 import { initialRoomAtmo } from "./room-config.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { statusLabelOf, defaultStatusId } from "./statuses.js";
+import { isAfk } from "./presence.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
 import { locationFromRoom, locationRoom, knownLocation, placeOf, locationCatalogue } from "./location-world.js";
@@ -205,6 +206,11 @@ function publicCat(cat, room) {
   }
   if (typeof cat.statusLabel === "string" && cat.statusLabel) {
     base.status = cat.statusLabel;
+  }
+  // AFK: бездействие >10 мин при живой вкладке — клиент рисует над именем.
+  const accountId = typeof cat.accountId === "string" ? cat.accountId : "";
+  if ((accountId && isAfk(accountId)) || !!cat.afk) {
+    base.afk = true;
   }
   // Комната «тест»: режим свободной ходьбы и позиция в клеточных долях —
   // новичкам и после переподключения (иначе свободный кот замрёт на клетке).
@@ -398,6 +404,7 @@ function joinInWorld(ws, payload = {},options={}) {
   const sizeRaw = Number(payload.size ?? fromAccount?.size);
   const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
   const accountLogin = ws.account ? String(ws.account.login || "") : "";
+  const accountId = ws.account ? String(ws.account.id || "") : "";
   const statusId =
     typeof ws.account?.profile?.statusId === "string" && ws.account.profile.statusId
       ? ws.account.profile.statusId
@@ -407,6 +414,8 @@ function joinInWorld(ws, payload = {},options={}) {
     locationId: locationFromRoom(room.code)||undefined,
     login,
     accountLogin,
+    accountId,
+    afk: accountId ? isAfk(accountId) : false,
     statusLabel: ws.account ? statusLabelOf(statusId) : "",
     color: PALETTE[slot % PALETTE.length],
     sprite: savedSprite || pickSprite(payload, slot),

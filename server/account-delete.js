@@ -46,6 +46,27 @@ function removeOwnAvatarFiles(accountId) {
   return { ok: true };
 }
 
+/** Удаляет файлы баннера профиля этого id. */
+function removeOwnBannerFiles(accountId) {
+  if (!AVATAR_ID.test(accountId)) {
+    return { error: "bad_id" };
+  }
+  const dir = path.join(DATA_DIR, "banners");
+  for (const ext of ["png", "jpg", "gif"]) {
+    const file = path.join(dir, `${accountId}.${ext}`);
+    if (path.dirname(file) !== dir) return { error: "bad_id" };
+    try {
+      fs.unlinkSync(file);
+    } catch (e) {
+      if (e?.code !== "ENOENT") {
+        console.warn("banner delete failed:", e?.message || e);
+        return { error: "io" };
+      }
+    }
+  }
+  return { ok: true };
+}
+
 /** Снимает личные окрасы владельца. Builtin и чужие ownerAccountId не входят. */
 async function removeOwnSprites(accountId) {
   return mutateSprites((ops) => {
@@ -77,6 +98,8 @@ export async function deleteOwnAccount(acc, password) {
   if (sprites.error) return { error: "io" };
   const avatars = removeOwnAvatarFiles(acc.id);
   if (avatars.error) return { error: avatars.error === "bad_id" ? "bad_id" : "io" };
+  const banners = removeOwnBannerFiles(acc.id);
+  if (banners.error) return { error: banners.error === "bad_id" ? "bad_id" : "io" };
 
   const removed = new Set(sprites.ids || []);
   if (Array.isArray(acc.characters)) {
@@ -93,6 +116,9 @@ export async function deleteOwnAccount(acc, password) {
     avatarCharacterId: null,
     avatarExt: null,
     avatarAt: 0,
+    bannerExt: null,
+    bannerAt: 0,
+    playtimeMs: 0,
     deletedAt: Date.now(),
   };
   flushAccounts(true);
