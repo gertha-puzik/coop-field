@@ -4,9 +4,8 @@
 // свой server.js на случайном порту с временным DATA_DIR. Внешний сервер:
 // WS_URL=ws://… node scripts/test-spawn-cells.mjs.
 // Каждая setmap-правка уходит со своего НОВОГО сокета: сервер троттлит любые
-// setmap-кадры раз в 10 с НА СОКЕТ. Пароль редактора по умолчанию — 1946
-// (совпадает с серверным legacy-дефолтом); переопределение — env MAP_PASS
-// (спавненному серверу передаётся ADMIN_PASS с тем же значением).
+// setmap-кадры раз в 10 с НА СОКЕТ. Пароля редактора нет: setmap сохраняет
+// только admin-роль.
 import { WebSocket } from "ws";
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -14,14 +13,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sendJoin } from "./ws-auth.mjs";
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || "1946";
-
 // Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
 // все setmap-загрузчики теста логинятся админом. Аккаунт создаётся в DATA_DIR
 // ДО старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
 const ADMIN_LOGIN = "mapboss";
-const ADMIN_PASS = "password1";
+const ADMIN_ACCOUNT_PASS = "password1";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 4013 + Math.floor(Math.random() * 40);
@@ -38,7 +34,7 @@ const rnd = Date.now().toString(36);
 // стартом — аккаунт-админ для setmap-загрузок теста.
 const DATA = mkdtempSync(path.join(tmpdir(), "coop-spawn-cells-"));
 if (!process.env.WS_URL) {
-  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_ACCOUNT_PASS], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: "utf8",
   });
@@ -52,7 +48,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: "127.0.0.1",
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -138,7 +133,7 @@ const map = {
 const admin = await client(ADMIN_LOGIN);
 await waitFor(admin, "field");
 admin.inbox.length = 0; // регистрация админа уходит в fallback-логин (имя занято) — её info «имя занято» не должна попадать в err-скан ниже
-admin.send(JSON.stringify(["setmap", { pass: PASS, map }])); // первый setmap-кадр сокета — троттлинг не мешает
+admin.send(JSON.stringify(["setmap", { map }])); // первый setmap-кадр сокета — троттлинг не мешает
 await new Promise((r) => setTimeout(r, 300));
 const mapEcho = admin.inbox.find((m) => m[0] === "map");
 // ack «Редактор: сохранено.» уходит автору ДО broadcast-кадра map — не считаем его ошибкой
@@ -176,7 +171,7 @@ console.log("all spawn cells from the list, no doubles");
 // негатив здесь про санитайзер карты, а не про админ-гейт.
 const bad1 = await client(ADMIN_LOGIN);
 await waitFor(bad1, "field");
-bad1.send(JSON.stringify(["setmap", { pass: PASS, map: { ...map, spawns: [{ c: 7, r: 1 }] } }]));
+bad1.send(JSON.stringify(["setmap", { map: { ...map, spawns: [{ c: 7, r: 1 }] } }]));
 await new Promise((r) => setTimeout(r, 300));
 const info = bad1.inbox.filter((m) => m[0] === "info").pop();
 console.log("battle-cell spawn rejected:", !!(info && String(info[1]).includes("спавна ставится на траве")));
@@ -186,7 +181,7 @@ bad1.close();
 // подготовленный админ: проверяем санитайзер, а не гейт.
 const bad2 = await client(ADMIN_LOGIN);
 await waitFor(bad2, "field");
-bad2.send(JSON.stringify(["setmap", { pass: PASS, map: { ...map, spawns: [{ c: 11, r: 7 }] } }]));
+bad2.send(JSON.stringify(["setmap", { map: { ...map, spawns: [{ c: 11, r: 7 }] } }]));
 await new Promise((r) => setTimeout(r, 300));
 const info2 = bad2.inbox.filter((m) => m[0] === "info").pop();
 console.log("off-grass spawn rejected:", !!(info2 && String(info2[1]).includes("спавна ставится на траве")));

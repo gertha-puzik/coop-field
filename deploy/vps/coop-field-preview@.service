@@ -2,7 +2,7 @@
 # Не ставить вместо coop-field.service (это прод).
 # Пользователь deploy-preview — не deploy прода.
 # EnvironmentFile: /opt/coop-field-preview/%i/env
-# (PORT, DATA_DIR, ADMIN_PASS случайный). Прод-секреты сюда не копируются.
+# (PORT, DATA_DIR, хосты/Origin превью). Прод-секреты сюда не копируются.
 
 [Unit]
 Description=coop-field preview (%i)

@@ -339,15 +339,11 @@ function queryToken(req) {
 }
 
 function tokenFromRequest(req) {
-  // Матрица токенов P1. Класс local — прежнее поведение (?t= работает, токен
-  // в телах и whoami — на нём стоят тесты). Класс elyria уходит от токенов в
-  // URL: принимает только cookie; AUTH_LEGACY_TOKEN=1 возвращает приём ?t=
-  // на переходный период. Класс public ?t= пока принимает (гейт net.js всё
-  // равно закрывает его HTTP-зоны; старые клиенты снимают ?t= в соседней фазе).
-  if (siteClassOfRequest(req) === "elyria" && process.env.AUTH_LEGACY_TOKEN !== "1") {
-    return cookieToken(req);
-  }
-  return queryToken(req) || cookieToken(req);
+  // Матрица токенов (P1 + A7). Класс local — прежнее поведение (?t= работает,
+  // токен в телах и whoami — на нём стоят тесты и dev). Классы public и elyria
+  // принимают только cookie: токен в URL утекает в логи, историю и Referer.
+  if (siteClassOfRequest(req) === "local") return queryToken(req) || cookieToken(req);
+  return cookieToken(req);
 }
 
 /** Сессия запроса (cookie/заголовки) — HTTP-потребителям профилей и др. */
@@ -404,13 +400,10 @@ function cookieHeader(token, secure) {
   // B1: host-only cookie — атрибута Domain намеренно НЕТ: кука привязана к
   // точному хосту и не расползается на соседние поддомены зоны.
   const parts = [`${COOKIE}=${token}`, "HttpOnly", "Path=/", `Max-Age=${maxAge}`];
-  // P1: https-кука — Secure + SameSite=Lax (браузерный ход Элизии был
-  // same-origin, None туда не нужен). COOKIE_LOOSE=1 возвращает легаси None
-  // для переходного периода старых кросс-доменных клиентов.
-  if (secure) {
-    const samesite = process.env.COOKIE_LOOSE === "1" ? "SameSite=None" : "SameSite=Lax";
-    parts.push("Secure", samesite);
-  } else parts.push("SameSite=Lax");
+  // P1/A7: всегда SameSite=Lax (браузерный ход Элизии same-origin, None не
+  // нужен); на https — плюс Secure.
+  if (secure) parts.push("Secure");
+  parts.push("SameSite=Lax");
   return parts.join("; ");
 }
 

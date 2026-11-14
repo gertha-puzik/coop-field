@@ -3,9 +3,7 @@
 // Запуск: node scripts/test-terrain.mjs — из чистого клона, сам поднимает свой
 // server.js на случайном порту с временным DATA_DIR. Внешний сервер:
 // WS_URL=ws://… node scripts/test-terrain.mjs.
-// Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
-// переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
-// с тем же значением).
+// Пароля редактора нет: setmap сохраняет только admin-роль.
 import { WebSocket } from "ws";
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -13,15 +11,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sendJoin } from "./ws-auth.mjs";
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || "1946";
-
 // Аккаунт-редактор: мутации карт (кадр setmap) теперь за админ-гейтом
 // (server/testmap.js, гейт как у adminGate в sprites.js), поэтому загрузчик
 // карты заходит под админом. Аккаунт создаётся в DATA_DIR ДО старта сервера
 // через scripts/make-admin.mjs (лестница S1, см. test-admin-reset).
 const ADMIN_LOGIN = "mapboss";
-const ADMIN_PASS = "password1";
+const ADMIN_ACCOUNT_PASS = "password1";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 4033 + Math.floor(Math.random() * 40);
@@ -35,7 +30,7 @@ const rnd = Date.now().toString(36);
 // стартом — аккаунт-админ для setmap-загрузок теста.
 const DATA = mkdtempSync(path.join(tmpdir(), "coop-terrain-"));
 if (!process.env.WS_URL) {
-  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_ACCOUNT_PASS], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: "utf8",
   });
@@ -49,7 +44,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: "127.0.0.1",
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -137,7 +131,7 @@ const map = {
 const admin = await client(ADMIN_LOGIN);
 await waitFor(admin, "field");
 clear(admin); // выкидываем info «Это имя уже занято» от register в sendJoin (нужен был fallback-логин) — иначе err-check ниже ложно сработает
-admin.send(JSON.stringify(["setmap", { pass: PASS, map }])); // первый setmap-кадр сокета — троттлинг не мешает
+admin.send(JSON.stringify(["setmap", { map }])); // первый setmap-кадр сокета — троттлинг не мешает
 await new Promise((r) => setTimeout(r, 300));
 const mapEcho = admin.inbox.find((m) => m[0] === "map");
 // «Редактор: сохранено.» — малый ack автору ДО broadcast-кадра map; игнорируем его в err-скане

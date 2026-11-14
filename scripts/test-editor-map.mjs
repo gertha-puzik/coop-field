@@ -14,9 +14,8 @@
  * Каждая setmap-правка уходит со своего НОВОГО сокета: сервер троттлит любые
  * setmap-кадры раз в 10 с НА СОКЕТ — свежее соединение получает свежий счётчик.
  *
- * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
- * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
- * с тем же значением — клиент и сервер теста всегда сходимся).
+ * Пароля редактора нет: setmap пароль не читает, карту сохраняет только
+ * сессия с ролью admin (server/testmap.js).
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -25,28 +24,24 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { sendJoin } from './ws-auth.mjs';
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || '1946';
-
 // Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
 // setmap-загрузчики теста логинятся админом; негатив-гейт — обычным игроком.
 // Аккаунт создаётся в DATA_DIR ДО старта сервера через scripts/make-admin.mjs
 // (лестница S1, см. test-admin-reset).
 const ADMIN_LOGIN = 'mapboss';
-const ADMIN_PASS = 'password1';
+const ADMIN_ACCOUNT_PASS = 'password1';
 
 const PORT = 3953 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
 
-// Свой server.js, если внешний адрес не задан; пароль уходит в spawn-окружение
-// тем же значением, что и в кадрах setmap («читает env КАК сервер»). Перед
-// стартом — аккаунт-админ для setmap-загрузок теста.
+// Свой server.js, если внешний адрес не задан. Перед стартом — аккаунт-админ
+// для setmap-загрузок теста.
 const DATA = mkdtempSync(path.join(tmpdir(), 'coop-editor-map-'));
 if (!process.env.WS_URL) {
   execFileSync(process.execPath, [
     path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
     ADMIN_LOGIN,
-    ADMIN_PASS,
+    ADMIN_ACCOUNT_PASS,
   ], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: 'utf8',
@@ -61,7 +56,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: '127.0.0.1',
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -145,14 +139,14 @@ async function waitServer() {
  *  (requiresAccount): register/login через ws-auth.mjs. По умолчанию загрузчик
  *  — подготовленный админ; admin=false разыгрывает негатив админ-гейта
  *  (server/testmap.js: карта мутирует только sessions.role === "admin"). */
-const setmapOnce = async (map, pass, pred, label, admin = true) => {
+const setmapOnce = async (map, pred, label, admin = true) => {
   const sock = await connect();
   sendJoin(sock.ws, {
     room: 'test',
     login: admin ? ADMIN_LOGIN : `peasant-${Date.now().toString(36)}`,
   });
   await wait(sock.state, (m) => m[0] === 'field', 'field админа');
-  send(sock.ws, 'setmap', { pass, map });
+  send(sock.ws, 'setmap', { map });
   const reply = await wait(sock.state, pred, label);
   sock.ws.close();
   return reply;
@@ -171,10 +165,9 @@ const main = async () => {
   console.log('   зоны:', f.map.zones.map((z) => `${z.name}[${z.kind}] ${z.c0},${z.r0}-${z.c1},${z.r1}`).join(' | '));
 
   // негатив админ-гейта: валидный конфиг от обычного зарегистрированного
-  // игрока (pass сервером игнорируется) — отказ, map не меняется.
+  // игрока — отказ, map не меняется.
   const badPass = await setmapOnce(
     f.map,
-    PASS,
     (m) => m[0] === 'info',
     'info (non-admin)',
     false,
@@ -189,7 +182,7 @@ const main = async () => {
   broken.zones.push({ id: 'zx', name: 'Оторванная', kind: 'green', c0: 0, r0: 0, c1: 0, r1: 0 });
   // разрываем соединение: убираем боевой полигон между двумя зелёными зонами
   broken.zones = broken.zones.filter((z) => z.name !== 'Полигон');
-  const badMap = await setmapOnce(broken, PASS, (m) => m[0] === 'info', 'info (broken map)');
+  const badMap = await setmapOnce(broken, (m) => m[0] === 'info', 'info (broken map)');
   console.log('3. несоединённые зоны →', badMap[1]);
 
   // валидный конфиг: мир выше, зелёная зона сверху
@@ -202,7 +195,7 @@ const main = async () => {
     { id: 'z3', name: 'Закуток', kind: 'cells', c0: 13, r0: 2, c1: 18, r1: 7 },
     { id: 'z4', name: 'Зелёная зона 1', kind: 'green', c0: 2, r0: 0, c1: 8, r1: 2 },
   ];
-  const mapMsg = await setmapOnce(good, PASS, (m) => m[0] === 'map', 'map event');
+  const mapMsg = await setmapOnce(good, (m) => m[0] === 'map', 'map event');
   console.log('4. map event: %sx%s, зоны=%d', mapMsg[1].cols, mapMsg[1].rows, mapMsg[1].zones.length);
   const field2 = await wait(state, (m) => m[0] === 'field' && m[1].map?.rows === 9, 'field (resync)');
   const me = field2[1].cats.find((c) => c.login === testerLogin);
@@ -230,7 +223,6 @@ const main = async () => {
       ],
       objects: [],
     },
-    PASS,
     (m) => m[0] === 'map' && m[1].rows === 7,
     'map (restore)',
   );

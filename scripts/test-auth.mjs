@@ -28,7 +28,8 @@
  *     (/auth, POST /cfg, /profiles → 404, GET /cfg жив), WS-кадры register/
  *     login на public — отказ без деталей (hello/logout гостя живы), CSRF
  *     Origin (чужой → 403 csrf, белый → доходит до логина), матрица токенов
- *     на elyria (тела без token, приём ?t= выключен, cookie работает),
+ *     на elyria (тела без token, приём ?t= выключен, cookie работает) и на
+ *     public (A7: ?t= игнорируется, cookie поднимает сессию),
  *     https-cookie SameSite=Lax+Secure; join по коду combat → поле room
  *     grot-1 (снятая комната алиасится в RETIRED_ROOMS);
  *  9. (P2) там же: admin-маршруты конфига — /cfg/admin и /cfg/export на
@@ -959,7 +960,34 @@ try {
   );
   pubWs.close();
 
-  const elyWs = await client3({ host: "ely.example", origin: "https://ely.example" });
+  // A7: public-хост ?t= больше не принимает (только cookie) — WS-рукопожатие
+  // с валидным токеном в query остаётся гостем; та же сессия кукой поднимается.
+  const pubByQ = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${WS3}/?t=${elyTok}`, { headers: { host: "pub.example" } });
+    ws.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      if (m[0] === "whoami") { ws.close(); resolve(m); }
+    });
+    ws.on("error", reject);
+  });
+  check(
+    pubByQ[1]?.ok === true && pubByQ[1]?.role === "guest" && !pubByQ[1]?.accountId,
+    "token-matrix: public игнорирует ?t= (A7: только cookie)",
+  );
+  const pubByCookie = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS3, { headers: { host: "pub.example", cookie: `coop_session=${elyTok}` } });
+    ws.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      if (m[0] === "whoami") { ws.close(); resolve(m); }
+    });
+    ws.on("error", reject);
+  });
+  check(
+    pubByCookie[1]?.login === "ElyHost" && pubByCookie[1]?.token === undefined,
+    "token-matrix: cookie-сессия на public-хосте поднимается (без токена в кадре)",
+  );
+
+  const elyWs =await client3({ host: "ely.example", origin: "https://ely.example" });
   const elyMark = elyWs.inbox.length;
   elyWs.send(JSON.stringify(["auth", { action: "register", login: "WsEly", pass: "password1" }]));
   const elyFrame = await waitForIdx(elyWs, (m) => m[0] === "whoami" && m[1]?.ok === true && m[1]?.accountId, elyMark);

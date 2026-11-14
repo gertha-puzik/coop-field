@@ -15,9 +15,8 @@
  * Каждая setmap-правка уходит со своего НОВОГО сокета: сервер троттлит любые
  * setmap-кадры раз в 10 с НА СОКЕТ — свежее соединение получает свежий счётчик.
  *
- * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
- * переопределение — env MAP_PASS (спавненному серверу передаётся ADMIN_PASS
- * с тем же значением — клиент и сервер теста всегда сходимся).
+ * Пароля редактора нет: setmap пароль не читает, карту сохраняет только
+ * сессия с ролью admin (server/testmap.js).
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -26,15 +25,13 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { sendJoin } from './ws-auth.mjs';
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || '1946';
 const ROOM = 'test';
 
 // Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
 // setmap-загрузчик теста логинится админом. Аккаунт создаётся в DATA_DIR ДО
 // старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
 const ADMIN_LOGIN = 'mapboss';
-const ADMIN_PASS = 'password1';
+const ADMIN_ACCOUNT_PASS = 'password1';
 
 const PORT = 3973 + Math.floor(Math.random() * 40);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
@@ -47,7 +44,7 @@ if (!process.env.WS_URL) {
   execFileSync(process.execPath, [
     path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
     ADMIN_LOGIN,
-    ADMIN_PASS,
+    ADMIN_ACCOUNT_PASS,
   ], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: 'utf8',
@@ -62,7 +59,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: '127.0.0.1',
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -147,7 +143,7 @@ const join = async (sock, name, login) => {
 const setmap = async (map, expectOk) => {
   const sock = await connect();
   await join(sock, 'uploader', ADMIN_LOGIN);
-  sock.ws.send(JSON.stringify(['setmap', { pass: PASS, map }]));
+  sock.ws.send(JSON.stringify(['setmap', { map }]));
   const first = await wait(sock.state, ([e]) => e === 'info' || e === 'map', 'setmap ответ');
   // При успехе сервер сначала шлёт автору малый ack «Редактор: сохранено.»,
   // и только затем широковещательный кадр map — дожидаемся его.

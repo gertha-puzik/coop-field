@@ -116,7 +116,7 @@ function mapWithPlateau() {
 async function uploadMap(map) {
   const admin = await client(ADMIN_LOGIN);
   await waitFor(admin, 'you');
-  admin.send(JSON.stringify(['setmap', { pass: process.env.MAP_PASS || '1946', map }]));
+  admin.send(JSON.stringify(['setmap', { map }]));
   await waitFor(admin, 'map');
   admin.close();
 }
