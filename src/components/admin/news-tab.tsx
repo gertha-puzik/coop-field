@@ -1,21 +1,28 @@
 'use client';
 
 /**
- * Вкладка «Новости доски» дашборда /admin: правка записок «Что нового?»
- * на главной (оба сайта читают GET /cfg/news). Сохранение — POST /cfg/news.
+ * Вкладка «Новости доски» дашборда /admin: pin, DnD-порядок, rich-text body.
+ * Сохранение — POST /cfg/news. Новые записи вставляются выше старых (под
+ * закреплёнными); pinned всегда сверху на главной.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui';
+import { NewsRichEditor } from '@/components/admin/news-rich-editor';
 import { httpHomeNews, type HomeNewsItem } from '@/lib/net/http-home-news';
 import { httpAdminHomeNewsSave } from '@/lib/net/http-admin-ops';
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
-type DraftRow = { key: string; id?: string; title: string; body: string };
+type DraftRow = {
+  key: string;
+  id?: string;
+  title: string;
+  body: string;
+  pinned: boolean;
+};
 
 const TITLE_MAX = 80;
-const BODY_MAX = 500;
 const ITEMS_MAX = 12;
 
 function humanError(reason: string | undefined, fallback: string): string {
@@ -43,7 +50,6 @@ function humanError(reason: string | undefined, fallback: string): string {
   }
 }
 
-/** Не светим сырой HTML nginx (405 и т.п.) в баннере ошибки. */
 function cleanDetails(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const t = raw.trim();
@@ -51,13 +57,30 @@ function cleanDetails(raw: string | undefined): string | undefined {
   return t.slice(0, 240);
 }
 
+/** pinned вверх; внутри групп — исходный порядок. */
+function normalizeDraft(list: DraftRow[]): DraftRow[] {
+  return [...list.filter((r) => r.pinned), ...list.filter((r) => !r.pinned)];
+}
+
 function toDraft(items: HomeNewsItem[]): DraftRow[] {
-  return items.map((it, i) => ({
-    key: it.id || `row-${i}`,
-    id: it.id,
-    title: it.title,
-    body: it.body,
-  }));
+  return normalizeDraft(
+    items.map((it, i) => ({
+      key: it.id || `row-${i}`,
+      id: it.id,
+      title: it.title,
+      body: it.body,
+      pinned: it.pinned === true,
+    })),
+  );
+}
+
+function bodyPlain(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Редактор новостей доски главной. */
@@ -66,6 +89,7 @@ export function NewsTab() {
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [dragKey, setDragKey] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -84,19 +108,43 @@ export function NewsTab() {
   }, [reload]);
 
   const updateRow = (key: string, patch: Partial<DraftRow>) => {
-    setDraft((list) => list.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+    setDraft((list) =>
+      normalizeDraft(list.map((row) => (row.key === key ? { ...row, ...patch } : row))),
+    );
   };
 
   const addRow = () => {
     if (draft.length >= ITEMS_MAX) return;
-    setDraft((list) => [
-      ...list,
-      { key: `new-${Date.now()}`, title: '', body: '' },
-    ]);
+    const row: DraftRow = {
+      key: `new-${Date.now()}`,
+      title: '',
+      body: '',
+      pinned: false,
+    };
+    setDraft((list) => {
+      const pinned = list.filter((r) => r.pinned);
+      const rest = list.filter((r) => !r.pinned);
+      // Новая — выше старых незакреплённых.
+      return [...pinned, row, ...rest];
+    });
   };
 
   const removeRow = (key: string) => {
     setDraft((list) => list.filter((row) => row.key !== key));
+  };
+
+  const onDropOn = (targetKey: string) => {
+    if (!dragKey || dragKey === targetKey) return;
+    setDraft((list) => {
+      const from = list.findIndex((r) => r.key === dragKey);
+      const to = list.findIndex((r) => r.key === targetKey);
+      if (from < 0 || to < 0) return list;
+      const next = [...list];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return normalizeDraft(next);
+    });
+    setDragKey(null);
   };
 
   const save = async () => {
@@ -104,9 +152,10 @@ export function NewsTab() {
       .map((row) => ({
         id: row.id,
         title: row.title.trim(),
-        body: row.body.trim(),
+        body: row.body,
+        pinned: row.pinned,
       }))
-      .filter((row) => row.title && row.body);
+      .filter((row) => row.title && bodyPlain(row.body));
     if (!items.length) {
       setStatus({ kind: 'err', text: 'Добавьте хотя бы одну запись с заголовком и текстом.' });
       return;
@@ -133,7 +182,8 @@ export function NewsTab() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-[var(--uk-page-muted-text)]">
-        Записки на доске «Что нового?» на главной. Сохранение сразу видно на гротах и на закрытом сайте.
+        Записки на доске «Что нового?». Закреплённые всегда сверху; новые — выше старых.
+        Перетащите запись за «⋮⋮», чтобы сменить порядок. В тексте — жирность, курсив, подчёркивание и размер.
       </p>
       {status ? (
         <div
@@ -155,13 +205,43 @@ export function NewsTab() {
           {draft.map((row, idx) => (
             <li
               key={row.key}
-              className="flex flex-col gap-2 rounded-xl border border-[var(--uk-border)] bg-[var(--uk-panel-bg)] p-3"
+              onDragOver={(ev) => ev.preventDefault()}
+              onDrop={() => onDropOn(row.key)}
+              className={`flex flex-col gap-2 rounded-xl border bg-[var(--uk-panel-bg)] p-3 ${
+                row.pinned ? 'border-amber-700/60' : 'border-[var(--uk-border)]'
+              } ${dragKey === row.key ? 'opacity-60' : ''}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-[var(--uk-page-muted-text)]">Запись {idx + 1}</span>
-                <Button type="button" variant="ghost" size="sm" onClick={() => removeRow(row.key)} disabled={busy}>
-                  Удалить
-                </Button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    draggable={!busy}
+                    onDragStart={() => setDragKey(row.key)}
+                    onDragEnd={() => setDragKey(null)}
+                    className="cursor-grab select-none px-1 text-[var(--uk-page-muted-text)] active:cursor-grabbing"
+                    title="Перетащить"
+                    aria-label="Перетащить запись"
+                    role="button"
+                  >
+                    ⋮⋮
+                  </span>
+                  <span className="text-xs text-[var(--uk-page-muted-text)]">
+                    {row.pinned ? 'Закреплена' : `Запись ${idx + 1}`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <Button
+                    type="button"
+                    variant={row.pinned ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => updateRow(row.key, { pinned: !row.pinned })}
+                    disabled={busy}
+                  >
+                    {row.pinned ? 'Открепить' : 'Закрепить'}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => removeRow(row.key)} disabled={busy}>
+                    Удалить
+                  </Button>
+                </div>
               </div>
               <label className="flex flex-col gap-1 text-sm">
                 <span>Заголовок</span>
@@ -173,16 +253,14 @@ export function NewsTab() {
                   disabled={busy}
                 />
               </label>
-              <label className="flex flex-col gap-1 text-sm">
+              <div className="flex flex-col gap-1 text-sm">
                 <span>Текст</span>
-                <textarea
-                  className="min-h-[4.5rem] rounded-md border border-[var(--uk-border-strong)] bg-[var(--uk-field-bg)] px-2 py-1.5 text-[var(--uk-field-text)]"
+                <NewsRichEditor
                   value={row.body}
-                  maxLength={BODY_MAX}
-                  onChange={(ev) => updateRow(row.key, { body: ev.target.value })}
                   disabled={busy}
+                  onChange={(html) => updateRow(row.key, { body: html })}
                 />
-              </label>
+              </div>
             </li>
           ))}
         </ul>

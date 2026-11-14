@@ -202,6 +202,39 @@ async function main() {
       });
       ok(r.status === 400 && r.body?.reason === "invalid_items", "empty items → 400");
     }
+
+    // Pin floats to top; rich HTML kept allowlisted; scripts stripped
+    {
+      const r = await jsonFetch(`${HTTP}/cfg/news`, {
+        method: "POST",
+        headers: { Origin: ORIGIN, Cookie: adminCookie },
+        body: JSON.stringify({
+          items: [
+            {
+              title: "Новая",
+              body: "свежая <b>запись</b>",
+              pinned: false,
+            },
+            {
+              title: "Старая закрепа",
+              body: '<span class="news-size-lg">крупно</span> <script>x</script><i>и курсив</i>',
+              pinned: true,
+            },
+          ],
+        }),
+      });
+      ok(r.status === 200 && r.body?.ok === true, "admin POST pin+html → 200");
+      ok(r.body?.items?.length === 2, "pin+html saved 2");
+      ok(r.body.items[0].title === "Старая закрепа", "pinned item first");
+      ok(r.body.items[0].pinned === true, "pinned flag true");
+      ok(r.body.items[1].pinned === false, "unpinned flag false");
+      const pinnedBody = r.body.items[0].body || "";
+      ok(
+        pinnedBody.includes('class="news-size-lg"') && pinnedBody.includes("<i>") && !/script/i.test(pinnedBody),
+        "html allowlist keeps size+i, drops script",
+      );
+      ok(r.body.items[1].body.includes("<b>"), "bold kept on unpinned");
+    }
   } finally {
     try {
       child.kill("SIGTERM");

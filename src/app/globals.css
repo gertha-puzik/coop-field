@@ -460,7 +460,42 @@ option:disabled,
 
 /* Главная: авторский арт целиком (без crop), letterbox цветом скетча. */
 .wander-sky-home {
-  background: #2a2440;
+  --wander-home-void: #2a2440;
+  background: var(--wander-home-void);
+}
+
+/* Мягкий переход letterbox → арт: перо основным цветом фона по бокам. */
+.wander-sky-home::before,
+.wander-sky-home::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: max(72px, 9vw);
+  pointer-events: none;
+}
+
+.wander-sky-home::before {
+  left: 0;
+  background: linear-gradient(
+    90deg,
+    var(--wander-home-void) 0%,
+    rgba(42, 36, 64, 0.82) 28%,
+    rgba(42, 36, 64, 0.35) 62%,
+    rgba(42, 36, 64, 0) 100%
+  );
+}
+
+.wander-sky-home::after {
+  right: 0;
+  background: linear-gradient(
+    270deg,
+    var(--wander-home-void) 0%,
+    rgba(42, 36, 64, 0.82) 28%,
+    rgba(42, 36, 64, 0.35) 62%,
+    rgba(42, 36, 64, 0) 100%
+  );
 }
 
 .wander-home-art {
@@ -570,6 +605,14 @@ option:disabled,
 
 .wander-home-nav {
   margin-left: auto;
+  /* Тёмная подложка: белые ссылки читаются поверх арта. */
+  padding: 0.4rem 0.7rem 0.4rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 220, 255, 0.14);
+  background: rgba(10, 8, 22, 0.78);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .wander-home-nav-links .wander-home-link {
@@ -579,6 +622,7 @@ option:disabled,
   text-transform: uppercase;
   color: #f4f0ff;
   text-decoration: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .wander-home-nav-links .wander-home-link:hover {
@@ -608,18 +652,17 @@ option:disabled,
   justify-content: flex-end;
 }
 
-/* Hotspot всей лицевой плоскости доски (красная рамка на скетче).
- * % от .wander-home-art (16:9), не от viewport — иначе уезжает при letterbox. */
+/* Hotspot лицевой плоскости доски (красная обводка на скетче):
+ * только доска, без кустов/травы/ножек. % от .wander-home-art (16:9). */
 .wander-board-hotspot {
   position: absolute;
   z-index: 3;
-  /* Лицевая плоскость доски по красной рамке скетча (не ножки). */
-  left: 47.5%;
-  top: 3.5%;
-  width: 49%;
-  height: 86%;
+  left: 51%;
+  top: 10%;
+  width: 42.5%;
+  height: 68%;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   pointer-events: auto;
   cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
@@ -678,12 +721,16 @@ option:disabled,
     0 22px 48px rgba(0, 0, 0, 0.45),
     inset 0 1px 0 rgba(255, 236, 210, 0.18);
   color: #f7efe0;
-  animation: wander-news-in 0.22s ease-out;
+  /* Без scale в анимации — иначе текст карточек «шакалится». */
+  animation: wander-news-in 0.2s ease-out;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
 }
 
 @keyframes wander-news-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.98); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -734,33 +781,76 @@ option:disabled,
 }
 
 .wander-news-card {
-  border-radius: 6px;
-  border: 1px solid rgba(255, 244, 220, 0.35);
-  background: rgba(255, 248, 232, 0.94);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 244, 220, 0.4);
+  background: #fff8e8;
   color: #2c2116;
-  padding: 0.6rem 0.7rem 0.7rem;
-  box-shadow: 1px 2px 0 rgba(40, 24, 8, 0.18);
+  padding: 0.7rem 0.85rem 0.75rem;
+  /* Без rotate/scale — субпиксельный поворот размывает кириллицу. */
+  box-shadow: 0 1px 0 rgba(40, 24, 8, 0.12);
 }
 
-.wander-news-card:nth-child(even) {
-  transform: rotate(0.6deg);
-}
-
-.wander-news-card:nth-child(3n) {
-  transform: rotate(-0.8deg);
+.wander-news-card-pinned {
+  border-color: rgba(180, 130, 60, 0.55);
+  box-shadow:
+    0 1px 0 rgba(40, 24, 8, 0.12),
+    inset 0 0 0 1px rgba(200, 150, 70, 0.18);
 }
 
 .wander-news-card strong {
   display: block;
-  font-size: 0.95rem;
-  line-height: 1.25;
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: #24180f;
 }
 
-.wander-news-card p {
-  margin: 0.3rem 0 0;
-  font-size: 0.84rem;
-  line-height: 1.4;
-  color: #4a3a2a;
+.wander-news-pin {
+  display: inline-block;
+  margin-right: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(120, 80, 30, 0.12);
+  border: 1px solid rgba(120, 80, 30, 0.28);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  color: #6a4a22;
+}
+
+.wander-news-body {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #3f3226;
+  overflow-wrap: anywhere;
+}
+
+.wander-news-body .news-size-sm {
+  font-size: 0.8em;
+}
+
+.wander-news-body .news-size-md {
+  font-size: 1em;
+}
+
+.wander-news-body .news-size-lg {
+  font-size: 1.22em;
+}
+
+.news-rich-editor .news-size-sm {
+  font-size: 0.8em;
+}
+
+.news-rich-editor .news-size-md {
+  font-size: 1em;
+}
+
+.news-rich-editor .news-size-lg {
+  font-size: 1.22em;
 }
 
 .wander-hero {

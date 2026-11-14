@@ -9,6 +9,7 @@ export type HomeNewsItem = {
   id: string;
   title: string;
   body: string;
+  pinned: boolean;
 };
 
 export type HomeNewsAction =
@@ -20,7 +21,7 @@ function parseItem(row: ApiRow): HomeNewsItem | null {
   const title = asText(row.title);
   const body = asText(row.body);
   if (!id || !title || !body) return null;
-  return { id, title, body };
+  return { id, title, body, pinned: row.pinned === true };
 }
 
 /** GET /cfg/news — доступно обоим сайтам (тот же room-сервер). */

@@ -4,12 +4,12 @@
  *
  * Роуты:
  *   GET  /cfg/news | /news           — {ok, items[]} (public/elyria/local);
- *   POST /cfg/news | /admin/news     — {items:[{title,body}]} admin-only.
+ *   POST /cfg/news | /admin/news     — {items:[{title,body,pinned?}]} admin-only.
  *
- * Запись идёт через POST /cfg/news: nginx уже проксирует весь /cfg в Node,
- * а /admin/news без отдельного location упирается в статику → 405.
- * /admin/news остаётся каноном на сервере (и для preview location после
- * обновления apply). host-гейт public прячет POST /cfg* и /admin* → 404.
+ * Порядок: массив = порядок показа; pinned=true всегда всплывают наверх
+ * (относительный порядок внутри групп сохраняется). body — ограниченный HTML
+ * (b/strong/i/em/u/br/span.news-size-*). Запись через POST /cfg/news — обход
+ * nginx 405 на /admin без location.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +21,8 @@ import { writeFileAtomic } from "./atomic-file.js";
 
 const NEWS_FILE = path.join(DATA_DIR, "home-news.json");
 const TITLE_MAX = 80;
-const BODY_MAX = 500;
+const BODY_PLAIN_MAX = 500;
+const BODY_HTML_MAX = 2500;
 const ITEMS_MAX = 12;
 
 const ROUTES = {
@@ -30,24 +31,29 @@ const ROUTES = {
   ADMIN: "/admin/news",
 };
 
+const SIZE_CLASS = new Set(["news-size-sm", "news-size-md", "news-size-lg"]);
+const INLINE_TAGS = new Set(["b", "strong", "i", "em", "u"]);
+
 /** Дефолт, если файла нет или он битый — обе главные показывают одно и то же. */
 const DEFAULT_ITEMS = [
   {
     id: "seed-1",
     title: "Добро пожаловать",
     body: "На доске появляются короткие новости о поле и меню. Заглядывай, когда вернёшься домой.",
+    pinned: false,
   },
   {
     id: "seed-2",
     title: "Следы лап",
     body: "Проведи курсором по ночному полю — останутся лапки.",
+    pinned: false,
   },
 ];
 
 let store = loadStore();
 
 function emptyStore() {
-  return { v: 1, updatedAt: 0, items: DEFAULT_ITEMS.map((x) => ({ ...x })) };
+  return { v: 2, updatedAt: 0, items: DEFAULT_ITEMS.map((x) => ({ ...x })) };
 }
 
 function loadStore() {
@@ -57,7 +63,7 @@ function loadStore() {
     const items = sanitizeItems(raw.items);
     if (!items) return emptyStore();
     return {
-      v: 1,
+      v: 2,
       updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
       items,
     };
@@ -78,21 +84,116 @@ function cleanText(v, max) {
   return [...t].slice(0, max).join("");
 }
 
+function plainLength(html) {
+  return [...html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")].length;
+}
+
+/**
+ * Ограниченный HTML для body: b/strong/i/em/u/br/span.news-size-*.
+ * contentEditable-обёртки div/p схлопываются в <br>.
+ */
+export function sanitizeNewsBody(raw) {
+  if (typeof raw !== "string") return null;
+  let html = raw.replace(/\u0000/g, "");
+  html = html.replace(/<!--[\s\S]*?-->/g, "");
+  html = html.replace(
+    /<\/?(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|svg|math|video|audio|source|img|a|table|thead|tbody|tr|td|th)\b[^>]*>/gi,
+    "",
+  );
+  html = html.replace(/<div><br\s*\/?><\/div>/gi, "<br>");
+  html = html.replace(/<\/div>/gi, "");
+  html = html.replace(/<div\b[^>]*>/gi, "<br>");
+  html = html.replace(/<\/p>/gi, "<br>");
+  html = html.replace(/<p\b[^>]*>/gi, "");
+  html = html.replace(/<br\s*\/?>/gi, "<br>");
+  html = html.replace(/(?:<br>\s*){3,}/gi, "<br><br>");
+  html = html.replace(/&nbsp;/gi, " ");
+
+  let out = "";
+  const stack = [];
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] !== "<") {
+      const next = html.indexOf("<", i);
+      const chunk = next < 0 ? html.slice(i) : html.slice(i, next);
+      out += chunk
+        .replace(/&(?!#\d+;|#x[\da-fA-F]+;|[a-zA-Z][a-zA-Z\d]+;)/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      i = next < 0 ? html.length : next;
+      continue;
+    }
+    const end = html.indexOf(">", i + 1);
+    if (end < 0) {
+      out += "&lt;";
+      i += 1;
+      continue;
+    }
+    const rawTag = html.slice(i + 1, end).trim();
+    i = end + 1;
+    if (!rawTag) continue;
+    const closing = rawTag[0] === "/";
+    const body = closing ? rawTag.slice(1).trim() : rawTag;
+    const sp = body.search(/\s/);
+    const name = (sp < 0 ? body : body.slice(0, sp)).toLowerCase();
+    const attrStr = sp < 0 ? "" : body.slice(sp + 1);
+    if (name === "br") {
+      if (!closing) out += "<br>";
+      continue;
+    }
+    if (closing) {
+      const idx = stack.lastIndexOf(name);
+      if (idx < 0) continue;
+      while (stack.length > idx) out += `</${stack.pop()}>`;
+      continue;
+    }
+    if (/on\w+|javascript:|data:/i.test(attrStr)) continue;
+    if (INLINE_TAGS.has(name)) {
+      if (attrStr.trim()) continue;
+      out += `<${name}>`;
+      stack.push(name);
+      continue;
+    }
+    if (name === "span") {
+      const cm = attrStr.match(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+      const cls = ((cm && (cm[1] || cm[2] || cm[3])) || "").trim();
+      if (!SIZE_CLASS.has(cls)) continue;
+      out += `<span class="${cls}">`;
+      stack.push("span");
+    }
+  }
+  while (stack.length) out += `</${stack.pop()}>`;
+  out = out.replace(/^(?:<br>|\s)+|(?:<br>|\s)+$/g, "").trim();
+  if (!out) return null;
+  if (plainLength(out) > BODY_PLAIN_MAX) return null;
+  if (out.length > BODY_HTML_MAX) return null;
+  return out;
+}
+
+/** pinned вверх, внутри групп — порядок массива (DnD / «новые сверху»). */
+function orderItems(items) {
+  const pinned = [];
+  const rest = [];
+  for (const it of items) (it.pinned ? pinned : rest).push(it);
+  return [...pinned, ...rest];
+}
+
 function sanitizeItems(raw) {
   if (!Array.isArray(raw)) return null;
   const out = [];
   for (const row of raw.slice(0, ITEMS_MAX)) {
     if (!row || typeof row !== "object") continue;
     const title = cleanText(row.title, TITLE_MAX);
-    const body = cleanText(row.body, BODY_MAX);
+    const body = sanitizeNewsBody(row.body);
     if (!title || !body) continue;
     const id =
       typeof row.id === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(row.id)
         ? row.id
         : newId();
-    out.push({ id, title, body });
+    out.push({ id, title, body, pinned: row.pinned === true });
   }
-  return out.length ? out : null;
+  if (!out.length) return null;
+  return orderItems(out);
 }
 
 function persist() {
@@ -107,6 +208,7 @@ function publicPayload() {
       id: it.id,
       title: it.title,
       body: it.body,
+      pinned: it.pinned === true,
     })),
   };
 }
@@ -142,8 +244,6 @@ export async function handleHomeNewsHttp(req, res) {
   const isWrite =
     method === "POST" && (p === ROUTES.CFG || p === ROUTES.ADMIN);
   if (isWrite) {
-    // POST /cfg/news — обход nginx (весь /cfg уже в Node); /admin/news —
-    // канон, когда location проксируется. Public host-гейт режет оба.
     if (!adminGate(req, res)) return true;
     let body;
     try {
@@ -157,11 +257,11 @@ export async function handleHomeNewsHttp(req, res) {
       json(res, 400, {
         ok: false,
         reason: "invalid_items",
-        message: `Нужен непустой список записей (до ${ITEMS_MAX}): у каждой title и body.`,
+        message: `Нужен непустой список записей (до ${ITEMS_MAX}): у каждой title и body (до ${BODY_PLAIN_MAX} знаков).`,
       });
       return true;
     }
-    store = { v: 1, updatedAt: Date.now(), items };
+    store = { v: 2, updatedAt: Date.now(), items };
     try {
       persist();
     } catch {
