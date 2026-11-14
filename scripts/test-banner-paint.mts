@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Операции пиксельного редактора шапки 120×40: заливка и кисть. Без DOM.
 import assert from 'node:assert/strict';
-import { floodFill, stamp } from '../src/components/players/banner-paint-ops.ts';
+import { floodFill, pick, stamp, strokeLine } from '../src/components/players/banner-paint-ops.ts';
 
 const W = 120, H = 40;
 const blank = () => {
@@ -39,4 +39,16 @@ assert.equal(count(e, WHITE), 4, 'кисть 2 = 2×2');
 const f = blank();
 floodFill(f, 3, 3, [11, 16, 38, 255]);
 assert.equal(count(f, [11, 16, 38]), W * H, 'заливка тем же цветом — ничего не ломает');
+// Сетка аватарки 64×64: те же операции с явным размером.
+const AW = 64, AH = 64;
+const av = new Uint8ClampedArray(AW * AH * 4);
+floodFill(av, 10, 10, RED, AW, AH);
+assert.equal(count(av, RED), AW * AH, 'заливка сетки 64×64 красит 4096');
+const av2 = new Uint8ClampedArray(AW * AH * 4);
+stamp(av2, 63, 63, 3, WHITE, AW, AH);
+assert.equal(count(av2, WHITE), 4, 'кисть 3 в углу (63,63) сетки 64 — 4 пикселя');
+const av3 = new Uint8ClampedArray(AW * AH * 4);
+strokeLine(av3, 0, 0, 63, 0, 1, WHITE, AW, AH);
+assert.equal(count(av3, WHITE), 64, 'линия через всю строку 64');
+assert.deepEqual(pick(av3, 63, 0, AW, AH), WHITE, 'пипетка на сетке 64');
 console.log('banner-paint: ok');

@@ -28,7 +28,6 @@ import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
 import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import { httpLogout } from '@/lib/net/http-auth';
-import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -39,7 +38,6 @@ import {
 } from '@/lib/sim/settings';
 import styles from './players-elyria.module.css';
 import {
-  AvatarField,
   MineSpritesSection,
   SKIN_GROUPS,
   SpChip,
@@ -147,13 +145,6 @@ export function OwnProfileEditor({
       : 100;
   const [draftSprite, setDraftSprite] = useState(originSprite);
   const [draftScale, setDraftScale] = useState(originScale);
-  // Своя картинка-аватар: DTO-URL профиля; мутацию подтверждают ответ
-  // сервера и рефреш (onSaved обновляет myProfile-кэш каталога).
-  const [avatarUrl, setAvatarUrl] = useState(profile.avatar || '');
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  /** Вооружённое удаление картинки: второй клик подтверждает (5 сек). */
-  const [armedAvatar, setArmedAvatar] = useState(false);
-  const armAvatarTimer = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -165,7 +156,6 @@ export function OwnProfileEditor({
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
     setDraftBirthday(profile.birthday || '');
-    setAvatarUrl(profile.avatar || '');
     setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
@@ -175,10 +165,6 @@ export function OwnProfileEditor({
     );
   }, [profile]);
 
-  // вооружённое «Убрать картинку» гаснет само — таймер чистим на выходе
-  useEffect(() => () => {
-    if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
-  }, []);
 
   /** СП едут в PATCH только если игрок их реально тронул: неточно равные
    *  наборы не перезаписывают профиль (и не мешают правке имени/био). */
@@ -241,59 +227,6 @@ export function OwnProfileEditor({
     } else {
       setFail({ title: 'Изменения сохранились, но свежий профиль не прочитался — обновите страницу.' });
     }
-  };
-
-  /** Рефреш профиля после аватара — канон PATCH-успехов соседей:
-   *  свежий /profiles/me + onSaved. */
-  const refreshMineAfterAvatar = async () => {
-    const fresh = await httpMyProfile();
-    if (fresh.ok && fresh.profile) onSaved(fresh.profile);
-  };
-
-  /** Загрузка своей картинки: размер проверяем локально, остальное —
-   *  за сервером; по успеху свежий URL в превью и рефреш карточки. */
-  const uploadOwnAvatar = async (file: File) => {
-    if (avatarBusy) return;
-    if (file.size > 2 * 1024 * 1024) {
-      setFail({ title: 'Файл больше 2 МБ не принимается — уменьшите картинку.' });
-      return;
-    }
-    setFail(null);
-    setAvatarBusy(true);
-    const res = await httpUploadAvatar(file);
-    setAvatarBusy(false);
-    if (!res.ok) {
-      setFail({ title: humanAvatarError(res.reason, 'Загрузить картинку не удалось.'), details: res.message || undefined });
-      return;
-    }
-    setAvatarUrl(res.avatar || '');
-    setArmedAvatar(false);
-    setNote('Картинка загружена.');
-    window.setTimeout(() => setNote(null), 2500);
-    await refreshMineAfterAvatar();
-  };
-
-  /** Удаление своей картинки — уже подтверждённый второй клик кнопки. */
-  const removeOwnAvatar = async () => {
-    setAvatarBusy(true);
-    const res = await httpDeleteAvatar();
-    setAvatarBusy(false);
-    if (!res.ok) {
-      setFail({ title: humanAvatarError(res.reason, 'Убрать картинку не удалось.'), details: res.message || undefined });
-      return;
-    }
-    setAvatarUrl('');
-    setArmedAvatar(false);
-    setNote('Картинка убрана.');
-    window.setTimeout(() => setNote(null), 2500);
-    await refreshMineAfterAvatar();
-  };
-
-  /** Первый клик «Убрать картинку» — вооружение на 5 секунд, второй — ход. */
-  const armAvatarRemoval = () => {
-    setArmedAvatar(true);
-    if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
-    armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
   /** «Надеть» — сразу в профиль, без отдельного «Сохранить»: иначе игрок
@@ -392,15 +325,6 @@ export function OwnProfileEditor({
         </span>
       </label>
 
-      {/* Своя картинка-аватар: сетевым клиентом владеет этот модуль,
-          превью обновляется сразу, портрет карточки — рефрешем профиля. */}
-      <AvatarField
-        avatarUrl={avatarUrl}
-        busy={avatarBusy}
-        armed={armedAvatar}
-        onFile={(file) => void uploadOwnAvatar(file)}
-        onRemoveClick={() => (armedAvatar ? void removeOwnAvatar() : armAvatarRemoval())}
-      />
 
       {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
           и применяется на поле сам; плитки те же группы, что на карусели входа. */}

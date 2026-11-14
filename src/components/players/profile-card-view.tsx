@@ -269,11 +269,16 @@ export function ProfileCardView({
         bioLine={rawBio.split('\n')[0] || ''}
         banner={banner}
         faceUrl={faceUrl}
+        hasAvatar={!!avatarUrl}
         createdAt={card.createdAt}
         presence={pr}
         now={now}
         actions={friendActions}
         onBannerChanged={async () => {
+          await onBannerChanged?.();
+          setActivityTick((t) => t + 1);
+        }}
+        onAvatarChanged={async () => {
           await onBannerChanged?.();
           setActivityTick((t) => t + 1);
         }}

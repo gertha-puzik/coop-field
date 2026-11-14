@@ -10,8 +10,8 @@
  * Решение владелицы 2026-11-10: окрасы CatWar в игре не используются,
  * вход по коду и пак изображений из репозитория сняты.
  * Контент-волна профиля: Portrait рисует свою картинку (DTO avatar) вместо
- * спрайта; AvatarField — блок «Аватар» редактора (сетевой клиент аватаров —
- * отдельный модуль lib/net, сюда его не импортируем).
+ * спрайта. Блок «Аватар» редактора снят 2026-11-14: картинку меняет меню на
+ * аватарке в шапке (profile-avatar.tsx — кадр и пиксельная дорисовка).
  */
 
 import type { ReactNode } from 'react';
@@ -235,86 +235,6 @@ export function humanEditError(reason: string | undefined): string {
     default:
       return 'Не получилось сохранить.';
   }
-}
-
-/* ——— «Аватар» (контент-волна профиля): своя картинка игрока. Блок чисто
-   презентационный — сетевыми ходоками владеет player-profile.tsx, здесь
-   только состояние-props: превью, скрытый файл-инпут, подтверждение
-   удаления вторым кликом (канон MineSpritesSection) ——— */
-
-export function AvatarField({
-  avatarUrl,
-  busy,
-  armed,
-  onFile,
-  onRemoveClick,
-}: {
-  /** DTO-URL своей картинки ('' — картинки нет: превью и «убрать» скрыты). */
-  avatarUrl: string;
-  busy: boolean;
-  /** «Убрать картинку» вооружена: следующий клик удаляет (5 сек назад). */
-  armed: boolean;
-  onFile: (file: File) => void;
-  onRemoveClick: () => void;
-}) {
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  return (
-    <div className={styles.edField}>
-      <span className={styles.edLabel}>Аватар</span>
-      <div className="mt-1.5 flex flex-wrap items-center gap-2.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
-        {avatarUrl ? (
-          <img
-            src={avatarUrl}
-            alt="Своя картинка профиля"
-            className="h-16 w-16 shrink-0 rounded-md border border-[var(--sim-line)] bg-black/20 object-contain"
-            draggable={false}
-          />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] text-[var(--sim-text-faint)]">
-            Своя картинка (PNG или JPEG, сторона 64–1500 px, до 2 МБ)
-          </p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-                e.target.value = '';
-                if (file) onFile(file);
-              }}
-            />
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-              disabled={busy}
-              onClick={() => fileRef.current?.click()}
-            >
-              {busy ? 'Загружаем…' : 'Загрузить картинку'}
-            </Button>
-            {avatarUrl ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onRemoveClick}
-                className={`rounded border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-50 ${
-                  armed
-                    ? 'border-red-500 bg-red-950 font-bold text-red-300'
-                    : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
-                }`}
-                title={armed ? 'Ещё раз — и картинки не будет' : 'Убрать свою картинку'}
-              >
-                {armed ? 'Точно убрать?' : 'Убрать картинку'}
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /* ——— «Свой окрас» (#83): загрузка личного PNG, список своих (надеть /
