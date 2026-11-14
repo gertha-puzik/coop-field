@@ -22,6 +22,7 @@ import { DATA_DIR } from "./config.js";
 import { flushAccounts, hashPassword, verifyPassword } from "./accounts.js";
 import { mutateSprites } from "./sprites.js";
 import { revokeAccountSessions } from "./auth.js";
+import { forgetActivity } from "./activity.js";
 
 const AVATAR_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -99,6 +100,7 @@ export async function deleteOwnAccount(acc, password) {
   const avatars = removeOwnAvatarFiles(acc.id);
   if (avatars.error) return { error: avatars.error === "bad_id" ? "bad_id" : "io" };
   const banners = removeOwnBannerFiles(acc.id);
+  forgetActivity(acc.id);
   if (banners.error) return { error: banners.error === "bad_id" ? "bad_id" : "io" };
 
   const removed = new Set(sprites.ids || []);

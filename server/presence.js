@@ -21,6 +21,7 @@ import { sessionFromRequest } from "./auth.js";
 import { json, setCors, readJson } from "./runtime-config.js";
 import { findById, flushAccounts } from "./accounts.js";
 import { lastLocationFor } from "./persist.js";
+import { pushActivity } from "./activity.js";
 
 const HEARTBEAT_TTL_MS = 45_000;
 const AWAY_MS = 10 * 60_000;
@@ -265,6 +266,8 @@ export async function handlePresenceHttp(req, res) {
     const wasAfk = isAfk(id, now);
 
     if (where === "game") {
+      // Лента: вход в игру — когда свежего game-heartbeat до этого не было.
+      if (row.gameUntil <= now) pushActivity(id, "entered_game", { label: locationLabelOf(acc) || "" });
       accruePlaytime(acc, row, now);
       row.gameUntil = now + HEARTBEAT_TTL_MS;
       maybeFlushPlaytime(acc, row, false);

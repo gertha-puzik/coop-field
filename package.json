@@ -23,6 +23,7 @@
     "test:profiles": "node scripts/test-profiles.mjs",
     "test:avatars": "node scripts/test-avatars.mjs",
     "test:profile-social": "node scripts/test-profile-social.mjs",
+    "test:activity": "node scripts/test-activity.mjs",
     "test:cfg": "node scripts/test-cfg-registry.mjs",
     "test:room-config": "node scripts/test-room-config.mjs",
     "test:weather-rotation": "node scripts/test-weather-rotation.mjs",

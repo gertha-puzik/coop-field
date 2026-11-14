@@ -10,6 +10,8 @@ import { rooms, roomOf, spawnCell, join, send, occupied, broadcast } from './roo
 import { testPointInIsland, testWalkable } from './world.js';
 import { sessionFromRequest } from './auth.js';
 import { json, readJson, setCors } from './runtime-config.js';
+import { pushActivity } from './activity.js';
+import { locationLabelOf } from './presence.js';
 
 const INDEX_FILE = path.join(DATA_DIR, 'locations-index.json');
 const MAX_LOCATIONS = 64;
@@ -304,6 +306,7 @@ export function travel(ws, payload) {
             return fail(arrival.error);
         ws.lastTravel = Date.now();
         join(ws, { room: target.code, login: cat.login, sprite: cat.sprite, size: cat.size }, { arrival });
+        pushActivity(ws.account.id, 'moved', { locationId: passage.targetId, label: locationLabelOf(ws.account) || '' });
     }
     catch (error) {
         console.warn('location travel failed:', error.message);

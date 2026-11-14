@@ -1,9 +1,13 @@
 'use client';
 
 /**
- * Редизайн карточки профиля: баннер / звёздный градиент, аватар, presence,
- * пилюли дней и playtime, вкладки «Профиль» / «Настройки», персонаж на лугу,
- * статистика = локация, «о себе», список друзей с заявками.
+ * Карточка профиля по макету владелицы 2026-11-14
+ * (docs/superpowers/specs/2026-11-14-profile-banner-activity-design.md):
+ * шапка-баннер с аватаром (ProfileHero), вкладки «Профиль» / «Настройки
+ * профиля», две колонки карточек — слева активный персонаж на лугу, краткая
+ * статистика и «о себе», справа друзья сеткой и «Последние действия».
+ * Только честные данные DTO: боевых счётчиков и достижений сервер не
+ * собирает — их на странице нет.
  *
  * Правка своей карточки остаётся в OwnProfileEditor (player-profile.tsx) —
  * вкладка «Настройки» только монтирует переданный settingsSlot.
@@ -11,7 +15,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { Button } from '@/components/ui';
+import { Button } from '@/components/ui/button';
 import type { ProfileCard, ProfileFriend, PublicProfile } from '@/lib/net/http-profiles';
 import {
   httpFriendAccept,
@@ -22,27 +26,13 @@ import {
   humanFriendError,
   type FriendRelation,
 } from '@/lib/net/http-friends';
-import {
-  avatarOf,
-  moonsText,
-  ruDate,
-  existsDaysText,
-  presenceLabel,
-  playtimeShort,
-  playtimeText,
-  spriteUrl,
-  type PresenceTone,
-} from './players-format';
-import baseStyles from './players-elyria.module.css';
-import referenceStyles from './profile-reference.module.css';
-const styles = { ...baseStyles, ...referenceStyles };
-
-const PRESENCE_PILL: Record<PresenceTone, string> = {
-  online: styles.stOnline,
-  traveling: styles.stTravel,
-  away: styles.stAway,
-  resting: styles.stRest,
-};
+import { ProfileActivity } from './profile-activity';
+import { ProfileFriendsGrid } from './profile-friends-grid';
+import { ProfileHero } from './profile-hero';
+import { Icon, type IconName } from './profile-icons';
+import { avatarOf, daysSince, plural, presenceLabel, playtimeShort, playtimeText, spriteUrl } from './players-format';
+import styles from './players-elyria.module.css';
+import card2 from './profile-card.module.css';
 
 /** Активный персонаж всегда на лугу — аватар-фото живёт в шапке баннера. */
 function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; name: string }) {
@@ -94,34 +84,26 @@ function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; nam
   );
 }
 
-function FriendRow({
-  friend,
-  canManage,
-  onOpen,
-  onRemove,
+function StatTile({
+  icon,
+  value,
+  label,
+  title,
+  wide = false,
 }: {
-  friend: ProfileFriend;
-  canManage: boolean;
-  onOpen: (id: string) => void;
-  onRemove?: (id: string) => void;
+  icon: IconName;
+  value: string;
+  label: string;
+  title?: string;
+  wide?: boolean;
 }) {
-  const pr = presenceLabel(friend.presence, undefined);
   return (
-    <li className={styles.friendRow}>
-      <button type="button" className={styles.friendOpen} onClick={() => onOpen(friend.accountId)}>
-        <span className={styles.friendAvatar} aria-hidden>
-          {friend.avatar ? <img src={friend.avatar} alt="" /> : <span className={styles.friendAvatarEmpty} />}
-        </span>
-        <span className={styles.friendMeta}>
-          <span className={styles.friendName}>{friend.displayName}</span>
-          <span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span>
-        </span>
-      </button>
-      {canManage && onRemove ? (
-        <button type="button" className={styles.friendActGhost} onClick={() => onRemove(friend.accountId)}>
-          Удалить
-        </button>
-      ) : null}
+    <li className={wide ? `${card2.statTile} ${card2.statWide}` : card2.statTile} title={title}>
+      <Icon name={icon} size={22} className={card2.statIcon} />
+      <span className={card2.statText}>
+        <span className={card2.statValue}>{value}</span>
+        <span className={card2.statLabel}>{label}</span>
+      </span>
     </li>
   );
 }
@@ -138,6 +120,8 @@ export type ProfileCardViewProps = {
   onClose: () => void;
   /** После мутации дружбы — обновить карточку снаружи. */
   onFriendsChanged?: () => void;
+  /** После смены шапки — освежить свою карточку (GET /profiles/me). */
+  onBannerChanged?: () => void | Promise<void>;
 };
 
 export function ProfileCardView({
@@ -149,6 +133,7 @@ export function ProfileCardView({
   onOpenFriend,
   onClose,
   onFriendsChanged,
+  onBannerChanged,
 }: ProfileCardViewProps) {
   const [tab, setTab] = useState<'profile' | 'settings'>(() =>
     typeof window !== 'undefined' && window.location.hash === '#settings' && mine ? 'settings' : 'profile',
@@ -157,6 +142,7 @@ export function ProfileCardView({
   const [friends, setFriends] = useState<ProfileFriend[]>(card.friends || []);
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
+  const [activityTick, setActivityTick] = useState(0);
   const [idCopied, setIdCopied] = useState(false);
 
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
@@ -168,16 +154,16 @@ export function ProfileCardView({
   const name = shown.displayName || card.displayName || 'Безымянный кот';
   const pr = presenceLabel(shown.presence ?? card.presence, card.lastSeenAt, now);
   const playMs = shown.playtimeMs ?? card.playtimeMs ?? 0;
-  const daysPill = existsDaysText(card.createdAt, now);
-  const playPill = playtimeShort(playMs);
-  const playFull = playtimeText(playMs);
   const location = (shown.locationLabel ?? card.locationLabel) || 'неизвестно';
-  const bio = (shown.bio ?? card.bio) || 'Пока ничего не рассказала о себе.';
+  const rawBio = (shown.bio ?? card.bio) || '';
+  const bio = rawBio || 'Пока ничего не рассказано о себе.';
   const banner = shown.banner ?? card.banner;
   const avatarUrl = shown.avatar ?? card.avatar;
   const char = avatarOf(shown);
   const faceUrl = avatarUrl || spriteUrl(char);
   const friendCount = card.friendCount ?? friends.length;
+  const days = daysSince(card.createdAt, now);
+  const charCount = shown.characters?.length ?? card.characters.length;
   const shortId = card.accountId ? `№${card.accountId.slice(0, 8)}` : '№—';
 
   const pickTab = (next: 'profile' | 'settings') => {
@@ -242,257 +228,221 @@ export function ProfileCardView({
     }
   };
 
+  const friendActions =
+    !mine && relation !== 'self' ? (
+      <>
+        {relation === 'none' ? (
+          <Button type="button" size="sm" className={card2.primaryBtn} disabled={friendBusy} onClick={() => void runFriend('request', card.accountId)}>
+            В друзья
+          </Button>
+        ) : null}
+        {relation === 'outgoing' ? (
+          <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('cancel', card.accountId)}>
+            Отменить заявку
+          </Button>
+        ) : null}
+        {relation === 'incoming' ? (
+          <>
+            <Button type="button" size="sm" className={card2.primaryBtn} disabled={friendBusy} onClick={() => void runFriend('accept', card.accountId)}>
+              Принять
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('decline', card.accountId)}>
+              Отклонить
+            </Button>
+          </>
+        ) : null}
+        {relation === 'friends' ? (
+          <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('remove', card.accountId)}>
+            Удалить из друзей
+          </Button>
+        ) : null}
+        {friendNote ? <span className={styles.friendNote}>{friendNote}</span> : null}
+      </>
+    ) : null;
+
   return (
-    <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
-      <header className={styles.profileHeader}>
-      <div
-        className={banner ? styles.profileBanner : `${styles.profileBanner} ${styles.profileBannerStar}`}
-        style={banner ? { backgroundImage: `url(${banner})` } : undefined}
-        role="img"
-        aria-label={banner ? 'Фон профиля' : 'Звёздный фон профиля'}
+    <main className={card2.page}>
+      <ProfileHero
+        accountId={card.accountId}
+        mine={mine}
+        name={name}
+        bioLine={rawBio.split('\n')[0] || ''}
+        banner={banner}
+        faceUrl={faceUrl}
+        createdAt={card.createdAt}
+        presence={pr}
+        now={now}
+        actions={friendActions}
+        onBannerChanged={async () => {
+          await onBannerChanged?.();
+          setActivityTick((t) => t + 1);
+        }}
       />
 
-      <div className={styles.profileHero}>
-        <figure className={styles.profilePortrait}>
-        <div className={styles.profileFaceWrap}>
-          {faceUrl ? (
-            <img className={styles.profileFace} src={faceUrl} alt={name} draggable={false} />
-          ) : (
-            <span className={styles.profileFaceEmpty} aria-hidden>
-              🐾
-            </span>
-          )}
-          <svg className={styles.portraitFrame} viewBox="0 0 200 276" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M100 3 113 17 166 17Q184 17 184 35L194 45V245Q194 263 174 263H26Q6 263 6 245V45L16 35Q16 17 34 17H87Z" />
-            <path d="M100 12 110 24H164Q177 24 177 39L186 49V243Q186 255 173 255H27Q14 255 14 243V49L23 39Q23 24 36 24H90Z" />
-            <path d="m100 3 7 10-7 11-7-11Z" />
-          </svg>
-        </div>
-        <figcaption className={styles.profileRibbon}>{name}</figcaption>
-        </figure>
-        <div className={styles.profileHeroMain}>
-          <div className={styles.profileTitleRow}>
-            <h1 className={styles.profileName}>{name}</h1>
-            <span className={styles.profileTitleStatus}>— [ {pr.text} ]</span>
-            {mine ? <button type="button" className={styles.profileEdit} onClick={() => pickTab('settings')} aria-label="Настроить профиль">✎</button> : null}
-          </div>
-          <dl className={styles.profileFacts}>
-            <div><dt><span aria-hidden>▣</span> ID профиля</dt><dd>
-              <button type="button" className={styles.profileCopyId} title={`Скопировать ID: ${card.accountId}`} onClick={async () => {
-                try { await navigator.clipboard.writeText(card.accountId); setIdCopied(true); }
-                catch { setIdCopied(false); }
-              }}>{shortId} <span aria-hidden>▢</span></button>
-              <span className={styles.copyStatus} role="status">{idCopied ? 'Скопировано' : ''}</span>
-            </dd></div>
-            <div><dt><span aria-hidden>▦</span> Дата регистрации</dt><dd>{ruDate(card.createdAt)}</dd></div>
-            <div><dt><span aria-hidden>☾</span> Возраст аккаунта</dt><dd>{moonsText(card.createdAt, now)}</dd></div>
-            <div><dt><span aria-hidden>✦</span> Активность</dt><dd><span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span></dd></div>
-          </dl>
-          <div className={styles.profilePills}>
-            <span className={styles.metaPill} title={daysPill}>☾ {daysPill}</span>
-            <span className={styles.metaPill} title={playFull}>◷ В игре: {playPill}</span>
-            <span className={styles.metaPill}>🐾 Размер {char?.size || 100}</span>
-          </div>
-          {!mine && relation !== 'self' ? (
-            <div className={styles.profileFriendActs}>
-              {relation === 'none' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('request', card.accountId)}
-                >
-                  В друзья
-                </Button>
-              ) : null}
-              {relation === 'outgoing' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('cancel', card.accountId)}
-                >
-                  Отменить заявку
-                </Button>
-              ) : null}
-              {relation === 'incoming' ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                    disabled={friendBusy}
-                    onClick={() => void runFriend('accept', card.accountId)}
-                  >
-                    Принять
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    disabled={friendBusy}
-                    onClick={() => void runFriend('decline', card.accountId)}
-                  >
-                    Отклонить
-                  </Button>
-                </>
-              ) : null}
-              {relation === 'friends' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('remove', card.accountId)}
-                >
-                  Удалить из друзей
-                </Button>
-              ) : null}
-              {friendNote ? <span className={styles.friendNote}>{friendNote}</span> : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-        <aside className={styles.profileAbout} aria-labelledby="hero-about">
-          <div className={styles.profileAboutTitle}>
-            <h2 id="hero-about">О себе</h2>
-            {mine ? <button type="button" onClick={() => pickTab('settings')} aria-label="Изменить рассказ о себе">✎</button> : null}
-          </div>
-          <p>{bio}</p>
-          <span className={styles.paperPaw} aria-hidden>🐾</span>
-        </aside>
-      </header>
-      <div className={styles.profileTabs} role="tablist" aria-label="Разделы профиля">
+      <div className={card2.tabs} role="tablist" aria-label="Разделы профиля">
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'profile'}
-          className={tab === 'profile' ? `${styles.profileTab} ${styles.profileTabOn}` : styles.profileTab}
+          className={tab === 'profile' ? `${card2.tab} ${card2.tabOn}` : card2.tab}
           onClick={() => pickTab('profile')}
         >
-          Профиль
+          <Icon name="paw" size={16} /> Профиль
         </button>
         {mine ? (
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'settings'}
-            className={tab === 'settings' ? `${styles.profileTab} ${styles.profileTabOn}` : styles.profileTab}
+            className={tab === 'settings' ? `${card2.tab} ${card2.tabOn}` : card2.tab}
             onClick={() => pickTab('settings')}
           >
-            Настройки
+            <Icon name="gear" size={16} /> Настройки профиля
           </button>
         ) : null}
       </div>
 
       {tab === 'settings' && mine ? (
-        <div className={styles.profileBody} role="tabpanel">
+        <div className={`${styles.panel} ${card2.settingsBody}`} role="tabpanel">
           {settingsSlot}
         </div>
       ) : (
-        <div className={styles.profileBody} role="tabpanel">
-          <div className={styles.profileGrid}>
-            <section className={styles.profileCharacter} aria-labelledby="prof-character">
-              <h2 className={styles.secTitle} id="prof-character">🐾 Активный персонаж</h2>
-              <MeadowPortrait card={shown} name={name} />
-            </section>
-            <div className={styles.profileAside}>
-              <section className={styles.profileSection} aria-labelledby="prof-stats">
-                <h2 className={styles.secTitle} id="prof-stats">
-                  Статистика
+        <div className={card2.grid} role="tabpanel">
+          <div className={card2.col}>
+            <section className={card2.card} aria-labelledby="prof-char">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-char">
+                  <Icon name="paw" className={card2.cardIcon} />
+                  Активный персонаж
                 </h2>
-                <table className={styles.stats}>
-                  <tbody>
-                    <tr><td className={styles.statsK}>На сайте</td><td className={styles.statsV}>{daysPill}</td></tr>
-                    <tr><td className={styles.statsK}>Время в игре</td><td className={styles.statsV}>{playFull}</td></tr>
-                    <tr><td className={styles.statsK}>Персонажи</td><td className={styles.statsV}>{shown.characters.length}</td></tr>
-                    <tr>
-                      <td className={styles.statsK}>Локация</td>
-                      <td className={styles.statsV}>{location}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </section>
+                {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
+              </header>
+              <div className={card2.charBody}>
+                <MeadowPortrait card={shown} name={name} />
+              </div>
+            </section>
 
+            <section className={card2.card} aria-labelledby="prof-stats">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-stats">
+                  <Icon name="chart" className={card2.cardIcon} />
+                  Краткая статистика
+                </h2>
+              </header>
+              <ul className={card2.stats}>
+                <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
+                <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
+                <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
+                <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
+                <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
+              </ul>
+            </section>
 
-            </div>
+            <section className={card2.card} aria-labelledby="prof-about">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-about">
+                  <Icon name="leaf" className={card2.cardIcon} />О себе
+                </h2>
+                {mine ? (
+                  <button type="button" className={card2.iconBtn} aria-label="Изменить «о себе»" onClick={() => pickTab('settings')}>
+                    <Icon name="pencil" size={16} />
+                  </button>
+                ) : null}
+              </header>
+              <p className={card2.bio}>{bio}</p>
+            </section>
           </div>
 
-          <section className={styles.profileSection} aria-labelledby="prof-friends">
-            <h2 className={styles.secTitle} id="prof-friends">
-              Друзья{friendCount ? ` · ${friendCount}` : ''}
-            </h2>
-            {friends.length ? (
-              <ul className={styles.friendList}>
-                {friends.map((f) => (
-                  <FriendRow
-                    key={f.accountId}
-                    friend={f}
-                    canManage={mine}
-                    onOpen={openFriend}
-                    onRemove={mine ? (id) => void runFriend('remove', id) : undefined}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className={styles.profileMuted}>Пока никого в списке друзей.</p>
-            )}
-          </section>
+          <div className={card2.col}>
+            <ProfileFriendsGrid
+              friends={friends}
+              count={friendCount}
+              mine={mine}
+              onOpen={openFriend}
+              onRemove={(id) => void runFriend('remove', id)}
+              onFind={onClose}
+            />
+            <ProfileActivity accountId={card.accountId} now={now} refreshKey={activityTick} onOpenFriend={openFriend} />
+          </div>
         </div>
       )}
 
-      <footer className={styles.panelFoot}>
+      <footer className={card2.foot}>
         <button type="button" className={styles.backLink} onClick={onClose}>
           ← Вернуться в каталог
         </button>
-        <span className={styles.footNum} title={card.accountId}>
-          Профиль {shortId}
+        <button
+          type="button"
+          className={card2.copyId}
+          title={`Скопировать ID: ${card.accountId}`}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(card.accountId);
+              setIdCopied(true);
+              window.setTimeout(() => setIdCopied(false), 2000);
+            } catch {
+              setIdCopied(false);
+            }
+          }}
+        >
+          Профиль {shortId} <span aria-hidden>⧉</span>
+        </button>
+        <span className={card2.copyStatus} role="status">
+          {idCopied ? 'ID скопирован' : ''}
         </span>
       </footer>
     </main>
   );
 }
 
-/** Геометрия загрузки совпадает с широкой шапкой готовой карточки. */
+/** Скелетон загрузки в геометрии готовой карточки (из PR #169, под новую вёрстку). */
 export function ProfileCardSkeleton() {
+  const bar = (w: string | number, h: number) => <span className={styles.skel} style={{ display: 'block', width: w, height: h }} />;
   return (
-    <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }} aria-hidden="true">
-      <header className={styles.profileHeader}>
-        <div className={`${styles.profileBanner} ${styles.profileBannerStar}`} />
-        <div className={styles.profileHero}>
-          <figure className={styles.profilePortrait}>
-            <div className={`${styles.profileFaceWrap} ${styles.skel}`} />
-            <figcaption className={styles.profileRibbon}> </figcaption>
-          </figure>
-          <div className={styles.profileHeroMain}>
-            <h1 className={styles.profileName}><span className={styles.skel} style={{ width: '65%', height: 36 }} /></h1>
-            <dl className={styles.profileFacts} style={{ marginTop: 20 }}>
-              {['ID профиля', 'Дата регистрации', 'Возраст аккаунта', 'Активность'].map((label) => (
-                <div key={label}><dt>{label}</dt><dd><span className={styles.skel} style={{ width: '80%', height: 15 }} /></dd></div>
-              ))}
-            </dl>
-            <div className={styles.profilePills}><span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 200, height: 28 }} /></div>
+    <main className={card2.page} aria-hidden="true">
+      <div className={card2.hero}>
+        <div className={`${card2.heroBanner} ${styles.skel}`}>
+          <div className={card2.heroInfo}>
+            <div className={card2.heroFace} />
+            <div className={card2.heroText}>
+              {bar(220, 36)}
+              {bar(160, 14)}
+              <div className={card2.heroPills}>
+                {bar(90, 26)}
+                {bar(180, 26)}
+                {bar(100, 26)}
+              </div>
+            </div>
           </div>
         </div>
-        <aside className={styles.profileAbout}>
-          <div className={styles.profileAboutTitle}><h2>О себе</h2></div>
-          <p><span className={styles.skel} style={{ width: '100%', height: 40 }} /></p>
-        </aside>
-      </header>
-      <div className={styles.profileTabs}><span className={styles.profileTab}>Профиль</span><span className={styles.profileTab}>Настройки</span></div>
-      <div className={styles.profileBody}>
-        <div className={styles.profileGrid}>
-          <section className={styles.profileCharacter}><h2 className={styles.secTitle}>🐾 Активный персонаж</h2><figure className={styles.avatar}><span className={`${styles.avatarArt} ${styles.skel}`} /></figure></section>
-          <section className={styles.profileAside}><h2 className={styles.secTitle}>Статистика</h2><span className={styles.skel} style={{ width: '100%', height: 150 }} /></section>
+      </div>
+      <div className={card2.tabs}>
+        <span className={`${card2.tab} ${card2.tabOn}`}>
+          <Icon name="paw" size={16} /> Профиль
+        </span>
+      </div>
+      <div className={card2.grid}>
+        <div className={card2.col}>
+          {(['Активный персонаж', 'Краткая статистика', 'О себе'] as const).map((t) => (
+            <section key={t} className={card2.card}>
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle}>{t}</h2>
+              </header>
+              {bar('100%', t === 'Активный персонаж' ? 220 : 80)}
+            </section>
+          ))}
+        </div>
+        <div className={card2.col}>
+          {(['Друзья', 'Последние действия'] as const).map((t) => (
+            <section key={t} className={card2.card}>
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle}>{t}</h2>
+              </header>
+              {bar('100%', t === 'Друзья' ? 96 : 140)}
+            </section>
+          ))}
         </div>
       </div>
-      <footer className={styles.panelFoot}><span className={styles.skel} style={{ width: 172, height: 14 }} /></footer>
     </main>
   );
 }

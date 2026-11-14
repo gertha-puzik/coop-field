@@ -18,6 +18,7 @@ import { json, setCors } from "./runtime-config.js";
 import { flushAccounts, bannerUrlOf } from "./accounts.js";
 import { readBody, parseMultipart, PNG_MAGIC } from "./sprites.js";
 import { writeFileAtomic } from "./atomic-file.js";
+import { pushActivity } from "./activity.js";
 
 const DIR = path.join(DATA_DIR, "banners");
 fs.mkdirSync(DIR, { recursive: true });
@@ -295,6 +296,7 @@ export async function handleBannersHttp(req, res) {
     acc.profile.bannerAt = Date.now();
     flushAccounts(true);
     rateRecord(accountId);
+    pushActivity(accountId, "banner_changed");
     json(res, 200, { ok: true, banner: bannerUrlOf(acc) });
     return true;
   }

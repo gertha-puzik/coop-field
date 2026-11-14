@@ -103,6 +103,13 @@ try {
     const me = arrived.cats.find(c => c.id === a.frames.slice(n).find(f => f[0] === 'you')[1].id);
     assert.equal(me.fm, 1);
     assert.equal(me.size, 67, 'passage retains saved height');
+    // Лента «Последние действия»: успешный проход пишет ровно одно moved (провалы — нет).
+    const meRow = await (await fetch(origin + '/profiles/me', { headers: { Origin: origin, Cookie: cookie } })).json();
+    const feed = await (await fetch(origin + '/activity/' + meRow.accountId)).json();
+    const moves = feed.items.filter(it => it.type === 'moved');
+    assert.equal(moves.length, 1, 'one successful passage → one moved activity');
+    assert.equal(moves[0].data.locationId, 2);
+    assert.match(moves[0].data.label, /Редколесье/);
     assert(me.fx + .45 >= 0 && me.fx + .45 < 10 && me.fy + .95 >= 0 && me.fy + .95 < 10, 'fallback arrival is on destination map');
     // Rename and passage edits affect only the destination file/room.
     const observer=await client(cookie);observer.send('join',{room:'test'});await observer.wait(f=>f[0]==='field');
