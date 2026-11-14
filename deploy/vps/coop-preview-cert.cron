@@ -1,3 +1,0 @@
-# HTTP-01 per-host сертификаты coop-field preview: скрипт в /usr/local/sbin,
-# копия для ревью — deploy/vps/preview-cert-scan.sh. Всё в journal, без почты.
-*/5 * * * * root /usr/local/sbin/coop-preview-cert 2>&1 | logger -t coop-preview-cert

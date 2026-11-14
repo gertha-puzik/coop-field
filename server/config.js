@@ -141,7 +141,7 @@ function csrfStrictFor(destClass) {
  * COOP_INSTANCE_CLASS: 'production' | 'preview' | 'local' | 'test'.
  *  - unknown значения → throw (fail closed, §5 «Unknown environment names»);
  *  - без явного env: preview-маркеры (PREVIEW_SITES_MODE|PREVIEW_SLUG, их
- *    пишет preview-apply.sh в env инстанса) → 'preview', иначе 'local';
+ *    писал снятый в 2026-11-14 preview-apply.sh) → 'preview', иначе 'local';
  *  - «production» НИКОГДА не выводится по косвенным признакам — прод обязан
  *    заявить себя явно через systemd-юнит (deploy/vps/coop-field.service:
  *    Environment=COOP_INSTANCE_CLASS=production); неявный дефолт — local.

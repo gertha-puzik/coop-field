@@ -42,7 +42,7 @@ jobs:
         run: npm ci
       # Gate (2026-11 incident follow-up): `bash -n` over every workflow
       # run-block (with ${{ }} substituted) plus the shell scripts of
-      # scripts/ and deploy/vps/. The preview-deploy status step once died at
+      # scripts/ and deploy/vps/. A deploy status step (old PR previews) once died at
       # PARSE time from a single stray `)` — after a successful rollout, with
       # a stale failure marker left on the PR. This gate stops that class of
       # bug at PR time; the checker is regression-proven against the very
@@ -161,24 +161,6 @@ jobs:
           done
           test "$ready" = 1
           WS_URL="ws://127.0.0.1:${port}" npm run test:ws
-      - name: Preview slug
-        run: npm run test:preview-slug
-      - name: Preview apply/destroy guards
-        run: npm run test:preview-apply
-      # Контракт артефакта preview-билда (two-state): dual/legacy-single
-      # детект по package.json, валидации корней, SHA-гейт, режим из
-      # metadata/каталогов — по синтетическим деревьям, без реальных сборок.
-      - name: Preview build contract (dual + legacy-single)
-        run: npm run test:preview-build-contract
-      - name: Preview link (шапка PR)
-        run: npm run test:preview-pr-link
-      # Marker-comment step of preview-deploy.yml, extracted from the inline
-      # shell into scripts/preview-comment.mjs: create-or-update the ONE
-      # marker (paginated search, no duplicates), deployment badges
-      # best-effort, honest body for every PREVIEW-RESULT status, header
-      # block via preview-pr-link.mjs apply semantics. Fetch-stub suite.
-      - name: Preview комментарий (маркер/бейджи/шапка)
-        run: node scripts/test-preview-comment.mjs
       # Production web-root switch transaction (deploy-frontend.yml
       # promotion): both-or-nothing switch of /opt/coop-field/www and
       # www-elyria, .prev never deleted up front, injected rename failures

@@ -1,5 +1,7 @@
 # DEPLOY-CHECKLIST — owner-only actions of the CI/CD wave
 
+> **2026-11-14:** PR previews (`pr-<N>.*`, `preview-*.yml`, `coop-preview-cert`) are retired. Every preview-related item below is historical; do not act on it.
+
 Every item below is an **owner** action (GitHub Settings, VPS as root, or a
 manual merge). None of them is marked as done: this file is a walk-through,
 not a status report. Agent contributions end at "merge the PR and hand over".
