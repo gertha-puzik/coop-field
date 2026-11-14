@@ -35,6 +35,7 @@ const TESTS = [
   "scripts/test-me-dedup.mts",
   "scripts/test-banner-gen.mts",
   "scripts/test-banner-crop.mts",
+  "scripts/test-banner-paint.mts",
 ];
 
 if (!supportsStripTypes) {

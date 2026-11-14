@@ -118,3 +118,84 @@
   flex: 1;
   accent-color: var(--gold, #f6d7a2);
 }
+
+/* ---------- редактор шапки ---------- */
+.paintCanvas {
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  image-rendering: pixelated;
+  border-radius: 12px;
+  outline: 2px solid rgba(246, 215, 162, 0.55);
+  outline-offset: -2px;
+  touch-action: none;
+  background: #0b1026;
+}
+
+.paintTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line, rgba(226, 220, 255, 0.28));
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.segBtn {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--muted, #b9b3d9);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.segBtn + .segBtn {
+  border-left: 1px solid var(--line-soft, rgba(226, 220, 255, 0.12));
+}
+
+.segBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.segOn {
+  color: #1b1530;
+  background: var(--gold, #f6d7a2);
+}
+
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+}
+
+.swatchOn {
+  outline: 2px solid var(--gold, #f6d7a2);
+  outline-offset: 2px;
+}
+
+.customColor input {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.footGap {
+  flex: 1;
+}
