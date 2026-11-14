@@ -29,7 +29,6 @@ import { SiteHeader } from '@/components/site/site-header';
 import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import { httpLogout } from '@/lib/net/http-auth';
 import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
-import { httpDeleteBanner, httpUploadBanner, humanBannerError } from '@/lib/net/http-banners';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -155,11 +154,6 @@ export function OwnProfileEditor({
   /** Вооружённое удаление картинки: второй клик подтверждает (5 сек). */
   const [armedAvatar, setArmedAvatar] = useState(false);
   const armAvatarTimer = useRef<number | null>(null);
-  const [bannerUrl, setBannerUrl] = useState(profile.banner || '');
-  const [bannerBusy, setBannerBusy] = useState(false);
-  const [armedBanner, setArmedBanner] = useState(false);
-  const armBannerTimer = useRef<number | null>(null);
-  const bannerFileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -172,7 +166,6 @@ export function OwnProfileEditor({
     setDraftBio(profile.bio);
     setDraftBirthday(profile.birthday || '');
     setAvatarUrl(profile.avatar || '');
-    setBannerUrl(profile.banner || '');
     setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
@@ -185,7 +178,6 @@ export function OwnProfileEditor({
   // вооружённое «Убрать картинку» гаснет само — таймер чистим на выходе
   useEffect(() => () => {
     if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
-    if (armBannerTimer.current) window.clearTimeout(armBannerTimer.current);
   }, []);
 
   /** СП едут в PATCH только если игрок их реально тронул: неточно равные
@@ -304,53 +296,6 @@ export function OwnProfileEditor({
     armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
-  const refreshMineAfterBanner = async () => {
-    const fresh = await httpMyProfile();
-    if (fresh.ok && fresh.profile) onSaved(fresh.profile);
-  };
-
-  const uploadOwnBanner = async (file: File) => {
-    if (bannerBusy) return;
-    if (file.size > 2 * 1024 * 1024) {
-      setFail({ title: 'Файл больше 2 МБ не принимается — уменьшите картинку.' });
-      return;
-    }
-    setFail(null);
-    setBannerBusy(true);
-    const res = await httpUploadBanner(file);
-    setBannerBusy(false);
-    if (!res.ok) {
-      setFail({ title: humanBannerError(res.reason, 'Загрузить фон не удалось.'), details: res.message || undefined });
-      return;
-    }
-    setBannerUrl(res.banner || '');
-    setArmedBanner(false);
-    setNote('Фон загружен.');
-    window.setTimeout(() => setNote(null), 2500);
-    await refreshMineAfterBanner();
-  };
-
-  const removeOwnBanner = async () => {
-    setBannerBusy(true);
-    const res = await httpDeleteBanner();
-    setBannerBusy(false);
-    if (!res.ok) {
-      setFail({ title: humanBannerError(res.reason, 'Убрать фон не удалось.'), details: res.message || undefined });
-      return;
-    }
-    setBannerUrl('');
-    setArmedBanner(false);
-    setNote('Фон убран.');
-    window.setTimeout(() => setNote(null), 2500);
-    await refreshMineAfterBanner();
-  };
-
-  const armBannerRemoval = () => {
-    setArmedBanner(true);
-    if (armBannerTimer.current) window.clearTimeout(armBannerTimer.current);
-    armBannerTimer.current = window.setTimeout(() => setArmedBanner(false), 5000);
-  };
-
   /** «Надеть» — сразу в профиль, без отдельного «Сохранить»: иначе игрок
    *  уходит в комнату с черновиком, а кот остаётся в прежнем окрасе. */
   const wearSprite = async (id: string) => {
@@ -456,62 +401,6 @@ export function OwnProfileEditor({
         onFile={(file) => void uploadOwnAvatar(file)}
         onRemoveClick={() => (armedAvatar ? void removeOwnAvatar() : armAvatarRemoval())}
       />
-
-      <div className={styles.edField}>
-        <span className={styles.edLabel}>Фон профиля</span>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
-          {bannerUrl ? (
-            <img
-              src={bannerUrl}
-              alt="Фон профиля"
-              className="h-14 w-36 shrink-0 rounded-md border border-[var(--sim-line)] bg-black/20 object-cover"
-              draggable={false}
-            />
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-[var(--sim-text-faint)]">
-              Горизонтальная картинка (PNG/JPEG/GIF, до 1200×400, до 2 МБ). Без файла — звёздный градиент.
-            </p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <input
-                ref={bannerFileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-                  e.target.value = '';
-                  if (file) void uploadOwnBanner(file);
-                }}
-              />
-              <Button
-                type="button"
-                size="sm"
-                className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                disabled={bannerBusy}
-                onClick={() => bannerFileRef.current?.click()}
-              >
-                {bannerBusy ? 'Загружаем…' : 'Загрузить фон'}
-              </Button>
-              {bannerUrl ? (
-                <button
-                  type="button"
-                  disabled={bannerBusy}
-                  onClick={() => (armedBanner ? void removeOwnBanner() : armBannerRemoval())}
-                  className={`rounded border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-50 ${
-                    armedBanner
-                      ? 'border-red-500 bg-red-950 font-bold text-red-300'
-                      : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
-                  }`}
-                  title={armedBanner ? 'Ещё раз — и фона не будет' : 'Убрать фон'}
-                >
-                  {armedBanner ? 'Точно убрать?' : 'Убрать фон'}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
           и применяется на поле сам; плитки те же группы, что на карусели входа. */}
@@ -830,6 +719,10 @@ export default function PlayerProfile({
           onClose={onClose}
           onOpenFriend={onOpenFriend}
           onFriendsChanged={onFriendsChanged}
+          onBannerChanged={async () => {
+            const fresh = await httpMyProfile();
+            if (fresh.ok && fresh.profile) onSaved(fresh.profile);
+          }}
           settingsSlot={
             mine ? (
               myProfile ? (

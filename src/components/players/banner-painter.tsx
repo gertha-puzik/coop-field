@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { BANNER_H, BANNER_W, generateBanner, paintPixels } from '@/lib/sim/banner-gen';
 
 import { floodFill, fromHex, pick, strokeLine, toHex, type RGBA } from './banner-paint-ops';
-import styles from './profile-card.module.css';
+import styles from './banner-editor.module.css';
 
 const ERASE: RGBA = fromHex('#0b1026');
 const HISTORY = 50;

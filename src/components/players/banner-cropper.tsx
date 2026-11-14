@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { clampOffset, coverScale, cropRect, type Offset } from './banner-crop-math';
-import styles from './profile-card.module.css';
+import styles from './banner-editor.module.css';
 
 const FRAME_W = 1200;
 const FRAME_H = 400;
@@ -47,7 +47,9 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
     if (file.size > MAX_FILE) return;
     const url = URL.createObjectURL(file);
     const img = new Image();
+    let live = true;
     img.onload = () => {
+      if (!live) return;
       const w = img.naturalWidth;
       const h = img.naturalHeight;
       if (!w || !h) {
@@ -59,9 +61,16 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
       setZoom(1);
       setOff({ x: (FRAME_W - w * s) / 2, y: (FRAME_H - h * s) / 2 });
     };
-    img.onerror = () => setError('Не удалось открыть картинку — нужен PNG, JPEG, GIF или WebP.');
+    img.onerror = () => {
+      if (live) setError('Не удалось открыть картинку — нужен PNG, JPEG, GIF или WebP.');
+    };
     img.src = url;
-    return () => URL.revokeObjectURL(url);
+    return () => {
+      // Отменённая загрузка (смена файла, StrictMode-двойной эффект) молчит:
+      // revoke ниже иначе роняет её в onerror и показывает ложную ошибку.
+      live = false;
+      URL.revokeObjectURL(url);
+    };
   }, [file]);
 
   useEffect(() => {

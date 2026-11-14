@@ -1,9 +1,13 @@
 'use client';
 
 /**
- * Редизайн карточки профиля: баннер / звёздный градиент, аватар, presence,
- * пилюли дней и playtime, вкладки «Профиль» / «Настройки», персонаж на лугу,
- * статистика = локация, «о себе», список друзей с заявками.
+ * Карточка профиля по макету владелицы 2026-11-14
+ * (docs/superpowers/specs/2026-11-14-profile-banner-activity-design.md):
+ * шапка-баннер с аватаром (ProfileHero), вкладки «Профиль» / «Настройки
+ * профиля», две колонки карточек — слева активный персонаж на лугу, краткая
+ * статистика и «о себе», справа друзья сеткой и «Последние действия».
+ * Только честные данные DTO: боевых счётчиков и достижений сервер не
+ * собирает — их на странице нет.
  *
  * Правка своей карточки остаётся в OwnProfileEditor (player-profile.tsx) —
  * вкладка «Настройки» только монтирует переданный settingsSlot.
@@ -22,23 +26,13 @@ import {
   humanFriendError,
   type FriendRelation,
 } from '@/lib/net/http-friends';
-import {
-  avatarOf,
-  existsDaysText,
-  presenceLabel,
-  playtimeShort,
-  playtimeText,
-  spriteUrl,
-  type PresenceTone,
-} from './players-format';
+import { ProfileActivity } from './profile-activity';
+import { ProfileFriendsGrid } from './profile-friends-grid';
+import { ProfileHero } from './profile-hero';
+import { Icon, type IconName } from './profile-icons';
+import { avatarOf, daysSince, plural, presenceLabel, playtimeShort, playtimeText, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
-
-const PRESENCE_PILL: Record<PresenceTone, string> = {
-  online: styles.stOnline,
-  traveling: styles.stTravel,
-  away: styles.stAway,
-  resting: styles.stRest,
-};
+import card2 from './profile-card.module.css';
 
 /** Активный персонаж всегда на лугу — аватар-фото живёт в шапке баннера. */
 function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; name: string }) {
@@ -90,34 +84,26 @@ function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; nam
   );
 }
 
-function FriendRow({
-  friend,
-  canManage,
-  onOpen,
-  onRemove,
+function StatTile({
+  icon,
+  value,
+  label,
+  title,
+  wide = false,
 }: {
-  friend: ProfileFriend;
-  canManage: boolean;
-  onOpen: (id: string) => void;
-  onRemove?: (id: string) => void;
+  icon: IconName;
+  value: string;
+  label: string;
+  title?: string;
+  wide?: boolean;
 }) {
-  const pr = presenceLabel(friend.presence, undefined);
   return (
-    <li className={styles.friendRow}>
-      <button type="button" className={styles.friendOpen} onClick={() => onOpen(friend.accountId)}>
-        <span className={styles.friendAvatar} aria-hidden>
-          {friend.avatar ? <img src={friend.avatar} alt="" /> : <span className={styles.friendAvatarEmpty} />}
-        </span>
-        <span className={styles.friendMeta}>
-          <span className={styles.friendName}>{friend.displayName}</span>
-          <span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span>
-        </span>
-      </button>
-      {canManage && onRemove ? (
-        <button type="button" className={styles.friendActGhost} onClick={() => onRemove(friend.accountId)}>
-          Удалить
-        </button>
-      ) : null}
+    <li className={wide ? `${card2.statTile} ${card2.statWide}` : card2.statTile} title={title}>
+      <Icon name={icon} size={22} className={card2.statIcon} />
+      <span className={card2.statText}>
+        <span className={card2.statValue}>{value}</span>
+        <span className={card2.statLabel}>{label}</span>
+      </span>
     </li>
   );
 }
@@ -134,6 +120,8 @@ export type ProfileCardViewProps = {
   onClose: () => void;
   /** После мутации дружбы — обновить карточку снаружи. */
   onFriendsChanged?: () => void;
+  /** После смены шапки — освежить свою карточку (GET /profiles/me). */
+  onBannerChanged?: () => void | Promise<void>;
 };
 
 export function ProfileCardView({
@@ -145,6 +133,7 @@ export function ProfileCardView({
   onOpenFriend,
   onClose,
   onFriendsChanged,
+  onBannerChanged,
 }: ProfileCardViewProps) {
   const [tab, setTab] = useState<'profile' | 'settings'>(() =>
     typeof window !== 'undefined' && window.location.hash === '#settings' && mine ? 'settings' : 'profile',
@@ -153,6 +142,7 @@ export function ProfileCardView({
   const [friends, setFriends] = useState<ProfileFriend[]>(card.friends || []);
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
+  const [activityTick, setActivityTick] = useState(0);
 
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
   useEffect(() => {
@@ -163,16 +153,16 @@ export function ProfileCardView({
   const name = shown.displayName || card.displayName || 'Безымянный кот';
   const pr = presenceLabel(shown.presence ?? card.presence, card.lastSeenAt, now);
   const playMs = shown.playtimeMs ?? card.playtimeMs ?? 0;
-  const daysPill = existsDaysText(card.createdAt, now);
-  const playPill = playtimeShort(playMs);
-  const playFull = playtimeText(playMs);
   const location = (shown.locationLabel ?? card.locationLabel) || 'неизвестно';
-  const bio = (shown.bio ?? card.bio) || 'Пока ничего не рассказала о себе.';
+  const rawBio = (shown.bio ?? card.bio) || '';
+  const bio = rawBio || 'Пока ничего не рассказано о себе.';
   const banner = shown.banner ?? card.banner;
   const avatarUrl = shown.avatar ?? card.avatar;
   const char = avatarOf(shown);
   const faceUrl = avatarUrl || spriteUrl(char);
   const friendCount = card.friendCount ?? friends.length;
+  const days = daysSince(card.createdAt, now);
+  const charCount = shown.characters?.length ?? card.characters.length;
   const shortId = card.accountId ? `№${card.accountId.slice(0, 8)}` : '№—';
 
   const pickTab = (next: 'profile' | 'settings') => {
@@ -237,189 +227,146 @@ export function ProfileCardView({
     }
   };
 
+  const friendActions =
+    !mine && relation !== 'self' ? (
+      <>
+        {relation === 'none' ? (
+          <Button type="button" size="sm" className={card2.primaryBtn} disabled={friendBusy} onClick={() => void runFriend('request', card.accountId)}>
+            В друзья
+          </Button>
+        ) : null}
+        {relation === 'outgoing' ? (
+          <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('cancel', card.accountId)}>
+            Отменить заявку
+          </Button>
+        ) : null}
+        {relation === 'incoming' ? (
+          <>
+            <Button type="button" size="sm" className={card2.primaryBtn} disabled={friendBusy} onClick={() => void runFriend('accept', card.accountId)}>
+              Принять
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('decline', card.accountId)}>
+              Отклонить
+            </Button>
+          </>
+        ) : null}
+        {relation === 'friends' ? (
+          <Button type="button" size="sm" variant="outline" disabled={friendBusy} onClick={() => void runFriend('remove', card.accountId)}>
+            Удалить из друзей
+          </Button>
+        ) : null}
+        {friendNote ? <span className={styles.friendNote}>{friendNote}</span> : null}
+      </>
+    ) : null;
+
   return (
-    <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
-      <div
-        className={banner ? styles.profileBanner : `${styles.profileBanner} ${styles.profileBannerStar}`}
-        style={banner ? { backgroundImage: `url(${banner})` } : undefined}
-        role="img"
-        aria-label={banner ? 'Фон профиля' : 'Звёздный фон профиля'}
+    <main className={card2.page}>
+      <ProfileHero
+        accountId={card.accountId}
+        mine={mine}
+        name={name}
+        bioLine={rawBio.split('\n')[0] || ''}
+        banner={banner}
+        faceUrl={faceUrl}
+        createdAt={card.createdAt}
+        presence={pr}
+        now={now}
+        actions={friendActions}
+        onBannerChanged={async () => {
+          await onBannerChanged?.();
+          setActivityTick((t) => t + 1);
+        }}
       />
 
-      <div className={styles.profileHero}>
-        <div className={styles.profileFaceWrap}>
-          {faceUrl ? (
-            <img className={styles.profileFace} src={faceUrl} alt={name} draggable={false} />
-          ) : (
-            <span className={styles.profileFaceEmpty} aria-hidden>
-              🐾
-            </span>
-          )}
-        </div>
-        <div className={styles.profileHeroMain}>
-          <h1 className={styles.profileName}>{name}</h1>
-          <p className={styles.profilePresence}>
-            <span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span>
-          </p>
-          <div className={styles.profilePills}>
-            <span className={styles.metaPill} title={daysPill}>
-              {daysPill}
-            </span>
-            <span className={styles.metaPill} title={playFull}>
-              {playPill}
-            </span>
-            {friendCount > 0 ? (
-              <span className={styles.metaPill}>
-                {friendCount}{' '}
-                {friendCount === 1 ? 'друг' : friendCount < 5 ? 'друга' : 'друзей'}
-              </span>
-            ) : null}
-          </div>
-          {!mine && relation !== 'self' ? (
-            <div className={styles.profileFriendActs}>
-              {relation === 'none' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('request', card.accountId)}
-                >
-                  В друзья
-                </Button>
-              ) : null}
-              {relation === 'outgoing' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('cancel', card.accountId)}
-                >
-                  Отменить заявку
-                </Button>
-              ) : null}
-              {relation === 'incoming' ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
-                    disabled={friendBusy}
-                    onClick={() => void runFriend('accept', card.accountId)}
-                  >
-                    Принять
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    disabled={friendBusy}
-                    onClick={() => void runFriend('decline', card.accountId)}
-                  >
-                    Отклонить
-                  </Button>
-                </>
-              ) : null}
-              {relation === 'friends' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={friendBusy}
-                  onClick={() => void runFriend('remove', card.accountId)}
-                >
-                  Удалить из друзей
-                </Button>
-              ) : null}
-              {friendNote ? <span className={styles.friendNote}>{friendNote}</span> : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className={styles.profileTabs} role="tablist" aria-label="Разделы профиля">
+      <div className={card2.tabs} role="tablist" aria-label="Разделы профиля">
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'profile'}
-          className={tab === 'profile' ? `${styles.profileTab} ${styles.profileTabOn}` : styles.profileTab}
+          className={tab === 'profile' ? `${card2.tab} ${card2.tabOn}` : card2.tab}
           onClick={() => pickTab('profile')}
         >
-          Профиль
+          <Icon name="paw" size={16} /> Профиль
         </button>
         {mine ? (
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'settings'}
-            className={tab === 'settings' ? `${styles.profileTab} ${styles.profileTabOn}` : styles.profileTab}
+            className={tab === 'settings' ? `${card2.tab} ${card2.tabOn}` : card2.tab}
             onClick={() => pickTab('settings')}
           >
-            Настройки
+            <Icon name="gear" size={16} /> Настройки профиля
           </button>
         ) : null}
       </div>
 
       {tab === 'settings' && mine ? (
-        <div className={styles.profileBody} role="tabpanel">
+        <div className={`${styles.panel} ${card2.settingsBody}`} role="tabpanel">
           {settingsSlot}
         </div>
       ) : (
-        <div className={styles.profileBody} role="tabpanel">
-          <div className={styles.profileGrid}>
-            <MeadowPortrait card={shown} name={name} />
-            <div className={styles.profileAside}>
-              <section className={styles.profileSection} aria-labelledby="prof-stats">
-                <h2 className={styles.secTitle} id="prof-stats">
-                  Статистика
+        <div className={card2.grid} role="tabpanel">
+          <div className={card2.col}>
+            <section className={card2.card} aria-labelledby="prof-char">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-char">
+                  <Icon name="paw" className={card2.cardIcon} />
+                  Активный персонаж
                 </h2>
-                <table className={styles.stats}>
-                  <tbody>
-                    <tr>
-                      <td className={styles.statsK}>Локация</td>
-                      <td className={styles.statsV}>{location}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </section>
+                {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
+              </header>
+              <div className={card2.charBody}>
+                <MeadowPortrait card={shown} name={name} />
+              </div>
+            </section>
 
-              <section className={styles.profileSection} aria-labelledby="prof-about">
-                <h2 className={styles.secTitle} id="prof-about">
-                  О себе
+            <section className={card2.card} aria-labelledby="prof-stats">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-stats">
+                  <Icon name="chart" className={card2.cardIcon} />
+                  Краткая статистика
                 </h2>
-                <p className={styles.profileBio}>{bio}</p>
-              </section>
-            </div>
+              </header>
+              <ul className={card2.stats}>
+                <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
+                <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
+                <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
+                <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
+                <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
+              </ul>
+            </section>
+
+            <section className={card2.card} aria-labelledby="prof-about">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-about">
+                  <Icon name="leaf" className={card2.cardIcon} />О себе
+                </h2>
+                {mine ? (
+                  <button type="button" className={card2.iconBtn} aria-label="Изменить «о себе»" onClick={() => pickTab('settings')}>
+                    <Icon name="pencil" size={16} />
+                  </button>
+                ) : null}
+              </header>
+              <p className={card2.bio}>{bio}</p>
+            </section>
           </div>
 
-          <section className={styles.profileSection} aria-labelledby="prof-friends">
-            <h2 className={styles.secTitle} id="prof-friends">
-              Друзья{friendCount ? ` · ${friendCount}` : ''}
-            </h2>
-            {friends.length ? (
-              <ul className={styles.friendList}>
-                {friends.map((f) => (
-                  <FriendRow
-                    key={f.accountId}
-                    friend={f}
-                    canManage={mine}
-                    onOpen={openFriend}
-                    onRemove={mine ? (id) => void runFriend('remove', id) : undefined}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className={styles.profileMuted}>Пока никого в списке друзей.</p>
-            )}
-          </section>
+          <div className={card2.col}>
+            <ProfileFriendsGrid
+              friends={friends}
+              count={friendCount}
+              mine={mine}
+              onOpen={openFriend}
+              onRemove={(id) => void runFriend('remove', id)}
+              onFind={onClose}
+            />
+            <ProfileActivity accountId={card.accountId} now={now} refreshKey={activityTick} onOpenFriend={openFriend} />
+          </div>
         </div>
       )}
 
-      <footer className={styles.panelFoot}>
+      <footer className={card2.foot}>
         <button type="button" className={styles.backLink} onClick={onClose}>
           ← Вернуться в каталог
         </button>
