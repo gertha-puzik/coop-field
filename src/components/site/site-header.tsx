@@ -4,7 +4,7 @@
  * Общая шапка закрытого сайта (пересводка волны W2, мандат владелицы
  * 2026-11-08): тонкая стеклянная ночная полоса (52px, кант/стекло/цвета
  * существующих сессий-панелей auth-gate) — единая для страниц Элизии
- * (/, /game/, /players/, /admin/); на главной — ghost без стекла (2026-11-10).
+ * (/, /game/, /players/, /admin/); на главной — ghost + home справа сверху (2026-11-14).
  *
  * Мобильная нав-волна 2026-11-10 (<lg): прежнее содержимое полосы скрыто
  * целиком (обёртка hidden lg:flex), слева остаётся один бургер; dropdown
@@ -61,7 +61,7 @@ const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 /** id dropdown-панели для aria-controls бургера (шапка на странице одна). */
 const MENU_ID = 'site-nav-menu';
 
-export function SiteHeader({ ghost = false }: { ghost?: boolean }) {
+export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; home?: boolean }) {
   const [open, setOpen] = useState(false);
   /** Бургер + панель одним контейнером: «клик вне» меряется от него. */
   const menuRef = useRef<HTMLDivElement>(null);
@@ -148,8 +148,16 @@ export function SiteHeader({ ghost = false }: { ghost?: boolean }) {
     </button>
   ) : null;
 
+  /** Главная (home): кнопки справа вверху макета — без sticky-полосы на
+   *  всю ширину; на остальных страницах — прежняя стеклянная/ghost шапка. */
+  const shellClass = home
+    ? 'wander-home-nav z-[45] flex min-h-[44px] flex-wrap items-center justify-end gap-x-4 gap-y-2'
+    : ghost
+      ? 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 px-4'
+      : 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]';
+
   return (
-    <header ref={headerRef} className={ghost ? 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 px-4' : 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]'}>
+    <header ref={headerRef} className={shellClass}>
       {/* <lg: бургер; на lg+ контейнер не виден (lg:hidden) */}
       <div ref={menuRef} className="relative lg:hidden">
         <button
@@ -184,11 +192,11 @@ export function SiteHeader({ ghost = false }: { ghost?: boolean }) {
         ) : null}
       </div>
       {/* lg+: прежняя полоса; на <lg скрыта (hidden lg:flex — вид ноль) */}
-      <div className="hidden min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2 lg:flex">
-        <nav aria-label="Разделы сайта" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
-          {renderNav(NAV_LINK)}
+      <div className={`hidden min-w-0 flex-wrap items-center gap-x-5 gap-y-2 lg:flex ${home ? 'justify-end' : 'flex-1'}`}>
+        <nav aria-label="Разделы сайта" className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 ${home ? 'wander-home-nav-links' : ''}`}>
+          {renderNav(home ? `${NAV_LINK} wander-home-link` : NAV_LINK)}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${home ? '' : 'ml-auto'}`}>
           {sessionBadge}
           {logoutButton}
           <ThemeSelect />

@@ -8,9 +8,10 @@ import { playersLabel } from '@/components/sim/room-picker';
 // страницами); здесь — патч-замена инлайн-блока 1:1: тот же массив, те же
 // классы wander-star/wander-spark, появление после гидрации.
 import { StarBackdrop } from '@/components/menu/star-backdrop';
+import { WanderNewsBoard, WanderScene } from '@/components/menu/wander-home-board';
 // Пересводка W2 (2026-11-08): навигацию аккаунтов главной несёт общая шапка
-// сайта, на главной — ghost без фона (владелица 2026-11-10). Монтируется
-// внутри IS_ELYRIA-ветки — grotto не получает ни шапки, ни её графа (DCE).
+// сайта. Макет 2026-11-14: на главной кнопки справа вверху (home), не под
+// карточками. Монтируется внутри IS_ELYRIA-ветки — grotto без шапки (DCE).
 import { SiteHeader } from '@/components/site/site-header';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
@@ -261,13 +262,13 @@ function Grass() {
   );
 }
 
-function NightSky({ children }: { children: ReactNode }) {
+function NightSky({ children, home = false }: { children: ReactNode; home?: boolean }) {
   return (
-    <div className="wander-sky">
+    <div className={home ? 'wander-sky wander-sky-home' : 'wander-sky'}>
       <div className="wander-drift" aria-hidden />
       <StarBackdrop />
       <PawTrail />
-      <div className="wander-stage">{children}</div>
+      <div className={home ? 'wander-stage wander-stage-home' : 'wander-stage'}>{children}</div>
       <Grass />
     </div>
   );
@@ -285,7 +286,8 @@ function WorldPreview({ kind }: { kind: Preview }) {
   return ELISION_PREVIEW;
 }
 
-/** Главное меню: небо, трава, три окна миров и живой счётчик. */
+/** Главное меню: макет 2026-11-14 — бренд слева сверху, кнопки справа
+ *  сверху (закрытый вариант), окна миров слева снизу, доска «Что нового?» справа. */
 export function WanderMenu() {
   const { counts, online, roomIds } = useLiveCounts();
   useEffect(() => {
@@ -293,46 +295,53 @@ export function WanderMenu() {
     if (href) window.location.replace(href);
   }, []);
   return (
-    <NightSky>
-      <header className="wander-hero">
-        <h1 className={`${display.className} wander-title`}>Wanderpaws</h1>
-        <p className="wander-lead">Твой путь начинается здесь</p>
-      </header>
-      <div className="wander-worlds">
-        {WORLDS.map((world) => {
-          const ids = IS_ELYRIA && world.preview === 'elision' ? roomIds : world.ids;
-          const n = sumCounts(counts, ids, online);
-          return (
-            <a key={world.href} className="wander-window" href={world.href}>
-              <span className="wander-dots" aria-hidden>
-                <i />
-                <i />
-                <i />
-              </span>
-              <WorldPreview kind={world.preview} />
-              <span className="wander-name">{world.name}</span>
-              <span className={world.italic ? 'wander-blurb wander-blurb-italic' : 'wander-blurb'}>{world.blurb}</span>
-              <span className="wander-count" aria-live="polite">
-                <i className={online ? 'wander-dot wander-dot-on' : 'wander-dot'} />
-                {n == null ? 'считаем…' : playersLabel(n)}
-              </span>
-            </a>
-          );
-        })}
-        {!IS_ELYRIA ? (
-          <a className="wander-window" href="https://phainonsmilk.ru/">
-            <span className="wander-dots" aria-hidden>
-              <i />
-              <i />
-              <i />
+    <NightSky home>
+      <div className="wander-topbar">
+        <div className="wander-brand-wrap">
+          <h1 className={`${display.className} wander-brand`}>
+            Wanderpaws
+            <span className="wander-brand-paws" aria-hidden>
+              <img src="/lapka.svg" alt="" />
+              <img src="/lapka.svg" alt="" />
             </span>
-            <span className="wander-name">Wanderpaws: Elysiae</span>
-            <span className="wander-blurb">Закрытый мир — вход по аккаунту, отдельный сайт</span>
-            <span className="wander-count">отдельный сайт →</span>
-          </a>
-        ) : null}
+            <span className="wander-brand-flag" aria-hidden />
+          </h1>
+          <p className="wander-brand-lead">Твой путь начинается здесь</p>
+        </div>
+        {IS_ELYRIA ? <SiteHeader ghost home /> : null}
       </div>
-      {IS_ELYRIA ? <SiteHeader ghost /> : null}
+      <div className="wander-layout">
+        <div className="wander-layout-main">
+          <WanderScene />
+          <div className="wander-worlds">
+            {WORLDS.map((world) => {
+              const ids = IS_ELYRIA && world.preview === 'elision' ? roomIds : world.ids;
+              const n = sumCounts(counts, ids, online);
+              return (
+                <a key={world.href} className="wander-window" href={world.href}>
+                  <span className="wander-window-knob" aria-hidden />
+                  <WorldPreview kind={world.preview} />
+                  <span className="wander-name">{world.name}</span>
+                  <span className={world.italic ? 'wander-blurb wander-blurb-italic' : 'wander-blurb'}>{world.blurb}</span>
+                  <span className="wander-count" aria-live="polite">
+                    <i className={online ? 'wander-dot wander-dot-on' : 'wander-dot'} />
+                    {n == null ? 'считаем…' : playersLabel(n)}
+                  </span>
+                </a>
+              );
+            })}
+            {!IS_ELYRIA ? (
+              <a className="wander-window" href="https://phainonsmilk.ru/">
+                <span className="wander-window-knob" aria-hidden />
+                <span className="wander-name">Wanderpaws: Elysiae</span>
+                <span className="wander-blurb">Закрытый мир — вход по аккаунту, отдельный сайт</span>
+                <span className="wander-count">отдельный сайт →</span>
+              </a>
+            ) : null}
+          </div>
+        </div>
+        <WanderNewsBoard />
+      </div>
     </NightSky>
   );
 }
