@@ -70,14 +70,13 @@ createdAt                             позиция в Элизии — по na
 
 | Класс | HTTP-API | WS auth-кадры | Токены |
 | --- | --- | --- | --- |
-| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | `?t=` принимается переходно (старые клиенты) + cookie; кадр `whoami` токен не возвращает. `hello` с `payload.token` требует Origin своего класса |
-| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` выключен; env `AUTH_LEGACY_TOKEN=1` возвращает на переходный период; токен не выдаётся ни в теле HTTP, ни в кадре `whoami`. `hello` с `payload.token` требует Origin своего класса (`originOk`) |
+| `public` (гроты) | `/auth/*`, `/profiles/*`, `/admin/*`, `/cfg/admin*`, `/cfg/export`, пишущие `POST /cfg*` → **404 `not_found`** (гейт server/net.js); `GET /cfg` (значения) и геймплей — ок | `register`/`login` → `{ok:false, reason:"error"}` (спокойный отказ) | **cookie-only** (A7, 2026-11): `?t=` игнорируется; кадр `whoami` токен не возвращает. `hello` с `payload.token` требует Origin своего класса |
+| `elyria` (Элизия) | всё API открыто | обычно | **cookie-only**: `?t=` игнорируется (флаг `AUTH_LEGACY_TOKEN` удалён, A7); токен не выдаётся ни в теле HTTP, ни в кадре `whoami`. `hello` с `payload.token` требует Origin своего класса (`originOk`) |
 | `local` (dev/тесты) | всё API, пермиссивно | работают | прежнее поведение: `?t=` + токен в HTTP-телах и в кадре `whoami` — на нём стоят test-auth/test-флои; `hello` с токеном без Origin по-прежнему жив |
 
 Cookie `coop_session`: `HttpOnly; Path=/; Max-Age=14д`, **host-only** — атрибута Domain
 намеренно нет (B1): кука привязана к точному хосту, соседний сайт её не увидит. На https —
-`Secure + SameSite=Lax` (P1; `COOKIE_LOOSE=1` возвращает легаси `None` для старых
-кросс-доменных клиентов), на http — `SameSite=Lax`. CSRF-щит (B1, fail-closed
+`Secure + SameSite=Lax` (P1; легаси-флаг `COOKIE_LOOSE` удалён, A7), на http — `SameSite=Lax`. CSRF-щит (B1, fail-closed
 per-destination): unsafe-метод с cookie-аутентификацией на public/elyria обязан нести
 Origin, точный для destination-класса — пустой Origin → 403 `csrf_origin_required`,
 чужой (в т.ч. сиблинг-класс из общего env-списка) → 403 `csrf_origin_mismatch`; класс

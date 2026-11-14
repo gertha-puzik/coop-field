@@ -65,13 +65,12 @@ path that forgets a cat, and it is still name-keyed.
   `createdAt` is fixed; `lastSeenByAccount()` reads the newest live session as a
   read-only "last seen" source for the catalog).
 - Cookie: `coop_session`, **HttpOnly**, `Path=/`, `Max-Age=14d`, host-only (no
-  `Domain` attribute — B1). On https: `Secure` + `SameSite=Lax` (legacy
-  `SameSite=None` only behind `COOKIE_LOOSE=1`). The token is never put in
-  `localStorage`; on the elyria host class it is cookie-only (`?t=` acceptance
-  off unless `AUTH_LEGACY_TOKEN=1`) and the WS `whoami` frame does not echo it;
+  `Domain` attribute — B1). On https: `Secure` + `SameSite=Lax` (always;
+  the legacy `COOKIE_LOOSE` switch was removed in A7). The token is never put in
+  `localStorage`; on the elyria and public host classes it is cookie-only (`?t=` is
+  ignored there since A7) and the WS `whoami` frame does not echo it;
   on `local` the token also appears in HTTP response bodies and in `whoami`
-  (tests/dev rely on it); on `public` old clients' `?t=` still works transitively,
-  but `whoami` does not echo the token. `hello` carrying `payload.token` on
+  (tests/dev rely on it), and `?t=` is accepted only there. `hello` carrying `payload.token` on
   public/elyria requires a class-matching Origin.
 - Rate limiting (anti-guessing) — **memory-only, never persisted**: per-IP buckets
   (`hits` map, register 60s/5h prod, login 6s gap) and the per-LOGIN failure lock
@@ -150,7 +149,7 @@ Where that root lives per environment:
   The instance declares `COOP_INSTANCE_CLASS=production` explicitly.
 - **PR preview** — `/opt/coop-field-preview/<slug>/data` (unit + `preview-apply.sh`
   write `DATA_DIR=$APP/data`; the script **refuses** a `DATA_DIR` pointing at the
-  prod root). Preview instances get a per-instance random `ADMIN_PASS` and
+  prod root). Preview instances get no prod secrets and
   softened register limits (5s / 60 per hour). Whole tree is destroyed on PR
   close/merge.
 - **Local dev** — repo `./data/` (gitignored, fails safe to empty).

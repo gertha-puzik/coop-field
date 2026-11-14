@@ -64,6 +64,7 @@ eq("alpha nginx", existsSync(join(t.nginxD, "preview-alpha.conf")), true);
 const alphaEnv = readFileSync(join(t.previewRoot, "alpha/env"), "utf8");
 eq("alpha env not prod data", alphaEnv.includes("/opt/coop-field/data"), false);
 eq("alpha env preview data", alphaEnv.includes(join(t.previewRoot, "alpha/data")), true);
+eq("alpha env has no ADMIN_PASS (A7: server no longer reads it)", alphaEnv.includes("ADMIN_PASS"), false);
 eq(
   "alpha env origins four values",
   alphaEnv.includes(
@@ -217,11 +218,13 @@ eq(
   eq("refuse artifact without grotto index", r2.status === 0 ? "ok" : "fail", "fail");
 }
 // Легаси-env без ALLOWED_ORIGINS (какой был на VPS до фикса): re-apply добавляет
-// новые ключи вместе с ОБЕИМИ хостами и не теряет ADMIN_PASS. HOST2 не передан —
+// новые ключи вместе с ОБЕИМИ хостами и не теряет чужие ключи оператора
+// (ROOMS_MAX — пример; старые env превью ещё могут нести мёртвый ADMIN_PASS,
+// apply его не трогает и не добавляет). HOST2 не передан —
 // дефолт от slug (pr-41.elysiae.phainonsmilk.ru), как в deploy-конвейере.
 writeFileSync(
   join(t.previewRoot, "pr-41/env"),
-  "PORT=41041\nHOST=127.0.0.1\nDATA_DIR=/tmp/coop-legacy/data\nADMIN_PASS=zz\nREQUIRE_ORIGIN=0\n",
+  "PORT=41041\nHOST=127.0.0.1\nDATA_DIR=/tmp/coop-legacy/data\nROOMS_MAX=7\nREQUIRE_ORIGIN=0\n",
 );
 const noHost2 = { ...base };
 delete noHost2.PREVIEW_HOST2;
@@ -244,7 +247,7 @@ eq(
 );
 eq("legacy env gained public hosts", legacyEnv.includes("PUBLIC_HOSTS=cafebabe.abnocw.phainonsmilk.ru"), true);
 eq("legacy env gained elyria hosts", legacyEnv.includes("ELYRIA_HOSTS=pr-41.elysiae.phainonsmilk.ru"), true);
-eq("legacy env kept admin pass", legacyEnv.includes("ADMIN_PASS=zz"), true);
+eq("legacy env kept operator key", legacyEnv.includes("ROOMS_MAX=7"), true);
 eq("legacy env erased stale hosts", legacyEnv.includes("pr-41.abnocw.phainonsmilk.ru") || legacyEnv.includes("alpha.elysiae.phainonsmilk.ru"), false);
 
 const b = run({

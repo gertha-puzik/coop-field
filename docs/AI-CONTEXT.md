@@ -117,7 +117,7 @@ class, config registry (5 keys, apply policies), profiles, RETIRED_ROOMS.
    drifted size numbers fail CI (`check:landmarks`).
 4. **No secrets in the client bundle; secrets come from env only.** The owner
    removed the editor password on 2026-11-09. On 2026-11-10 the owner limited
-   saving to role admin: a joined test-room admin may save maps. ADMIN_PASS is obsolete and ignored.
+   saving to role admin: a joined test-room admin may save maps. There is no editor password (ADMIN_PASS removed, A7).
 
 5. **Production/VPS is owner-only.** An agent needing prod operations writes the exact
    commands for the owner and waits — it never improvises server work itself.
@@ -233,8 +233,8 @@ npm run check:variants       # artifact isolation A1 — needs www-grotto/ + www
   preset logins — registration gives `registered`, NOT admin, plus a log warning; admin
   role ONLY via `node scripts/make-admin.mjs` (S1); `MAX_ACCOUNTS` cap → `full`),
   `server/auth.js` (sessions; cookie `coop_session` HttpOnly host-only (no Domain
-  attribute), SameSite=Lax (+Secure on https; `COOKIE_LOOSE=1` → legacy None); token
-  matrix per host class — elyria is cookie-only, `AUTH_LEGACY_TOKEN=1` brings back `?t=`;
+  attribute), SameSite=Lax (+Secure on https; always — `COOKIE_LOOSE` removed, A7); token
+  matrix per host class — public and elyria are cookie-only, `?t=` only on local (A7);
   WS `whoami.token` is hostClass `local` only, and `hello` with a payload token
   on public/elyria requires `originOk`;
   rate envs `AUTH_REGISTER_GAP_MS`, `AUTH_REGISTER_HOURLY_MAX`, `AUTH_LOGIN_GAP_MS`,

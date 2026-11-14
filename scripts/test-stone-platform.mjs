@@ -25,7 +25,7 @@ import WebSocket from 'ws';
 // аккаунт создаётся в DATA_DIR ДО старта сервера через scripts/make-admin.mjs
 // (лестница S1, см. test-admin-reset). Негатив-гейт (не-админ) — outsider ниже.
 const ADMIN_LOGIN = 'mapboss';
-const ADMIN_PASS = 'password1';
+const ADMIN_ACCOUNT_PASS = 'password1';
 
 const PORT = 3981 + Math.floor(Math.random() * 20);
 const url = process.env.WS_URL || `ws://127.0.0.1:${PORT}`;
@@ -35,7 +35,7 @@ if (!process.env.WS_URL) {
   execFileSync(process.execPath, [
     path.resolve(new URL('..', import.meta.url).pathname, 'scripts/make-admin.mjs'),
     ADMIN_LOGIN,
-    ADMIN_PASS,
+    ADMIN_ACCOUNT_PASS,
   ], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: 'utf8',
@@ -50,7 +50,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: '127.0.0.1',
         DATA_DIR: DATA,
-        ADMIN_PASS: process.env.OPEN_EDITOR_TEST_PASS || '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -93,7 +92,7 @@ async function joinTest(prefix, asAdmin = false) {
   await s.open();
   await s.wait(); // handshake whoami
   s.send('auth', asAdmin
-    ? { action: 'login', login: ADMIN_LOGIN, pass: ADMIN_PASS }
+    ? { action: 'login', login: ADMIN_LOGIN, pass: ADMIN_ACCOUNT_PASS }
     : { action: 'register', login: `${prefix}${Math.random().toString(36).slice(2, 8)}`, pass: 'parol12345' });
   const reg = await s.wait();
   if (!reg[1]?.ok) throw new Error(`auth: ${JSON.stringify(reg)}`);

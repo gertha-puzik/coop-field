@@ -997,12 +997,10 @@ else
 fi
 
 if [ ! -f "$APP/env" ]; then
-  PASS="$(openssl rand -hex 16 2>/dev/null || od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   cat > "$APP/env" <<EOF
 PORT=$PORT
 HOST=127.0.0.1
 DATA_DIR=$APP/data
-ADMIN_PASS=$PASS
 REQUIRE_ORIGIN=0
 EOF
 fi
