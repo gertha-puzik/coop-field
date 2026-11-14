@@ -141,20 +141,20 @@
   .ptab.active { background: rgba(245,169,75,.14); border-color: #f5a94b; color: #ffd9a3; font-weight: 700; }
   .ppane { display: flex; flex-direction: column; gap: 6px; }
   /* атрибут hidden перебивается display:flex (классика) — панель,
-     выключенная табом, обязана исчезать, иначе CatWar-палитры
+     выключенная табом, обязана исчезать, иначе классические палитры
      оставались на экране при возврате на «Свой» */
   .ppane[hidden] { display: none !important; }
-  #paneCW { max-height: 176px; overflow-y: auto; padding-right: 4px; }
+  #paneClassic { max-height: 176px; overflow-y: auto; padding-right: 4px; }
 
   .cwgrp { display: flex; flex-direction: column; gap: 4px; }
   .cwgrp .glab { font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: #83868f; }
   .cwrow { display: flex; flex-wrap: wrap; gap: 4px; }
-  .cw {
+  .pswatch {
     width: 19px; height: 19px; border-radius: 5px; border: 1px solid rgba(0,0,0,.4);
     cursor: pointer; padding: 0; transition: .12s;
   }
-  .cw:hover { transform: scale(1.18); }
-  .cw.active { outline: 2px solid #f5a94b; outline-offset: 1px; }
+  .pswatch:hover { transform: scale(1.18); }
+  .pswatch.active { outline: 2px solid #f5a94b; outline-offset: 1px; }
 
   .histrow { display: flex; flex-wrap: wrap; gap: 4px; min-height: 17px; }
   .histrow .sw {
@@ -386,13 +386,13 @@
         </div>
         <div class="ptabs">
           <button type="button" class="ptab active" data-pt="own">Свой</button>
-          <button type="button" class="ptab" data-pt="cw">CatWar</button>
+          <button type="button" class="ptab" data-pt="classic">Классика</button>
         </div>
         <div class="ppane" id="paneOwn">
           <canvas id="svSquare" width="280" height="128"></canvas>
           <canvas id="hueBar" width="280" height="14"></canvas>
         </div>
-        <div class="ppane" id="paneCW" hidden></div>
+        <div class="ppane" id="paneClassic" hidden></div>
         <div class="cap" style="margin-top:2px">Недавние</div>
         <div class="histrow" id="histRow"></div>
       </div>
@@ -454,7 +454,7 @@
    4) ластик стирает краску до базы, кот и контур не трогаются;
    5) seed штампов зависит только от позиции на пути — карандаш
       и спрей не «дёргаются» при движении курсора;
-   6) цвет: таб «Свой» (HSV) и «CatWar» (палитры окрасов CatWar);
+   6) цвет: таб «Свой» (HSV) и «Классика» (готовые палитры окрасов);
    7) импорт проекта: PNG «слой краски» 300×200 — REPLACE краски
       АКТИВНОГО слоя, один undo-шаг на весь импорт, клип по
       силуэту и кап по альфе скетча; «картинка кота» распознаётся
@@ -1491,8 +1491,8 @@ function drawBrushPrev() {
   brushPrevShape(w / 2, h / 2, s, col);
 }
 
-/* ---------- табы цвета: «Свой» / CatWar ---------- */
-var CW_PALETTES = [
+/* ---------- табы цвета: «Свой» / «Классика» ---------- */
+var CLASSIC_PALETTES = [
   { name: 'Шерсть', colors: ['#f5e5ce', '#ffffff', '#e6e6e6', '#d1d1d1', '#9e9e9e', '#5c5c5c', '#242424', '#141414', '#1d212c', '#2b1d1c', '#3d1c0b', '#6b3c28', '#9a715f', '#bd6d32', '#cb4402', '#e15c0f', '#ed9b2d', '#e5bd7f', '#d7ae98', '#b19798', '#a6b4b7', '#697a8a', '#465165', '#323d51'] },
   { name: 'Тёплые', colors: ['#9C7941', '#362121', '#612322', '#D6700B', '#FCB10D', '#FCDF00', '#B3B059', '#A8AB0C', '#2FA12D', '#7DC210', '#0ECC90', '#87C3D4', '#148CCC', '#192580', '#7D8996'] },
   { name: 'Рыжие', colors: ['#9C7941', '#362121', '#612322', '#B90000', '#D6700B', '#FCB10D', '#FCDF00', '#B3B059', '#A8AB0C', '#2FA12D', '#7DC210', '#0ECC90', '#87C3D4', '#148CCC', '#192580', '#7D8996'] },
@@ -1500,10 +1500,10 @@ var CW_PALETTES = [
   { name: 'Нос', colors: ['#f5e5ce', '#ffffff', '#9e9e9e', '#242424', '#3d1c0b', '#6b3c28', '#9a715f', '#bd6d32', '#e15c0f', '#cc8370', '#b19798', '#465165'] },
   { name: 'Усы', colors: ['#ffffff', '#5c5c5c', '#242424'] }
 ];
-function buildCWPane() {
-  var pane = $('paneCW');
+function buildClassicPane() {
+  var pane = $('paneClassic');
   pane.innerHTML = '';
-  CW_PALETTES.forEach(function (g) {
+  CLASSIC_PALETTES.forEach(function (g) {
     var grp = document.createElement('div');
     grp.className = 'cwgrp';
     var lab = document.createElement('span');
@@ -1515,12 +1515,12 @@ function buildCWPane() {
     g.colors.forEach(function (hex) {
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'cw' + (hex.toLowerCase() === state.color ? ' active' : '');
+      b.className = 'pswatch' + (hex.toLowerCase() === state.color ? ' active' : '');
       b.style.background = hex;
       b.title = hex;
       b.addEventListener('click', function () {
         setColor(hex);
-        var all = pane.querySelectorAll('.cw');
+        var all = pane.querySelectorAll('.pswatch');
         for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
         b.classList.add('active');
       });
@@ -1535,8 +1535,8 @@ function setColorPane(which) {
   for (var i = 0; i < tabs.length; i++)
     tabs[i].classList.toggle('active', tabs[i].getAttribute('data-pt') === which);
   $('paneOwn').hidden = which !== 'own';
-  $('paneCW').hidden = which !== 'cw';
-  if (which === 'cw' && !$('paneCW').childNodes.length) buildCWPane();
+  $('paneClassic').hidden = which !== 'classic';
+  if (which === 'classic' && !$('paneClassic').childNodes.length) buildClassicPane();
 }
 (function () {
   var tabs = document.querySelectorAll('.ptab');
@@ -2428,16 +2428,16 @@ async function runSelfTestAsync() {
   window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'я', ctrlKey: true, bubbles: true, cancelable: true }));
   var hotUndo17 = dataEqual(snapWork(), A17);
   /* табы палитр: выключенная панель реально исчезает (баг hidden vs display:flex) */
-  setColorPane('cw');
-  var cwH17 = $('paneCW').getBoundingClientRect().height;
+  setColorPane('classic');
+  var classicH17 = $('paneClassic').getBoundingClientRect().height;
   var ownH17 = $('paneOwn').getBoundingClientRect().height;
   setColorPane('own');
-  var cwH17b = $('paneCW').getBoundingClientRect().height;
+  var classicH17b = $('paneClassic').getBoundingClientRect().height;
   var ownH17b = $('paneOwn').getBoundingClientRect().height;
-  var tabsOk17 = cwH17 > 4 && ownH17 === 0 && cwH17b === 0 && ownH17b > 4;
+  var tabsOk17 = classicH17 > 4 && ownH17 === 0 && classicH17b === 0 && ownH17b > 4;
   rec('ST17', touchN17 > 50 && touchUndo17 && hotUndo17 && tabsOk17,
     'тач: ' + touchN17 + ' px, undo ' + touchUndo17 + '; Ctrl+Z (code=KeyZ/key=я): ' + hotUndo17 +
-    '; табы корректны ' + tabsOk17 + ' (cw ' + Math.round(cwH17) + '→' + Math.round(cwH17b) + ', свой ' + Math.round(ownH17) + '→' + Math.round(ownH17b) + ')');
+    '; табы корректны ' + tabsOk17 + ' (классика ' + Math.round(classicH17) + '→' + Math.round(classicH17b) + ', свой ' + Math.round(ownH17) + '→' + Math.round(ownH17b) + ')');
   setColorPane('own');
 
   /* ST18: НАЛОЖЕНИЕ СЛОЁВ (blend modes) + мини-предпросмотры в списке */
@@ -2711,7 +2711,7 @@ window.PAINT = {
   persistNow: persistNow,
   masks: { sil: function () { return silArr; }, dark: function () { return darkArr; }, cap: function () { return alphaCap; } },
   setColorPane: setColorPane,
-  cwPalettes: function () { return CW_PALETTES.slice(); },
+  classicPalettes: function () { return CLASSIC_PALETTES.slice(); },
   importLayer: importLayer,
   exportGameCanvas: exportGameCanvas,
   exportGameDataURL: exportGameDataURL,

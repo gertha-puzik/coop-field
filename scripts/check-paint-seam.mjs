@@ -9,8 +9,8 @@
  *
  * Проверяет, что текущий index.html == канонический исходник KNS +
  * ровно этот шов: исходник восстанавливается вырезанием шва, его
- * sha1 сверяется с эталоном (kns origin/main paint-demo/index.html @ 5a9dcff
- * == корневой index.html после kns#54; v8.1.2 был зафиксирован в PR #87).
+ * sha1 сверяется с эталоном (kns index.html в корне @ 13d2d6c, ветка
+ * chore/paint-only / kns#54; v8.1.2 был зафиксирован в PR #87).
  * Провал = копию отредактировали сверх шва (или изменили сам шов) —
  * обнови эталон ТОЛЬКО при осознанном релизе KNS Paint (новый PR:
  * копия + таблица sha1, как в PR #87).
@@ -26,9 +26,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGE = path.join(ROOT, "public", "paint-demo", "index.html");
 const BRIDGE = path.join(ROOT, "public", "paint-demo", "game-bridge.js");
 
-/** Эталон исходника KNS Paint v8.3 (sha1 == kns 5a9dcff paint-demo/index.html,
- *  133751 B; прежний v8.1.2 — PR #87). Меняется ТОЛЬКО при релизе KNS Paint. */
-const SOURCE_SHA1 = "82fe9806d3b91792d6172f96a6bf5ae284260131";
+/** Эталон исходника KNS Paint v8.3 (sha1 == kns 13d2d6c index.html,
+ *  133965 B; прежний v8.1.2 — PR #87). Меняется ТОЛЬКО при релизе KNS Paint. */
+const SOURCE_SHA1 = "4a57b916c189a90a5c3c2436046651194ec6e39f";
 
 /** Шов — ровно эти 4 строки (3 комментария + script), без хвостовых пробелов. */
 const SEAM = [
