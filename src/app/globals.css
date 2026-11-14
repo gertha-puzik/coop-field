@@ -458,19 +458,29 @@ option:disabled,
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
 
-/* Главная: авторский арт как фон (cover), фиолетовая подложка под letterbox. */
+/* Главная: авторский арт целиком (без crop), letterbox цветом скетча. */
 .wander-sky-home {
   background: #2a2440;
+}
+
+.wander-home-art {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  top: 50%;
+  /* Ровно 16:9 внутри viewport — картинка не обрезается. */
+  width: min(100vw, calc(100dvh * 16 / 9));
+  height: min(100dvh, calc(100vw * 9 / 16));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .wander-home-bg {
   position: absolute;
   inset: 0;
-  z-index: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center;
+  object-fit: fill;
   pointer-events: none;
   user-select: none;
 }
@@ -535,6 +545,18 @@ option:disabled,
   justify-content: flex-start;
   gap: 1.25rem;
   padding: 1.1rem 1.25rem 6.5rem;
+  /* Стейдж поверх арта (z>0), но клики к hotspot доски не перехватываем. */
+  pointer-events: none;
+}
+
+.wander-stage-home a,
+.wander-stage-home button,
+.wander-stage-home input,
+.wander-stage-home select,
+.wander-stage-home textarea,
+.wander-stage-home [role='button'],
+.wander-stage-home .wander-home-nav {
+  pointer-events: auto;
 }
 
 .wander-topbar {
@@ -586,17 +608,20 @@ option:disabled,
   justify-content: flex-end;
 }
 
-/* Hotspot доски на арте (правая половина, ~16:9 cover). */
+/* Hotspot всей лицевой плоскости доски (красная рамка на скетче).
+ * % от .wander-home-art (16:9), не от viewport — иначе уезжает при letterbox. */
 .wander-board-hotspot {
   position: absolute;
   z-index: 3;
-  top: 12%;
-  right: 4%;
-  width: min(42%, 520px);
-  height: 74%;
+  /* Лицевая плоскость доски по красной рамке скетча (не ножки). */
+  left: 47.5%;
+  top: 3.5%;
+  width: 49%;
+  height: 86%;
   border: 0;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
+  pointer-events: auto;
   cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
   box-shadow: none;
   transition: background 0.2s ease, box-shadow 0.2s ease;
@@ -604,27 +629,17 @@ option:disabled,
 
 .wander-board-hotspot:hover,
 .wander-board-hotspot:focus-visible {
-  background: rgba(255, 244, 220, 0.1);
+  background: rgba(255, 244, 220, 0.12);
   box-shadow:
-    0 0 0 2px rgba(255, 236, 200, 0.45),
-    0 0 28px rgba(255, 230, 180, 0.28),
-    inset 0 0 40px rgba(255, 240, 210, 0.08);
+    0 0 0 2px rgba(255, 236, 200, 0.5),
+    0 0 32px rgba(255, 230, 180, 0.32),
+    inset 0 0 48px rgba(255, 240, 210, 0.1);
   outline: none;
 }
 
 .wander-board-hotspot:focus-visible {
   outline: 2px solid rgba(255, 236, 200, 0.85);
   outline-offset: 3px;
-}
-
-@media (max-width: 720px) {
-  .wander-board-hotspot {
-    top: auto;
-    right: 3%;
-    bottom: 38%;
-    width: 46%;
-    height: 42%;
-  }
 }
 
 .wander-news-scrim {
@@ -637,6 +652,8 @@ option:disabled,
   padding: 1.25rem;
   background: rgba(12, 10, 24, 0.55);
   backdrop-filter: blur(4px);
+  /* Родитель .wander-home-art — pointer-events:none; модалке клики нужны. */
+  pointer-events: auto;
 }
 
 .wander-news-modal {

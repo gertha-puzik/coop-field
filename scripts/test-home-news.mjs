@@ -2,7 +2,7 @@
 /**
  * Контракт новостей доски главной (server/home-news.js):
  *   GET  /cfg/news|/news — публично на local;
- *   PUT  /admin/news     — только admin + Origin (CSRF).
+ *   POST /cfg/news|/admin/news — только admin + Origin (CSRF).
  *
  * Песочница: mkdtemp DATA_DIR, свободный порт, спавн server.js.
  * Запуск: node scripts/test-home-news.mjs
@@ -139,27 +139,27 @@ async function main() {
     const userLogin = await login(USER, "password-news-2");
     const userCookie = cookieFrom(userLogin);
 
-    // Non-admin PUT → 403
+    // Non-admin POST → 403
     {
-      const r = await jsonFetch(`${HTTP}/admin/news`, {
-        method: "PUT",
+      const r = await jsonFetch(`${HTTP}/cfg/news`, {
+        method: "POST",
         headers: { Origin: ORIGIN, Cookie: userCookie },
         body: JSON.stringify({ items: [{ title: "x", body: "y" }] }),
       });
-      ok(r.status === 403 && r.body?.reason === "forbidden", "user PUT → 403 forbidden");
+      ok(r.status === 403 && r.body?.reason === "forbidden", "user POST /cfg/news → 403 forbidden");
     }
 
     // Admin without Origin → CSRF
     {
-      const r = await jsonFetch(`${HTTP}/admin/news`, {
-        method: "PUT",
+      const r = await jsonFetch(`${HTTP}/cfg/news`, {
+        method: "POST",
         headers: { Cookie: adminCookie },
         body: JSON.stringify({ items: [{ title: "x", body: "y" }] }),
       });
-      ok(r.status === 403 && String(r.body?.reason || "").startsWith("csrf"), "admin PUT without Origin → csrf");
+      ok(r.status === 403 && String(r.body?.reason || "").startsWith("csrf"), "admin POST without Origin → csrf");
     }
 
-    // Admin save
+    // Admin save via /cfg/news (nginx-safe path)
     {
       const payload = {
         items: [
@@ -167,26 +167,36 @@ async function main() {
           { title: "Тест Б", body: "Вторая запись доски." },
         ],
       };
-      const r = await jsonFetch(`${HTTP}/admin/news`, {
-        method: "PUT",
+      const r = await jsonFetch(`${HTTP}/cfg/news`, {
+        method: "POST",
         headers: { Origin: ORIGIN, Cookie: adminCookie },
         body: JSON.stringify(payload),
       });
-      ok(r.status === 200 && r.body?.ok === true, "admin PUT → 200");
+      ok(r.status === 200 && r.body?.ok === true, "admin POST /cfg/news → 200");
       ok(r.body?.items?.length === 2, "saved 2 items");
       ok(r.body.items[0].title === "Тест А", "title preserved");
+    }
+
+    // Alias /admin/news also accepts POST
+    {
+      const r = await jsonFetch(`${HTTP}/admin/news`, {
+        method: "POST",
+        headers: { Origin: ORIGIN, Cookie: adminCookie },
+        body: JSON.stringify({ items: [{ title: "Алиас", body: "через /admin/news" }] }),
+      });
+      ok(r.status === 200 && r.body?.ok === true, "admin POST /admin/news → 200");
     }
 
     // Public sees update
     {
       const r = await jsonFetch(`${HTTP}/cfg/news`);
-      ok(r.body?.items?.[0]?.title === "Тест А", "public GET sees admin write");
+      ok(r.body?.items?.[0]?.title === "Алиас", "public GET sees admin write");
     }
 
     // Empty items rejected
     {
-      const r = await jsonFetch(`${HTTP}/admin/news`, {
-        method: "PUT",
+      const r = await jsonFetch(`${HTTP}/cfg/news`, {
+        method: "POST",
         headers: { Origin: ORIGIN, Cookie: adminCookie },
         body: JSON.stringify({ items: [] }),
       });

@@ -408,12 +408,14 @@ export type AdminHomeNewsAction =
   | { ok: true; items: HomeNewsItem[]; updatedAt: number }
   | AdminFieldError;
 
-/** PUT /admin/news {items} — заменить список новостей доски. */
+/** POST /cfg/news {items} — заменить список новостей доски.
+ *  Пишем в /cfg/news: nginx уже проксирует /cfg* в Node; /admin/news без
+ *  отдельного location отдаёт статику → 405. */
 export async function httpAdminHomeNewsSave(
   items: { title: string; body: string; id?: string }[],
 ): Promise<AdminHomeNewsAction> {
-  const { status, row, text } = await apiFetch('/admin/news', {
-    method: 'PUT',
+  const { status, row, text } = await apiFetch('/cfg/news', {
+    method: 'POST',
     body: { items },
   });
   if (status === 200 && row?.ok === true) {
