@@ -128,6 +128,79 @@ fragments get the same prefixes from `preview-apply.sh` after this lands on
 - [ ] `curl -sI https://phainonsmilk.ru/cfg/statuses` → JSON/`401`, not `text/html`
 - [ ] `curl -sI https://phainonsmilk.ru/admin/statuses` → JSON/`401` after nginx block
 
+## 3c. Production nginx: profile social API prefixes (owner, root)
+
+**Workaround shipped (merge this PR + room restart):** clients talk to
+`/cfg/presence/*`, `/cfg/friends/*`, `/cfg/banners/*`, `/cfg/notifications/*`,
+`/cfg/announcements*` — the existing `location /cfg` proxy is enough, so
+presence / friends / banners / notifications work **without** new nginx
+blocks after the room deploy. Exact locations below remain recommended for
+canonical paths and for any non-`/cfg` callers.
+
+Without `/cfg` (or these blocks) the profile shows «Не получилось изменить
+дружбу» / «Загрузить фон не удалось», statuses stay «Отдыхает», AFK never
+arms.
+
+On the Elysiae production vhost add and `nginx -t && systemctl reload nginx`:
+
+```nginx
+location /banners/mine {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /banners/file {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+location /presence {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /friends {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /notifications {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+location /admin/announcements {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Cookie $http_cookie;
+}
+```
+
+Do **not** add a broad `location /admin` — the `/admin` page must stay on
+try_files. Preview fragments get the same prefixes from `preview-apply.sh`
+after this lands on `main`.
+
+- [ ] Room deploy with `/cfg/*` aliases is enough for clients (no nginx wait)
+- [ ] Optional: add the blocks above; `curl -sI https://elysiae…/cfg/presence/heartbeat` → not `text/html`
+- [ ] `curl -sI https://elysiae…/friends/me` → JSON/`401` after nginx block (not HTML)
+
 ## 4. VPS one-time prerequisites (root, once)
 
 The production flow needs **no new** rights beyond what

@@ -1,5 +1,6 @@
 /**
- * Heartbeat присутствия: сайт / игровая. Литералы /presence/* только здесь.
+ * Heartbeat присутствия: сайт / игровая.
+ * Литералы /cfg/presence/* только здесь (обход прод-nginx через location /cfg).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 
@@ -14,7 +15,7 @@ export type HeartbeatResult =
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
 
 function presenceRoute(): string {
-  return IS_ELYRIA ? "/presence/heartbeat" : "/dev/null";
+  return IS_ELYRIA ? "/cfg/presence/heartbeat" : "/dev/null";
 }
 
 export async function httpPresenceHeartbeat(

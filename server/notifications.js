@@ -117,14 +117,27 @@ function publicItem(row) {
   };
 }
 
+/** Канон /notifications/*; обходной /cfg/notifications/* — прод nginx уже шлёт /cfg в Node. */
 function isNotifPath(p) {
-  return p === "/notifications/me" || p.startsWith("/notifications/");
+  return (
+    p === "/notifications/me" || p.startsWith("/notifications/") ||
+    p === "/cfg/notifications/me" || p.startsWith("/cfg/notifications/")
+  );
+}
+
+function canonNotifPath(p) {
+  if (p === "/cfg/notifications/me") return "/notifications/me";
+  if (p.startsWith("/cfg/notifications/")) {
+    return "/notifications/" + p.slice("/cfg/notifications/".length);
+  }
+  return p;
 }
 
 export async function handleNotificationsHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
-  if (!isNotifPath(p)) return false;
+  const raw = url.pathname;
+  if (!isNotifPath(raw)) return false;
+  const p = canonNotifPath(raw);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

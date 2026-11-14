@@ -1,12 +1,19 @@
 /**
- * Уведомления колокольчика. Литералы /notifications/* только здесь.
+ * Уведомления колокольчика + админ-анонсы.
+ * Литералы /cfg/notifications/* и /cfg/announcements* только здесь
+ * (обход прод-nginx через location /cfg).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
 
 function route(path: string): string {
-  return IS_ELYRIA ? path : "/dev/null";
+  if (!IS_ELYRIA) return "/dev/null";
+  if (path.startsWith("/notifications")) return `/cfg${path}`;
+  if (path.startsWith("/admin/announcements")) {
+    return `/cfg/announcements${path.slice("/admin/announcements".length)}`;
+  }
+  return path;
 }
 
 export type NotificationItem = {

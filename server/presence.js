@@ -206,14 +206,25 @@ export function touchActivity(accountId) {
   emitAfk(id, was, now);
 }
 
+/** Канон /presence/*; обходной /cfg/presence/* — прод nginx уже шлёт /cfg в Node. */
 function isPresencePath(p) {
-  return p === "/presence/heartbeat" || p.startsWith("/presence/");
+  return (
+    p === "/presence/heartbeat" || p.startsWith("/presence/") ||
+    p === "/cfg/presence/heartbeat" || p.startsWith("/cfg/presence/")
+  );
+}
+
+function canonPresencePath(p) {
+  if (p === "/cfg/presence/heartbeat") return "/presence/heartbeat";
+  if (p.startsWith("/cfg/presence/")) return "/presence/" + p.slice("/cfg/presence/".length);
+  return p;
 }
 
 export async function handlePresenceHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
-  if (!isPresencePath(p)) return false;
+  const raw = url.pathname;
+  if (!isPresencePath(raw)) return false;
+  const p = canonPresencePath(raw);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

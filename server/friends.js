@@ -91,8 +91,18 @@ function acceptedFriendsOf(accountId) {
   return out;
 }
 
+/** Канон /friends/*; обходной /cfg/friends/* — прод nginx уже шлёт /cfg в Node. */
 function isFriendsPath(p) {
-  return p === "/friends" || p.startsWith("/friends/");
+  return (
+    p === "/friends" || p.startsWith("/friends/") ||
+    p === "/cfg/friends" || p.startsWith("/cfg/friends/")
+  );
+}
+
+function canonFriendsPath(p) {
+  if (p === "/cfg/friends") return "/friends";
+  if (p.startsWith("/cfg/friends/")) return "/friends/" + p.slice("/cfg/friends/".length);
+  return p;
 }
 
 async function requireSession(req, res) {
@@ -118,8 +128,9 @@ async function requireSession(req, res) {
 
 export async function handleFriendsHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
-  if (!isFriendsPath(p)) return false;
+  const raw = url.pathname;
+  if (!isFriendsPath(raw)) return false;
+  const p = canonFriendsPath(raw);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

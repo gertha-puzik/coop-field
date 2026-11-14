@@ -281,6 +281,18 @@ export function startServer() {
         p.startsWith("/friends/") ||
         p === "/notifications" ||
         p.startsWith("/notifications/") ||
+        // /cfg-обходы тех же зон (клиент ходит сюда на проде): на public
+        // их нет. GET /cfg/banners/file ниже НЕ прячем — публичная отдача.
+        p === "/cfg/banners/mine" ||
+        p.startsWith("/cfg/banners/mine/") ||
+        p === "/cfg/presence" ||
+        p.startsWith("/cfg/presence/") ||
+        p === "/cfg/friends" ||
+        p.startsWith("/cfg/friends/") ||
+        p === "/cfg/notifications" ||
+        p.startsWith("/cfg/notifications/") ||
+        p === "/cfg/announcements" ||
+        p.startsWith("/cfg/announcements/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
@@ -409,6 +421,18 @@ export function startServer() {
       // /cfg/tex* и /cfg/tex-catalog|/cfg/tex-file должны попасть сюда раньше.
       return Promise.resolve(handleTexturesHttp(req, res)).then((texHit) => {
         if (texHit) return;
+      // Профиль-соц: /cfg/banners|/cfg/presence|/cfg/friends|/cfg/notifications|
+      // /cfg/announcements — ДО handleCfgHttp (тот же обход nginx, что /cfg/tex*).
+      return Promise.resolve(handleBannersHttp(req, res)).then((bannersHit) => {
+        if (bannersHit) return;
+      return Promise.resolve(handlePresenceHttp(req, res)).then((presHit) => {
+        if (presHit) return;
+      return Promise.resolve(handleFriendsHttp(req, res)).then((frHit) => {
+        if (frHit) return;
+      return Promise.resolve(handleNotificationsHttp(req, res)).then((ntHit) => {
+        if (ntHit) return;
+      return Promise.resolve(handleAnnouncementsHttp(req, res)).then((anHit) => {
+        if (anHit) return;
       // F2: per-room ветка /cfg-домена разбирается ПЕРВОЙ среди cfg:
       // глобальный /cfg-хендлер заявляет всё /cfg-подпространство, а room-роуты
       // отвечают false на всё, что не /cfg/rooms*.
@@ -427,31 +451,21 @@ export function startServer() {
               // уходит в файловый 404 (тот же порядок, что у /sprites/*).
               return Promise.resolve(handleAvatarsHttp(req, res)).then((avatarsHit) => {
                 if (avatarsHit) return;
-                return Promise.resolve(handleBannersHttp(req, res)).then((bannersHit) => {
-                  if (bannersHit) return;
-                  return Promise.resolve(handlePresenceHttp(req, res)).then((presHit) => {
-                    if (presHit) return;
-                    return Promise.resolve(handleFriendsHttp(req, res)).then((frHit) => {
-                      if (frHit) return;
-                      return Promise.resolve(handleNotificationsHttp(req, res)).then((ntHit) => {
-                        if (ntHit) return;
-                        return Promise.resolve(handleAnnouncementsHttp(req, res)).then((anHit) => {
-                          if (anHit) return;
-                          // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
-                          // — последними до статики.
-                          return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
-                            if (spritesHit) return;
-                            serveStatic(req, res, url);
-                          });
-                        });
-                      });
-                    });
-                  });
+                // Менеджер спрайтов: /sprites/catalog, /sprites/file/* и /admin/sprites*
+                // — последними до статики.
+                return Promise.resolve(handleSpritesHttp(req, res)).then((spritesHit) => {
+                  if (spritesHit) return;
+                  serveStatic(req, res, url);
                 });
               });
             });
           });
         });
+      });
+      });
+      });
+      });
+      });
       });
       });
       });

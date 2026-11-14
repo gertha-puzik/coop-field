@@ -737,6 +737,47 @@ export default function PlayersCatalog() {
     [focused],
   );
 
+  // Живое обновление presence/playtime/локации на открытой карточке (~20 с).
+  useEffect(() => {
+    if (!IS_ELYRIA || !focused?.accountId) return;
+    const id = focused.accountId;
+    const tick = async () => {
+      const one = await httpProfileById(id);
+      if (!one.ok || !one.card) return;
+      const fresh = one.card;
+      setFocused((prev) => {
+        if (!prev || prev.accountId !== id) return prev;
+        return {
+          ...prev,
+          presence: fresh.presence,
+          playtimeMs: fresh.playtimeMs,
+          locationLabel: fresh.locationLabel,
+          lastSeenAt: fresh.lastSeenAt,
+          friendRelation: fresh.friendRelation ?? prev.friendRelation,
+          friends: fresh.friends ?? prev.friends,
+          friendCount: fresh.friendCount ?? prev.friendCount,
+          banner: fresh.banner,
+        };
+      });
+      setCards((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) =>
+          c.accountId === id
+            ? {
+                ...c,
+                presence: fresh.presence,
+                playtimeMs: fresh.playtimeMs,
+                locationLabel: fresh.locationLabel,
+                lastSeenAt: fresh.lastSeenAt,
+              }
+            : c,
+        );
+      });
+    };
+    const t = window.setInterval(() => void tick(), 20_000);
+    return () => window.clearInterval(t);
+  }, [focused?.accountId]);
+
   /** Производные строки: статусы фиксированы моментом загрузки (fetchedAt),
    *  сортировка — перестановка уже загруженных карточек, ничего выдуманного. */
   const rows = useMemo<RowModel[]>(() => {
