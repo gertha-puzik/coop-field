@@ -1,7 +1,7 @@
 /**
  * Публичное чтение новостей доски главной (GET /cfg/news).
- * Пишется только админкой — PUT /admin/news живёт в http-admin-ops.ts,
- * чтобы литерал /admin/news не попадал в grotto-бандл меню.
+ * Пишется только админкой — POST /cfg/news живёт в http-admin-ops.ts
+ * (обход nginx; литерал /admin/news не попадает в grotto-бандл меню).
  */
 import { apiFetch, asText, type ApiRow } from './http-auth';
 

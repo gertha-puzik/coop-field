@@ -3,11 +3,13 @@
  * запись только admin. Хранилище DATA_DIR/home-news.json (атомарная запись).
  *
  * Роуты:
- *   GET  /cfg/news | /news     — {ok, items[]} (public/elyria/local);
- *   PUT  /admin/news — {items:[{title,body}]} admin-only.
+ *   GET  /cfg/news | /news           — {ok, items[]} (public/elyria/local);
+ *   POST /cfg/news | /admin/news     — {items:[{title,body}]} admin-only.
  *
- * /cfg/news — обходной путь: на проде nginx уже шлёт /cfg* в Node.
- * host-гейт public прячет /admin*, поэтому PUT на public → 404 not_found.
+ * Запись идёт через POST /cfg/news: nginx уже проксирует весь /cfg в Node,
+ * а /admin/news без отдельного location упирается в статику → 405.
+ * /admin/news остаётся каноном на сервере (и для preview location после
+ * обновления apply). host-гейт public прячет POST /cfg* и /admin* → 404.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -137,8 +139,11 @@ export async function handleHomeNewsHttp(req, res) {
     return true;
   }
 
-  if (p === ROUTES.ADMIN && method === "PUT") {
-    // Запись только /admin/news: на public host-гейт прячет /admin* целиком.
+  const isWrite =
+    method === "POST" && (p === ROUTES.CFG || p === ROUTES.ADMIN);
+  if (isWrite) {
+    // POST /cfg/news — обход nginx (весь /cfg уже в Node); /admin/news —
+    // канон, когда location проксируется. Public host-гейт режет оба.
     if (!adminGate(req, res)) return true;
     let body;
     try {
@@ -170,7 +175,7 @@ export async function handleHomeNewsHttp(req, res) {
   return false;
 }
 
-/** Для тестов: сброс к дефолту в памяти (файл не трогаем, пока не PUT). */
+/** Для тестов: сброс к дефолту в памяти (файл не трогаем, пока не POST). */
 export function resetHomeNewsForTests() {
   store = emptyStore();
 }

@@ -346,6 +346,16 @@ ${https_jump}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header Cookie \$http_cookie;
     }
+    # Новости доски главной (server/home-news.js): POST /admin/news → Node;
+    # клиент пишет также через POST /cfg/news (location /cfg уже выше).
+    location /admin/news {
+        proxy_pass http://127.0.0.1:$port;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header Cookie \$http_cookie;
+    }
     # Менеджер спрайтов (server/sprites.js): те же правила «только реальные
     # API-префиксы» — админские CRUD /admin/sprites* уходят в Node, страница
     # /admin остаётся статикой варианта (как /admin/players выше).

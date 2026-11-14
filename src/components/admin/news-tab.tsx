@@ -2,7 +2,7 @@
 
 /**
  * Вкладка «Новости доски» дашборда /admin: правка записок «Что нового?»
- * на главной (оба сайта читают GET /cfg/news). Сохранение — PUT /admin/news.
+ * на главной (оба сайта читают GET /cfg/news). Сохранение — POST /cfg/news.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -35,9 +35,20 @@ function humanError(reason: string | undefined, fallback: string): string {
       return 'Не удалось сохранить на сервере.';
     case 'offline':
       return 'Сервер недоступен — проверьте соединение.';
+    case 'http_405':
+    case 'method_not_allowed':
+      return 'Сервер отклонил способ сохранения — обновите страницу и попробуйте снова.';
     default:
       return fallback;
   }
+}
+
+/** Не светим сырой HTML nginx (405 и т.п.) в баннере ошибки. */
+function cleanDetails(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const t = raw.trim();
+  if (!t || t.startsWith('<') || /<!DOCTYPE|Not Allowed/i.test(t)) return undefined;
+  return t.slice(0, 240);
 }
 
 function toDraft(items: HomeNewsItem[]): DraftRow[] {
@@ -104,10 +115,14 @@ export function NewsTab() {
     const res = await httpAdminHomeNewsSave(items);
     setBusy(false);
     if (!res.ok) {
+      const reason =
+        /405|Not Allowed/i.test(res.details || '') || /405|Not Allowed/i.test(res.message || '')
+          ? 'http_405'
+          : res.reason;
       setStatus({
         kind: 'err',
-        text: humanError(res.reason, 'Не удалось сохранить.'),
-        details: res.message || res.details,
+        text: humanError(reason, 'Не удалось сохранить.'),
+        details: cleanDetails(res.message || res.details),
       });
       return;
     }

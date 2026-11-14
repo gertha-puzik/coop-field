@@ -262,12 +262,24 @@ function Grass() {
   );
 }
 
-function NightSky({ children, home = false }: { children: ReactNode; home?: boolean }) {
+function NightSky({
+  children,
+  home = false,
+  boardHotspot = null,
+}: {
+  children: ReactNode;
+  home?: boolean;
+  /** Hotspot доски — внутри 16:9-рамки арта, чтобы % совпадали с картинкой. */
+  boardHotspot?: ReactNode;
+}) {
   return (
     <div className={home ? 'wander-sky wander-sky-home' : 'wander-sky'}>
       {home ? (
-        // Авторский фон (скетч): cover + центр, без второго слоя звёзд/травы.
-        <img className="wander-home-bg" src="/menu/home-bg.jpg" alt="" />
+        // Рамка 16:9 без обрезки (contain): арт целиком + hotspot в тех же %.
+        <div className="wander-home-art">
+          <img className="wander-home-bg" src="/menu/home-bg.jpg" alt="" />
+          {boardHotspot}
+        </div>
       ) : (
         <>
           <div className="wander-drift" aria-hidden />
@@ -302,7 +314,7 @@ export function WanderMenu() {
     if (href) window.location.replace(href);
   }, []);
   return (
-    <NightSky home>
+    <NightSky home boardHotspot={<WanderNewsHotspot />}>
       <h1 className="sr-only">Wanderpaws</h1>
       <div className="wander-topbar">
         {IS_ELYRIA ? <SiteHeader ghost home /> : <span aria-hidden />}
@@ -336,7 +348,6 @@ export function WanderMenu() {
             ) : null}
           </div>
         </div>
-        <WanderNewsHotspot />
       </div>
     </NightSky>
   );
