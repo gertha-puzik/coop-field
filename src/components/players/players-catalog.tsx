@@ -34,27 +34,31 @@ import {
   httpProfileById,
   httpProfileCatalog,
   type ProfileCard,
+  type ProfileMe,
   type PublicProfile,
 } from '@/lib/net/http-profiles';
 import { httpMe } from '@/lib/net/http-auth';
+import {
+  httpFriendAccept,
+  httpFriendCancel,
+  httpFriendRequest,
+  humanFriendError,
+  type FriendRelation,
+} from '@/lib/net/http-friends';
 import type { CoopWhoami } from '@/lib/net/protocol';
 import PlayerProfile, { BrandRow, ProfileSkeleton, Starscape, displayFont } from './player-profile';
 import {
-  ACTIVITY_TEXT,
-  STATUS_TEXT,
-  activityOf,
   avatarOf,
   consumeCatalogDeepLink,
   moonsFromMs,
   moonsText,
   plural,
+  presenceLabel,
   ruAgo,
   ruDate,
   ruStamp,
   spriteUrl,
-  statusOf,
-  type ActivityTone,
-  type StatusTone,
+  type PresenceTone,
 } from './players-format';
 import styles from './players-elyria.module.css';
 
@@ -67,7 +71,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Unknown-значения не выезжают наверх реверсом: неизвестное остаётся
  * неизвестным внизу списка в любом направлении. */
 
-type SortKey = 'name' | 'status' | 'born' | 'seen' | 'age' | 'act';
+type SortKey = 'name' | 'status' | 'born' | 'seen' | 'age';
 
 const SORT_TITLE: Record<SortKey, string> = {
   name: 'Персонаж',
@@ -75,28 +79,23 @@ const SORT_TITLE: Record<SortKey, string> = {
   born: 'Дата рождения',
   seen: 'Последний вход',
   age: 'Возраст',
-  act: 'Активность',
 };
 
 /** Стартовое направление при выборе колонки (как в каталоге-референсе). */
-const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, age: -1, act: -1 };
+const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, age: -1 };
 
-const RANK_STATUS: Record<StatusTone, number> = { online: 0, sleep: 1, recent: 2, away: 3, unknown: 4 };
-const RANK_ACT: Record<ActivityTone, number> = { shifting: 0, positive: 1, ideal: 2, unknown: 3 };
-
-const STATUS_PILL: Record<StatusTone, string> = {
-  online: styles.stOnline,
-  sleep: styles.stSleep,
-  recent: styles.stRecent,
-  away: styles.stAway,
-  unknown: styles.stUnknown,
+const RANK_PRESENCE: Record<PresenceTone, number> = {
+  online: 0,
+  traveling: 1,
+  away: 2,
+  resting: 3,
 };
 
-const ACT_COLOR: Record<ActivityTone, string> = {
-  ideal: styles.actIdeal,
-  positive: styles.actPositive,
-  shifting: styles.actShifting,
-  unknown: styles.actUnknown,
+const PRESENCE_PILL: Record<PresenceTone, string> = {
+  online: styles.stOnline,
+  traveling: styles.stTravel,
+  away: styles.stAway,
+  resting: styles.stRest,
 };
 
 /** Строка таблицы/плитки: производные поля карточки, вычисленные один раз
@@ -107,8 +106,9 @@ type RowModel = {
   card: ProfileCard;
   name: string;
   shortId: string;
-  status: StatusTone;
-  activity: ActivityTone;
+  presence: PresenceTone;
+  presenceText: string;
+  relation: FriendRelation;
   born: string;
   bornTs: number | null;
   seenAgo: string;
@@ -120,12 +120,14 @@ type RowModel = {
 
 function makeRow(card: ProfileCard, clock: number): RowModel {
   const seen = card.lastSeenAt ?? 0;
+  const pr = presenceLabel(card.presence, seen, clock);
   return {
     card,
     name: card.displayName || 'Безымянный',
     shortId: `№${card.accountId.slice(0, 8)}`,
-    status: statusOf(seen, clock),
-    activity: activityOf(seen, clock),
+    presence: pr.tone,
+    presenceText: pr.text,
+    relation: card.friendRelation || 'none',
     born: ruDate(card.createdAt),
     bornTs: card.createdAt > 0 ? card.createdAt : null,
     seenAgo: seen > 0 ? ruAgo(seen, clock) : 'неизвестно',
@@ -149,9 +151,7 @@ function cmpModels(a: RowModel, b: RowModel, key: SortKey, dir: 1 | -1): number 
     case 'name':
       return a.name.localeCompare(b.name, 'ru') * dir;
     case 'status':
-      return (RANK_STATUS[a.status] - RANK_STATUS[b.status]) * dir;
-    case 'act':
-      return (RANK_ACT[a.activity] - RANK_ACT[b.activity]) * dir;
+      return (RANK_PRESENCE[a.presence] - RANK_PRESENCE[b.presence]) * dir;
     case 'born': {
       const n = nullsLast(a.bornTs, b.bornTs);
       return n !== 0 ? n : ((a.bornTs ?? 0) - (b.bornTs ?? 0)) * dir;
@@ -234,19 +234,60 @@ function SortHead({
   );
 }
 
-/** Мини-арена со спрайтом аватара и точкой «свежий вход» (пульс гасится
+/** Мини-арена со спрайтом аватара и точкой «в сети» (пульс гасится
  *  prefers-reduced-motion). Без спрайта — пустая сцена, без выдуманных лиц. */
 function MiniArena({ m, big }: { m: RowModel; big?: boolean }) {
   return (
     <span className={`${styles.miniArena} ${big ? styles.tileArena : ''}`} aria-hidden>
-      {m.status === 'online' ? <span className={styles.onlineDot} /> : null}
+      {m.presence === 'online' ? <span className={styles.onlineDot} /> : null}
       {m.sprite ? <img src={m.sprite} alt="" /> : null}
     </span>
   );
 }
 
+/** Кнопка дружбы в строке/плитке: stopPropagation, чтобы не открыть карточку. */
+function FriendBtn({
+  relation,
+  busy,
+  onAct,
+}: {
+  relation: FriendRelation;
+  busy: boolean;
+  onAct: (action: 'request' | 'accept' | 'cancel') => void;
+}) {
+  if (relation === 'self' || relation === 'friends') return null;
+  const label =
+    relation === 'outgoing' ? 'Отменить' : relation === 'incoming' ? 'Принять' : 'В друзья';
+  const muted = relation === 'outgoing';
+  return (
+    <button
+      type="button"
+      className={muted ? `${styles.friendBtn} ${styles.friendBtnMuted}` : styles.friendBtn}
+      disabled={busy}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        onAct(relation === 'outgoing' ? 'cancel' : relation === 'incoming' ? 'accept' : 'request');
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 /** Строка таблицы: клик открывает полную страницу профиля. */
-function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
+function RowBtn({
+  m,
+  onOpen,
+  friendBusy,
+  onFriend,
+  showFriend,
+}: {
+  m: RowModel;
+  onOpen: () => void;
+  friendBusy: boolean;
+  onFriend: (action: 'request' | 'accept' | 'cancel') => void;
+  showFriend: boolean;
+}) {
   return (
     <button
       type="button"
@@ -274,11 +315,11 @@ function RowBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
       <span className={`${styles.ageC} ${styles.cAge}`} title="возраст карточки в лунах (1 луна = 30 дней с регистрации)">
         {m.moons}
       </span>
-      <span className={`${styles.actW} ${ACT_COLOR[m.activity]} ${styles.cAct}`}>
-        {m.activity === 'unknown' ? 'неизвестно' : `${ACTIVITY_TEXT[m.activity]} активность`}
-      </span>
       <span className={styles.cStatus}>
-        <span className={`${styles.pill} ${STATUS_PILL[m.status]}`}>{STATUS_TEXT[m.status]}</span>
+        <span className={`${styles.pill} ${PRESENCE_PILL[m.presence]}`}>{m.presenceText}</span>
+      </span>
+      <span className={styles.rowFriend}>
+        {showFriend ? <FriendBtn relation={m.relation} busy={friendBusy} onAct={onFriend} /> : null}
       </span>
     </button>
   );
@@ -312,8 +353,8 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
             <div className={styles.cBorn}>{SORT_TITLE.born}</div>
             <div className={styles.cSeen}>{SORT_TITLE.seen}</div>
             <div className={styles.cAge}>{SORT_TITLE.age}</div>
-            <div className={styles.cAct}>{SORT_TITLE.act}</div>
             <div className={styles.cStatus}>{SORT_TITLE.status}</div>
+            <div />
           </div>
           <div className={styles.tbody} aria-hidden>
             {idx.map((i) => (
@@ -326,8 +367,8 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
                 {strip('84%')}
                 {strip('96%')}
                 {strip('58%')}
-                {strip('88%')}
                 {pill(78)}
+                {strip('64%', 22)}
               </div>
             ))}
           </div>
@@ -357,7 +398,19 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
 }
 
 /** Плитка плиточного вида: те же честные данные, компактнее. */
-function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
+function TileBtn({
+  m,
+  onOpen,
+  friendBusy,
+  onFriend,
+  showFriend,
+}: {
+  m: RowModel;
+  onOpen: () => void;
+  friendBusy: boolean;
+  onFriend: (action: 'request' | 'accept' | 'cancel') => void;
+  showFriend: boolean;
+}) {
   return (
     <button type="button" className={styles.tile} onClick={onOpen} aria-label={`Открыть профиль: ${m.name}`}>
       <MiniArena m={m} big />
@@ -365,11 +418,12 @@ function TileBtn({ m, onOpen }: { m: RowModel; onOpen: () => void }) {
       <span className={styles.acc} title={m.card.accountId}>
         {m.shortId}
       </span>
-      <span className={`${styles.pill} ${STATUS_PILL[m.status]}`}>{STATUS_TEXT[m.status]}</span>
+      <span className={`${styles.pill} ${PRESENCE_PILL[m.presence]}`}>{m.presenceText}</span>
       <span className={styles.tAge}>
         <b>{m.moons}</b>
         {` · ${m.seenAgo}`}
       </span>
+      {showFriend ? <FriendBtn relation={m.relation} busy={friendBusy} onAct={onFriend} /> : null}
     </button>
   );
 }
@@ -409,7 +463,9 @@ export default function PlayersCatalog() {
   }, []);
   const [focused, setFocused] = useState<ProfileCard | null>(null);
   const [focusMissing, setFocusMissing] = useState<string | null>(null);
-  const [myProfile, setMyProfile] = useState<PublicProfile | null>(null);
+  const [myProfile, setMyProfile] = useState<ProfileMe | null>(null);
+  const [friendBusyId, setFriendBusyId] = useState<string | null>(null);
+  const [friendFlash, setFriendFlash] = useState<string | null>(null);
   /** #84 ч.2: ?mine= — подсветка возврата из редактора. */
   const [mineFlash, setMineFlash] = useState<string | null>(null);
   /** Момент последней успешной загрузки: от него считаются статусы и
@@ -600,23 +656,85 @@ export default function PlayersCatalog() {
   /** PATCH прошёл: свежий /profiles/me + перерисовка карточки в каталоге. */
   const handleSaved = useCallback(
     (fresh: PublicProfile) => {
-      setMyProfile(fresh);
+      setMyProfile((prev) => (prev ? { ...prev, ...fresh } : (fresh as ProfileMe)));
       setCards((prev) => {
         if (!prev) return prev;
         const me = session?.accountId;
         return prev.map((c) =>
           me && c.accountId === me
-            ? { ...c, displayName: fresh.displayName, bio: fresh.bio, avatarCharacterId: fresh.avatarCharacterId }
+            ? {
+                ...c,
+                displayName: fresh.displayName,
+                bio: fresh.bio,
+                avatarCharacterId: fresh.avatarCharacterId,
+                avatar: fresh.avatar,
+                banner: fresh.banner,
+                birthday: fresh.birthday,
+              }
             : c,
         );
       });
       setFocused((prev) =>
         prev && session?.accountId && prev.accountId === session.accountId
-          ? { ...prev, displayName: fresh.displayName, bio: fresh.bio, avatarCharacterId: fresh.avatarCharacterId }
+          ? {
+              ...prev,
+              displayName: fresh.displayName,
+              bio: fresh.bio,
+              avatarCharacterId: fresh.avatarCharacterId,
+              avatar: fresh.avatar,
+              banner: fresh.banner,
+              birthday: fresh.birthday,
+            }
           : prev,
       );
     },
     [session],
+  );
+
+  const patchRelation = useCallback((accountId: string, relation: FriendRelation) => {
+    setCards((prev) =>
+      prev ? prev.map((c) => (c.accountId === accountId ? { ...c, friendRelation: relation } : c)) : prev,
+    );
+    setFocused((prev) => (prev && prev.accountId === accountId ? { ...prev, friendRelation: relation } : prev));
+  }, []);
+
+  const runCatalogFriend = useCallback(
+    async (accountId: string, action: 'request' | 'accept' | 'cancel') => {
+      if (friendBusyId) return;
+      setFriendBusyId(accountId);
+      setFriendFlash(null);
+      const fn =
+        action === 'request' ? httpFriendRequest : action === 'accept' ? httpFriendAccept : httpFriendCancel;
+      const res = await fn(accountId);
+      setFriendBusyId(null);
+      if (!res.ok) {
+        setFriendFlash(humanFriendError(res.reason, 'Не получилось изменить дружбу.'));
+        return;
+      }
+      patchRelation(
+        accountId,
+        action === 'request' ? 'outgoing' : action === 'accept' ? 'friends' : 'none',
+      );
+    },
+    [friendBusyId, patchRelation],
+  );
+
+  const openFriendFromCard = useCallback(
+    async (accountId: string) => {
+      if (!accountId || accountId === focused?.accountId) return;
+      const one = await httpProfileById(accountId);
+      if (one.ok && one.card) {
+        setFocused(one.card);
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set('id', accountId);
+          window.history.replaceState(null, '', url);
+        } catch {
+          /* noop */
+        }
+      }
+    },
+    [focused],
   );
 
   /** Производные строки: статусы фиксированы моментом загрузки (fetchedAt),
@@ -647,6 +765,8 @@ export default function PlayersCatalog() {
         onSaved={handleSaved}
         onClose={closeCard}
         mineHighlight={mineFlash}
+        onOpenFriend={(id) => void openFriendFromCard(id)}
+        onFriendsChanged={() => setReloadTick((t) => t + 1)}
       />
     );
   }
@@ -659,7 +779,8 @@ export default function PlayersCatalog() {
     return <ProfileSkeleton />;
   }
 
-  const onlineNow = rows.filter((r) => r.status === 'online').length;
+  const onlineNow = rows.filter((r) => r.presence === 'online' || r.presence === 'traveling').length;
+  const loggedIn = !!(session?.ok && session.accountId);
   const appliedQuery = query.trim();
   const qPart = appliedQuery ? ` по запросу «${appliedQuery}»` : '';
   const sortNote = `сортировка: ${SORT_TITLE[sort.key].toLowerCase()} ${sort.dir === 1 ? '↑' : '↓'} (по загруженным)`;
@@ -754,6 +875,11 @@ export default function PlayersCatalog() {
         </form>
 
         {focusMissing ? <ServerError title={focusMissing} /> : null}
+        {friendFlash ? (
+          <div style={{ marginBottom: 12 }} className={styles.errBox}>
+            <p className={styles.errTitle}>{friendFlash}</p>
+          </div>
+        ) : null}
 
         {listFail ? (
           <div style={{ marginBottom: 16 }} className={styles.errBox}>
@@ -833,32 +959,39 @@ export default function PlayersCatalog() {
                     onSort={() => applySort('age')}
                   />
                   <SortHead
-                    label={SORT_TITLE.act}
-                    hint="активность выводится из времени последнего входа"
-                    cellClass={styles.cAct}
-                    active={sort.key === 'act'}
-                    dir={sort.dir}
-                    onSort={() => applySort('act')}
-                  />
-                  <SortHead
                     label={SORT_TITLE.status}
-                    hint="«в игре» — вход был в последние 15 минут"
+                    hint="присутствие с сервера: в сети / путешествует / отошёл / отдыхает"
                     cellClass={styles.cStatus}
                     active={sort.key === 'status'}
                     dir={sort.dir}
                     onSort={() => applySort('status')}
                   />
+                  <div aria-hidden />
                 </div>
                 <div className={styles.tbody}>
                   {rows.map((m) => (
-                    <RowBtn key={m.card.accountId} m={m} onOpen={() => openCard(m.card)} />
+                    <RowBtn
+                      key={m.card.accountId}
+                      m={m}
+                      onOpen={() => openCard(m.card)}
+                      friendBusy={friendBusyId === m.card.accountId}
+                      showFriend={loggedIn && m.relation !== 'self'}
+                      onFriend={(action) => void runCatalogFriend(m.card.accountId, action)}
+                    />
                   ))}
                 </div>
               </div>
             ) : (
               <div className={styles.tiles}>
                 {rows.map((m) => (
-                  <TileBtn key={m.card.accountId} m={m} onOpen={() => openCard(m.card)} />
+                  <TileBtn
+                    key={m.card.accountId}
+                    m={m}
+                    onOpen={() => openCard(m.card)}
+                    friendBusy={friendBusyId === m.card.accountId}
+                    showFriend={loggedIn && m.relation !== 'self'}
+                    onFriend={(action) => void runCatalogFriend(m.card.accountId, action)}
+                  />
                 ))}
               </div>
             )}
