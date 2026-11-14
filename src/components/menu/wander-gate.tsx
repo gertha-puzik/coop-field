@@ -269,13 +269,13 @@ function NightSky({
 }: {
   children: ReactNode;
   home?: boolean;
-  /** Hotspot доски — внутри 16:9-рамки арта, чтобы % совпадали с картинкой. */
+  /** Hotspot доски — внутри рамки арта, чтобы % совпадали с картинкой. */
   boardHotspot?: ReactNode;
 }) {
   return (
     <div className={home ? 'wander-sky wander-sky-home' : 'wander-sky'}>
       {home ? (
-        // Рамка 16:9 cover: ровная обрезка по центру + hotspot в тех же %.
+        // Фон на весь экран целиком (fill, без crop) + hotspot в % картинки.
         <div className="wander-home-art">
           <img className="wander-home-bg" src="/menu/home-bg.jpg" alt="" />
           {boardHotspot}

@@ -63,7 +63,7 @@ server.js             комната: комнаты, клетки, бой, ча
 | `src/lib/sim/elision-scene.ts` | 356 | Математика WebGL-сцены Элизии: `worldPxToScene` — единственный шаг px мира → сцена (второго ±1 нет), камера ортографическая повторяет `screenToWorld` |
 | `src/lib/sim/` прочее | 472 | keys.ts 73 (физическая раскладка WASD), remote-aim.ts 92 (чужой прицел), textures.ts 189 + tex-live.ts 126, theme.ts 54, gif-walk.ts 117 (пробная GIF-анимация ходьбы: decodeGifFrames через WebCodecs ImageDecoder, walkFrameAt/walkPhaseOf — кадр по локальным часам с фазой кота; без класса/битый gif — отказ, useWalkGifCache оставляет статичный PNG) |
 | `src/lib/site.ts` | 28 | Канон варианта сайта (P3): `SITE` из `NEXT_PUBLIC_SITE`, дефолт `grotto` (fail-safe: пустой env — публичный сайт). Хелперы для кода вне React; вариантозависимый UI-код НЕ импортирует его для фолдинга — сверяет env инлайном (см. шапку модуля) |
-| `src/components/menu/wander-gate.tsx` | 370 | Главное меню: фон `/menu/home-bg.jpg` 16:9 cover по центру, окна миров (Элизия — одно шире по центру), hotspot доски; на Элизии шапка сверху + комнаты из GET /locations |
+| `src/components/menu/wander-gate.tsx` | 370 | Главное меню: фон `/menu/home-bg.jpg` целиком (fill, без crop), окна миров слева (Элизия — одно чуть шире), hotspot доски; на Элизии шапка сверху + комнаты из GET /locations |
 | `src/components/menu/wander-home-board.tsx` | 120 | Hotspot доски + модалка новостей (portal, pin/HTML body, GET /cfg/news) |
 | `src/components/admin/news-rich-editor.tsx` | 103 | Мини-редактор body новости (b/i/u/size) |
 | `server/home-news.js` | 281 | Новости доски: GET/POST /cfg/news, pin+порядок, HTML body allowlist, DATA_DIR/home-news.json |
