@@ -192,6 +192,8 @@ export type CoopCat = {
   fm?: number;
   fx?: number;
   fy?: number;
+  /** Presence AFK на поле: клиент рисует «AFK» над именем. */
+  afk?: boolean;
 };
 
 /** Боевой лог комнаты. name / part / weapon / isAttacking — как в журнале удара. */
