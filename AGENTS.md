@@ -34,6 +34,7 @@ npm run test:auth            # accounts, cookies/CSRF, host gate, closed Elision
 npm run test:cross-origin    # B1: per-destination Origin/CSRF/CORS live-probe matrix (>=20)
 npm run test:cfg             # config registry whitelist + clamps + list mutations (P4/B2); S1 harness: stop -> make-admin -> restart cycle
 npm run test:profiles        # HTTP profiles: catalog (?q/?limit/?cursor), card, PATCH /profiles/me (P5)
+npm run test:profile-social  # баннер/presence/playtime/друзья/уведомления/админ-анонсы (spawn песочница)
 npm run test:locations       # isolated world maps, trusted passages, reverse arrival, resume and corrupt-neighbor recovery
 npm run test:my-sprites     # #83: /sprites/mine* — сессия, дедуп, лимит 3, rate, IHDR-валидация, CSRF, corrupt-манифест (spawn песочница)
 npm run test:home-news      # доска «Что нового?»: GET/POST /cfg/news, pin+HTML allowlist, CSRF

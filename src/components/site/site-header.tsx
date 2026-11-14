@@ -38,6 +38,7 @@ import {
   httpNotificationsRead,
   type NotificationItem,
 } from '@/lib/net/http-notifications';
+import { httpFriendAccept, httpFriendDecline } from '@/lib/net/http-friends';
 import { startPresenceBeat } from '@/lib/net/presence-beat';
 import { ThemeSelect } from '@/components/site/theme-select';
 
@@ -115,13 +116,14 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
   const openPanel = async () => {
     const next = !open;
     setOpen(next);
-    if (next) {
-      await reload();
-      if (unread > 0) {
-        const res = await httpNotificationsRead({ all: true });
-        if (res.ok) setUnread(res.unread);
-        setItems((prev) => prev.map((it) => ({ ...it, read: true })));
-      }
+    if (next) await reload();
+  };
+
+  const markAllRead = async () => {
+    const res = await httpNotificationsRead({ all: true });
+    if (res.ok) {
+      setUnread(res.unread);
+      setItems((prev) => prev.map((it) => ({ ...it, read: true })));
     }
   };
 
@@ -148,7 +150,7 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
         </svg>
         {unread > 0 ? (
           <span
-            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#e2c15a] shadow-[0_0_0_2px_rgba(10,14,32,0.85)]"
+            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#e05252] shadow-[0_0_0_2px_rgba(10,14,32,0.85)]"
             aria-hidden
           />
         ) : null}
@@ -157,27 +159,81 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
         <div id={BELL_ID} className={BELL_PANEL} role="dialog" aria-label="Уведомления">
           <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
             <span className="text-[12.5px] font-semibold text-[#efe7ff]">Уведомления</span>
-            <button
-              type="button"
-              className="text-[11px] text-[#b9b3d9] underline-offset-2 hover:text-[#f4f0ff] hover:underline"
-              onClick={() => void reload()}
-            >
-              {loading ? '…' : 'Обновить'}
-            </button>
+            <div className="flex items-center gap-2">
+              {unread > 0 ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-[#b9b3d9] underline-offset-2 hover:text-[#f4f0ff] hover:underline"
+                  onClick={() => void markAllRead()}
+                >
+                  Прочитать все
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="text-[11px] text-[#b9b3d9] underline-offset-2 hover:text-[#f4f0ff] hover:underline"
+                onClick={() => void reload()}
+              >
+                {loading ? '…' : 'Обновить'}
+              </button>
+            </div>
           </div>
           {items.length === 0 ? (
             <p className="px-3 py-4 text-center text-[12.5px] text-[#b9b3d9]">Пока тихо — новых уведомлений нет.</p>
           ) : (
             <ul className="max-h-72 space-y-1 overflow-y-auto">
-              {items.map((it) => (
-                <li
-                  key={it.id}
-                  className={`rounded-lg px-3 py-2 ${it.read ? 'bg-transparent' : 'bg-[rgba(226,220,255,0.07)]'}`}
-                >
-                  <div className="text-[12.5px] font-semibold text-[#f4f0ff]">{it.title || 'Событие'}</div>
-                  {it.body ? <p className="mt-0.5 text-[12px] leading-snug text-[#b9b3d9]">{it.body}</p> : null}
-                </li>
-              ))}
+              {items.map((it) => {
+                const fromId =
+                  it.type === 'friend_request' && typeof it.payload?.fromId === 'string'
+                    ? it.payload.fromId
+                    : '';
+                return (
+                  <li
+                    key={it.id}
+                    className={`rounded-lg px-3 py-2 ${it.read ? 'bg-transparent' : 'bg-[rgba(226,220,255,0.07)]'}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-[12.5px] font-semibold text-[#f4f0ff]">{it.title || 'Событие'}</div>
+                      {!it.read ? (
+                        <span className="mt-0.5 shrink-0 rounded bg-[rgba(224,82,82,0.2)] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#ffb4b4]">
+                          новое
+                        </span>
+                      ) : null}
+                    </div>
+                    {it.body ? <p className="mt-0.5 text-[12px] leading-snug text-[#b9b3d9]">{it.body}</p> : null}
+                    {fromId ? (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md border border-[rgba(226,220,255,0.28)] px-2 py-1 text-[11px] text-[#efe7ff] hover:bg-[rgba(226,220,255,0.1)]"
+                          onClick={() => {
+                            void (async () => {
+                              await httpFriendAccept(fromId);
+                              await httpNotificationsRead({ ids: [it.id] });
+                              void reload();
+                            })();
+                          }}
+                        >
+                          Принять
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md px-2 py-1 text-[11px] text-[#b9b3d9] hover:text-[#f4f0ff]"
+                          onClick={() => {
+                            void (async () => {
+                              await httpFriendDecline(fromId);
+                              await httpNotificationsRead({ ids: [it.id] });
+                              void reload();
+                            })();
+                          }}
+                        >
+                          Отклонить
+                        </button>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

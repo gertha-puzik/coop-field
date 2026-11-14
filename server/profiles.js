@@ -175,7 +175,7 @@ function publicBirthday(full) {
  *  и пустоту не подменяем выдуманной комнатой. Источники только читаются:
  *  сессии (auth.js) и книга позиций (persist.js). Книга ключуется ИМЕНЕМ
  *  персонажа — одноимённые коты неразличимы, это честно отражает источник. */
-function card(acc, sessionSeen, viewerId = "", { withFriends = false } = {}) {
+function card(acc, sessionSeen, viewerId = "", { withFriends = false, ownerView = false } = {}) {
   const chars = Array.isArray(acc.characters) ? acc.characters : [];
   let catTs = 0;
   for (const ch of chars) {
@@ -190,7 +190,8 @@ function card(acc, sessionSeen, viewerId = "", { withFriends = false } = {}) {
   return {
     accountId: String(acc.id || ""),
     ...pub,
-    birthday: publicBirthday(pub && pub.birthday),
+    // Владельцу (/profiles/me) — полная ГГГГ-ММ-ДД; чужим — ММ-ДД.
+    birthday: ownerView ? pub && pub.birthday : publicBirthday(pub && pub.birthday),
     lastSeenAt: seen,
     presence: slice.presence,
     locationLabel: slice.locationLabel,
@@ -525,6 +526,7 @@ export async function handleProfilesHttp(req, res) {
       // СП — только владельцу; presence/friends — тот же карточный срез.
       const meCard = card(session.account, lastSeenByAccount(), session.account.id, {
         withFriends: true,
+        ownerView: true,
       });
       json(res, 200, { ok: true, ...meCard, sp: spView(session.account) });
       return true;
