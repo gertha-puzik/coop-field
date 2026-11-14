@@ -270,6 +270,8 @@ export interface DummyConfig {
   accountLogin?: string;
   /** Статус на поле (подпись третьей строкой); нет у гостя/мишени. */
   statusLabel?: string;
+  /** AFK на поле (presence): nameplate рисует «AFK» над именем. */
+  afk?: boolean;
   /** Спрайт персонажа. */
   sprite: SpriteId;
   /** Клетка (колонка / ряд, с нуля). */

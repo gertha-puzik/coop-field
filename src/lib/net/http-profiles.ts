@@ -46,6 +46,16 @@ export type ProfileCharacter = { id: string; name: string; sprite: string; size:
  *  последней записи кота; 0 = неизвестно, честное «неизвестно» вместо
  *  выдумки). Комнаты последней записи в DTO нет. Сервер может не прислать
  *  lastSeenAt (свой /profiles/me его не несёт) — поэтому поле необязательное. */
+export type PresenceTone = "online" | "traveling" | "away" | "resting";
+export type FriendRelation = "none" | "friends" | "outgoing" | "incoming" | "self";
+
+export type ProfileFriend = {
+  accountId: string;
+  displayName: string;
+  avatar: string | null;
+  presence: PresenceTone;
+};
+
 export type PublicProfile = {
   displayName: string;
   bio: string;
@@ -56,11 +66,22 @@ export type PublicProfile = {
   /** Своя загруженная картинка: URL файла аватара или null — портрет
    *  карточки рисует её вместо спрайта персонажа. */
   avatar: string | null;
+  /** Горизонтальный фон профиля или null → звёздный градиент. */
+  banner: string | null;
   avatarCharacterId: string | null;
   characters: ProfileCharacter[];
   activeCharacterId: string | null;
   createdAt: number;
   lastSeenAt?: number;
+  /** Накопленное время на игровом поле (мс). */
+  playtimeMs?: number;
+  /** Серверный статус присутствия. */
+  presence?: PresenceTone;
+  /** Текущая / последняя локация. */
+  locationLabel?: string | null;
+  friendCount?: number;
+  friendRelation?: FriendRelation;
+  friends?: ProfileFriend[];
 };
 
 /** Карточка каталога: DTO + accountId (для deep-link /players?id=). */
@@ -138,12 +159,44 @@ function parseSp(raw: unknown): ProfileSp | undefined {
   return Object.keys(sp).length ? sp : undefined;
 }
 
+function asPresence(v: unknown): PresenceTone | undefined {
+  const s = asText(v);
+  return s === "online" || s === "traveling" || s === "away" || s === "resting" ? s : undefined;
+}
+
+function asRelation(v: unknown): FriendRelation | undefined {
+  const s = asText(v);
+  return s === "none" || s === "friends" || s === "outgoing" || s === "incoming" || s === "self"
+    ? s
+    : undefined;
+}
+
+function parseFriends(raw: unknown): ProfileFriend[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ProfileFriend[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const r = x as Record<string, unknown>;
+    const accountId = asText(r.accountId);
+    if (!accountId) continue;
+    out.push({
+      accountId,
+      displayName: asText(r.displayName, accountId),
+      avatar: asId(r.avatar),
+      presence: asPresence(r.presence) || "resting",
+    });
+  }
+  return out;
+}
+
 function parseProfile(row: ApiRow): ProfileMe {
+  const playtimeMs = Number(row.playtimeMs);
   return {
     displayName: asText(row.displayName),
     bio: asText(row.bio),
     birthday: asBirthday(row.birthday),
     avatar: asId(row.avatar),
+    banner: asId(row.banner),
     avatarCharacterId: asId(row.avatarCharacterId),
     characters: parseCharacters(row.characters),
     activeCharacterId: asId(row.activeCharacterId),
@@ -151,6 +204,12 @@ function parseProfile(row: ApiRow): ProfileMe {
     // P5: только конечные числа и строки/NULL — мусор схлопывается в
     // «неизвестно» (0/null), чтобы UI не рисовал выдуманное время.
     lastSeenAt: Number.isFinite(Number(row.lastSeenAt)) ? Number(row.lastSeenAt) : 0,
+    playtimeMs: Number.isFinite(playtimeMs) ? Math.max(0, playtimeMs) : 0,
+    presence: asPresence(row.presence),
+    locationLabel: asText(row.locationLabel) || null,
+    friendCount: Number.isFinite(Number(row.friendCount)) ? Number(row.friendCount) : undefined,
+    friendRelation: asRelation(row.friendRelation),
+    friends: parseFriends(row.friends),
     // СП — только из ответа своего /profiles/me (владелец).
     sp: parseSp(row.sp),
   };

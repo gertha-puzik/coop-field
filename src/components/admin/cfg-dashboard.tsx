@@ -83,6 +83,7 @@ import { TexturesTab } from './textures-tab';
 import { InvitesTab } from './invites-tab';
 import { StatusesTab } from './statuses-tab';
 import { NewsTab } from './news-tab';
+import { AnnouncementsTab } from './announcements-tab';
 // Пересводка W2 (2026-11-08): ThemeSelect из шапки панели убран — селект темы
 // несёт общая шапка сайта (SiteHeader), дублей быть не должно.
 // Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
@@ -105,7 +106,7 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
  *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
  *  «пункт, который мы смотрели», сохраняется между визитами. */
 const TAB_KEY = 'elyria-admin-tab';
-const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures', 'invites', 'statuses', 'news'] as const;
+const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures', 'invites', 'statuses', 'news', 'announce'] as const;
 const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'cfg';
 
 /** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
@@ -564,6 +565,7 @@ export default function CfgDashboard() {
     { id: 'invites', title: 'Коды приглашений', render: () => <InvitesTab /> },
     { id: 'statuses', title: 'Статусы', render: () => <StatusesTab /> },
     { id: 'news', title: 'Новости доски', render: () => <NewsTab /> },
+    { id: 'announce', title: 'Объявления', render: () => <AnnouncementsTab /> },
   ];
 
   const activeTab = tabs.find((t) => t.id === tab) ?? null;

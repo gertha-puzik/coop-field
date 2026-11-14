@@ -115,6 +115,7 @@ import { JUMP_MAX_CELLS, type CoopWhoami } from '@/lib/net/protocol';
 import { httpLogin, httpLogout, httpMe, httpRegister } from '@/lib/net/http-auth';
 import { loadUniverses, snapToAllowed, snapPeriodToAllowed, universesNow, type Universes } from '@/lib/net/cfg-live';
 import { roomsForMode, namedRoom, isRegisteredOnlyCode, type PlayMode } from '@/lib/net/modes';
+import { startPresenceBeat } from '@/lib/net/presence-beat';
 
 /**
  * Compile-time вариант сайта (P3, спек §2A): сворачивается сборщиком, гейты
@@ -552,7 +553,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    *  манекены. Всё в refs, не в модуле: два экземпляра Simulator не делят состояние. */
   const liveRemotesRef = useRef<DummyConfig[]>([]);
   /** Своя подпись на поле (имя/логин/статус) — из you/update cat. */
-  const selfPlateRef = useRef<{ id: string; name: string; accountLogin?: string; statusLabel?: string } | null>(null);
+  const selfPlateRef = useRef<{ id: string; name: string; accountLogin?: string; statusLabel?: string; afk?: boolean } | null>(null);
   /** Плавный угол чужой стрелы: d.angle — последний сетевой угол, на кадре рисуем display. */
   const remoteAimRef = useRef(new Map<string, RemoteAim>());
   /** Экранная дорисовка чужих клеток: за кадр не больше одного шага. */
@@ -3593,6 +3594,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               charName: d.name,
               accountLogin: d.accountLogin,
               statusLabel: d.statusLabel,
+              afk: d.afk,
             });
             ctx.restore();
           }
@@ -3648,6 +3650,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 charName: plate.name,
                 accountLogin: plate.accountLogin,
                 statusLabel: plate.statusLabel,
+                afk: plate.afk,
               });
               ctx.restore();
             }
@@ -4529,6 +4532,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       dead = true;
     };
   }, []);
+
+  /** Presence на игровом поле: heartbeat where=game (AFK/playtime). */
+  useEffect(() => {
+    if (!IS_ELYRIA || mode !== 'elision') return;
+    if (!whoami?.ok || !whoami.accountId) return;
+    startPresenceBeat('game');
+  }, [mode, whoami?.ok, whoami?.accountId]);
 
   /** Живые universes: согласовать сохранённый выбор СП с разрешённым списком.
    *  Значение вне списка снапится к дефолту (спек §6A): загрузка профиля не

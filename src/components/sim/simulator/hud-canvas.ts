@@ -132,7 +132,7 @@ export function drawElisionNameplates(
   cv: HTMLCanvasElement | null,
   frame: ElisionFrame,
   remotes: DummyConfig[],
-  self?: { id: string; name: string; accountLogin?: string; statusLabel?: string } | null,
+  self?: { id: string; name: string; accountLogin?: string; statusLabel?: string; afk?: boolean } | null,
 ) {
   if (!cv || frame.editor) return;
   const g = cv.getContext('2d');
@@ -140,7 +140,7 @@ export function drawElisionNameplates(
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   g.save();
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const plates: { id: string; name: string; accountLogin?: string; statusLabel?: string }[] = [];
+  const plates: { id: string; name: string; accountLogin?: string; statusLabel?: string; afk?: boolean }[] = [];
   if (self?.name) plates.push(self);
   for (const d of remotes) {
     if (!d.present || !d.visible || d.id === frame.controlledId) continue;
@@ -160,6 +160,7 @@ export function drawElisionNameplates(
       charName: plate.name,
       accountLogin: plate.accountLogin,
       statusLabel: plate.statusLabel,
+      afk: plate.afk,
     });
   }
   g.restore();

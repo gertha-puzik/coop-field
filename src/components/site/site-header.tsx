@@ -18,11 +18,8 @@
  * профиль (пункт «Настройки» упразднён решением владелицы 2026-11-10: он
  * вёл на ту же страницу профиля, что и «Мой профиль»; якорь #settings
  * формы правки живёт в deep-link); «Админка» — только при role==='admin'.
- * Справа — сессия: «Вы вошли как …» (гость: бейджа и админ-пункта нет —
- * он видит окно входа гейта), «Выйти» (POST /auth/logout через
- * httpLogout — он же сбрасывает общий me-кэш вкладки и рассылает
- * ME_EVENT) и возврат на главную, плюс селект темы (существующий
- * ThemeSelect: статья про новый механизм темы не открывается).
+ * Справа — сессия: колокольчик уведомлений, «Вы вошли как …», «Выйти»
+ * и ThemeSelect. Presence-beat ('site') стартует при входе в аккаунт.
  *
  * Данные — useMeRow/meCached из src/lib/net/me-cache.tsx: шапка не шлёт
  * второго GET /auth/me, если страницу уже спросил AuthGate/каталог/админка
@@ -36,6 +33,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { httpLogout } from '@/lib/net/http-auth';
 import { meBadgeName, meHasAccount, myProfileHref, useMeRow } from '@/lib/net/me-cache';
+import {
+  httpNotificationsMe,
+  httpNotificationsRead,
+  type NotificationItem,
+} from '@/lib/net/http-notifications';
+import { httpFriendAccept, httpFriendDecline } from '@/lib/net/http-friends';
+import { startPresenceBeat } from '@/lib/net/presence-beat';
 import { ThemeSelect } from '@/components/site/theme-select';
 
 /** Текстовая ссылка полосы: тонкая, без рамок — стеклянная ночь шапки. */
@@ -56,10 +60,187 @@ const BURGER_BUTTON =
 const MENU_PANEL =
   'absolute left-0 top-full z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-[18px] border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-[8px]';
 
+const BELL_PANEL =
+  'absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-[18px] border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.92)] p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur-[8px]';
+
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 /** id dropdown-панели для aria-controls бургера (шапка на странице одна). */
 const MENU_ID = 'site-nav-menu';
+const BELL_ID = 'site-notify-panel';
+
+function NotifyBell({ inAccount }: { inAccount: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const reload = useCallback(async () => {
+    if (!inAccount || !IS_ELYRIA) return;
+    setLoading(true);
+    const res = await httpNotificationsMe();
+    setLoading(false);
+    if (!res) return;
+    setItems(res.items);
+    setUnread(res.unread);
+  }, [inAccount]);
+
+  useEffect(() => {
+    if (!inAccount) {
+      setItems([]);
+      setUnread(0);
+      return;
+    }
+    void reload();
+    const t = window.setInterval(() => void reload(), 45_000);
+    return () => window.clearInterval(t);
+  }, [inAccount, reload]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (ev: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(ev.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const openPanel = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next) await reload();
+  };
+
+  const markAllRead = async () => {
+    const res = await httpNotificationsRead({ all: true });
+    if (res.ok) {
+      setUnread(res.unread);
+      setItems((prev) => prev.map((it) => ({ ...it, read: true })));
+    }
+  };
+
+  if (!inAccount) return null;
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-[rgba(226,220,255,0.28)] bg-[rgba(226,220,255,0.06)] text-[#f4f0ff] transition-colors hover:bg-[rgba(226,220,255,0.14)]"
+        aria-label={unread ? `Уведомления, непрочитанных: ${unread}` : 'Уведомления'}
+        aria-expanded={open}
+        aria-controls={BELL_ID}
+        onClick={() => void openPanel()}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path
+            d="M12 3a5.5 5.5 0 0 0-5.5 5.5v2.2c0 .7-.2 1.4-.6 2L4.6 15a1 1 0 0 0 .8 1.6h13.2a1 1 0 0 0 .8-1.6l-1.3-2.3c-.4-.6-.6-1.3-.6-2V8.5A5.5 5.5 0 0 0 12 3Z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+          <path d="M9.5 18.2a2.5 2.5 0 0 0 5 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        {unread > 0 ? (
+          <span
+            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#e05252] shadow-[0_0_0_2px_rgba(10,14,32,0.85)]"
+            aria-hidden
+          />
+        ) : null}
+      </button>
+      {open ? (
+        <div id={BELL_ID} className={BELL_PANEL} role="dialog" aria-label="Уведомления">
+          <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
+            <span className="text-[12.5px] font-semibold text-[#efe7ff]">Уведомления</span>
+            <div className="flex items-center gap-2">
+              {unread > 0 ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-[#b9b3d9] underline-offset-2 hover:text-[#f4f0ff] hover:underline"
+                  onClick={() => void markAllRead()}
+                >
+                  Прочитать все
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="text-[11px] text-[#b9b3d9] underline-offset-2 hover:text-[#f4f0ff] hover:underline"
+                onClick={() => void reload()}
+              >
+                {loading ? '…' : 'Обновить'}
+              </button>
+            </div>
+          </div>
+          {items.length === 0 ? (
+            <p className="px-3 py-4 text-center text-[12.5px] text-[#b9b3d9]">Пока тихо — новых уведомлений нет.</p>
+          ) : (
+            <ul className="max-h-72 space-y-1 overflow-y-auto">
+              {items.map((it) => {
+                const fromId =
+                  it.type === 'friend_request' && typeof it.payload?.fromId === 'string'
+                    ? it.payload.fromId
+                    : '';
+                return (
+                  <li
+                    key={it.id}
+                    className={`rounded-lg px-3 py-2 ${it.read ? 'bg-transparent' : 'bg-[rgba(226,220,255,0.07)]'}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-[12.5px] font-semibold text-[#f4f0ff]">{it.title || 'Событие'}</div>
+                      {!it.read ? (
+                        <span className="mt-0.5 shrink-0 rounded bg-[rgba(224,82,82,0.2)] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#ffb4b4]">
+                          новое
+                        </span>
+                      ) : null}
+                    </div>
+                    {it.body ? <p className="mt-0.5 text-[12px] leading-snug text-[#b9b3d9]">{it.body}</p> : null}
+                    {fromId ? (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md border border-[rgba(226,220,255,0.28)] px-2 py-1 text-[11px] text-[#efe7ff] hover:bg-[rgba(226,220,255,0.1)]"
+                          onClick={() => {
+                            void (async () => {
+                              await httpFriendAccept(fromId);
+                              await httpNotificationsRead({ ids: [it.id] });
+                              void reload();
+                            })();
+                          }}
+                        >
+                          Принять
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md px-2 py-1 text-[11px] text-[#b9b3d9] hover:text-[#f4f0ff]"
+                          onClick={() => {
+                            void (async () => {
+                              await httpFriendDecline(fromId);
+                              await httpNotificationsRead({ ids: [it.id] });
+                              void reload();
+                            })();
+                          }}
+                        >
+                          Отклонить
+                        </button>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; home?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -77,6 +258,11 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
   const me = useMeRow();
   const inAccount = meHasAccount(me);
   const isAdmin = inAccount && me?.role === 'admin';
+
+  useEffect(() => {
+    if (!IS_ELYRIA || !inAccount) return;
+    startPresenceBeat('site');
+  }, [inAccount]);
 
   /** Закрытие панели: повторный тап (toggle в кнопке), клик вне
    *  (pointerdown мимо menuRef) и Esc — слушатели живут только пока
@@ -191,12 +377,17 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
           </div>
         ) : null}
       </div>
+      {/* <lg: колокольчик справа от бургера */}
+      <div className="ml-auto flex items-center lg:hidden">
+        <NotifyBell inAccount={inAccount} />
+      </div>
       {/* lg+: прежняя полоса; на <lg скрыта (hidden lg:flex — вид ноль) */}
       <div className={`hidden min-w-0 flex-wrap items-center gap-x-5 gap-y-2 lg:flex ${home ? 'justify-end' : 'flex-1'}`}>
         <nav aria-label="Разделы сайта" className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 ${home ? 'wander-home-nav-links' : ''}`}>
           {renderNav(home ? `${NAV_LINK} wander-home-link` : NAV_LINK)}
         </nav>
         <div className={`flex items-center gap-3 ${home ? '' : 'ml-auto'}`}>
+          <NotifyBell inAccount={inAccount} />
           {sessionBadge}
           {logoutButton}
           <ThemeSelect />

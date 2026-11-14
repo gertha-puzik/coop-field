@@ -29,6 +29,7 @@ import { SiteHeader } from '@/components/site/site-header';
 import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import { httpLogout } from '@/lib/net/http-auth';
 import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
+import { httpDeleteBanner, httpUploadBanner, humanBannerError } from '@/lib/net/http-banners';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -37,33 +38,17 @@ import {
   damageLevelLabel,
   persistProfileSp,
 } from '@/lib/sim/settings';
-import {
-  ACTIVITY_TEXT,
-  STATUS_TEXT,
-  activityOf,
-  avatarOf,
-  daysSince,
-  moonsText,
-  plural,
-  ruAgo,
-  ruBirthday,
-  ruDate,
-  statusOf,
-  type StatusTone,
-} from './players-format';
 import styles from './players-elyria.module.css';
 import {
-  ACH_ICONS,
   AvatarField,
   MineSpritesSection,
-  Portrait,
   SKIN_GROUPS,
   SpChip,
-  achFacts,
   activeCharOf,
   humanEditError,
   moonPath,
 } from './player-profile-ui';
+import { ProfileCardView } from './profile-card-view';
 
 /** Латинский шрифт бренда один на обе страницы (Lilita One, только latin:
  *  русские заголовки — system-ui 600); инстанс переиспользуется каталогом. */
@@ -71,15 +56,6 @@ export const displayFont = Lilita_One({ weight: '400', subsets: ['latin'], displ
 
 const NAME_MAX = 24;
 const BIO_MAX = 280;
-const UNKNOWN = 'неизвестно';
-
-const STATUS_COLOR: Record<StatusTone, string> = {
-  online: '#7dcaa0',
-  sleep: '#9aa3c0',
-  recent: '#e2c15a',
-  away: '#b9b3d9',
-  unknown: 'rgba(185,179,217,.55)',
-};
 
 /** Тот же детерминированный генератор звёзд, что в меню Wanderpaws:
  *  пререндер и клиент рисуют одинаковые точки (без hydration-дребезга). */
@@ -124,73 +100,6 @@ export function BrandRow() {
   );
 }
 
-/* ——— контурные иконки строк данных (стиль референса) ——— */
-
-const stroke = {
-  fill: 'none' as const,
-  stroke: 'currentColor',
-  strokeWidth: 1.7,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-};
-
-type InfoIcon = 'id' | 'calendar' | 'moon' | 'activity' | 'paw' | 'feather';
-
-const INFO_ICONS: Record<InfoIcon, ReactNode> = {
-  id: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <rect x="3" y="5" width="18" height="14.5" rx="3" />
-      <circle cx="8.6" cy="11" r="1.9" />
-      <path d="M13.2 10.2h4.6" />
-      <path d="M13.2 14h4.6" />
-    </svg>
-  ),
-  calendar: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
-      <path d="M3.5 10.4h17" />
-      <path d="M8 3v4" />
-      <path d="M16 3v4" />
-    </svg>
-  ),
-  moon: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <path d={moonPath} />
-    </svg>
-  ),
-  activity: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <path d="M3 12.2h3.5l2.4-5.8 4 11.2 2.4-5.4H21" />
-    </svg>
-  ),
-  paw: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <ellipse cx="12" cy="16.6" rx="4.4" ry="3.4" />
-      <circle cx="5.8" cy="12.4" r="1.6" />
-      <circle cx="9.4" cy="9.6" r="1.8" />
-      <circle cx="14.6" cy="9.6" r="1.8" />
-      <circle cx="18.2" cy="12.4" r="1.6" />
-    </svg>
-  ),
-  feather: (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden>
-      <path d="M20.2 4.2C11.6 5 7 10 6.4 19.8 15.4 19.6 20 14.8 20.2 4.2Z" />
-      <path d="M7.2 18.9C9.8 12.8 13.6 8.8 19.4 6.2" />
-    </svg>
-  ),
-};
-
-
-
-const spark = (
-  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M12 3l2.1 6.9L21 12l-6.9 2.1L12 21l-2.1-6.9L3 12l6.9-2.1z" />
-  </svg>
-);
-
-
-
-
 /* ——— инлайн-редактор своей карточки (P4, поток прежний) ——— */
 
 /** Черновик СП: все три значения заполнены (незаданное в профиле берётся из
@@ -215,7 +124,7 @@ const spDefaults = (sp: ProfileSp | undefined): SpDraft => ({
 
 
 
-function OwnProfileEditor({
+export function OwnProfileEditor({
   profile,
   onSaved,
   mineHighlight = null,
@@ -246,6 +155,11 @@ function OwnProfileEditor({
   /** Вооружённое удаление картинки: второй клик подтверждает (5 сек). */
   const [armedAvatar, setArmedAvatar] = useState(false);
   const armAvatarTimer = useRef<number | null>(null);
+  const [bannerUrl, setBannerUrl] = useState(profile.banner || '');
+  const [bannerBusy, setBannerBusy] = useState(false);
+  const [armedBanner, setArmedBanner] = useState(false);
+  const armBannerTimer = useRef<number | null>(null);
+  const bannerFileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [fail, setFail] = useState<{ title: string; details?: string } | null>(null);
@@ -258,6 +172,7 @@ function OwnProfileEditor({
     setDraftBio(profile.bio);
     setDraftBirthday(profile.birthday || '');
     setAvatarUrl(profile.avatar || '');
+    setBannerUrl(profile.banner || '');
     setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
@@ -270,6 +185,7 @@ function OwnProfileEditor({
   // вооружённое «Убрать картинку» гаснет само — таймер чистим на выходе
   useEffect(() => () => {
     if (armAvatarTimer.current) window.clearTimeout(armAvatarTimer.current);
+    if (armBannerTimer.current) window.clearTimeout(armBannerTimer.current);
   }, []);
 
   /** СП едут в PATCH только если игрок их реально тронул: неточно равные
@@ -388,6 +304,53 @@ function OwnProfileEditor({
     armAvatarTimer.current = window.setTimeout(() => setArmedAvatar(false), 5000);
   };
 
+  const refreshMineAfterBanner = async () => {
+    const fresh = await httpMyProfile();
+    if (fresh.ok && fresh.profile) onSaved(fresh.profile);
+  };
+
+  const uploadOwnBanner = async (file: File) => {
+    if (bannerBusy) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setFail({ title: 'Файл больше 2 МБ не принимается — уменьшите картинку.' });
+      return;
+    }
+    setFail(null);
+    setBannerBusy(true);
+    const res = await httpUploadBanner(file);
+    setBannerBusy(false);
+    if (!res.ok) {
+      setFail({ title: humanBannerError(res.reason, 'Загрузить фон не удалось.'), details: res.message || undefined });
+      return;
+    }
+    setBannerUrl(res.banner || '');
+    setArmedBanner(false);
+    setNote('Фон загружен.');
+    window.setTimeout(() => setNote(null), 2500);
+    await refreshMineAfterBanner();
+  };
+
+  const removeOwnBanner = async () => {
+    setBannerBusy(true);
+    const res = await httpDeleteBanner();
+    setBannerBusy(false);
+    if (!res.ok) {
+      setFail({ title: humanBannerError(res.reason, 'Убрать фон не удалось.'), details: res.message || undefined });
+      return;
+    }
+    setBannerUrl('');
+    setArmedBanner(false);
+    setNote('Фон убран.');
+    window.setTimeout(() => setNote(null), 2500);
+    await refreshMineAfterBanner();
+  };
+
+  const armBannerRemoval = () => {
+    setArmedBanner(true);
+    if (armBannerTimer.current) window.clearTimeout(armBannerTimer.current);
+    armBannerTimer.current = window.setTimeout(() => setArmedBanner(false), 5000);
+  };
+
   /** «Надеть» — сразу в профиль, без отдельного «Сохранить»: иначе игрок
    *  уходит в комнату с черновиком, а кот остаётся в прежнем окрасе. */
   const wearSprite = async (id: string) => {
@@ -493,6 +456,62 @@ function OwnProfileEditor({
         onFile={(file) => void uploadOwnAvatar(file)}
         onRemoveClick={() => (armedAvatar ? void removeOwnAvatar() : armAvatarRemoval())}
       />
+
+      <div className={styles.edField}>
+        <span className={styles.edLabel}>Фон профиля</span>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
+          {bannerUrl ? (
+            <img
+              src={bannerUrl}
+              alt="Фон профиля"
+              className="h-14 w-36 shrink-0 rounded-md border border-[var(--sim-line)] bg-black/20 object-cover"
+              draggable={false}
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] text-[var(--sim-text-faint)]">
+              Горизонтальная картинка (PNG/JPEG/GIF, до 1200×400, до 2 МБ). Без файла — звёздный градиент.
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <input
+                ref={bannerFileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                  e.target.value = '';
+                  if (file) void uploadOwnBanner(file);
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+                disabled={bannerBusy}
+                onClick={() => bannerFileRef.current?.click()}
+              >
+                {bannerBusy ? 'Загружаем…' : 'Загрузить фон'}
+              </Button>
+              {bannerUrl ? (
+                <button
+                  type="button"
+                  disabled={bannerBusy}
+                  onClick={() => (armedBanner ? void removeOwnBanner() : armBannerRemoval())}
+                  className={`rounded border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-50 ${
+                    armedBanner
+                      ? 'border-red-500 bg-red-950 font-bold text-red-300'
+                      : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
+                  }`}
+                  title={armedBanner ? 'Ещё раз — и фона не будет' : 'Убрать фон'}
+                >
+                  {armedBanner ? 'Точно убрать?' : 'Убрать фон'}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
           и применяется на поле сам; плитки те же группы, что на карусели входа. */}
@@ -670,24 +689,8 @@ function OwnProfileEditor({
 
 /* ——— скелетоны: deep-link-загрузка на месте, без прыжка страницы ——— */
 
-/** Инфостроки: иконки и лейблы статичны (не грузятся) — скелет повторяет
- *  их один в один, полоса стоит только на месте ЗНАЧЕНИЯ. Ширины полос —
- *  порядок настоящего контента; высота 1em = строка текста. */
-const SKEL_INFO: { icon: InfoIcon; label: string; width: string }[] = [
-  { icon: 'id', label: 'ID профиля', width: 'min(46%, 180px)' },
-  { icon: 'calendar', label: 'Дата рождения', width: 'min(40%, 150px)' },
-  { icon: 'moon', label: 'Возраст (в лунах)', width: 'min(36%, 120px)' },
-  { icon: 'activity', label: 'Последний вход', width: 'min(38%, 130px)' },
-  { icon: 'paw', label: 'Персонажи', width: 'min(45%, 170px)' },
-  { icon: 'feather', label: 'О себе', width: 'min(70%, 260px)' },
-];
-
-/** Лейблы статистики тоже известны заранее — полоса только на значении. */
-const SKEL_STATS = ['Дней в стае', 'Персонажей в аккаунте', 'Активный персонаж'];
-
-/** Каркас страницы профиля той же геометрии (deep-link ?id=): шапка/панель/
- *  разметка/заголовки секций — настоящие, контентные места — полосы .skel.
- *  Приход карточки меняет полосы на значения, верстка не перестраивается. */
+/** Каркас редизайна профиля (баннер + герой + вкладки) — полосы на местах
+ *  значений, чтобы deep-link ?id= не дёргал верстку при приходе карточки. */
 export function ProfileSkeleton() {
   return (
     <div className={styles.sky} role="status" aria-label="Загружаем профиль">
@@ -695,67 +698,39 @@ export function ProfileSkeleton() {
       <SiteHeader />
       <div className={styles.page}>
         <BrandRow />
-        <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
-          <div className={styles.head}>
-            <figure className={styles.avatar}>
-              <span className={`${styles.avatarArt} ${styles.skel}`} />
-              <figcaption className={styles.avatarCap}>
-                <span className={styles.skel} style={{ width: '82%', height: '1em' }} />
-              </figcaption>
-            </figure>
-            <div className={styles.headMain}>
-              <h1 className={styles.catNameBig}>
-                <span className={styles.skel} style={{ width: 'min(58%, 300px)', height: '1.05em' }} />
+        <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
+          <div className={`${styles.profileBanner} ${styles.profileBannerStar}`} />
+          <div className={styles.profileHero}>
+            <span className={`${styles.profileFaceWrap} ${styles.skel}`} />
+            <div className={styles.profileHeroMain}>
+              <h1 className={styles.profileName}>
+                <span className={styles.skel} style={{ width: 'min(58%, 260px)', height: '1.05em' }} />
               </h1>
-              <p className={styles.sub}>
-                <span className={styles.skel} style={{ width: 'min(72%, 400px)', height: '1em' }} />
-              </p>
-              <ul className={styles.info}>
-                {SKEL_INFO.map((row) => (
-                  <li key={row.label}>
-                    <span className={styles.iIco}>{INFO_ICONS[row.icon]}</span>
-                    <span className={styles.iLabel}>{row.label}</span>
-                    <span className={styles.skel} style={{ width: row.width, height: '1em', alignSelf: 'center' }} />
-                  </li>
-                ))}
-              </ul>
+              <div className={styles.profilePills}>
+                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 120, height: 24 }} />
+                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 88, height: 24 }} />
+              </div>
             </div>
           </div>
-
-          <div className={styles.badges}>
-            {[0, 1, 2].map((i) => (
-              <span key={i} className={`${styles.skel} ${styles.skelPill}`} style={{ width: 138 - i * 26, height: 25 }} />
-            ))}
+          <div className={styles.profileTabs} aria-hidden>
+            <span className={styles.profileTab}>Профиль</span>
+            <span className={styles.profileTab}>Настройки</span>
           </div>
-
-          <section className={styles.section}>
-            <h2 className={styles.secTitle}>Достижения</h2>
-            <div className={styles.ach}>
-              {SKEL_INFO.map((_, i) => (
-                <span key={i} className={styles.achItem}>
-                  <span className={`${styles.skel} ${styles.skelTile}`} style={{ width: 72, height: 72 }} />
-                  <span className={styles.skel} style={{ width: 76, height: 10 }} />
-                </span>
-              ))}
+          <div className={styles.profileBody}>
+            <div className={styles.profileGrid}>
+              <figure className={styles.avatar}>
+                <span className={`${styles.avatarArt} ${styles.skel}`} />
+              </figure>
+              <div className={styles.profileAside}>
+                <h2 className={styles.secTitle}>Статистика</h2>
+                <span className={styles.skel} style={{ width: '70%', height: 14 }} />
+                <h2 className={styles.secTitle} style={{ marginTop: 18 }}>
+                  О себе
+                </h2>
+                <span className={styles.skel} style={{ width: '92%', height: 14 }} />
+              </div>
             </div>
-          </section>
-
-          <section className={styles.section}>
-            <h2 className={styles.secTitle}>Статистика</h2>
-            <table className={styles.stats}>
-              <tbody>
-                {SKEL_STATS.map((k, i) => (
-                  <tr key={k}>
-                    <td className={styles.statsK}>{k}</td>
-                    <td className={styles.statsV}>
-                      <span className={styles.skel} style={{ width: 96 + i * 26, height: '1em' }} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
+          </div>
           <footer className={styles.panelFoot}>
             <span className={styles.skel} style={{ width: 172, height: 14 }} />
             <span className={styles.skel} style={{ width: 92, height: 12, borderRadius: 7 }} />
@@ -812,6 +787,8 @@ export default function PlayerProfile({
   onSaved,
   onClose,
   mineHighlight = null,
+  onOpenFriend,
+  onFriendsChanged,
 }: {
   card: ProfileCard;
   mine: boolean;
@@ -821,214 +798,48 @@ export default function PlayerProfile({
   /** #84 ч.2: id свежего окраса из редактора (возврат ?back=profile) —
    *  своя карточка подсвечивает его в блоке «Свой окрас». */
   mineHighlight?: string | null;
+  onOpenFriend?: (accountId: string) => void;
+  onFriendsChanged?: () => void;
 }) {
-  // Компонент живёт только на клиенте: в пререндере каталога focused=null,
-  // карточка приходит после fetch — поэтому «сейчас» можно взять один раз
-  // при появлении карточки; статусы/«сколько назад» не дребезжат между
-  // перерисовками и не расходятся с пререндером.
   const [now] = useState(() => Date.now());
-  /** Подстраница настроек: с карточки её не видно. #settings и возврат из
-   *  редактора окрасов (?mine=#settings) открывают её сразу. */
-  const [settingsView, setSettingsView] = useState(
-    () => typeof window !== 'undefined' && window.location.hash === '#settings',
-  );
-  useEffect(() => {
-    const sync = () => setSettingsView(window.location.hash === '#settings');
-    window.addEventListener('hashchange', sync);
-    window.addEventListener('popstate', sync);
-    return () => {
-      window.removeEventListener('hashchange', sync);
-      window.removeEventListener('popstate', sync);
-    };
-  }, []);
-  const openSettings = () => {
-    const next = `${window.location.pathname}${window.location.search}#settings`;
-    window.history.pushState(null, '', next);
-    setSettingsView(true);
-  };
-  const closeSettings = () => {
-    const next = `${window.location.pathname}${window.location.search}`;
-    window.history.pushState(null, '', next);
-    setSettingsView(false);
-  };
-  const showSettings = mine && settingsView;
 
-  // Своя карточка: myProfile (/profiles/me) после правок свежее deep-link-
-  // карточки каталога (его обновляет onSaved), поэтому день рождения и свою
-  // картинку своей карточки берём из него — правки и аватар видны сразу.
-  const shownCard = mine && myProfile ? { ...card, birthday: myProfile.birthday, avatar: myProfile.avatar } : card;
-  const seen = card.lastSeenAt ?? 0;
-  const status = statusOf(seen, now);
-  const activity = activityOf(seen, now);
-  const days = daysSince(card.createdAt, now);
-  const char = avatarOf(card);
-  const name = card.displayName || 'Безымянный кот';
-  const shortId = card.accountId ? `№${card.accountId.slice(0, 8)}` : '№—';
-
-  const birth = ruDate(card.createdAt);
-  const birthNote =
-    card.createdAt > 0 ? `дата регистрации аккаунта — ${ruDate(card.createdAt)}` : 'дата регистрации неизвестна';
-  /** День рождения, если он указан. Чужим — «5 марта» без года даже если
-   *  в строке случайно оказалась полная дата. Своя карточка (mine) может
-   *  показать год: его прислал /profiles/me, им же правят поле. Пусто →
-   *  строка даты регистрации, дату не выдумываем. */
-  const ownBirthday = ruBirthday(shownCard.birthday, mine);
-  const seenAgo = seen > 0 ? ruAgo(seen, now) : UNKNOWN;
-
-  // честная строка-резюме: только факты карточки в читаемом виде
-  const regPart = card.createdAt > 0 ? `регистрация: ${ruAgo(card.createdAt, now)}` : 'регистрация: неизвестно';
-  const summary = `${regPart} · активность: ${ACTIVITY_TEXT[activity]} · ${STATUS_TEXT[status].toLowerCase()}`;
-
-  const facts = achFacts(card, now);
-  const moonsLine = moonsText(card.createdAt, now);
-
-  const infoRows: { icon: InfoIcon; label: string; value: string; title?: string }[] = [
-    { icon: 'id', label: 'ID профиля', value: shortId, title: card.accountId || undefined },
-    ownBirthday
-      ? { icon: 'calendar', label: 'День рождения', value: ownBirthday, title: 'день рождения, указанный самим игроком' }
-      : { icon: 'calendar', label: 'Дата рождения', value: birth, title: birthNote },
-    { icon: 'moon', label: 'Возраст (в лунах)', value: moonsLine },
-    { icon: 'activity', label: 'Последний вход', value: seenAgo, title: seen > 0 ? ruDate(seen) : 'нет записей о входе' },
-    {
-      icon: 'paw',
-      label: 'Персонажи',
-      value: card.characters.length ? card.characters.map((c) => c.name).join(', ') : UNKNOWN,
-    },
-    { icon: 'feather', label: 'О себе', value: card.bio || 'Пока ничего не рассказала о себе.' },
-  ];
-
-  const stats: [string, string][] = [
-    ['Дней в стае', days !== null ? `${days} ${plural(days, 'день', 'дня', 'дней')}` : UNKNOWN],
-    ['Персонажей в аккаунте', String(card.characters.length)],
-    ['Активный персонаж', char ? `${char.name} · размер ${char.size}` : UNKNOWN],
-  ];
-
-  const badges: { text: string; gold: boolean }[] = [];
-  if (activity !== 'unknown') badges.push({ text: `${ACTIVITY_TEXT[activity]} активность`, gold: activity === 'ideal' });
-  if (card.createdAt > 0) badges.push({ text: `${moonsLine} с нами`, gold: false });
+  // Своя карточка: myProfile после правок свежее deep-link-карточки каталога.
+  const shownCard: ProfileCard =
+    mine && myProfile
+      ? {
+          ...card,
+          ...myProfile,
+          accountId: card.accountId,
+          friends: myProfile.friends ?? card.friends,
+          friendRelation: myProfile.friendRelation ?? card.friendRelation ?? 'self',
+          friendCount: myProfile.friendCount ?? card.friendCount,
+        }
+      : card;
 
   return (
     <div className={styles.sky}>
       <Starscape />
-      {/* W2 (2026-11-08): общая шапка сайта и над открытым профилем —
-          из карточки/настроек можно уйти в любой раздел и выйти из аккаунта;
-          паттерн каталога: sticky-полоса лежит на звёздном небе .sky. */}
       <SiteHeader />
       <div className={styles.page}>
         <BrandRow />
-        <main className={styles.panel} style={{ padding: 'clamp(18px, 3.4vw, 30px) clamp(16px, 3.2vw, 30px)' }}>
-          {showSettings ? (
-            <div className={styles.settingsView}>
-              <div className={styles.settingsHead}>
-                <button type="button" className={styles.backLink} onClick={closeSettings}>
-                  ← К карточке
-                </button>
-                <h1 className={styles.catNameBig}>Настройки</h1>
-              </div>
-              <p className={styles.sub}>
-                {name}: внешность, день рождения, аватар и игровые параметры. На карточке этого блока нет.
-              </p>
-              {myProfile ? (
+        <ProfileCardView
+          card={card}
+          mine={mine}
+          shown={shownCard}
+          now={now}
+          onClose={onClose}
+          onOpenFriend={onOpenFriend}
+          onFriendsChanged={onFriendsChanged}
+          settingsSlot={
+            mine ? (
+              myProfile ? (
                 <OwnProfileEditor profile={myProfile} onSaved={onSaved} mineHighlight={mineHighlight} />
               ) : (
                 <OwnEditorSkeleton />
-              )}
-            </div>
-          ) : (
-          <>
-          <div className={styles.head}>
-            <Portrait card={shownCard} name={name} />
-            <div className={styles.headMain}>
-              <h1 className={styles.catNameBig}>
-                {name}{' '}
-                <span className={styles.statusInline} style={{ color: STATUS_COLOR[status] }}>
-                  — [ {STATUS_TEXT[status]} ]
-                </span>
-              </h1>
-              <p className={styles.sub}>{summary}</p>
-              <ul className={styles.info}>
-                {infoRows.map((row) => (
-                  <li key={row.label}>
-                    <span className={styles.iIco}>{INFO_ICONS[row.icon]}</span>
-                    <span className={styles.iLabel} title={row.title}>
-                      {row.label}
-                    </span>
-                    <span className={styles.iValue} title={row.title}>
-                      {row.value}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className={styles.badges}>
-            {badges.length ? (
-              badges.map((b) => (
-                <span key={b.text} className={b.gold ? `${styles.badge} ${styles.badgeGold}` : styles.badge}>
-                  {spark}
-                  {b.text}
-                </span>
-              ))
-            ) : (
-              <span className={styles.badge}>{spark} данных о карточке пока немного</span>
-            )}
-          </div>
-
-          <section className={styles.section} aria-labelledby="ach-title">
-            <h2 className={styles.secTitle} id="ach-title">
-              Достижения
-            </h2>
-            <div className={styles.ach}>
-              {facts.map((f) => (
-                <div
-                  key={f.title}
-                  className={f.earned ? styles.achItem : `${styles.achItem} ${styles.achLocked}`}
-                  title={f.earned ? `получено: ${f.hint}` : `не получено: ${f.hint}`}
-                >
-                  <div className={styles.achTile} style={{ color: f.earned ? f.color : '#a4abc4' }}>
-                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                      {ACH_ICONS[f.icon]}
-                    </svg>
-                  </div>
-                  <div className={styles.achCap}>{f.title}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.section} aria-labelledby="stats-title">
-            <h2 className={styles.secTitle} id="stats-title">
-              Статистика
-            </h2>
-            <table className={styles.stats}>
-              <tbody>
-                {stats.map(([k, v]) => (
-                  <tr key={k}>
-                    <td className={styles.statsK}>{k}</td>
-                    <td className={styles.statsV}>{v}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-          <footer className={styles.panelFoot}>
-            <button type="button" className={styles.backLink} onClick={onClose}>
-              ← Вернуться в каталог
-            </button>
-            {mine ? (
-              <button type="button" className={styles.settingsBtn} onClick={openSettings}>
-                Настройки
-              </button>
-            ) : null}
-            <span className={styles.footNum} title={card.accountId}>
-              Профиль {shortId}
-            </span>
-          </footer>
-          </>
-          )}
-        </main>
+              )
+            ) : null
+          }
+        />
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">
             ← Главное меню

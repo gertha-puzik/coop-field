@@ -43,11 +43,12 @@ becomes `Удалён <id>`, and `profile.deletedAt` is set. `deletedAt` keeps
 the row out of the public catalog and out of `GET /profiles/:id`. Character
 names on the row are left unchanged. Every session of that `accountId` is
 removed from `sessions.json`, and the response clears the `coop_session`
-cookie. Files removed are only this account's: `avatars/<id>.png` and
-`avatars/<id>.jpg`, plus sprite-manifest rows whose `ownerAccountId` equals
-this id (builtin rows and any other owner's files stay). An already-open
-WebSocket is not closed by this HTTP handler; the dead cookie and the
-revoked session store make the next HTTP call and a fresh socket bind fail.
+cookie. Files removed are only this account's: `avatars/<id>.png` /
+`avatars/<id>.jpg`, `banners/<id>.{png,jpg,gif}`, plus sprite-manifest rows
+whose `ownerAccountId` equals this id (builtin rows and any other owner's
+files stay). An already-open WebSocket is not closed by this HTTP handler;
+the dead cookie and the revoked session store make the next HTTP call and a
+fresh socket bind fail.
 
 The position book is **not** part of that cleanup. `test-cats.json` rows
 are keyed only by character name (`{login, fm, fx, fy, x, y, ts}` — no
@@ -139,6 +140,10 @@ default `<repo>/data`, overridable per environment):
 | `room-configs.json` | per-room overrides + named backup history | rolling backups |
 | `test-map.json` | location layout (no personal data) | last 8 backups in `backups/`; invalid files quarantined as `test-map.invalid-*.json` |
 | `avatars/` | one png/jpg per account id | removed on self-delete for that id only |
+| `banners/` | one png/jpg/gif horizontal profile banner per account id (≤1200×400) | removed on self-delete for that id only |
+| `friends.json` | friend edges `{fromId,toId,status:pending\|accepted}` | until removed/declined; no TTL |
+| `notifications.json` | per-account inbox (friend_request, announcement); read flags | capped ~100/account, no TTL |
+| `announcements.json` | admin announcement journal (title/body/delivered count) | rolling cap ~100 |
 | `sprites/` | admin-uploaded and personal sprite files + manifest | a deleted account's rows (`ownerAccountId`) are unlinked; other owners and builtins stay |
 
 Where that root lives per environment:

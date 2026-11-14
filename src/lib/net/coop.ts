@@ -303,6 +303,7 @@ export function catToDummy(cat: CoopCat): DummyConfig {
     name: cat.login || `#${cat.id}`,
     accountLogin,
     statusLabel,
+    afk: !!cat.afk,
     sprite,
     col: Math.max(0, (cat.x || 1) - 1),
     row: Math.max(0, (cat.y || 1) - 1),

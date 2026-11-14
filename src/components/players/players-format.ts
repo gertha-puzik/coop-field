@@ -1,14 +1,8 @@
 /**
- * Чистые хелперы представления для страниц игроков (P5-редизайн каталога):
- * даты и «луны», статусы и активность из lastSeenAt, аватар/спрайт карточки.
- * Всё детерминировано и без внешних источников: любой вывод ЛЕЖИТ на данных
- * DTO карточки (createdAt/lastSeenAt/birthday) — отсутствующие данные
- * оформляются честным «неизвестно»/«—», а не выдуманным значением.
- *
- * Пороги статуса/активности — сознательное решение редизайна: сервер не
- * хранит «в игре прямо сейчас», поэтому статус выводится КЛИЕНТОМ из
- * lastSeenAt (последнее появление: свежая сессия или запись позиции кота).
- * Формулировки согласованы с референсом лучших профилей жанра.
+ * Чистые хелперы представления для страниц игроков:
+ * даты, дни существования, playtime, presence (серверный срез), аватар/спрайт.
+ * Активность ideal/positive снята; старый statusOf оставлен как fallback
+ * для карточек без поля presence.
  */
 
 import type { ProfileCharacter } from '@/lib/net/http-profiles';
@@ -149,22 +143,33 @@ export function daysSince(createdAt: number, now: number = Date.now()): number |
   return Math.max(0, Math.floor((now - createdAt) / DAY_MS));
 }
 
-/* --------------------- статус и активность из lastSeenAt --------------------- */
+/* --------------------- presence (сервер) + legacy fallback --------------------- */
 
+export type PresenceTone = 'online' | 'traveling' | 'away' | 'resting';
+
+export const PRESENCE_TEXT: Record<PresenceTone, string> = {
+  online: 'В сети',
+  traveling: 'Путешествует',
+  away: 'Отошёл',
+  resting: 'Отдыхает',
+};
+
+export function asPresence(raw: unknown): PresenceTone | null {
+  const s = typeof raw === 'string' ? raw : '';
+  return s === 'online' || s === 'traveling' || s === 'away' || s === 'resting' ? s : null;
+}
+
+/** Legacy эвристика lastSeenAt — только если сервер не прислал presence. */
 export type StatusTone = 'online' | 'sleep' | 'recent' | 'away' | 'unknown';
 
 export const STATUS_TEXT: Record<StatusTone, string> = {
-  online: 'В игре',
-  sleep: 'Спит',
-  recent: 'Недавно ушёл',
-  away: 'На удалении',
-  unknown: 'Неизвестно',
+  online: 'В сети',
+  sleep: 'Отдыхает',
+  recent: 'Отошёл',
+  away: 'Отдыхает',
+  unknown: 'Отдыхает',
 };
 
-/** Статус по времени последнего появления (честный клиентский вывод):
- *  < 15 мин — «В игре», < 3 ч — «Спит», < 3 дней — «Недавно ушёл», дольше —
- *  «На удалении», данных нет — «Неизвестно». «В игре» — эвристика свежего
- *  входа: HTTP-каталог не видит живых сокетов, поэтому опирается на lastSeenAt. */
 export function statusOf(seen: number, now: number = Date.now()): StatusTone {
   if (!Number.isFinite(seen) || seen <= 0) return 'unknown';
   const age = Math.max(0, now - seen);
@@ -174,24 +179,60 @@ export function statusOf(seen: number, now: number = Date.now()): StatusTone {
   return 'away';
 }
 
+/** @deprecated активность снята с профиля; оставлено для старых импортов. */
 export type ActivityTone = 'ideal' | 'positive' | 'shifting' | 'unknown';
-
 export const ACTIVITY_TEXT: Record<ActivityTone, string> = {
-  ideal: 'идеальная',
-  positive: 'положительная',
-  shifting: 'переходная',
-  unknown: 'неизвестно',
+  ideal: '—',
+  positive: '—',
+  shifting: '—',
+  unknown: '—',
 };
-
-/** Активность-слово из lastSeenAt: < 15 мин — «идеальная», < 3 дней —
- *  «положительная», < 30 дней — «переходная», дольше/нет данных — «неизвестно». */
-export function activityOf(seen: number, now: number = Date.now()): ActivityTone {
-  if (!Number.isFinite(seen) || seen <= 0) return 'unknown';
-  const age = Math.max(0, now - seen);
-  if (age < 15 * MIN_MS) return 'ideal';
-  if (age < 3 * DAY_MS) return 'positive';
-  if (age < 30 * DAY_MS) return 'shifting';
+export function activityOf(_seen: number, _now: number = Date.now()): ActivityTone {
   return 'unknown';
+}
+
+/** «Существует N дней». */
+export function existsDaysText(createdAt: number, now: number = Date.now()): string {
+  const d = daysSince(createdAt, now);
+  if (d === null) return '—';
+  return `Существует ${d} ${plural(d, 'день', 'дня', 'дней')}`;
+}
+
+/** «Проведено в игре N часов M минут». */
+export function playtimeText(playtimeMs: number): string {
+  const ms = Math.max(0, Math.floor(Number(playtimeMs) || 0));
+  const totalMin = Math.floor(ms / MIN_MS);
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return `Проведено в игре ${hours} ${plural(hours, 'час', 'часа', 'часов')} ${mins} ${plural(mins, 'минута', 'минуты', 'минут')}`;
+}
+
+/** Короткий playtime для бейджа: «67 ч 7 мин». */
+export function playtimeShort(playtimeMs: number): string {
+  const ms = Math.max(0, Math.floor(Number(playtimeMs) || 0));
+  const totalMin = Math.floor(ms / MIN_MS);
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return `${hours} ч ${mins} мин`;
+}
+
+/** Сводка presence для UI: серверное поле или legacy statusOf. */
+export function presenceLabel(
+  presence: PresenceTone | null | undefined,
+  lastSeenAt: number | undefined,
+  now: number = Date.now(),
+): { tone: PresenceTone; text: string } {
+  if (presence) return { tone: presence, text: PRESENCE_TEXT[presence] };
+  const legacy = statusOf(lastSeenAt || 0, now);
+  const map: Record<StatusTone, PresenceTone> = {
+    online: 'online',
+    sleep: 'resting',
+    recent: 'away',
+    away: 'resting',
+    unknown: 'resting',
+  };
+  const tone = map[legacy];
+  return { tone, text: PRESENCE_TEXT[tone] };
 }
 
 /* ------------------------------ карточка ------------------------------ */
