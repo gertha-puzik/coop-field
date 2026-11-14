@@ -22,6 +22,7 @@
  * человекочитаемый. Гейты: сессия (401), роль admin (403), CSRF-щит apiZone.
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
+import type { HomeNewsItem } from "./http-home-news";
 
 /** Строка кота в списке занятости (координаты живые, из комнаты). */
 export type AdminFieldCat = {
@@ -396,6 +397,44 @@ export async function httpAdminStatusDelete(id: string): Promise<AdminStatusesSn
   return {
     ok: false,
     reason: status === 401 ? "auth_required" : status === 0 ? "offline" : asText(row?.reason, "error"),
+    message: asText(row?.message),
+    details: text,
+  };
+}
+
+/* ========================= Новости доски главной ========================= */
+
+export type AdminHomeNewsAction =
+  | { ok: true; items: HomeNewsItem[]; updatedAt: number }
+  | AdminFieldError;
+
+/** PUT /admin/news {items} — заменить список новостей доски. */
+export async function httpAdminHomeNewsSave(
+  items: { title: string; body: string; id?: string }[],
+): Promise<AdminHomeNewsAction> {
+  const { status, row, text } = await apiFetch('/admin/news', {
+    method: 'PUT',
+    body: { items },
+  });
+  if (status === 200 && row?.ok === true) {
+    const raw = Array.isArray(row.items) ? row.items : [];
+    const next: HomeNewsItem[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const id = asText((item as ApiRow).id);
+      const title = asText((item as ApiRow).title);
+      const body = asText((item as ApiRow).body);
+      if (id && title && body) next.push({ id, title, body });
+    }
+    return {
+      ok: true,
+      items: next,
+      updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : 0,
+    };
+  }
+  return {
+    ok: false,
+    reason: status === 401 ? 'auth_required' : status === 0 ? 'offline' : asText(row?.reason, 'error'),
     message: asText(row?.message),
     details: text,
   };

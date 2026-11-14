@@ -51,7 +51,8 @@
     "test:atomic-file": "node scripts/test-atomic-file.mjs",
     "test:locations": "node scripts/test-locations.mjs",
     "test:textures": "node scripts/test-textures.mjs",
-    "test:statuses": "node scripts/test-statuses.mjs"
+    "test:statuses": "node scripts/test-statuses.mjs",
+    "test:home-news": "node scripts/test-home-news.mjs"
   },
   "engines": {
     "node": ">=18"

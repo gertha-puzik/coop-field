@@ -8,10 +8,10 @@ import { playersLabel } from '@/components/sim/room-picker';
 // страницами); здесь — патч-замена инлайн-блока 1:1: тот же массив, те же
 // классы wander-star/wander-spark, появление после гидрации.
 import { StarBackdrop } from '@/components/menu/star-backdrop';
-import { WanderNewsBoard, WanderScene } from '@/components/menu/wander-home-board';
+import { WanderNewsHotspot } from '@/components/menu/wander-home-board';
 // Пересводка W2 (2026-11-08): навигацию аккаунтов главной несёт общая шапка
-// сайта. Макет 2026-11-14: на главной кнопки справа вверху (home), не под
-// карточками. Монтируется внутри IS_ELYRIA-ветки — grotto без шапки (DCE).
+// сайта. Макет 2026-11-14: на главной кнопки справа вверху (home). Фон —
+// авторский арт /menu/home-bg.jpg; доска справа — кликабельный hotspot.
 import { SiteHeader } from '@/components/site/site-header';
 
 const display = Lilita_One({ weight: '400', subsets: ['latin'], display: 'swap' });
@@ -265,11 +265,18 @@ function Grass() {
 function NightSky({ children, home = false }: { children: ReactNode; home?: boolean }) {
   return (
     <div className={home ? 'wander-sky wander-sky-home' : 'wander-sky'}>
-      <div className="wander-drift" aria-hidden />
-      <StarBackdrop />
+      {home ? (
+        // Авторский фон (скетч): cover + центр, без второго слоя звёзд/травы.
+        <img className="wander-home-bg" src="/menu/home-bg.jpg" alt="" />
+      ) : (
+        <>
+          <div className="wander-drift" aria-hidden />
+          <StarBackdrop />
+        </>
+      )}
       <PawTrail />
       <div className={home ? 'wander-stage wander-stage-home' : 'wander-stage'}>{children}</div>
-      <Grass />
+      {home ? null : <Grass />}
     </div>
   );
 }
@@ -286,8 +293,8 @@ function WorldPreview({ kind }: { kind: Preview }) {
   return ELISION_PREVIEW;
 }
 
-/** Главное меню: макет 2026-11-14 — бренд слева сверху, кнопки справа
- *  сверху (закрытый вариант), окна миров слева снизу, доска «Что нового?» справа. */
+/** Главное меню: авторский фон, окна миров слева снизу, доска справа —
+ *  hotspot → модалка новостей; на закрытом варианте — шапка сверху. */
 export function WanderMenu() {
   const { counts, online, roomIds } = useLiveCounts();
   useEffect(() => {
@@ -296,23 +303,12 @@ export function WanderMenu() {
   }, []);
   return (
     <NightSky home>
+      <h1 className="sr-only">Wanderpaws</h1>
       <div className="wander-topbar">
-        <div className="wander-brand-wrap">
-          <h1 className={`${display.className} wander-brand`}>
-            Wanderpaws
-            <span className="wander-brand-paws" aria-hidden>
-              <img src="/lapka.svg" alt="" />
-              <img src="/lapka.svg" alt="" />
-            </span>
-            <span className="wander-brand-flag" aria-hidden />
-          </h1>
-          <p className="wander-brand-lead">Твой путь начинается здесь</p>
-        </div>
-        {IS_ELYRIA ? <SiteHeader ghost home /> : null}
+        {IS_ELYRIA ? <SiteHeader ghost home /> : <span aria-hidden />}
       </div>
-      <div className="wander-layout">
+      <div className="wander-layout wander-layout-art">
         <div className="wander-layout-main">
-          <WanderScene />
           <div className="wander-worlds">
             {WORLDS.map((world) => {
               const ids = IS_ELYRIA && world.preview === 'elision' ? roomIds : world.ids;
@@ -340,7 +336,7 @@ export function WanderMenu() {
             ) : null}
           </div>
         </div>
-        <WanderNewsBoard />
+        <WanderNewsHotspot />
       </div>
     </NightSky>
   );

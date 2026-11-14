@@ -45,6 +45,8 @@ import { handleInvitesHttp } from "./invites.js";
 // (гейты — в самом домене, как invites/admin-ops; host-гейт прячет /admin
 // на public, apiZone — CSRF-щит).
 import { handleStatusesHttp, bootStatuses } from "./statuses.js";
+// Новости главной доски: GET /cfg/news|/news (public), PUT /admin/news (admin).
+import { handleHomeNewsHttp } from "./home-news.js";
 // Менеджер спрайтов (server/sprites.js): публичный каталог + файлы загруженных
 // (/sprites/*, ДО статики — иначе /sprites/file/… ушёл бы в файловый 404) и
 // админские CRUD /admin/sprites* (гейты — в самом домене, как в admin-ops.js).
@@ -277,6 +279,10 @@ export function startServer() {
       // Статусы на поле (/admin/statuses* и обходной /cfg/statuses*): CSRF.
       p === "/admin/statuses" || p.startsWith("/admin/statuses/") ||
       p === "/cfg/statuses" || p.startsWith("/cfg/statuses/") ||
+      // Новости доски главной: GET /cfg/news|/news публичны; PUT /admin/news —
+      // cookie+CSRF (unsafe).
+      p === "/news" || p === "/cfg/news" ||
+      p === "/admin/news" || p.startsWith("/admin/news/") ||
       // Создание локаций мира (POST /locations|/cfg/locations и алиас /admin/locations).
       p === "/locations" || p === "/cfg/locations" ||
       p === "/admin/locations" || p.startsWith("/admin/locations/") ||
@@ -349,6 +355,8 @@ export function startServer() {
         if (invHit) return;
       return handleStatusesHttp(req, res).then((stHit) => {
         if (stHit) return;
+      return handleHomeNewsHttp(req, res).then((newsHit) => {
+        if (newsHit) return;
       return Promise.resolve(handleLocationsHttp(req, res)).then((locHit) => {
         if (locHit) return;
       // Текстуры ДО /cfg: на проде nginx уже шлёт весь /cfg в Node, а
@@ -386,6 +394,7 @@ export function startServer() {
             });
           });
         });
+      });
       });
       });
       });
