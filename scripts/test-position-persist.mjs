@@ -11,8 +11,8 @@
  *  4. данные позиции и карты живут в отдельных файлах, каталог data не в git.
  *
  * Запуск: node scripts/test-position-persist.mjs (сам спавнит свои server.js).
- * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом);
- * переопределение — env MAP_PASS — передаётся спавненному серверу как ADMIN_PASS.
+ * Пароля редактора нет: setmap пароль не читает, карту сохраняет только
+ * сессия с ролью admin (server/testmap.js).
  */
 import { spawn, execFileSync } from "node:child_process";
 import { WebSocket } from "ws";
@@ -20,14 +20,11 @@ import { sendJoin } from "./ws-auth.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || "1946";
-
 // Аккаунт-редактор: мутации карт (кадр setmap) за админ-гейтом (server/testmap.js),
 // загрузчик карты «map-setter» — админ; аккаунт создаётся в data/ ДО старта
 // сервера через scripts/make-admin.mjs (лестница S1, см. test-admin-reset).
 const ADMIN_LOGIN = "map-setter";
-const ADMIN_PASS = "password1";
+const ADMIN_ACCOUNT_PASS = "password1";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const DATA = path.join(ROOT, "data");
@@ -38,7 +35,7 @@ const LOGIN = `persist-cat-${Math.floor(Math.random() * 1e6)}`;
 // data/ может отсутствовать в свежем worktree — тест пишет туда базовую карту
 // и аккаунт-админа до старта сервера.
 fs.mkdirSync(DATA, { recursive: true });
-execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_ACCOUNT_PASS], {
   env: { ...process.env, DATA_DIR: DATA },
   encoding: "utf8",
 });
@@ -48,9 +45,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function startServer() {
   const srv = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    // ADMIN_PASS передаётся в spawn-окружение тем же значением, что уходит
-    // в кадре setmap (тест «читает env КАК сервер»), карта живёт в ROOT/data.
-    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1", ADMIN_PASS: PASS },
+    // Карта живёт в ROOT/data.
+    env: { ...process.env, PORT: String(PORT), HOST: "127.0.0.1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   srv.stdout.on("data", () => {});
@@ -169,7 +165,7 @@ try {
     ],
     objects: [],
   };
-  ws3.send(JSON.stringify(["setmap", { pass: PASS, map: smallMap }]));
+  ws3.send(JSON.stringify(["setmap", { map: smallMap }]));
   const mapAck = await waitFor(ws3, ([ev, p]) => ev === "map" && p?.seed === "persist-test");
   check(!!mapAck, "setmap принят и разослан");
   const saved = JSON.parse(fs.readFileSync(path.join(DATA, "test-map.json"), "utf8"));

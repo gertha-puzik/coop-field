@@ -124,6 +124,10 @@ jobs:
       # atmoset-гейт, persistence room-configs.json (бэкапы/restore), WS-ран.
       - name: Per-room конфиг комнат
         run: npm run test:room-config
+      # Погода не зависает на дожде: песочница с интервалом 8 с (loader-хук
+      # scripts/lib/short-weather.mjs, прод-код не меняется), ~20 с.
+      - name: Смена погоды по интервалу
+        run: npm run test:weather-rotation
       # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
       # строго по cookie-сессии.
       - name: HTTP-профили

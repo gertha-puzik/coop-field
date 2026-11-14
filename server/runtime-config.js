@@ -27,7 +27,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, isAllowedOrigin } from "./config.js";
+import { DATA_DIR, isAllowedOrigin, siteClassOfRequest } from "./config.js";
 import { writeFileAtomic } from "./atomic-file.js";
 import {
   REGISTRY, KEYS, defaultsFor, sanitizeValues, universesForPublic, mutationsForAdmin,
@@ -206,12 +206,15 @@ function saveConfig(next) {
 }
 
 function tokenFromReq(req) {
-  try {
-    const url = new URL(req.url || "/", "http://localhost");
-    const q = String(url.searchParams.get("t") || "");
-    if (q) return q;
-  } catch {
-    /* ignore */
+  // Матрица токенов (A7, как tokenFromRequest в auth.js): ?t= — только local.
+  if (siteClassOfRequest(req) === "local") {
+    try {
+      const url = new URL(req.url || "/", "http://localhost");
+      const q = String(url.searchParams.get("t") || "");
+      if (q) return q;
+    } catch {
+      /* ignore */
+    }
   }
   const raw = String(req?.headers?.cookie || "");
   const m = raw.match(/(?:^|;\s*)coop_session=([0-9a-f]+)/i);

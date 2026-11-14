@@ -1,6 +1,6 @@
 #!/bin/bash
 # Один раз от root на том же VPS, что прод. Не трогает /opt/coop-field кроме чтения,
-# не трогает юнит coop-field, не копирует data/ и ADMIN_PASS прода.
+# не трогает юнит coop-field, не копирует data/ и секреты прода.
 # Делает пользователя deploy-preview, каталоги, sudoers, nginx include, юнит, ключ SSH.
 set -euo pipefail
 

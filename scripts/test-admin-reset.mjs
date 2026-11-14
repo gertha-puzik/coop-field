@@ -75,7 +75,6 @@ function startServer() {
       PORT: String(PORT),
       HOST,
       DATA_DIR: DATA,
-      ADMIN_PASS: "1946",
       AUTH_CSRF_STRICT: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],

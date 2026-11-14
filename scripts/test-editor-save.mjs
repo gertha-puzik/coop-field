@@ -72,7 +72,6 @@ console.log('stone support, terrain separation and elevation roundtrip: OK');
 
 // A disk failure cannot be acknowledged as a saved map or replace the live map.
 process.env.DATA_DIR=fs.mkdtempSync('/tmp/coop-editor-write-fail-');
-delete process.env.ADMIN_PASS;
 const serverMap=await import('../server/testmap.js');
 const previousMap=serverMap.testMap;
 fs.mkdirSync(process.env.DATA_DIR+'/test-map.json'); // force atomic rename to fail

@@ -3,8 +3,7 @@
  * Origin whitelist, payload/frame caps and every static registry a domain
  * module needs (palette, sprite whitelist, spawn cells, object dims). Values
  * are singletons for the whole process; nothing here is ever reassigned after
- * boot. Legacy ADMIN_PASS is exported for compatibility and no longer gates editing
- * and DATA_DIR.
+ * boot. Also DATA_DIR.
  */
 import path from "node:path";
 import fs from "node:fs";
@@ -404,8 +403,6 @@ const OBJECT_SCALE_MAX = 3.5;
  * логическую клетку — ближайшую проходимую — для ударов и препятствий).
  */
 const TEST_ROOM = 'test';
-/** Устаревшая настройка: больше не проверяется редактором локации. */
-const ADMIN_PASS = process.env.ADMIN_PASS || null;
 
 /** S5 (аудит Z.AI 2026-11-08): ресурсные лимиты процесса против исчерпания
  * сокетов/памяти гостевым флудом. WS_MAX_PER_IP — потолок ОДНОВРЕМЕННЫХ
@@ -439,5 +436,5 @@ export {
   STRIKE_COOLDOWN_MS, MAX_SPRITES_PER_ACCOUNT,
   // location objects (sanitize + geometry)
   OBJECT_DIMS, PLANT_SPRITE_IDS, TREE_SPRITE_IDS, ROCK_SPRITE_IDS, OBJECT_SCALE_MIN, OBJECT_SCALE_MAX,
-  ADMIN_PASS, DATA_DIR, WS_MAX_PER_IP, ROOMS_MAX,
+  DATA_DIR, WS_MAX_PER_IP, ROOMS_MAX,
 };

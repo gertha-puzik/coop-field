@@ -5,9 +5,7 @@
 // server.js на случайном порту с временным DATA_DIR. Внешний сервер:
 // WS_URL=ws://… node scripts/test-paint.mjs.
 // Вторая setmap-правка уходит с НОВОГО сокета: сервер троттлит любые setmap-кадры
-// раз в 10 с НА СОКЕТ. Пароль редактора по умолчанию — 1946 (совпадает с серверным
-// legacy-дефолтом); переопределение — env MAP_PASS (спавненному серверу передаётся
-// ADMIN_PASS с тем же значением).
+// раз в 10 с НА СОКЕТ. Пароля редактора нет: setmap сохраняет только admin-роль.
 import { WebSocket } from "ws";
 import zlib from "node:zlib";
 import { spawn, execFileSync } from "node:child_process";
@@ -16,14 +14,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { sendJoin } from "./ws-auth.mjs";
 
-// пароль редактора по умолчанию (совпадает с серверным legacy-дефолтом; переопределение — env MAP_PASS)
-const PASS = process.env.MAP_PASS || "1946";
-
 // Аккаунт-редактор: мутации карт (setmap) за админ-гейтом (server/testmap.js),
 // оба setmap-загрузчика теста логинятся админом. Аккаунт создаётся в DATA_DIR
 // ДО старта сервера через scripts/make-admin.mjs (лестница S1, test-admin-reset).
 const ADMIN_LOGIN = "mapboss";
-const ADMIN_PASS = "password1";
+const ADMIN_ACCOUNT_PASS = "password1";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const PORT = 3993 + Math.floor(Math.random() * 40);
@@ -41,7 +36,7 @@ const ok = (cond, label) => {
 // стартом — аккаунт-админ для setmap-загрузок теста.
 const DATA = mkdtempSync(path.join(tmpdir(), "coop-paint-"));
 if (!process.env.WS_URL) {
-  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_PASS], {
+  execFileSync(process.execPath, [path.join(ROOT, "scripts", "make-admin.mjs"), ADMIN_LOGIN, ADMIN_ACCOUNT_PASS], {
     env: { ...process.env, DATA_DIR: DATA },
     encoding: "utf8",
   });
@@ -55,7 +50,6 @@ const srv = process.env.WS_URL
         PORT: String(PORT),
         HOST: "127.0.0.1",
         DATA_DIR: DATA,
-        ADMIN_PASS: PASS,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -210,7 +204,7 @@ const a = await client(ADMIN_LOGIN);
 await waitFor(a, "you");
 await waitFor(a, "field");
 clear(a);
-a.send(JSON.stringify(["setmap", { pass: PASS, map: baseMap }]));
+a.send(JSON.stringify(["setmap", { map: baseMap }]));
 await new Promise((r) => setTimeout(r, 600));
 const mapEv = a.inbox.find((m) => m[0] === "map");
 ok(!!mapEv, "setmap с рисунком принят, map разослан");
@@ -234,7 +228,7 @@ await waitFor(admin2, "field");
 clear(admin2);
 const badMap = JSON.parse(JSON.stringify(baseMap));
 badMap.objects.push({ id: "o9", kind: "battle", c: 9, r: 4, pos: "center" });
-admin2.send(JSON.stringify(["setmap", { pass: PASS, map: badMap }]));
+admin2.send(JSON.stringify(["setmap", { map: badMap }]));
 await new Promise((r) => setTimeout(r, 500));
 const info = admin2.inbox.find((m) => m[0] === "info");
 ok(

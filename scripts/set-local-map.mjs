@@ -3,7 +3,7 @@
  * (по умолчанию ws://127.0.0.1:3780). Карта комнаты держится в памяти сервера
  * (дубль на диске — data/test-map.json), так что после перезапуска сервера её
  * возвращают на место этим скриптом. Флоу: join гостем mapprobe2 → ждём «you» →
- * шлём ['setmap', { pass, map }] → выходим по широковещательному «map» (успех)
+ * шлём ['setmap', { map }] → выходим по широковещательному «map» (успех)
  * или «info» (отказ сервера).
  *
  * Использование: node scripts/set-local-map.mjs [файл.json] [wsUrl]
@@ -17,10 +17,9 @@
  *   node scripts/set-local-map.mjs                       # бэкап 2026-11-06 → локальный сервер
  *   node scripts/set-local-map.mjs data/fresh-map.json   # карта, снятая dump-vps-map.mjs
  *   npm run map:restore                                  # то же, что первый пример
- *   MAP_PASS=… node scripts/set-local-map.mjs файл.json  # пароль редактора из env
  *
- * Пароль редактора по умолчанию — 1946 (совпадает с серверным legacy-дефолтом
- * ADMIN_PASS из server/config.js); переопределение — env MAP_PASS.
+ * Пароля редактора нет: setmap пароль не читает, карту сохраняет только
+ * сессия с ролью admin (server/testmap.js).
  *
  * Ограничения сервера (server/config.js, server/testmap.js): setmap не чаще раза
  * в 10 с на сокет («Редактор: слишком часто.»); крупный кадр легален только для
@@ -38,8 +37,6 @@ import { readFileSync } from 'node:fs';
 const LOCAL_URL = 'ws://127.0.0.1:3780';
 const PROD_URL = 'wss://coop.89-232-184-77.sslip.io';
 const FILE = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'backups/prod-elysia-map-2026-11-06.json';
-const PASS = process.env.MAP_PASS || '1946';
-
 if (process.argv[3] === PROD_URL) {
   console.error('прод-эндпоинт недоступен из этого скрипта — используйте scripts/set-vps-map.mjs');
   process.exit(1);
@@ -73,7 +70,7 @@ ws.on('message', (raw) => {
   if (event === 'noplace') { console.error('noplace — в комнате нет свободных клеток, попробуйте позже'); process.exit(3); }
   if (event === 'you' && !sent) {
     sent = true;
-    ws.send(JSON.stringify(['setmap', { pass: PASS, map }]));
+    ws.send(JSON.stringify(['setmap', { map }]));
     return;
   }
   if (event === 'info' && sent) {

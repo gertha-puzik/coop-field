@@ -24,6 +24,7 @@
     "test:avatars": "node scripts/test-avatars.mjs",
     "test:cfg": "node scripts/test-cfg-registry.mjs",
     "test:room-config": "node scripts/test-room-config.mjs",
+    "test:weather-rotation": "node scripts/test-weather-rotation.mjs",
     "test:preview-slug": "node scripts/test-preview-slug.mjs",
     "test:preview-apply": "node scripts/test-preview-apply.mjs",
     "test:preview-build-contract": "node scripts/test-preview-build-contract.mjs",
