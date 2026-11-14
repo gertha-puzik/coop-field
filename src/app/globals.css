@@ -458,55 +458,19 @@ option:disabled,
   cursor: var(--paw-cursor, url('/lapka.svg') 16 22), auto;
 }
 
-/* Главная: авторский арт целиком (без crop), letterbox цветом скетча. */
+/* Главная: арт на весь экран целиком (без crop); при ≠16:9 — лёгкое растяжение. */
 .wander-sky-home {
   --wander-home-void: #2a2440;
   background: var(--wander-home-void);
-}
-
-/* Мягкий переход letterbox → арт: перо основным цветом фона по бокам. */
-.wander-sky-home::before,
-.wander-sky-home::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: 1;
-  width: max(72px, 9vw);
-  pointer-events: none;
-}
-
-.wander-sky-home::before {
-  left: 0;
-  background: linear-gradient(
-    90deg,
-    var(--wander-home-void) 0%,
-    rgba(42, 36, 64, 0.82) 28%,
-    rgba(42, 36, 64, 0.35) 62%,
-    rgba(42, 36, 64, 0) 100%
-  );
-}
-
-.wander-sky-home::after {
-  right: 0;
-  background: linear-gradient(
-    270deg,
-    var(--wander-home-void) 0%,
-    rgba(42, 36, 64, 0.82) 28%,
-    rgba(42, 36, 64, 0.35) 62%,
-    rgba(42, 36, 64, 0) 100%
-  );
+  overflow: hidden;
 }
 
 .wander-home-art {
   position: absolute;
   z-index: 0;
-  left: 50%;
-  top: 50%;
-  /* Ровно 16:9 внутри viewport — картинка не обрезается. */
-  width: min(100vw, calc(100dvh * 16 / 9));
-  height: min(100dvh, calc(100vw * 9 / 16));
-  transform: translate(-50%, -50%);
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
@@ -515,7 +479,9 @@ option:disabled,
   inset: 0;
   width: 100%;
   height: 100%;
+  /* fill: картинка целиком, края не режутся; пропорции могут чуть потянуться. */
   object-fit: fill;
+  object-position: center;
   pointer-events: none;
   user-select: none;
 }
@@ -650,6 +616,12 @@ option:disabled,
   width: min(640px, 100%);
   flex-direction: column;
   justify-content: flex-end;
+}
+
+/* Элизия: одно окно слева снизу (как на макете), чуть шире гротовых. */
+.wander-layout-main:has(.wander-window:only-child) {
+  width: min(340px, 100%);
+  margin-inline: 0;
 }
 
 /* Hotspot лицевой плоскости доски (красная обводка на скетче):
@@ -894,6 +866,12 @@ option:disabled,
     grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: end;
   }
+
+  /* Одно окно (Элизия) не сжимать в треть сетки — колонка слева. */
+  .wander-stage-home .wander-worlds:has(> :only-child) {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
 }
 
 .wander-stage:not(.wander-stage-home) .wander-worlds {
@@ -934,7 +912,8 @@ option:disabled,
 }
 
 .wander-stage-home .wander-window:only-child {
-  max-width: 280px;
+  width: 100%;
+  max-width: 340px;
 }
 
 .wander-window:hover {
