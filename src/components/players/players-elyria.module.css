@@ -1379,13 +1379,30 @@
 }
 
 .profileBannerStar {
+  background-color: #070b1c;
   background-image:
-    radial-gradient(2px 2px at 12% 28%, rgba(255, 255, 255, 0.55), transparent),
-    radial-gradient(1.5px 1.5px at 34% 62%, rgba(255, 255, 255, 0.4), transparent),
-    radial-gradient(2px 2px at 58% 18%, rgba(255, 255, 255, 0.5), transparent),
-    radial-gradient(1px 1px at 72% 70%, rgba(255, 255, 255, 0.45), transparent),
-    radial-gradient(1.5px 1.5px at 88% 36%, rgba(255, 255, 255, 0.35), transparent),
-    linear-gradient(135deg, #0b1230 0%, #1a1540 45%, #0a1a2e 100%);
+    radial-gradient(1.5px 1.5px at 8% 22%, rgba(255, 255, 255, 0.85), transparent),
+    radial-gradient(2px 2px at 18% 58%, rgba(230, 235, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 28% 14%, rgba(255, 255, 255, 0.65), transparent),
+    radial-gradient(2.5px 2.5px at 40% 72%, rgba(200, 210, 255, 0.55), transparent),
+    radial-gradient(1.5px 1.5px at 52% 30%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 62% 80%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(2px 2px at 74% 18%, rgba(220, 230, 255, 0.75), transparent),
+    radial-gradient(1.5px 1.5px at 84% 48%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1px 1px at 92% 66%, rgba(255, 255, 255, 0.5), transparent),
+    linear-gradient(145deg, #0a1438 0%, #16103a 42%, #081828 100%);
+  animation: profile-star-twinkle 4.8s ease-in-out infinite alternate;
+}
+
+@keyframes profile-star-twinkle {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.18); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profileBannerStar {
+    animation: none;
+  }
 }
 
 .profileHero {

@@ -1,5 +1,6 @@
 /**
- * Друзья: заявки и список. Литералы /friends/* только здесь.
+ * Друзья: заявки и список.
+ * Литералы /cfg/friends/* только здесь (обход прод-nginx через location /cfg).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 import type { PresenceTone } from "./http-presence";
@@ -7,7 +8,9 @@ import type { PresenceTone } from "./http-presence";
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
 
 function friendsRoute(path: string): string {
-  return IS_ELYRIA ? path : "/dev/null";
+  // path канона: /friends/... → клиент ходит на /cfg/friends/...
+  if (!IS_ELYRIA) return "/dev/null";
+  return path.startsWith("/friends") ? `/cfg${path}` : path;
 }
 
 export type FriendCard = {

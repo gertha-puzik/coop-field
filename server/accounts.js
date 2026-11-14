@@ -342,7 +342,9 @@ function bannerUrlOf(acc) {
   const at = p?.bannerAt;
   if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return null;
   if (ext !== "png" && ext !== "jpg" && ext !== "gif") return null;
-  return `/banners/file/${acc.id}.${ext}?v=${at}`;
+  // /cfg/banners/file — обход прод-nginx (location /cfg уже в Node), пока
+  // на VPS нет отдельного location /banners/file.
+  return `/cfg/banners/file/${acc.id}.${ext}?v=${at}`;
 }
 
 function activeCharacter(acc) {

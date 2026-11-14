@@ -1,6 +1,6 @@
 /**
- * Горизонтальный фон профиля (/banners/mine*) — клиент редактора.
- * Литералы /banners/* только здесь (карантин как http-avatars).
+ * Горизонтальный фон профиля (/cfg/banners/mine*) — клиент редактора.
+ * Литералы /cfg/banners/* только здесь (обход прод-nginx через location /cfg).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
 import { httpOrigin } from "./coop";
@@ -52,7 +52,7 @@ function parseErrorRow(
 export async function httpUploadBanner(file: File): Promise<BannerAction> {
   const form = new FormData();
   form.append("file", file, file.name || "banner.png");
-  const { status, row } = await postMultipart("/banners/mine", form);
+  const { status, row } = await postMultipart("/cfg/banners/mine", form);
   if ((status === 200 || status === 201) && row?.ok === true) {
     return { ok: true, banner: asText(row.banner) || null };
   }
@@ -60,7 +60,7 @@ export async function httpUploadBanner(file: File): Promise<BannerAction> {
 }
 
 export async function httpDeleteBanner(): Promise<BannerAction> {
-  const { status, row } = await apiFetch("/banners/mine", { method: "DELETE" });
+  const { status, row } = await apiFetch("/cfg/banners/mine", { method: "DELETE" });
   if (status === 200 && row?.ok === true) {
     return { ok: true, banner: asText(row.banner) || null };
   }

@@ -104,11 +104,24 @@ function rateRecord(accountId) {
   lastUploadAt.set(accountId, Date.now());
 }
 
+/** Канон /banners/*; обходной /cfg/banners/* — прод nginx уже шлёт /cfg в Node. */
 function isBannersPath(p) {
   return (
     p === "/banners/mine" || p.startsWith("/banners/mine/") ||
-    p === "/banners/file" || p.startsWith("/banners/file/")
+    p === "/banners/file" || p.startsWith("/banners/file/") ||
+    p === "/cfg/banners/mine" || p.startsWith("/cfg/banners/mine/") ||
+    p === "/cfg/banners/file" || p.startsWith("/cfg/banners/file/")
   );
+}
+
+function canonBannersPath(p) {
+  if (p === "/cfg/banners/mine" || p.startsWith("/cfg/banners/mine/")) {
+    return "/banners/mine" + p.slice("/cfg/banners/mine".length);
+  }
+  if (p === "/cfg/banners/file" || p.startsWith("/cfg/banners/file/")) {
+    return "/banners/file" + p.slice("/cfg/banners/file".length);
+  }
+  return p;
 }
 
 const CONTENT_TYPE = {
@@ -119,8 +132,9 @@ const CONTENT_TYPE = {
 
 export async function handleBannersHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
-  if (!isBannersPath(p)) return false;
+  const raw = url.pathname;
+  if (!isBannersPath(raw)) return false;
+  const p = canonBannersPath(raw);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

@@ -248,15 +248,16 @@ async function main() {
     bob.accountId = bob2.accountId || bob.accountId;
     adm.token = adm2.token;
 
-    /* ---- banners ---- */
+    /* ---- banners (канон + /cfg обход nginx) ---- */
     const okPng = multipart({ filename: "b.png", type: "image/png", data: buildPng(800, 200) });
-    const up = await httpUpload("/banners/mine", {
+    const up = await httpUpload("/cfg/banners/mine", {
       body: okPng.body,
       contentType: okPng.contentType,
       token: alice.token,
       origin: ORIGIN,
     });
-    check(up.status === 200 && typeof up.json?.banner === "string", "banner PNG upload");
+    check(up.status === 200 && typeof up.json?.banner === "string", "banner PNG upload via /cfg");
+    check(String(up.json?.banner || "").includes("/cfg/banners/file/"), "banner URL uses /cfg/banners/file");
     const me = await httpJson("/profiles/me", { token: alice.token });
     check(!!me.json?.banner, "banner in /profiles/me");
 
@@ -268,42 +269,42 @@ async function main() {
       token: alice.token,
       origin: ORIGIN,
     });
-    check(badUp.status === 400 && badUp.json?.reason === "bad_dims", "banner oversized rejected");
+    check(badUp.status === 400 && badUp.json?.reason === "bad_dims", "banner oversized rejected (canon)");
 
     await sleep(10_100);
     const gif = multipart({ filename: "b.gif", type: "image/gif", data: buildGif(120, 40) });
-    const gifUp = await httpUpload("/banners/mine", {
+    const gifUp = await httpUpload("/cfg/banners/mine", {
       body: gif.body,
       contentType: gif.contentType,
       token: alice.token,
       origin: ORIGIN,
     });
-    check(gifUp.status === 200 && String(gifUp.json?.banner || "").includes(".gif"), "banner GIF upload");
+    check(gifUp.status === 200 && String(gifUp.json?.banner || "").includes(".gif"), "banner GIF upload via /cfg");
 
-    const pubMine = await probeWithHost("/banners/mine", {
+    const pubMine = await probeWithHost("/cfg/banners/mine", {
       host: "abnocw.phainonsmilk.ru",
       token: alice.token,
       method: "DELETE",
     });
-    check(pubMine.status === 404, "banner mine hidden on public host");
+    check(pubMine.status === 404, "banner mine hidden on public host (/cfg POST)");
 
     /* ---- presence ---- */
-    const hbSite = await httpJson("/presence/heartbeat", {
+    const hbSite = await httpJson("/cfg/presence/heartbeat", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
       body: { where: "site", active: true },
     });
-    check(hbSite.status === 200 && hbSite.json?.presence === "online", "presence site → online");
+    check(hbSite.status === 200 && hbSite.json?.presence === "online", "presence site → online (/cfg)");
     const hbGame = await httpJson("/presence/heartbeat", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
       body: { where: "game", active: true },
     });
-    check(hbGame.status === 200 && hbGame.json?.presence === "traveling", "presence game → traveling");
+    check(hbGame.status === 200 && hbGame.json?.presence === "traveling", "presence game → traveling (canon)");
     await sleep(50);
-    const hbGame2 = await httpJson("/presence/heartbeat", {
+    const hbGame2 = await httpJson("/cfg/presence/heartbeat", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
@@ -318,19 +319,19 @@ async function main() {
     check(Number(card.json?.playtimeMs) > 0, "card playtime public");
 
     /* ---- friends + notifications ---- */
-    const req = await httpJson("/friends/request", {
+    const req = await httpJson("/cfg/friends/request", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
       body: { accountId: bob.accountId },
     });
-    check(req.status === 200 && req.json?.status === "pending", "friend request");
-    const nBob = await httpJson("/notifications/me", { token: bob.token });
+    check(req.status === 200 && req.json?.status === "pending", "friend request via /cfg");
+    const nBob = await httpJson("/cfg/notifications/me", { token: bob.token });
     check(
       nBob.status === 200 &&
         Array.isArray(nBob.json?.items) &&
         nBob.json.items.some((x) => x.type === "friend_request"),
-      "friend request notification",
+      "friend request notification via /cfg",
     );
     check(Number(nBob.json?.unread) >= 1, "unread ≥ 1");
     const acc = await httpJson("/friends/accept", {
@@ -339,48 +340,48 @@ async function main() {
       origin: ORIGIN,
       body: { accountId: alice.accountId },
     });
-    check(acc.status === 200 && acc.json?.status === "accepted", "friend accept");
-    const friends = await httpJson(`/friends/${alice.accountId}`, { token: bob.token });
+    check(acc.status === 200 && acc.json?.status === "accepted", "friend accept (canon)");
+    const friends = await httpJson(`/cfg/friends/${alice.accountId}`, { token: bob.token });
     check(
       friends.status === 200 &&
         friends.json?.friends?.some((f) => f.accountId === bob.accountId),
-      "public friends list",
+      "public friends list via /cfg",
     );
-    const rem = await httpJson("/friends/remove", {
+    const rem = await httpJson("/cfg/friends/remove", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
       body: { accountId: bob.accountId },
     });
-    check(rem.status === 200, "friend remove");
+    check(rem.status === 200, "friend remove via /cfg");
 
     /* ---- announcements ---- */
-    const an = await httpJson("/admin/announcements", {
+    const an = await httpJson("/cfg/announcements", {
       method: "POST",
       token: adm.token,
       origin: ORIGIN,
       body: { title: "Тест анонс", body: "привет поле" },
     });
-    check(an.status === 200 && an.json?.ok === true, "admin announcement create");
+    check(an.status === 200 && an.json?.ok === true, "admin announcement create via /cfg");
     const nAlice = await httpJson("/notifications/me", { token: alice.token });
     check(
       nAlice.json?.items?.some((x) => x.type === "announcement" && x.title === "Тест анонс"),
       "announcement fanout",
     );
-    const read = await httpJson("/notifications/me/read", {
+    const read = await httpJson("/cfg/notifications/me/read", {
       method: "POST",
       token: alice.token,
       origin: ORIGIN,
       body: { all: true },
     });
-    check(read.status === 200 && Number(read.json?.unread) === 0, "mark all read");
+    check(read.status === 200 && Number(read.json?.unread) === 0, "mark all read via /cfg");
 
-    const delBan = await httpJson("/banners/mine", {
+    const delBan = await httpJson("/cfg/banners/mine", {
       method: "DELETE",
       token: alice.token,
       origin: ORIGIN,
     });
-    check(delBan.status === 200 && delBan.json?.banner === null, "banner delete");
+    check(delBan.status === 200 && delBan.json?.banner === null, "banner delete via /cfg");
   } finally {
     await stopServer();
     try {

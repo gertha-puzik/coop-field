@@ -56,8 +56,20 @@ function cleanText(v, max) {
   return [...t].slice(0, max).join("");
 }
 
+/** Канон /admin/announcements*; обходной /cfg/announcements* — как /cfg/statuses. */
 function isAnnPath(p) {
-  return p === "/admin/announcements" || p.startsWith("/admin/announcements/");
+  return (
+    p === "/admin/announcements" || p.startsWith("/admin/announcements/") ||
+    p === "/cfg/announcements" || p.startsWith("/cfg/announcements/")
+  );
+}
+
+function canonAnnPath(p) {
+  if (p === "/cfg/announcements") return "/admin/announcements";
+  if (p.startsWith("/cfg/announcements/")) {
+    return "/admin/announcements/" + p.slice("/cfg/announcements/".length);
+  }
+  return p;
 }
 
 function requireAdmin(req, res) {
@@ -95,8 +107,9 @@ function liveAccountIds() {
 
 export async function handleAnnouncementsHttp(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
-  if (!isAnnPath(p)) return false;
+  const raw = url.pathname;
+  if (!isAnnPath(raw)) return false;
+  const p = canonAnnPath(raw);
   setCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);

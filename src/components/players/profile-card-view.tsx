@@ -9,7 +9,7 @@
  * вкладка «Настройки» только монтирует переданный settingsSlot.
  */
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import type { ProfileCard, ProfileFriend, PublicProfile } from '@/lib/net/http-profiles';
@@ -153,6 +153,12 @@ export function ProfileCardView({
   const [friends, setFriends] = useState<ProfileFriend[]>(card.friends || []);
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
+
+  // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
+  useEffect(() => {
+    if (card.friendRelation) setRelation(card.friendRelation);
+    if (card.friends) setFriends(card.friends);
+  }, [card.friendRelation, card.friends]);
 
   const name = shown.displayName || card.displayName || 'Безымянный кот';
   const pr = presenceLabel(shown.presence ?? card.presence, card.lastSeenAt, now);
