@@ -149,7 +149,7 @@ export function AuthModal({
         <>
           <div className="flex flex-col items-center text-center">
             <span className={`${display.className} mb-3 rounded-full border border-[rgba(246,215,162,0.35)] px-3.5 py-1 text-[11px] uppercase tracking-[3px] text-[#f6d7a2]`}>
-              Elyria Eides
+              Elysiae Aedes
             </span>
             <h1
               className={`${display.className} m-0 bg-[linear-gradient(93deg,#f6d7a2_20%,#efe7ff)] bg-clip-text text-[clamp(2.5rem,7vw,3.4rem)] leading-[1.05] tracking-normal text-transparent drop-shadow-[0_6px_22px_rgba(246,215,162,0.18)]`}

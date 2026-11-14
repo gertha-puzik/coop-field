@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui';
 import type { ProfileCard, ProfileFriend, PublicProfile } from '@/lib/net/http-profiles';
 import {
   httpFriendAccept,
@@ -24,6 +24,8 @@ import {
 } from '@/lib/net/http-friends';
 import {
   avatarOf,
+  moonsText,
+  ruDate,
   existsDaysText,
   presenceLabel,
   playtimeShort,
@@ -31,7 +33,9 @@ import {
   spriteUrl,
   type PresenceTone,
 } from './players-format';
-import styles from './players-elyria.module.css';
+import baseStyles from './players-elyria.module.css';
+import referenceStyles from './profile-reference.module.css';
+const styles = { ...baseStyles, ...referenceStyles };
 
 const PRESENCE_PILL: Record<PresenceTone, string> = {
   online: styles.stOnline,
@@ -153,6 +157,7 @@ export function ProfileCardView({
   const [friends, setFriends] = useState<ProfileFriend[]>(card.friends || []);
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
+  const [idCopied, setIdCopied] = useState(false);
 
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
   useEffect(() => {
@@ -239,6 +244,7 @@ export function ProfileCardView({
 
   return (
     <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
+      <header className={styles.profileHeader}>
       <div
         className={banner ? styles.profileBanner : `${styles.profileBanner} ${styles.profileBannerStar}`}
         style={banner ? { backgroundImage: `url(${banner})` } : undefined}
@@ -247,6 +253,7 @@ export function ProfileCardView({
       />
 
       <div className={styles.profileHero}>
+        <figure className={styles.profilePortrait}>
         <div className={styles.profileFaceWrap}>
           {faceUrl ? (
             <img className={styles.profileFace} src={faceUrl} alt={name} draggable={false} />
@@ -255,25 +262,36 @@ export function ProfileCardView({
               🐾
             </span>
           )}
+          <svg className={styles.portraitFrame} viewBox="0 0 200 276" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M100 3 113 17 166 17Q184 17 184 35L194 45V245Q194 263 174 263H26Q6 263 6 245V45L16 35Q16 17 34 17H87Z" />
+            <path d="M100 12 110 24H164Q177 24 177 39L186 49V243Q186 255 173 255H27Q14 255 14 243V49L23 39Q23 24 36 24H90Z" />
+            <path d="m100 3 7 10-7 11-7-11Z" />
+          </svg>
         </div>
+        <figcaption className={styles.profileRibbon}>{name}</figcaption>
+        </figure>
         <div className={styles.profileHeroMain}>
-          <h1 className={styles.profileName}>{name}</h1>
-          <p className={styles.profilePresence}>
-            <span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span>
-          </p>
+          <div className={styles.profileTitleRow}>
+            <h1 className={styles.profileName}>{name}</h1>
+            <span className={styles.profileTitleStatus}>— [ {pr.text} ]</span>
+            {mine ? <button type="button" className={styles.profileEdit} onClick={() => pickTab('settings')} aria-label="Настроить профиль">✎</button> : null}
+          </div>
+          <dl className={styles.profileFacts}>
+            <div><dt><span aria-hidden>▣</span> ID профиля</dt><dd>
+              <button type="button" className={styles.profileCopyId} title={`Скопировать ID: ${card.accountId}`} onClick={async () => {
+                try { await navigator.clipboard.writeText(card.accountId); setIdCopied(true); }
+                catch { setIdCopied(false); }
+              }}>{shortId} <span aria-hidden>▢</span></button>
+              <span className={styles.copyStatus} role="status">{idCopied ? 'Скопировано' : ''}</span>
+            </dd></div>
+            <div><dt><span aria-hidden>▦</span> Дата регистрации</dt><dd>{ruDate(card.createdAt)}</dd></div>
+            <div><dt><span aria-hidden>☾</span> Возраст аккаунта</dt><dd>{moonsText(card.createdAt, now)}</dd></div>
+            <div><dt><span aria-hidden>✦</span> Активность</dt><dd><span className={`${styles.pill} ${PRESENCE_PILL[pr.tone]}`}>{pr.text}</span></dd></div>
+          </dl>
           <div className={styles.profilePills}>
-            <span className={styles.metaPill} title={daysPill}>
-              {daysPill}
-            </span>
-            <span className={styles.metaPill} title={playFull}>
-              {playPill}
-            </span>
-            {friendCount > 0 ? (
-              <span className={styles.metaPill}>
-                {friendCount}{' '}
-                {friendCount === 1 ? 'друг' : friendCount < 5 ? 'друга' : 'друзей'}
-              </span>
-            ) : null}
+            <span className={styles.metaPill} title={daysPill}>☾ {daysPill}</span>
+            <span className={styles.metaPill} title={playFull}>◷ В игре: {playPill}</span>
+            <span className={styles.metaPill}>🐾 Размер {char?.size || 100}</span>
           </div>
           {!mine && relation !== 'self' ? (
             <div className={styles.profileFriendActs}>
@@ -341,6 +359,15 @@ export function ProfileCardView({
         </div>
       </div>
 
+        <aside className={styles.profileAbout} aria-labelledby="hero-about">
+          <div className={styles.profileAboutTitle}>
+            <h2 id="hero-about">О себе</h2>
+            {mine ? <button type="button" onClick={() => pickTab('settings')} aria-label="Изменить рассказ о себе">✎</button> : null}
+          </div>
+          <p>{bio}</p>
+          <span className={styles.paperPaw} aria-hidden>🐾</span>
+        </aside>
+      </header>
       <div className={styles.profileTabs} role="tablist" aria-label="Разделы профиля">
         <button
           type="button"
@@ -371,7 +398,10 @@ export function ProfileCardView({
       ) : (
         <div className={styles.profileBody} role="tabpanel">
           <div className={styles.profileGrid}>
-            <MeadowPortrait card={shown} name={name} />
+            <section className={styles.profileCharacter} aria-labelledby="prof-character">
+              <h2 className={styles.secTitle} id="prof-character">🐾 Активный персонаж</h2>
+              <MeadowPortrait card={shown} name={name} />
+            </section>
             <div className={styles.profileAside}>
               <section className={styles.profileSection} aria-labelledby="prof-stats">
                 <h2 className={styles.secTitle} id="prof-stats">
@@ -379,6 +409,9 @@ export function ProfileCardView({
                 </h2>
                 <table className={styles.stats}>
                   <tbody>
+                    <tr><td className={styles.statsK}>На сайте</td><td className={styles.statsV}>{daysPill}</td></tr>
+                    <tr><td className={styles.statsK}>Время в игре</td><td className={styles.statsV}>{playFull}</td></tr>
+                    <tr><td className={styles.statsK}>Персонажи</td><td className={styles.statsV}>{shown.characters.length}</td></tr>
                     <tr>
                       <td className={styles.statsK}>Локация</td>
                       <td className={styles.statsV}>{location}</td>
@@ -387,12 +420,7 @@ export function ProfileCardView({
                 </table>
               </section>
 
-              <section className={styles.profileSection} aria-labelledby="prof-about">
-                <h2 className={styles.secTitle} id="prof-about">
-                  О себе
-                </h2>
-                <p className={styles.profileBio}>{bio}</p>
-              </section>
+
             </div>
           </div>
 
@@ -427,6 +455,44 @@ export function ProfileCardView({
           Профиль {shortId}
         </span>
       </footer>
+    </main>
+  );
+}
+
+/** Геометрия загрузки совпадает с широкой шапкой готовой карточки. */
+export function ProfileCardSkeleton() {
+  return (
+    <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }} aria-hidden="true">
+      <header className={styles.profileHeader}>
+        <div className={`${styles.profileBanner} ${styles.profileBannerStar}`} />
+        <div className={styles.profileHero}>
+          <figure className={styles.profilePortrait}>
+            <div className={`${styles.profileFaceWrap} ${styles.skel}`} />
+            <figcaption className={styles.profileRibbon}> </figcaption>
+          </figure>
+          <div className={styles.profileHeroMain}>
+            <h1 className={styles.profileName}><span className={styles.skel} style={{ width: '65%', height: 36 }} /></h1>
+            <dl className={styles.profileFacts} style={{ marginTop: 20 }}>
+              {['ID профиля', 'Дата регистрации', 'Возраст аккаунта', 'Активность'].map((label) => (
+                <div key={label}><dt>{label}</dt><dd><span className={styles.skel} style={{ width: '80%', height: 15 }} /></dd></div>
+              ))}
+            </dl>
+            <div className={styles.profilePills}><span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 200, height: 28 }} /></div>
+          </div>
+        </div>
+        <aside className={styles.profileAbout}>
+          <div className={styles.profileAboutTitle}><h2>О себе</h2></div>
+          <p><span className={styles.skel} style={{ width: '100%', height: 40 }} /></p>
+        </aside>
+      </header>
+      <div className={styles.profileTabs}><span className={styles.profileTab}>Профиль</span><span className={styles.profileTab}>Настройки</span></div>
+      <div className={styles.profileBody}>
+        <div className={styles.profileGrid}>
+          <section className={styles.profileCharacter}><h2 className={styles.secTitle}>🐾 Активный персонаж</h2><figure className={styles.avatar}><span className={`${styles.avatarArt} ${styles.skel}`} /></figure></section>
+          <section className={styles.profileAside}><h2 className={styles.secTitle}>Статистика</h2><span className={styles.skel} style={{ width: '100%', height: 150 }} /></section>
+        </div>
+      </div>
+      <footer className={styles.panelFoot}><span className={styles.skel} style={{ width: 172, height: 14 }} /></footer>
     </main>
   );
 }
