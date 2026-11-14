@@ -143,6 +143,7 @@ default `<repo>/data`, overridable per environment):
 | `banners/` | one png/jpg/gif horizontal profile banner per account id (≤1200×400) | removed on self-delete for that id only |
 | `friends.json` | friend edges `{fromId,toId,status:pending\|accepted}` | until removed/declined; no TTL |
 | `notifications.json` | per-account inbox (friend_request, announcement); read flags | capped ~100/account, no TTL |
+| `activity.json` | **public** per-account feed «Последние действия»: entered_game/moved (location names), friend_added (friend id), avatar/banner changed; `joined_site` is derived from `createdAt`, not stored. Owner decision 2026-11-14: visible to everyone, including locations | capped 20/account; friend_added of a pair dropped on unfriend; whole feed erased on self-delete |
 | `announcements.json` | admin announcement journal (title/body/delivered count) | rolling cap ~100 |
 | `sprites/` | admin-uploaded and personal sprite files + manifest | a deleted account's rows (`ownerAccountId`) are unlinked; other owners and builtins stay |
 

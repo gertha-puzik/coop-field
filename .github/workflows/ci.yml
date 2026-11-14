@@ -91,6 +91,8 @@ jobs:
         run: npm run test:editor-save
       - name: Локации мира и переходы
         run: npm run test:locations
+      - name: Лента «Последние действия»
+        run: npm run test:activity
       - name: Потолок кадров block/space/atmo/dummy
         run: npm run test:frame-limit
       - name: Аккаунты и закрытая Элизия

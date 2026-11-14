@@ -41,6 +41,7 @@ import { json, setCors } from "./runtime-config.js";
 import { flushAccounts, avatarUrlOf } from "./accounts.js";
 import { readBody, parseMultipart, PNG_MAGIC } from "./sprites.js";
 import { writeFileAtomic } from "./atomic-file.js";
+import { pushActivity } from "./activity.js";
 
 const DIR = path.join(DATA_DIR, "avatars");
 /** Каталог аватарок создаётся при старте (импорт модуля = старт сервера). */
@@ -325,6 +326,7 @@ export async function handleAvatarsHttp(req, res) {
     acc.profile.avatarAt = Date.now();
     flushAccounts(true); // форс-проход: саму мутацию accounts не считает
     rateRecord(accountId);
+    pushActivity(accountId, "avatar_changed");
     json(res, 200, { ok: true, avatar: avatarUrlOf(acc) });
     return true;
   }

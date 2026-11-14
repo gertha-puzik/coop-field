@@ -21,6 +21,7 @@ import { json, setCors, readJson } from "./runtime-config.js";
 import { writeFileAtomic } from "./atomic-file.js";
 import { findById, publicProfile } from "./accounts.js";
 import { pushNotification } from "./notifications.js";
+import { pushActivity, dropFriendActivity } from "./activity.js";
 import { presenceOf } from "./presence.js";
 
 const FILE = path.join(DATA_DIR, "friends.json");
@@ -89,6 +90,12 @@ function acceptedFriendsOf(accountId) {
   }
   out.sort((a, b) => a.displayName.localeCompare(b.displayName, "ru"));
   return out;
+}
+
+/** Лента: новая дружба видна у обеих сторон. */
+function recordFriendship(aId, bId) {
+  pushActivity(aId, "friend_added", { friendId: String(bId) });
+  pushActivity(bId, "friend_added", { friendId: String(aId) });
 }
 
 /** Канон /friends/*; обходной /cfg/friends/* — прод nginx уже шлёт /cfg в Node. */
@@ -220,6 +227,7 @@ export async function handleFriendsHttp(req, res) {
         existing.status = "accepted";
         existing.acceptedAt = Date.now();
         persist();
+        recordFriendship(meId, targetId);
         json(res, 200, { ok: true, status: "accepted" });
         return true;
       }
@@ -250,6 +258,7 @@ export async function handleFriendsHttp(req, res) {
       existing.status = "accepted";
       existing.acceptedAt = Date.now();
       persist();
+      recordFriendship(meId, targetId);
       json(res, 200, { ok: true, status: "accepted" });
       return true;
     }
@@ -283,6 +292,7 @@ export async function handleFriendsHttp(req, res) {
       }
       store.edges = store.edges.filter((e) => e !== existing);
       persist();
+      dropFriendActivity(meId, targetId);
       json(res, 200, { ok: true, status: "removed" });
       return true;
     }
