@@ -85,22 +85,22 @@ export function commentBody(ctx) {
     case "live":
       return ctx.mode === "legacy-single"
         ? `${m}Beer Grottoes:\n${url} — live. Верификация хоста (DNS, редирект, TLS, корень, health, WS-проба): прошла ${when}.\nСборка с коммита \`${sha7}\` (не из имени ветки). Данные прода не используются.`
-        : `${PREVIEW_COMMENT_MARKER}\nBeer Grottoes:\n${url} — live. Верификация: ${when}.\nElyria Eides:\n${url2} — live. Верификация: ${when}.\nСборка с коммита \`${sha7}\` (не из имени ветки). Оба сайта и комната — из этого SHA, данные прода не используются.\nHTTPS: per-host сертификат на КАЖДЫЙ хост — root-cron на VPS выдаёт их в течение ~5 минут; до этого первый прогон открывается по чистому http (это ожидаемо, не поломка).`;
+        : `${PREVIEW_COMMENT_MARKER}\nBeer Grottoes:\n${url} — live. Верификация: ${when}.\nElysiae Aedes:\n${url2} — live. Верификация: ${when}.\nСборка с коммита \`${sha7}\` (не из имени ветки). Оба сайта и комната — из этого SHA, данные прода не используются.\nHTTPS: per-host сертификат на КАЖДЫЙ хост — root-cron на VPS выдаёт их в течение ~5 минут; до этого первый прогон открывается по чистому http (это ожидаемо, не поломка).`;
     case "partial-failure":
-      return `${m}Beer Grottoes:\n${url} — ${grotto("unknown")}.\nElyria Eides:\n${url2} — ${elyria("unknown")}.\nЧастичная неудача: один сайт не прошёл верификацию, второй честно живёт по своему статусу.\nПричины: ${not(ctx.reasons, "unknown")}. Коммит \`${sha7}\`, проверено ${when}.\nЛог: ${ctx.runUrl}.`;
+      return `${m}Beer Grottoes:\n${url} — ${grotto("unknown")}.\nElysiae Aedes:\n${url2} — ${elyria("unknown")}.\nЧастичная неудача: один сайт не прошёл верификацию, второй честно живёт по своему статусу.\nПричины: ${not(ctx.reasons, "unknown")}. Коммит \`${sha7}\`, проверено ${when}.\nЛог: ${ctx.runUrl}.`;
     case "needs-tls":
-      return `${m}Beer Grottoes:\n${url} — выложено, https-сертификат ещё не готов.\nElyria Eides:\n${url2} — выложено, тот же сертификат-конвейер.\nroot-cron на VPS выпускает per-host сертификаты каждые ~5 минут; по http сайты уже отвечает. Ссылку можно открывать, как только статус станет live (следующий push или через повторную проверку). Причины последней проверки: ${not(ctx.reasons, "none")}. Проверено ${when}.`;
+      return `${m}Beer Grottoes:\n${url} — выложено, https-сертификат ещё не готов.\nElysiae Aedes:\n${url2} — выложено, тот же сертификат-конвейер.\nroot-cron на VPS выпускает per-host сертификаты каждые ~5 минут; по http сайты уже отвечает. Ссылку можно открывать, как только статус станет live (следующий push или через повторную проверку). Причины последней проверки: ${not(ctx.reasons, "none")}. Проверено ${when}.`;
     case "needs-dns":
-      return `${m}Beer Grottoes:\n${url} — не резолвится.\nElyria Eides:\n${url2} — не резолвится.\nСервер честно отказывается звать несуществующее имя live: нужен wildcard pr-*.abnocw.phainonsmilk.ru / pr-*.elysiae.phainonsmilk.ru (см. docs/PREVIEW-ENVIRONMENTS.md). Причины: ${not(ctx.reasons, "dns")}. Проверено ${when}.`;
+      return `${m}Beer Grottoes:\n${url} — не резолвится.\nElysiae Aedes:\n${url2} — не резолвится.\nСервер честно отказывается звать несуществующее имя live: нужен wildcard pr-*.abnocw.phainonsmilk.ru / pr-*.elysiae.phainonsmilk.ru (см. docs/PREVIEW-ENVIRONMENTS.md). Причины: ${not(ctx.reasons, "dns")}. Проверено ${when}.`;
     case "failed":
-      return `${m}Beer Grottoes:\n${url} — не выложен или не прошёл верификацию (${grotto("?")}).\nElyria Eides:\n${url2} — не выложен или не прошёл верификацию (${elyria("?")}).\nПричины: ${not(ctx.reasons, "unknown")}. Коммит \`${sha7}\`, проверено ${when}.\nЛог: ${ctx.runUrl}.`;
+      return `${m}Beer Grottoes:\n${url} — не выложен или не прошёл верификацию (${grotto("?")}).\nElysiae Aedes:\n${url2} — не выложен или не прошёл верификацию (${elyria("?")}).\nПричины: ${not(ctx.reasons, "unknown")}. Коммит \`${sha7}\`, проверено ${when}.\nЛог: ${ctx.runUrl}.`;
     case "needs-secret":
-      return `${m}Beer Grottoes:\n${url} — не выложен: нет секрета \`PREVIEW_SSH_KEY\`.\nElyria Eides:\n${url2} — не выложен: тот же секрет, один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${ctx.repo}/blob/${ctx.sha}/docs/PREVIEW-ENVIRONMENTS.md).`;
+      return `${m}Beer Grottoes:\n${url} — не выложен: нет секрета \`PREVIEW_SSH_KEY\`.\nElysiae Aedes:\n${url2} — не выложен: тот же секрет, один шаг Сырь — [docs/PREVIEW-ENVIRONMENTS.md](https://github.com/${ctx.repo}/blob/${ctx.sha}/docs/PREVIEW-ENVIRONMENTS.md).`;
     case "needs-bootstrap":
-      return `${m}Beer Grottoes:\n${url} — SSH есть, на VPS ещё нет bootstrap.\nElyria Eides:\n${url2} — то же окружение. От root один раз:\n\`\`\`\nsudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\n\`\`\`\nПосле этого следующий push в PR выложит оба сайта.`;
+      return `${m}Beer Grottoes:\n${url} — SSH есть, на VPS ещё нет bootstrap.\nElysiae Aedes:\n${url2} — то же окружение. От root один раз:\n\`\`\`\nsudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\n\`\`\`\nПосле этого следующий push в PR выложит оба сайта.`;
     default:
       // Unknown/empty status (ship step crashed before writing outputs).
-      return `${m}Beer Grottoes:\n${url} — не выложен (ошибка джобы).\nElyria Eides:\n${url2} — не выложен (то же окружение). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:\n\`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\``;
+      return `${m}Beer Grottoes:\n${url} — не выложен (ошибка джобы).\nElysiae Aedes:\n${url2} — не выложен (то же окружение). Если нет каталога \`/opt/coop-field-preview\`, на VPS от root:\n\`sudo bash /home/deploy-preview/incoming-preview/preview-bootstrap.sh\``;
   }
 }
 
@@ -135,17 +135,17 @@ export function headerLine(ctx) {
     default:
       switch (ctx.status) {
         case "live":
-          return `> 🚀 **Beer Grottoes:** [${url}](${url}) — сборка с коммита \`${sha7}\`, данные прода не используются.\n> 🚀 **Elyria Eides:** [${url2}](${url2}) — тот же коммит и та же комната. Верифицировано ${when}.`;
+          return `> 🚀 **Beer Grottoes:** [${url}](${url}) — сборка с коммита \`${sha7}\`, данные прода не используются.\n> 🚀 **Elysiae Aedes:** [${url2}](${url2}) — тот же коммит и та же комната. Верифицировано ${when}.`;
         case "needs-tls":
-          return `> 🚀 **Beer Grottoes:** ${url} — выложено, ждём https-сертификат (~5 мин, root-cron на VPS; http уже работает).\n> 🚀 **Elyria Eides:** ${url2} — выложено, тот же конвейер сертификатов.`;
+          return `> 🚀 **Beer Grottoes:** ${url} — выложено, ждём https-сертификат (~5 мин, root-cron на VPS; http уже работает).\n> 🚀 **Elysiae Aedes:** ${url2} — выложено, тот же конвейер сертификатов.`;
         case "destroyed":
           return `> 🚀 **Preview:** снесён — PR закрыт, оба сайта (${url} и ${url2}) и окружение убраны с VPS.`;
         case "needs-secret":
-          return `> 🚀 **Beer Grottoes:** ${url} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md).\n> 🚀 **Elyria Eides:** ${url2} — появится тем же шагом вместе с гротами.`;
+          return `> 🚀 **Beer Grottoes:** ${url} — не выложен: не задан секрет \`PREVIEW_SSH_KEY\` (docs/PREVIEW-ENVIRONMENTS.md).\n> 🚀 **Elysiae Aedes:** ${url2} — появится тем же шагом вместе с гротами.`;
         case "needs-bootstrap":
-          return `> 🚀 **Beer Grottoes:** ${url} — ждёт один bootstrap на VPS от root.\n> 🚀 **Elyria Eides:** ${url2} — появится тем же bootstrap'ом.`;
+          return `> 🚀 **Beer Grottoes:** ${url} — ждёт один bootstrap на VPS от root.\n> 🚀 **Elysiae Aedes:** ${url2} — появится тем же bootstrap'ом.`;
         default:
-          return `> 🚀 **Beer Grottoes:** ${url} — не выложен или не верифицирован (статус: ${status}).\n> 🚀 **Elyria Eides:** ${url2} — то же окружение.`;
+          return `> 🚀 **Beer Grottoes:** ${url} — не выложен или не верифицирован (статус: ${status}).\n> 🚀 **Elysiae Aedes:** ${url2} — то же окружение.`;
       }
   }
 }

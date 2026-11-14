@@ -837,7 +837,7 @@ export default function PlayersCatalog() {
 
         <header className={styles.pageHead}>
           <h1 className={styles.h1}>
-            Игроки <span className={`${styles.lite} ${displayFont.className}`}>Elyria Eides</span>
+            Игроки <span className={`${styles.lite} ${displayFont.className}`}>Elysiae Aedes</span>
           </h1>
           {cards && cards.length ? (
             <p className={styles.sub}>

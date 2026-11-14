@@ -97,3 +97,52 @@ export function humanBannerError(reason: string | undefined, fallback: string): 
       return fallback;
   }
 }
+
+/** Подготовка большого фона: пропорции сохраняются, исходный файл не меняется. */
+export async function prepareBanner(file: File): Promise<{ file: File; description: string | null }> {
+  if (!['image/png', 'image/jpeg', 'image/gif'].includes(file.type)) {
+    throw new Error('Выберите картинку PNG, JPEG или GIF.');
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const { naturalWidth: width, naturalHeight: height } = image;
+    if (width < 16 || height < 16) throw new Error('Картинка слишком маленькая: нужно хотя бы 16×16 пикселей.');
+    if (width <= 1200 && height <= 400 && file.size <= 2 * 1024 * 1024) {
+      return { file, description: null };
+    }
+    const ratio = Math.min(1, 1200 / width, 400 / height);
+    const w = Math.max(1, Math.floor(width * ratio));
+    const h = Math.max(1, Math.floor(height * ratio));
+    if (w < 16 || h < 16) throw new Error('Слишком вытянутый фон: после уменьшения каждая сторона должна быть не меньше 16 пикселей.');
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Браузер не смог подготовить картинку.');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, 0, 0, w, h);
+    const encode = (type: string, quality?: number) => new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Не удалось уменьшить картинку.')), type, quality);
+    });
+    let blob = await encode('image/png');
+    if (blob.size > 2 * 1024 * 1024) {
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = '#0a0e20';
+      ctx.fillRect(0, 0, w, h);
+      blob = await encode('image/jpeg', 0.9);
+    }
+    if (blob.size > 2 * 1024 * 1024) throw new Error('Не удалось уложить картинку в 2 МБ. Выберите другой файл.');
+    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+    return {
+      file: new File([blob], `profile-banner.${ext}`, { type: blob.type }),
+      description: `Подготовить фон ${width}×${height} → ${w}×${h} пикселей (${Math.ceil(blob.size / 1024)} КБ)? Пропорции сохранятся, обрезки не будет. Исходный файл останется прежним.${file.type === 'image/gif' ? ' Анимация GIF станет неподвижной картинкой.' : ''}${ext === 'jpg' ? ' Прозрачность будет заменена тёмным фоном.' : ''}`,
+    };
+  } catch (error) {
+    throw error instanceof Error && error.name !== 'EncodingError' ? error : new Error('Картинка повреждена или не читается браузером.');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

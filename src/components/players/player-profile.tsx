@@ -19,17 +19,18 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
-import { Dropdown } from '@/components/ui';
+import { Dropdown, ConfirmDialog } from '@/components/ui';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
 import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
 import { httpLogout } from '@/lib/net/http-auth';
 import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
-import { httpDeleteBanner, httpUploadBanner, humanBannerError } from '@/lib/net/http-banners';
+import { httpDeleteBanner, httpUploadBanner, humanBannerError, prepareBanner } from '@/lib/net/http-banners';
 import {
   DAMAGE_LEVELS,
   DEFAULT_SETTINGS,
@@ -48,7 +49,7 @@ import {
   humanEditError,
   moonPath,
 } from './player-profile-ui';
-import { ProfileCardView } from './profile-card-view';
+import { ProfileCardView, ProfileCardSkeleton } from './profile-card-view';
 
 /** Латинский шрифт бренда один на обе страницы (Lilita One, только latin:
  *  русские заголовки — system-ui 600); инстанс переиспользуется каталогом. */
@@ -88,14 +89,14 @@ export function Starscape() {
   return <div aria-hidden>{stars}</div>;
 }
 
-/** Строка бренда над страницей («Wanderpaws: Elyria Eides», латиница — Lilita One). */
+/** Строка бренда над страницей («Wanderpaws: Elysiae Aedes», латиница — Lilita One). */
 export function BrandRow() {
   return (
     <header className={styles.brand} aria-label="Название игры">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
         <path d={moonPath} />
       </svg>
-      <span className={`${displayFont.className} ${styles.brandName}`}>Wanderpaws: Elyria Eides</span>
+      <span className={`${displayFont.className} ${styles.brandName}`}>Wanderpaws: Elysiae Aedes</span>
     </header>
   );
 }
@@ -157,6 +158,7 @@ export function OwnProfileEditor({
   const armAvatarTimer = useRef<number | null>(null);
   const [bannerUrl, setBannerUrl] = useState(profile.banner || '');
   const [bannerBusy, setBannerBusy] = useState(false);
+  const [pendingBanner, setPendingBanner] = useState<{ file: File; description: string } | null>(null);
   const [armedBanner, setArmedBanner] = useState(false);
   const armBannerTimer = useRef<number | null>(null);
   const bannerFileRef = useRef<HTMLInputElement | null>(null);
@@ -311,10 +313,6 @@ export function OwnProfileEditor({
 
   const uploadOwnBanner = async (file: File) => {
     if (bannerBusy) return;
-    if (file.size > 2 * 1024 * 1024) {
-      setFail({ title: 'Файл больше 2 МБ не принимается — уменьшите картинку.' });
-      return;
-    }
     setFail(null);
     setBannerBusy(true);
     const res = await httpUploadBanner(file);
@@ -328,6 +326,21 @@ export function OwnProfileEditor({
     setNote('Фон загружен.');
     window.setTimeout(() => setNote(null), 2500);
     await refreshMineAfterBanner();
+  };
+
+  const selectOwnBanner = async (file: File) => {
+    if (bannerBusy || pendingBanner) return;
+    setBannerBusy(true);
+    setFail(null);
+    try {
+      const prepared = await prepareBanner(file);
+      setBannerBusy(false);
+      if (prepared.description) setPendingBanner({ file: prepared.file, description: prepared.description });
+      else await uploadOwnBanner(prepared.file);
+    } catch (error) {
+      setBannerBusy(false);
+      setFail({ title: error instanceof Error ? error.message : 'Не удалось прочитать картинку.' });
+    }
   };
 
   const removeOwnBanner = async () => {
@@ -390,6 +403,19 @@ export function OwnProfileEditor({
 
   return (
     <>
+    {pendingBanner && createPortal(<ConfirmDialog
+      open={true}
+      title="Уменьшить фон профиля?"
+      description={pendingBanner?.description}
+      confirmLabel="Уменьшить и загрузить"
+      onCancel={() => setPendingBanner(null)}
+      onConfirm={() => {
+        if (!pendingBanner) return;
+        const file = pendingBanner.file;
+        setPendingBanner(null);
+        void uploadOwnBanner(file);
+      }}
+    />, document.body)}
     {/* id="settings" — якорь /players/?id&mine=#settings: кнопка в карточке и мост Paint */}
     <form
       id="settings"
@@ -470,7 +496,7 @@ export function OwnProfileEditor({
           ) : null}
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-[var(--sim-text-faint)]">
-              Горизонтальная картинка (PNG/JPEG/GIF, до 1200×400, до 2 МБ). Без файла — звёздный градиент.
+              PNG/JPEG/GIF, до 1200×400 и 2 МБ. Большой фон предложим уменьшить без обрезки. Без файла — звёздный градиент.
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <input
@@ -481,7 +507,7 @@ export function OwnProfileEditor({
                 onChange={(e) => {
                   const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
                   e.target.value = '';
-                  if (file) void uploadOwnBanner(file);
+                  if (file) void selectOwnBanner(file);
                 }}
               />
               <Button
@@ -696,46 +722,9 @@ export function ProfileSkeleton() {
     <div className={styles.sky} role="status" aria-label="Загружаем профиль">
       <Starscape />
       <SiteHeader />
-      <div className={styles.page}>
+      <div className={`${styles.page} ${styles.profilePage}`}>
         <BrandRow />
-        <main className={`${styles.panel} ${styles.profileCard}`} style={{ padding: 0 }}>
-          <div className={`${styles.profileBanner} ${styles.profileBannerStar}`} />
-          <div className={styles.profileHero}>
-            <span className={`${styles.profileFaceWrap} ${styles.skel}`} />
-            <div className={styles.profileHeroMain}>
-              <h1 className={styles.profileName}>
-                <span className={styles.skel} style={{ width: 'min(58%, 260px)', height: '1.05em' }} />
-              </h1>
-              <div className={styles.profilePills}>
-                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 120, height: 24 }} />
-                <span className={`${styles.skel} ${styles.skelPill}`} style={{ width: 88, height: 24 }} />
-              </div>
-            </div>
-          </div>
-          <div className={styles.profileTabs} aria-hidden>
-            <span className={styles.profileTab}>Профиль</span>
-            <span className={styles.profileTab}>Настройки</span>
-          </div>
-          <div className={styles.profileBody}>
-            <div className={styles.profileGrid}>
-              <figure className={styles.avatar}>
-                <span className={`${styles.avatarArt} ${styles.skel}`} />
-              </figure>
-              <div className={styles.profileAside}>
-                <h2 className={styles.secTitle}>Статистика</h2>
-                <span className={styles.skel} style={{ width: '70%', height: 14 }} />
-                <h2 className={styles.secTitle} style={{ marginTop: 18 }}>
-                  О себе
-                </h2>
-                <span className={styles.skel} style={{ width: '92%', height: 14 }} />
-              </div>
-            </div>
-          </div>
-          <footer className={styles.panelFoot}>
-            <span className={styles.skel} style={{ width: 172, height: 14 }} />
-            <span className={styles.skel} style={{ width: 92, height: 12, borderRadius: 7 }} />
-          </footer>
-        </main>
+        <ProfileCardSkeleton />
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">
             ← Главное меню
@@ -820,7 +809,7 @@ export default function PlayerProfile({
     <div className={styles.sky}>
       <Starscape />
       <SiteHeader />
-      <div className={styles.page}>
+      <div className={`${styles.page} ${styles.profilePage}`}>
         <BrandRow />
         <ProfileCardView
           card={card}
