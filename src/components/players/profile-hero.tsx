@@ -16,6 +16,7 @@ import { BANNER_H, BANNER_W, generateBanner, paintPixels } from '@/lib/sim/banne
 
 import { BannerCropper } from './banner-cropper';
 import { BannerPainter } from './banner-painter';
+import { ProfileAvatar } from './profile-avatar';
 import { Icon } from './profile-icons';
 import { moonsText, ruDate, type PresenceTone } from './players-format';
 import styles from './profile-card.module.css';
@@ -52,6 +53,8 @@ export type ProfileHeroProps = {
   bioLine: string;
   banner: string | null;
   faceUrl: string | null;
+  /** Своя загруженная аватарка есть (меню предлагает «Убрать»). */
+  hasAvatar?: boolean;
   createdAt: number;
   presence: { tone: PresenceTone; text: string };
   now: number;
@@ -59,6 +62,8 @@ export type ProfileHeroProps = {
   actions?: ReactNode;
   /** После смены шапки — освежить свою карточку снаружи. */
   onBannerChanged?: () => void | Promise<void>;
+  /** После смены аватарки — то же. */
+  onAvatarChanged?: () => void | Promise<void>;
 };
 
 /** Относительный путь картинки сервера комнат → абсолютный (локально фронт и
@@ -74,11 +79,13 @@ export function ProfileHero({
   bioLine,
   banner,
   faceUrl,
+  hasAvatar = false,
   createdAt,
   presence,
   now,
   actions,
   onBannerChanged,
+  onAvatarChanged,
 }: ProfileHeroProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [menu, setMenu] = useState(false);
@@ -196,9 +203,14 @@ export function ProfileHero({
         ) : null}
 
         <div className={styles.heroInfo}>
-          <div className={styles.heroFace}>
-            {faceUrl ? <img src={faceUrl} alt={name} draggable={false} /> : <Icon name="paw" size={40} />}
-          </div>
+          <ProfileAvatar
+            mine={mine}
+            name={name}
+            faceUrl={faceUrl ? assetUrl(faceUrl) : null}
+            hasImage={hasAvatar}
+            onChanged={onAvatarChanged}
+            onError={setNote}
+          />
           <div className={styles.heroText}>
             <h1 className={styles.heroName}>
               {name}
@@ -226,7 +238,12 @@ export function ProfileHero({
         <BannerCropper file={cropFile} busy={busy} onDone={(b) => void upload(b)} onCancel={() => setCropFile(null)} />
       ) : null}
       {painting ? (
-        <BannerPainter seed={accountId} busy={busy} onDone={(b) => void upload(b)} onCancel={() => setPainting(false)} />
+        <BannerPainter
+          loadBase={() => generateBanner(accountId)}
+          busy={busy}
+          onDone={(b) => void upload(b)}
+          onCancel={() => setPainting(false)}
+        />
       ) : null}
     </div>
   );

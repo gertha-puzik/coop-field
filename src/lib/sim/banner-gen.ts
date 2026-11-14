@@ -207,11 +207,18 @@ export function generateBanner(seed: string): Uint8ClampedArray {
   return px;
 }
 
-/** Нарисовать RGBA 120×40 в ctx с целым масштабом, без сглаживания. */
-export function paintPixels(ctx: CanvasRenderingContext2D, rgba: Uint8ClampedArray, scale: number): void {
-  for (let y = 0; y < BANNER_H; y++) {
-    for (let x = 0; x < BANNER_W; x++) {
-      const i = (y * BANNER_W + x) * 4;
+/** Нарисовать RGBA-сетку w×h (по умолчанию шапка 120×40) с целым масштабом, без сглаживания. */
+export function paintPixels(
+  ctx: CanvasRenderingContext2D,
+  rgba: Uint8ClampedArray,
+  scale: number,
+  w: number = BANNER_W,
+  h: number = BANNER_H,
+): void {
+  ctx.clearRect(0, 0, w * scale, h * scale);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
       ctx.fillStyle = `rgba(${rgba[i]},${rgba[i + 1]},${rgba[i + 2]},${rgba[i + 3] / 255})`;
       ctx.fillRect(x * scale, y * scale, scale, scale);
     }

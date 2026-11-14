@@ -14,8 +14,6 @@ import { Button } from '@/components/ui/button';
 import { clampOffset, coverScale, cropRect, type Offset } from './banner-crop-math';
 import styles from './banner-editor.module.css';
 
-const FRAME_W = 1200;
-const FRAME_H = 400;
 const MAX_FILE = 10 * 1024 * 1024;
 const MAX_UPLOAD = 2 * 1024 * 1024;
 const ZOOM_MAX = 4;
@@ -28,12 +26,30 @@ function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number): 
 
 export type BannerCropperProps = {
   file: File;
+  /** Размер результата и пропорция рамки (по умолчанию шапка 1200×400). */
+  frameW?: number;
+  frameH?: number;
+  /** Скруглённая рамка (аватарка). */
+  round?: boolean;
+  title?: string;
+  /** Максимум байт для PNG, иначе JPEG. */
+  maxUpload?: number;
   busy?: boolean;
   onDone: (blob: Blob) => void;
   onCancel: () => void;
 };
 
-export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCropperProps) {
+export function BannerCropper({
+  file,
+  frameW: FRAME_W = 1200,
+  frameH: FRAME_H = 400,
+  round = false,
+  title = 'Шапка профиля',
+  maxUpload = MAX_UPLOAD,
+  busy = false,
+  onDone,
+  onCancel,
+}: BannerCropperProps) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ id: number; x: number; y: number; off: Offset } | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -71,7 +87,7 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
       live = false;
       URL.revokeObjectURL(url);
     };
-  }, [file]);
+  }, [file, FRAME_W, FRAME_H]);
 
   useEffect(() => {
     const el = frameRef.current;
@@ -81,7 +97,7 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [FRAME_W]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -105,7 +121,7 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
       setZoom(z);
       setOff(clampOffset(moved, loaded.w, loaded.h, base * z, FRAME_W, FRAME_H));
     },
-    [base, loaded, off, zoom],
+    [base, loaded, off, zoom, FRAME_W, FRAME_H],
   );
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -139,7 +155,7 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
     const r = cropRect(off, scale, FRAME_W, FRAME_H);
     ctx.drawImage(loaded.img, r.sx, r.sy, r.sw, r.sh, 0, 0, FRAME_W, FRAME_H);
     let blob = loaded.png ? await canvasBlob(canvas, 'image/png') : null;
-    if (!blob || blob.size > MAX_UPLOAD) blob = await canvasBlob(canvas, 'image/jpeg', 0.9);
+    if (!blob || blob.size > maxUpload) blob = await canvasBlob(canvas, 'image/jpeg', 0.9);
     setSaving(false);
     if (!blob) {
       setError('Не получилось подготовить картинку.');
@@ -149,15 +165,16 @@ export function BannerCropper({ file, busy = false, onDone, onCancel }: BannerCr
   };
 
   return (
-    <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label="Кадрирование шапки">
+    <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label={`Кадрирование: ${title}`}>
       <div className={styles.modal}>
         <header className={styles.modalHead}>
-          <h2 className={styles.modalTitle}>Шапка профиля</h2>
+          <h2 className={styles.modalTitle}>{title}</h2>
           <p className={styles.modalHint}>Перетащите картинку, чтобы выбрать видимую часть.</p>
         </header>
         <div
           ref={frameRef}
-          className={styles.cropFrame}
+          className={round ? `${styles.cropFrame} ${styles.cropRound}` : styles.cropFrame}
+          style={{ aspectRatio: `${FRAME_W} / ${FRAME_H}` }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
