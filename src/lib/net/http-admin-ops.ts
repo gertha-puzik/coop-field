@@ -412,7 +412,7 @@ export type AdminHomeNewsAction =
  *  Пишем в /cfg/news: nginx уже проксирует /cfg* в Node; /admin/news без
  *  отдельного location отдаёт статику → 405. */
 export async function httpAdminHomeNewsSave(
-  items: { title: string; body: string; id?: string }[],
+  items: { title: string; body: string; id?: string; pinned?: boolean }[],
 ): Promise<AdminHomeNewsAction> {
   const { status, row, text } = await apiFetch('/cfg/news', {
     method: 'POST',
@@ -426,7 +426,9 @@ export async function httpAdminHomeNewsSave(
       const id = asText((item as ApiRow).id);
       const title = asText((item as ApiRow).title);
       const body = asText((item as ApiRow).body);
-      if (id && title && body) next.push({ id, title, body });
+      if (id && title && body) {
+        next.push({ id, title, body, pinned: (item as ApiRow).pinned === true });
+      }
     }
     return {
       ok: true,

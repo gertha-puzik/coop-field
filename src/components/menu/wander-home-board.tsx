@@ -16,11 +16,13 @@ const FALLBACK: readonly HomeNewsItem[] = [
     id: 'local-1',
     title: 'Добро пожаловать',
     body: 'На доске появляются короткие новости о поле и меню.',
+    pinned: false,
   },
   {
     id: 'local-2',
     title: 'Следы лап',
     body: 'Проведи курсором по ночному полю — останутся лапки.',
+    pinned: false,
   },
 ];
 
@@ -80,9 +82,19 @@ export function WanderNewsHotspot() {
               </header>
               <ul className="wander-news-list">
                 {items.map((note) => (
-                  <li key={note.id} className="wander-news-card">
-                    <strong>{note.title}</strong>
-                    <p>{note.body}</p>
+                  <li
+                    key={note.id}
+                    className={note.pinned ? 'wander-news-card wander-news-card-pinned' : 'wander-news-card'}
+                  >
+                    <strong>
+                      {note.pinned ? <span className="wander-news-pin">Закреплено</span> : null}
+                      {note.title}
+                    </strong>
+                    {/* body уже санитизирован сервером (b/i/u/br/span.news-size-*). */}
+                    <div
+                      className="wander-news-body"
+                      dangerouslySetInnerHTML={{ __html: note.body }}
+                    />
                   </li>
                 ))}
               </ul>
