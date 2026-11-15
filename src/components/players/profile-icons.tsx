@@ -4,7 +4,6 @@
  */
 
 const PATHS = {
-  paw: 'M8.5 9.5a1.75 2.25 0 1 0 0-.01M15.5 9.5a1.75 2.25 0 1 0 0-.01M5 13.5a1.5 2 0 1 0 0-.01M19 13.5a1.5 2 0 1 0 0-.01M12 13c-3 0-5 3.2-5 5 0 1.4 1.3 2 2.6 2 1 0 1.6-.5 2.4-.5s1.4.5 2.4.5c1.3 0 2.6-.6 2.6-2 0-1.8-2-5-5-5z',
   moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   pin: 'M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
@@ -23,7 +22,18 @@ const PATHS = {
   chart: 'M5 20V10M11 20V4M17 20v-7',
 } as const;
 
-export type IconName = keyof typeof PATHS;
+/** Симметричный отпечаток: четыре отдельные подушечки и центральная лапка. */
+export function PawGlyph() {
+  return <g fill="currentColor" stroke="none">
+    <ellipse cx="5" cy="10" rx="2.1" ry="2.7" />
+    <ellipse cx="9.2" cy="5.8" rx="2.2" ry="2.8" />
+    <ellipse cx="14.8" cy="5.8" rx="2.2" ry="2.8" />
+    <ellipse cx="19" cy="10" rx="2.1" ry="2.7" />
+    <path d="M12 11.5c-2.8 0-6.5 4.1-6.5 6.6 0 1.8 1.5 2.9 3.2 2.9 1.4 0 2.1-.8 3.3-.8s1.9.8 3.3.8c1.7 0 3.2-1.1 3.2-2.9 0-2.5-3.7-6.6-6.5-6.6Z" />
+  </g>;
+}
+
+export type IconName = keyof typeof PATHS | 'paw';
 
 export function Icon({ name, size = 18, className }: { name: IconName; size?: number; className?: string }) {
   return (
@@ -39,7 +49,7 @@ export function Icon({ name, size = 18, className }: { name: IconName; size?: nu
       strokeLinejoin="round"
       aria-hidden
     >
-      <path d={PATHS[name]} />
+      {name === 'paw' ? <PawGlyph /> : <path d={PATHS[name]} />}
     </svg>
   );
 }

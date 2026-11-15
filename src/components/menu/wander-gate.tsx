@@ -316,7 +316,7 @@ export function WanderMenu() {
   return (
     <NightSky home boardHotspot={<WanderNewsHotspot />}>
       <h1 className="sr-only">Wanderpaws</h1>
-      <div className="wander-topbar">
+      <div className={IS_ELYRIA ? 'wander-topbar wander-topbar-wide' : 'wander-topbar'}>
         {IS_ELYRIA ? <SiteHeader ghost home /> : <span aria-hidden />}
       </div>
       <div className="wander-layout wander-layout-art">

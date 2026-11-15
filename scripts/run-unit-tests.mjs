@@ -36,6 +36,7 @@ const TESTS = [
   "scripts/test-banner-gen.mts",
   "scripts/test-banner-crop.mts",
   "scripts/test-banner-paint.mts",
+  "scripts/test-theme-policy.mts",
 ];
 
 if (!supportsStripTypes) {

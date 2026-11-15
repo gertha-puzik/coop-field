@@ -767,3 +767,19 @@
   .heroName { font-size: 24px; }
   .heroBio { font-size: 12px; }
 }
+
+/* Выемки относятся к синей подложке, не к содержимому и внешнему канту. */
+.card { position: relative; isolation: isolate; background: none; }
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(30,26,66,.72), rgba(14,12,34,.72));
+  mask:
+    radial-gradient(circle 12px at 0 0, transparent 11px, #000 12px) top left / 51% 51% no-repeat,
+    radial-gradient(circle 12px at 100% 0, transparent 11px, #000 12px) top right / 51% 51% no-repeat,
+    radial-gradient(circle 12px at 0 100%, transparent 11px, #000 12px) bottom left / 51% 51% no-repeat,
+    radial-gradient(circle 12px at 100% 100%, transparent 11px, #000 12px) bottom right / 51% 51% no-repeat;
+}

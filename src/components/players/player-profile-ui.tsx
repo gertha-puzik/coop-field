@@ -33,6 +33,7 @@ import {
   SPRITE_GROUPS,
 } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
+import { PawGlyph } from './profile-icons';
 import { avatarOf, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
 
@@ -45,15 +46,7 @@ type AchIcon = 'star' | 'moon' | 'paw' | 'leaf' | 'eye' | 'flame';
 export const ACH_ICONS: Record<AchIcon, ReactNode> = {
   star: <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
   moon: <path d={moonPath} />,
-  paw: (
-    <>
-      <ellipse cx="12" cy="16.4" rx="4.6" ry="3.5" />
-      <circle cx="5.5" cy="12.2" r="1.9" />
-      <circle cx="9.3" cy="9.3" r="2" />
-      <circle cx="14.7" cy="9.3" r="2" />
-      <circle cx="18.5" cy="12.2" r="1.9" />
-    </>
-  ),
+  paw: <PawGlyph />,
   leaf: (
     <>
       <path d="M20.6 3.4C9.8 4.4 4.4 10.2 3.9 20.6 14.2 20.2 19.6 14.4 20.6 3.4Z" />

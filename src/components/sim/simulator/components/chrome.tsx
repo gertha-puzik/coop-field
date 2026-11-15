@@ -18,6 +18,7 @@ import { damageLevelLabel, type SimSettings } from '@/lib/sim/settings';
 import { THEMES, type ThemeId } from '@/lib/sim/theme';
 import { roomTitle, type CoopRoomInfo } from '@/lib/net/coop';
 import { tabTitle } from '@/lib/net/modes';
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 /**
  * Вертикальный разделитель между колонками: тянется мышью, меняя ширину
@@ -160,7 +161,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
    *  сервером. */
   const gameControls = (
     <>
-      {!testField ? <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
+      {!IS_ELYRIA && !testField ? <label className="flex items-center gap-1 text-xs text-[var(--sim-text-muted)]">
         тема
         <Dropdown
           value={theme}
