@@ -57,7 +57,7 @@ export function ProfileAvatar({
   const upload = async (blob: Blob) => {
     setBusy(true);
     onError(null);
-    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+    const ext = blob.type === 'image/gif' ? 'gif' : blob.type === 'image/png' ? 'png' : 'jpg';
     const res = await httpUploadAvatar(new File([blob], `avatar.${ext}`, { type: blob.type }));
     setBusy(false);
     if (!res.ok) {
@@ -67,6 +67,29 @@ export function ProfileAvatar({
     setCropFile(null);
     setPainting(false);
     await onChanged?.();
+  };
+
+  const selectUpload = async (file: File) => {
+    if (busy) return;
+    onError(null);
+    if (file.size > 10 * 1024 * 1024) {
+      onError('Файл больше 10 МБ — выберите поменьше.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const signature = await file.slice(0, 6).text();
+      if (signature === 'GIF87a' || signature === 'GIF89a') {
+        // Оригинальные байты: canvas/cropper уничтожают анимацию.
+        await upload(new File([file], 'avatar.gif', { type: 'image/gif' }));
+      } else {
+        setBusy(false);
+        setCropFile(file);
+      }
+    } catch {
+      setBusy(false);
+      onError('Не удалось прочитать картинку. Попробуйте ещё раз.');
+    }
   };
 
   const remove = async () => {
@@ -126,7 +149,7 @@ export function ProfileAvatar({
               fileRef.current?.click();
             }}
           >
-            <Icon name="image" size={16} /> Загрузить картинку…
+            <Icon name="image" size={16} /> <span>Загрузить картинку / GIF…<small className={styles.uploadHint}>GIF до 10 МБ, анимация сохраняется</small></span>
           </button>
           <button
             type="button"
@@ -136,7 +159,7 @@ export function ProfileAvatar({
               setPainting(true);
             }}
           >
-            <Icon name="brush" size={16} /> Дорисовать…
+            <Icon name="brush" size={16} /> {faceUrl && /\.gif(?:\?|$)/i.test(faceUrl) ? 'Дорисовать (без анимации)…' : 'Дорисовать…'}
           </button>
           {hasImage ? (
             <button type="button" role="menuitem" className={armed ? styles.menuDanger : undefined} onClick={() => void remove()}>
@@ -153,7 +176,7 @@ export function ProfileAvatar({
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.target.value = '';
-          if (f) setCropFile(f);
+          if (f) void selectUpload(f);
         }}
       />
       {cropFile ? (

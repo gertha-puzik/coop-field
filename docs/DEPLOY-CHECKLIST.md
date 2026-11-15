@@ -308,3 +308,13 @@ by the OLD names (pr-<N>.abnocw.miew.ru) — those hosts are NOT served by the
 new preview nginx anymore. After the records are in, previews come back under
 `pr-<N>.abnocw.phainonsmilk.ru` / `pr-<N>.elysiae.phainonsmilk.ru` with fresh
 TLS from the cron (needs-tls ≈ 10 min is normal).
+
+### Profile GIF uploads (10 MiB)
+
+The Elysiae vhost must allow the 10 MiB file plus multipart overhead. The owner can include
+`deploy/vps/nginx-profile-upload-size.sample.conf` in its nginx `server {}` block
+(`client_max_body_size 11m;`), validate with `nginx -t`, then reload nginx.
+An existing larger effective limit also works. This repository does not contain the active
+Elysiae vhost, and normal application deployment does not install this snippet or reload nginx.
+Node still enforces exactly 10 MiB for GIF and 2 MiB for PNG/JPEG. Local tests verify the
+application contract; they do not establish the effective production proxy limit.

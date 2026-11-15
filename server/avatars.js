@@ -13,17 +13,17 @@
  *   DELETE /avatars/mine   — удаление своей аватарки → 200 {ok:true, avatar:null}
  *                            (файл уходит первым; ошибка диска → io, профильные
  *                            поля не меняются);
- *   GET    /avatars/file/<id>.png|.jpg — публичная отдача файла (404 на мусор
+ *   GET    /avatars/file/<id>.png|.jpg|.gif — публичная отдача файла (404 на мусор
  *                            и отсутствие; host-гейтом не спрятан — читается
  *                            обоим сайтам, как /sprites/file; имена строятся
  *                            только из [A-Za-z0-9_-]{1,64} + расширение).
  *
- * PROFILE-поля аккаунта (source of truth): profile.avatarExt ('png'|'jpg') и
+ * PROFILE-поля аккаунта (source of truth): profile.avatarExt ('png'|'jpg'|'gif') и
  * profile.avatarAt (unix-ms; 0 = аватарки нет). DTO собирает
  * accounts.avatarUrlOf (поле avatar в publicProfile), он же строит ответ
  * POST: «?v=<avatarAt>» меняется с каждой заменой и обходит кэш браузера.
  *
- * Лимиты (локальные константы зоны): тело ≤ 2 МБ; формат PNG или JPEG по магии
+ * Лимиты: GIF ≤10 МБ, PNG/JPEG ≤2 МБ (файл); multipart запас 64 КиБ; формат по магии
  * байтов; каждая сторона 64–1500 px; суммарно ≤ 2 250 000 px; файл ≥ 100 байт;
  * не чаще одной загрузки в 10 секунд на аккаунт. Сквозного лимита HTTP-тела
  * в net.js нет — зоны держат свои (sprites 3 МБ, my-sprites 1 МБ, profiles
@@ -47,11 +47,13 @@ const DIR = path.join(DATA_DIR, "avatars");
 /** Каталог аватарок создаётся при старте (импорт модуля = старт сервера). */
 fs.mkdirSync(DIR, { recursive: true });
 
-/** Потолок тела загрузки: 2 МБ — бытовой аватар весит килобайты, запас на
+/** Потолок чтения: GIF до 10 МБ плюс multipart; PNG/JPEG до 2 МБ. Запас на
  *  фотореалистичные JPEG оставлен без «безразмерности» (мultipart-обёртка
  *  добавляет копейки; проверяется по факту прочитанных байтов, не по
  *  Content-Length — отсутствующий заголовок не обходит лимит). */
 const MAX_AVATAR_UPLOAD = 2 * 1024 * 1024;
+const MAX_GIF_UPLOAD = 10 * 1024 * 1024;
+const MAX_UPLOAD_BODY = MAX_GIF_UPLOAD + 64 * 1024; // multipart overhead
 
 /** Габариты: каждая сторона 64–1500 px, всего ≤ 2 250 000 px — квадратная
  *  аватарка 1500×1500 проходит впритык, «полоса» 1500×1499 тоже. */
@@ -68,7 +70,7 @@ const MIN_FILE_BYTES = 100;
  *  клиента, а не бухгалтерия; засчитываются только успешные загрузки). */
 const RATE_INTERVAL_MS = 10_000;
 
-/** Имя файла: <id аккаунта>.<png|jpg> — имена строятся только из
+/** Имя файла: <id аккаунта>.<png|jpg|gif> — имена строятся только из
  *  [A-Za-z0-9_-]{1,64} + расширение (набор зашит в regex маршрута отдачи):
  *  пути из URL в файловую систему не передаются. */
 const fileOf = (accountId, ext) => path.join(DIR, `${accountId}.${ext}`);
@@ -131,7 +133,14 @@ function sniffImage(data) {
   ) {
     return "jpg";
   }
+  const sig = data.toString("ascii", 0, 6);
+  if ((sig === "GIF87a" || sig === "GIF89a") && data.length >= 13 && data[data.length - 1] === 0x3b) return "gif";
   return null;
+}
+
+function gifDimsOf(data) {
+  if (data.length < 13) return null;
+  return { w: data.readUInt16LE(6), h: data.readUInt16LE(8) };
 }
 
 /* ---------- rate: не чаще одной загрузки в 10 с на аккаунт ---------- */
@@ -172,7 +181,7 @@ export async function handleAvatarsHttp(req, res) {
 
   /* ---------- публичная отдача файла: GET /avatars/file/<id>.<ext> ---------- */
   if (p === "/avatars/file" || p.startsWith("/avatars/file/")) {
-    const m = /^\/avatars\/file\/([A-Za-z0-9_-]{1,64})\.(png|jpg)$/.exec(p);
+    const m = /^\/avatars\/file\/([A-Za-z0-9_-]{1,64})\.(png|jpg|gif)$/.exec(p);
     if (!m) {
       json(res, 404, { ok: false, reason: "not_found" });
       return true;
@@ -184,7 +193,7 @@ export async function handleAvatarsHttp(req, res) {
     try {
       const data = fs.readFileSync(fileOf(m[1], m[2]));
       res.writeHead(200, {
-        "content-type": m[2] === "png" ? "image/png" : "image/jpeg",
+        "content-type": m[2] === "gif" ? "image/gif" : m[2] === "png" ? "image/png" : "image/jpeg",
         "content-length": String(data.length),
         // короткий публичный кэш: замена картинки меняет ?v= в URL профиля
         "cache-control": "public, max-age=300",
@@ -251,13 +260,13 @@ export async function handleAvatarsHttp(req, res) {
     }
     let buf;
     try {
-      buf = await readBody(req, MAX_AVATAR_UPLOAD);
+      buf = await readBody(req, MAX_UPLOAD_BODY);
     } catch (e) {
       if (e && e.code === "too_large") {
         json(res, 413, {
           ok: false,
           reason: "too_large",
-          message: "Картинка больше 2 МБ не принимается — уменьшите её и попробуйте снова.",
+          message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.",
         });
         return true;
       }
@@ -291,11 +300,15 @@ export async function handleAvatarsHttp(req, res) {
       json(res, 400, {
         ok: false,
         reason: "bad_magic",
-        message: "Файл не похож на картинку — нужен PNG или JPEG.",
+        message: "Файл не похож на картинку — нужен PNG, JPEG или GIF.",
       });
       return true;
     }
-    const dims = ext === "png" ? pngDimsOf(img) : jpegDimsOf(img);
+    if (img.length > (ext === "gif" ? MAX_GIF_UPLOAD : MAX_AVATAR_UPLOAD)) {
+      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ." });
+      return true;
+    }
+    const dims = ext === "gif" ? gifDimsOf(img) : ext === "png" ? pngDimsOf(img) : jpegDimsOf(img);
     if (
       !dims ||
       dims.w < DIM_MIN || dims.w > DIM_MAX ||
@@ -316,6 +329,12 @@ export async function handleAvatarsHttp(req, res) {
     // трогаем — аккаунт не должен ссылаться на неписаный файл.
     try {
       writeFileAtomic(fileOf(accountId, ext), img);
+      for (const old of ["png", "jpg", "gif"]) {
+        if (old !== ext) {
+          try { fs.unlinkSync(fileOf(accountId, old)); }
+          catch (error) { if (error?.code !== "ENOENT") throw error; }
+        }
+      }
     } catch (e) {
       console.warn("avatar upload failed:", e?.message || e);
       json(res, 500, { ok: false, reason: "io", message: "Не удалось сохранить аватарку." });
@@ -334,10 +353,10 @@ export async function handleAvatarsHttp(req, res) {
   /* ---------- удаление (DELETE /avatars/mine) ---------- */
   if (req.method === "DELETE" && p === "/avatars/mine") {
     // Файл уходит ПЕРВЫМ: ошибка диска (не ENOENT) → io, профильные поля не
-    // трогаем. Чистим оба расширения: мусор в profile.avatarExt не должен
+    // трогаем. Чистим все расширения: мусор в profile.avatarExt не должен
     // оставлять осиротевший файл на диске.
     try {
-      for (const ext of ["png", "jpg"]) {
+      for (const ext of ["png", "jpg", "gif"]) {
         try {
           fs.unlinkSync(fileOf(accountId, ext));
         } catch (e) {

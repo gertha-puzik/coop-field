@@ -85,9 +85,9 @@ export function humanBannerError(reason: string | undefined, fallback: string): 
     case "bad_magic":
       return "Файл не похож на картинку — нужен PNG, JPEG или GIF.";
     case "bad_dims":
-      return "Фон не подходит: ширина до 1200 px, высота до 400 px.";
+      return "Фон: PNG/JPEG до 1200×400 px, GIF до 1500×1500 px.";
     case "too_large":
-      return "Файл больше 2 МБ не принимается — уменьшите картинку.";
+      return "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.";
     case "rate":
       return "Слишком часто, подождите немного и попробуйте снова.";
     case "io":
