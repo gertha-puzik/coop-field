@@ -9,8 +9,6 @@ import type { ProfileCharacter } from '@/lib/net/http-profiles';
 import { SPRITES } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 
-/** Луна = 30 дней (жанровый «месяц» котёнка). */
-export const MOON_DAYS = 30;
 const MIN_MS = 60_000;
 const HOUR_MS = 60 * MIN_MS;
 const DAY_MS = 24 * HOUR_MS;
@@ -25,7 +23,7 @@ export function plural(n: number, one: string, few: string, many: string): strin
   return many;
 }
 
-/* ---------------------------- время и луны ---------------------------- */
+/* ---------------------------- время и даты ---------------------------- */
 
 const MONTHS_GEN = [
   'января',
@@ -116,25 +114,8 @@ export function ruAgo(ts: number, now: number = Date.now()): string {
     const v = Math.round(ms / (7 * DAY_MS));
     return `${v} ${plural(v, 'неделю', 'недели', 'недель')} назад`;
   }
-  // в кошачьем лоре месяц = луна (MOON_DAYS): старые регистрации считаем в лунах
-  const v = Math.round(ms / (MOON_DAYS * DAY_MS));
-  return `${v} ${plural(v, 'луна', 'луны', 'лун')} назад`;
-}
-
-/** Возраст в лунах (1 луна = 30 дней), дробное; null — даты нет. */
-export function moonsFromMs(createdAt: number, now: number = Date.now()): number | null {
-  if (!Number.isFinite(createdAt) || createdAt <= 0) return null;
-  return Math.max(0, (now - createdAt) / (MOON_DAYS * DAY_MS));
-}
-
-/** «30 лун», «22 луны», «0,3 луны» — окончания как в референсе; нет даты → «—». */
-export function moonsText(createdAt: number, now: number = Date.now()): string {
-  const n = moonsFromMs(createdAt, now);
-  if (n === null) return '—';
-  const v = Math.round(n * 10) / 10;
-  const num = v % 1 === 0 ? String(v) : v.toFixed(1).replace('.', ',');
-  const word = v % 1 !== 0 ? plural(2, 'луна', 'луны', 'лун') : plural(v, 'луна', 'луны', 'лун');
-  return `${num} ${word}`;
+  const v = Math.round(ms / (30 * DAY_MS));
+  return `${v} ${plural(v, 'месяц', 'месяца', 'месяцев')} назад`;
 }
 
 /** Целых дней с регистрации для таблицы статистики; null — даты нет. */

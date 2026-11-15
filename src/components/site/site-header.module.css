@@ -1,0 +1,53 @@
+/* Единое верхнее меню Elysiae Aedes: бренд, текущие разделы и сессия. */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 64px;
+  padding: 8px 24px;
+  color: var(--sim-text, #f4f0ff);
+  border-bottom: 1px solid rgba(222,183,121,.6);
+  background: linear-gradient(100deg,rgba(18,18,31,.97),rgba(39,32,45,.96));
+  backdrop-filter: blur(12px);
+}
+.home { position: relative; }
+.brand { display: flex; align-items: center; gap: 8px; flex: none; text-decoration: none; color: #f6d7a2; }
+.brand > span { display: flex; flex-direction: column; }
+.brand strong { font-size: 19px; line-height: 1.1; letter-spacing: .025em; }
+.brand small { font-size: 9px; line-height: 1.5; letter-spacing: .29em; }
+.desktop { display: flex; align-items: center; gap: 18px; flex: 1; min-width: 0; }
+.navigation { display: flex; align-items: center; justify-content: center; gap: 18px; flex: 1; min-width: 0; }
+.navLink { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12px; color: #eee4e6; text-decoration: none; }
+.navLink svg { color: #c9b6bc; flex: none; }
+.navLink:hover, .navLink:focus-visible { color: #f6d7a2; }
+.session { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.identity { display: inline-flex; align-items: center; gap: 8px; max-width: 130px; color: #f4f0ff; text-decoration: none; font-size: 12px; }
+.identity > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identityAvatar { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border: 1px solid #deb779; border-radius: 50%; color: #f6d7a2; background: radial-gradient(circle at 40% 30%,#3b375d,#141429); font-size: 16px; }
+.mobileMenu, .mobileBell { display: none; }
+.menuLink { display: flex; align-items: center; gap: 9px; }
+@media (max-width: 1279px) {
+  .header { gap: 16px; padding-inline: 16px; }
+  .navigation { gap: 12px; }
+  .navLink { gap: 5px; }
+  .identityAvatar { display: none; }
+  .session { gap: 8px; }
+}
+@media (max-width: 1099px) {
+  .header { min-height: 60px; gap: 12px; padding: 8px 14px; }
+  .desktop { display: none; }
+  .mobileMenu { position: relative; display: block; order: -1; }
+  .mobileBell { display: flex; margin-left: auto; }
+  .brand strong { font-size: 17px; }
+  .brand svg { width: 28px; height: 28px; }
+  .brand small { font-size: 8px; }
+}
+@media (max-width: 359px) {
+  .header { gap: 8px; padding-inline: 10px; }
+  .brand { gap: 4px; }
+  .brand strong { font-size: 15px; }
+  .brand small { letter-spacing: .21em; }
+}

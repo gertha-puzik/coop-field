@@ -281,7 +281,7 @@
 }
 
 .tableWrap {
-  --cols: 62px minmax(150px, 1.7fr) 128px 150px 78px minmax(110px, 0.9fr) auto;
+  --cols: 62px minmax(150px, 1.7fr) 128px 150px minmax(110px, 0.9fr) auto;
 }
 
 .thead {
@@ -1685,3 +1685,11 @@
 
 /* Профиль шире каталога: баннер, портрет и записка помещаются в одну шапку. */
 .profilePage { max-width: 1400px; padding-top: 26px; }
+
+/* Оформление рамок согласовано с шапкой профиля. */
+.panel, .edBox {
+  border: 14px solid transparent;
+  border-image: url('/ui/ornamental-frame.svg') 20 / 14px / 0 stretch;
+  border-radius: 0;
+  background-clip: padding-box;
+}

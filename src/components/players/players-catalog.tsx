@@ -46,12 +46,10 @@ import {
   type FriendRelation,
 } from '@/lib/net/http-friends';
 import type { CoopWhoami } from '@/lib/net/protocol';
-import PlayerProfile, { BrandRow, ProfileSkeleton, Starscape, displayFont } from './player-profile';
+import PlayerProfile, { ProfileSkeleton, Starscape, displayFont } from './player-profile';
 import {
   avatarOf,
   consumeCatalogDeepLink,
-  moonsFromMs,
-  moonsText,
   plural,
   presenceLabel,
   ruAgo,
@@ -71,18 +69,17 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Unknown-значения не выезжают наверх реверсом: неизвестное остаётся
  * неизвестным внизу списка в любом направлении. */
 
-type SortKey = 'name' | 'status' | 'born' | 'seen' | 'age';
+type SortKey = 'name' | 'status' | 'born' | 'seen';
 
 const SORT_TITLE: Record<SortKey, string> = {
   name: 'Персонаж',
   status: 'Статус',
   born: 'Дата рождения',
   seen: 'Последний вход',
-  age: 'Возраст',
 };
 
 /** Стартовое направление при выборе колонки (как в каталоге-референсе). */
-const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1, age: -1 };
+const DEF_DIR: Record<SortKey, 1 | -1> = { name: 1, status: 1, born: -1, seen: -1 };
 
 const RANK_PRESENCE: Record<PresenceTone, number> = {
   online: 0,
@@ -113,8 +110,6 @@ type RowModel = {
   bornTs: number | null;
   seenAgo: string;
   seenTs: number | null;
-  moons: string;
-  moonsN: number | null;
   sprite: string | null;
 };
 
@@ -132,8 +127,6 @@ function makeRow(card: ProfileCard, clock: number): RowModel {
     bornTs: card.createdAt > 0 ? card.createdAt : null,
     seenAgo: seen > 0 ? ruAgo(seen, clock) : 'неизвестно',
     seenTs: seen > 0 ? seen : null,
-    moons: moonsText(card.createdAt, clock),
-    moonsN: moonsFromMs(card.createdAt, clock),
     sprite: spriteUrl(avatarOf(card)),
   };
 }
@@ -160,10 +153,7 @@ function cmpModels(a: RowModel, b: RowModel, key: SortKey, dir: 1 | -1): number 
       const n = nullsLast(a.seenTs, b.seenTs);
       return n !== 0 ? n : ((a.seenTs ?? 0) - (b.seenTs ?? 0)) * dir;
     }
-    case 'age': {
-      const n = nullsLast(a.moonsN, b.moonsN);
-      return n !== 0 ? n : ((a.moonsN ?? 0) - (b.moonsN ?? 0)) * dir;
-    }
+
   }
   return 0;
 }
@@ -312,9 +302,6 @@ function RowBtn({
       >
         {m.seenAgo}
       </span>
-      <span className={`${styles.ageC} ${styles.cAge}`} title="возраст карточки в лунах (1 луна = 30 дней с регистрации)">
-        {m.moons}
-      </span>
       <span className={styles.cStatus}>
         <span className={`${styles.pill} ${PRESENCE_PILL[m.presence]}`}>{m.presenceText}</span>
       </span>
@@ -352,7 +339,6 @@ function CatalogSkeleton({ viewMode }: { viewMode: 'table' | 'tiles' }) {
             <div>{SORT_TITLE.name}</div>
             <div className={styles.cBorn}>{SORT_TITLE.born}</div>
             <div className={styles.cSeen}>{SORT_TITLE.seen}</div>
-            <div className={styles.cAge}>{SORT_TITLE.age}</div>
             <div className={styles.cStatus}>{SORT_TITLE.status}</div>
             <div />
           </div>
@@ -420,8 +406,7 @@ function TileBtn({
       </span>
       <span className={`${styles.pill} ${PRESENCE_PILL[m.presence]}`}>{m.presenceText}</span>
       <span className={styles.tAge}>
-        <b>{m.moons}</b>
-        {` · ${m.seenAgo}`}
+        {m.seenAgo}
       </span>
       {showFriend ? <FriendBtn relation={m.relation} busy={friendBusy} onAct={onFriend} /> : null}
     </button>
@@ -833,7 +818,6 @@ export default function PlayersCatalog() {
           (sticky-полоса); заголовок и BrandRow каталога ниже — как были. */}
       <SiteHeader />
       <div className={styles.page}>
-        <BrandRow />
 
         <header className={styles.pageHead}>
           <h1 className={styles.h1}>
@@ -990,14 +974,6 @@ export default function PlayersCatalog() {
                     active={sort.key === 'seen'}
                     dir={sort.dir}
                     onSort={() => applySort('seen')}
-                  />
-                  <SortHead
-                    label={SORT_TITLE.age}
-                    hint="луны с регистрации (1 луна = 30 дней)"
-                    cellClass={styles.cAge}
-                    active={sort.key === 'age'}
-                    dir={sort.dir}
-                    onSort={() => applySort('age')}
                   />
                   <SortHead
                     label={SORT_TITLE.status}

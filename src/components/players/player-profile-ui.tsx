@@ -33,7 +33,7 @@ import {
   SPRITE_GROUPS,
 } from '@/lib/sim/settings';
 import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
-import { avatarOf, moonsFromMs, spriteUrl } from './players-format';
+import { avatarOf, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
 
 /** Контур луны (svg-путь): иконка ACH_ICONS и бренд-строки. */
@@ -77,20 +77,12 @@ export type AchFact = { title: string; hint: string; icon: AchIcon; earned: bool
 
 export function achFacts(card: ProfileCard, now: number): AchFact[] {
   const seen = card.lastSeenAt ?? 0;
-  const moons = moonsFromMs(card.createdAt, now) ?? 0;
   return [
     {
       title: 'Звёздный дебют',
       hint: 'публичная карточка в каталоге создана',
       icon: 'star',
       earned: card.createdAt > 0,
-      color: '#f6d7a2',
-    },
-    {
-      title: 'Первая луна',
-      hint: '30 дней с того дня, как карточка появилась',
-      icon: 'moon',
-      earned: moons >= 1,
       color: '#f6d7a2',
     },
     {

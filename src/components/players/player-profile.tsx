@@ -43,7 +43,6 @@ import {
   SpChip,
   activeCharOf,
   humanEditError,
-  moonPath,
 } from './player-profile-ui';
 import { ProfileCardView, ProfileCardSkeleton } from './profile-card-view';
 
@@ -83,18 +82,6 @@ export function Starscape() {
     );
   }
   return <div aria-hidden>{stars}</div>;
-}
-
-/** Строка бренда над страницей («Wanderpaws: Elysiae Aedes», латиница — Lilita One). */
-export function BrandRow() {
-  return (
-    <header className={styles.brand} aria-label="Название игры">
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-        <path d={moonPath} />
-      </svg>
-      <span className={`${displayFont.className} ${styles.brandName}`}>Wanderpaws: Elysiae Aedes</span>
-    </header>
-  );
 }
 
 /* ——— инлайн-редактор своей карточки (P4, поток прежний) ——— */
@@ -510,7 +497,6 @@ export function ProfileSkeleton() {
       <Starscape />
       <SiteHeader />
       <div className={`${styles.page} ${styles.profilePage}`}>
-        <BrandRow />
         <ProfileCardSkeleton />
         <p className={styles.footNote}>
           <a className={styles.backLink} href="/">
@@ -597,7 +583,6 @@ export default function PlayerProfile({
       <Starscape />
       <SiteHeader />
       <div className={`${styles.page} ${styles.profilePage}`}>
-        <BrandRow />
         <ProfileCardView
           card={card}
           mine={mine}

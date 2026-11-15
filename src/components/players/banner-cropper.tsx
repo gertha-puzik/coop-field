@@ -7,11 +7,13 @@
  * (существующий POST /cfg/banners/mine), сервер не меняется.
  */
 
+import { createPortal } from 'react-dom';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
-import { clampOffset, coverScale, cropRect, type Offset } from './banner-crop-math';
+import { clampOffset, coverScale, type Offset } from './banner-crop-math';
 import styles from './banner-editor.module.css';
 
 const MAX_FILE = 10 * 1024 * 1024;
@@ -31,6 +33,8 @@ export type BannerCropperProps = {
   frameH?: number;
   /** Скруглённая рамка (аватарка). */
   round?: boolean;
+  /** Сохранить весь исходник с полями (аватарка). */
+  fit?: 'cover' | 'contain';
   title?: string;
   /** Максимум байт для PNG, иначе JPEG. */
   maxUpload?: number;
@@ -44,6 +48,7 @@ export function BannerCropper({
   frameW: FRAME_W = 1200,
   frameH: FRAME_H = 400,
   round = false,
+  fit = 'cover',
   title = 'Шапка профиля',
   maxUpload = MAX_UPLOAD,
   busy = false,
@@ -72,7 +77,7 @@ export function BannerCropper({
         setError('Не удалось открыть картинку.');
         return;
       }
-      const s = coverScale(w, h, FRAME_W, FRAME_H);
+      const s = (fit === 'contain' ? Math.min(FRAME_W / w, FRAME_H / h) : coverScale(w, h, FRAME_W, FRAME_H));
       setLoaded({ img, w, h, png: file.type === 'image/png' });
       setZoom(1);
       setOff({ x: (FRAME_W - w * s) / 2, y: (FRAME_H - h * s) / 2 });
@@ -87,7 +92,7 @@ export function BannerCropper({
       live = false;
       URL.revokeObjectURL(url);
     };
-  }, [file, FRAME_W, FRAME_H]);
+  }, [file, FRAME_W, FRAME_H, fit]);
 
   useEffect(() => {
     const el = frameRef.current;
@@ -107,7 +112,7 @@ export function BannerCropper({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  const base = loaded ? coverScale(loaded.w, loaded.h, FRAME_W, FRAME_H) : 1;
+  const base = loaded ? (fit === 'contain' ? Math.min(FRAME_W / loaded.w, FRAME_H / loaded.h) : coverScale(loaded.w, loaded.h, FRAME_W, FRAME_H)) : 1;
   const scale = base * zoom;
 
   const applyZoom = useCallback(
@@ -152,9 +157,9 @@ export function BannerCropper({
       return;
     }
     ctx.imageSmoothingQuality = 'high';
-    const r = cropRect(off, scale, FRAME_W, FRAME_H);
-    ctx.drawImage(loaded.img, r.sx, r.sy, r.sw, r.sh, 0, 0, FRAME_W, FRAME_H);
-    let blob = loaded.png ? await canvasBlob(canvas, 'image/png') : null;
+    // Destination coordinates also support positive offsets for a contained image.
+    ctx.drawImage(loaded.img, off.x, off.y, loaded.w * scale, loaded.h * scale);
+    let blob = (loaded.png || fit === 'contain') ? await canvasBlob(canvas, 'image/png') : null;
     if (!blob || blob.size > maxUpload) blob = await canvasBlob(canvas, 'image/jpeg', 0.9);
     setSaving(false);
     if (!blob) {
@@ -164,17 +169,17 @@ export function BannerCropper({
     onDone(blob);
   };
 
-  return (
+  return createPortal(
     <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label={`Кадрирование: ${title}`}>
       <div className={styles.modal}>
         <header className={styles.modalHead}>
           <h2 className={styles.modalTitle}>{title}</h2>
-          <p className={styles.modalHint}>Перетащите картинку, чтобы выбрать видимую часть.</p>
+          <p className={styles.modalHint}>{fit === 'contain' ? 'Картинка показана целиком. Можно увеличить её и выбрать кадр.' : 'Перетащите картинку, чтобы выбрать видимую часть.'}</p>
         </header>
         <div
           ref={frameRef}
           className={round ? `${styles.cropFrame} ${styles.cropRound}` : styles.cropFrame}
-          style={{ aspectRatio: `${FRAME_W} / ${FRAME_H}` }}
+          style={{ aspectRatio: `${FRAME_W} / ${FRAME_H}`, width: `min(100%, max(120px, calc((100dvh - 220px) * ${FRAME_W / FRAME_H})))`, flexShrink: 0, alignSelf: 'center' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
@@ -221,6 +226,7 @@ export function BannerCropper({
           </Button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

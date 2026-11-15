@@ -2,7 +2,7 @@
 
 /**
  * Аватарка в шапке профиля (спека 2026-11-14-avatar-crop-paint). Владельцу —
- * меню: загрузить с квадратным кадром (512×512), дорисовать пикселями 64×64
+ * меню: загрузить целиком в квадратный холст (512×512), дорисовать пикселями 64×64
  * поверх текущей картинки, убрать (второй клик). Загрузка — существующий
  * /cfg/avatars/mine, сервер не меняется.
  */
@@ -89,7 +89,14 @@ export function ProfileAvatar({
 
   const loadBase = useCallback(() => imageToPixels(faceUrl, GRID, GRID), [faceUrl]);
 
-  const face = faceUrl ? <img src={faceUrl} alt={name} draggable={false} /> : <Icon name="paw" size={40} />;
+  const face = <>
+    {faceUrl ? <img src={faceUrl} alt={name} draggable={false} /> : <span aria-hidden>◇</span>}
+    <svg className={styles.faceFrame} viewBox="0 0 200 260" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M100 3 112 17H166Q184 17 184 35L194 45V239Q194 253 180 253H20Q6 253 6 239V45L16 35Q16 17 34 17H88Z" />
+      <path d="M100 13 109 24H164Q177 24 177 39L186 49V236Q186 245 176 245H24Q14 245 14 236V49L23 39Q23 24 36 24H91Z" />
+      <path d="m100 3 7 10-7 11-7-11Z" />
+    </svg>
+  </>;
 
   if (!mine) return <div className={styles.heroFace}>{face}</div>;
 
@@ -154,7 +161,7 @@ export function ProfileAvatar({
           file={cropFile}
           frameW={AVATAR_SIDE}
           frameH={AVATAR_SIDE}
-          round
+          fit="contain"
           title="Аватарка"
           busy={busy}
           onDone={(b) => void upload(b)}

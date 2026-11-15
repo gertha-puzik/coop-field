@@ -12,3 +12,7 @@ assert.deepEqual(clampOffset({ x: -10, y: -999 }, 300, 1000, 4, 1200, 400), { x:
 assert.deepEqual(clampOffset({ x: 0, y: -5000 }, 300, 1000, 4, 1200, 400), { x: 0, y: -3600 }, 'высокая: низ');
 assert.deepEqual(cropRect({ x: -100, y: -50 }, 2, 1200, 400), { sx: 50, sy: 25, sw: 600, sh: 200 });
 console.log('banner-crop: ok');
+
+// Contained avatars retain both ends of a tall or wide source, centred in the frame.
+assert.deepEqual(clampOffset({ x: -999, y: -999 }, 300, 900, 512 / 900, 512, 512), { x: (512 - 300 * (512 / 900)) / 2, y: 0 });
+assert.deepEqual(clampOffset({ x: 999, y: 999 }, 900, 300, 512 / 900, 512, 512), { x: 0, y: (512 - 300 * (512 / 900)) / 2 });

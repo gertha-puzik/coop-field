@@ -1,33 +1,8 @@
 'use client';
 
-/**
- * Общая шапка закрытого сайта (пересводка волны W2, мандат владелицы
- * 2026-11-08): тонкая стеклянная ночная полоса (52px, кант/стекло/цвета
- * существующих сессий-панелей auth-gate) — единая для страниц Элизии
- * (/, /game/, /players/, /admin/); на главной — ghost + home справа сверху (2026-11-14).
- *
- * Мобильная нав-волна 2026-11-10 (<lg): прежнее содержимое полосы скрыто
- * целиком (обёртка hidden lg:flex), слева остаётся один бургер; dropdown
- * под ним несёт ТОТ ЖЕ состав — пункты задаются один раз массивом
- * navItems (горизонтальная полоса и вертикальное меню рендерят его),
- * сессию и ThemeSelect переиспользуют те же элементы. Закрытие:
- * повторный тап, клик вне, Esc, клик по пункту. На lg+ вид прежней
- * полосы не менялся вовсе — добавлена только обёртка hidden lg:flex.
- *
- * Состав полосы — навигация: Главная, Игровая комната, Игроки, Мой
- * профиль (пункт «Настройки» упразднён решением владелицы 2026-11-10: он
- * вёл на ту же страницу профиля, что и «Мой профиль»; якорь #settings
- * формы правки живёт в deep-link); «Админка» — только при role==='admin'.
- * Справа — сессия: колокольчик уведомлений, «Вы вошли как …», «Выйти»
- * и ThemeSelect. Presence-beat ('site') стартует при входе в аккаунт.
- *
- * Данные — useMeRow/meCached из src/lib/net/me-cache.tsx: шапка не шлёт
- * второго GET /auth/me, если страницу уже спросил AuthGate/каталог/админка
- * (кэш «one fetch per tab», прецедент cfg-live.ts).
- *
- * Монтируется ТОЛЬКО в местах с инлайн-гейтом IS_ELYRIA (wander-gate,
- * страницы каталога/симулятора/админки): сам файл env-строк не носит —
- * grotto-сборка вырезает ветку целиком вместе с компонентом (DCE).
+/** Общая шапка Elysiae Aedes: бренд, текущие ссылки с иконками,
+ * уведомления, профиль, выход и тема. На узком экране тот же набор в меню.
+ * Сессия использует общий me-cache; закрытые ссылки остаются за IS_ELYRIA.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -41,10 +16,7 @@ import {
 import { httpFriendAccept, httpFriendDecline } from '@/lib/net/http-friends';
 import { startPresenceBeat } from '@/lib/net/presence-beat';
 import { ThemeSelect } from '@/components/site/theme-select';
-
-/** Текстовая ссылка полосы: тонкая, без рамок — стеклянная ночь шапки. */
-const NAV_LINK =
-  'whitespace-nowrap text-[13px] text-[#b9b3d9] underline-offset-2 transition-colors hover:text-[#f4f0ff] hover:underline';
+import styles from './site-header.module.css';
 
 /** Пункт вертикального меню бургера: та же пара цветов, но строка с
  *  площадкой тапа; hover-фон — существующий rgba auth-модалки (0.09). */
@@ -66,6 +38,13 @@ const BELL_PANEL =
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
 
 /** id dropdown-панели для aria-controls бургера (шапка на странице одна). */
+const NAV_ICONS = {
+  home: 'M3 11 12 3l9 8M6 10v11h12V10M10 21v-7h4v7',
+  game: 'M7 7h10c3 0 5 9 3 11-2 2-4-3-5-3H9c-1 0-3 5-5 3-2-2 0-11 3-11zM8 9v5M5.5 11.5h5M16 10h.01M18 13h.01',
+  players: 'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 21v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M17 15a5 5 0 0 1 5 5',
+  profile: 'M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 22a8 8 0 0 1 16 0',
+  admin: 'm12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM9 12l2 2 4-4',
+};
 const MENU_ID = 'site-nav-menu';
 const BELL_ID = 'site-notify-panel';
 
@@ -312,6 +291,7 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
   const renderNav = (link: string) =>
     navItems.map((item) => (
       <a key={item.key} className={link} href={item.href} onClick={closeMenu}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={NAV_ICONS[item.key as keyof typeof NAV_ICONS]} /></svg>
         {item.label}
       </a>
     ));
@@ -319,7 +299,10 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
   /** Переиспользование сессии без дублирования: бейдж и «Выйти» — те же
    *  элементы в полосе (lg+) и в меню бургера (<lg). */
   const sessionBadge = inAccount ? (
-    <span className="max-w-[24ch] truncate text-xs text-[#b9b3d9]">Вы вошли как {meBadgeName(me)}</span>
+    <a className={styles.identity} href={myProfileHref(me)} onClick={closeMenu}>
+      <span className={styles.identityAvatar} aria-hidden>{meBadgeName(me).slice(0, 1)}</span>
+      <span>{meBadgeName(me)}</span>
+    </a>
   ) : null;
   const logoutButton = inAccount ? (
     <button
@@ -334,18 +317,17 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
     </button>
   ) : null;
 
-  /** Главная (home): кнопки справа вверху макета — без sticky-полосы на
-   *  всю ширину; на остальных страницах — прежняя стеклянная/ghost шапка. */
-  const shellClass = home
-    ? 'wander-home-nav z-[45] flex min-h-[44px] flex-wrap items-center justify-end gap-x-4 gap-y-2'
-    : ghost
-      ? 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 px-4'
-      : 'sticky top-0 z-[45] flex min-h-[52px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-4 backdrop-blur-[8px]';
+  /** Главная использует тот же бренд и навигацию; остальные страницы — sticky. */
+  const shellClass = `${styles.header} ${home ? styles.home : ''}`;
 
   return (
     <header ref={headerRef} className={shellClass}>
+      <a href={IS_ELYRIA ? '/' : '/'} className={styles.brand} aria-label="Wanderpaws: Elysiae Aedes — главная">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.4 14.2A8.6 8.6 0 1 1 9.8 3.6a7 7 0 0 0 10.6 10.6Z" /></svg>
+        <span><strong>WANDERPAWS</strong><small>ELYSIAE AEDES</small></span>
+      </a>
       {/* <lg: бургер; на lg+ контейнер не виден (lg:hidden) */}
-      <div ref={menuRef} className="relative lg:hidden">
+      <div ref={menuRef} className={styles.mobileMenu}>
         <button
           type="button"
           className={BURGER_BUTTON}
@@ -363,7 +345,7 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
         {open ? (
           <div id={MENU_ID} className={MENU_PANEL}>
             <nav aria-label="Разделы сайта" className="flex flex-col">
-              {renderNav(MENU_LINK)}
+              {renderNav(`${MENU_LINK} ${styles.menuLink}`)}
             </nav>
             {inAccount ? (
               <div className="mt-1 flex flex-col items-start gap-2 border-t border-[rgba(226,220,255,0.12)] px-3 py-2.5">
@@ -378,15 +360,15 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
         ) : null}
       </div>
       {/* <lg: колокольчик справа от бургера */}
-      <div className="ml-auto flex items-center lg:hidden">
+      <div className={styles.mobileBell}>
         <NotifyBell inAccount={inAccount} />
       </div>
       {/* lg+: прежняя полоса; на <lg скрыта (hidden lg:flex — вид ноль) */}
-      <div className={`hidden min-w-0 flex-wrap items-center gap-x-5 gap-y-2 lg:flex ${home ? 'justify-end' : 'flex-1'}`}>
-        <nav aria-label="Разделы сайта" className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 ${home ? 'wander-home-nav-links' : ''}`}>
-          {renderNav(home ? `${NAV_LINK} wander-home-link` : NAV_LINK)}
+      <div className={styles.desktop}>
+        <nav aria-label="Разделы сайта" className={styles.navigation}>
+          {renderNav(styles.navLink)}
         </nav>
-        <div className={`flex items-center gap-3 ${home ? '' : 'ml-auto'}`}>
+        <div className={styles.session}>
           <NotifyBell inAccount={inAccount} />
           {sessionBadge}
           {logoutButton}

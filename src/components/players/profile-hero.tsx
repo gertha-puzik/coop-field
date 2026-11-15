@@ -3,7 +3,7 @@
 /**
  * Шапка профиля по макету 2026-11-14: широкий баннер (свой или
  * сгенерированный пиксельный пейзаж от accountId), аватар и имя поверх,
- * пилюли «луны / на сайте с / присутствие». Владельцу — меню «Изменить
+ * пилюли «на сайте с / присутствие». Владельцу — меню «Изменить
  * шапку»: загрузить с кадрированием, нарисовать, убрать. Загрузка — через
  * существующий /cfg/banners/mine (сервер не меняется).
  */
@@ -18,7 +18,7 @@ import { BannerCropper } from './banner-cropper';
 import { BannerPainter } from './banner-painter';
 import { ProfileAvatar } from './profile-avatar';
 import { Icon } from './profile-icons';
-import { moonsText, ruDate, type PresenceTone } from './players-format';
+import { ruDate, type PresenceTone } from './players-format';
 import styles from './profile-card.module.css';
 
 const DOT: Record<PresenceTone, string> = {
@@ -88,6 +88,7 @@ export function ProfileHero({
   onAvatarChanged,
 }: ProfileHeroProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const [idCopied, setIdCopied] = useState(false);
   const [menu, setMenu] = useState(false);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [painting, setPainting] = useState(false);
@@ -214,13 +215,14 @@ export function ProfileHero({
           <div className={styles.heroText}>
             <h1 className={styles.heroName}>
               {name}
-              <Icon name="paw" size={20} className={styles.heroPaw} />
+              <button type="button" className={styles.copyId} title={`Скопировать ID: ${accountId}`} onClick={async () => {
+                try { await navigator.clipboard.writeText(accountId); setIdCopied(true); }
+                catch { setIdCopied(false); }
+              }}>№{accountId.slice(0, 8)} <span aria-hidden>⧉</span></button>
+              <span className={styles.copyStatus} role="status">{idCopied ? 'ID скопирован' : ''}</span>
             </h1>
             {bioLine ? <p className={styles.heroBio}>{bioLine}</p> : null}
             <div className={styles.heroPills}>
-              <span className={styles.heroPill}>
-                <Icon name="moon" size={14} /> {moonsText(createdAt, now)}
-              </span>
               <span className={styles.heroPill}>
                 <Icon name="calendar" size={14} /> На сайте с {ruDate(createdAt)}
               </span>
