@@ -309,14 +309,14 @@ new preview nginx anymore. After the records are in, previews come back under
 `pr-<N>.abnocw.phainonsmilk.ru` / `pr-<N>.elysiae.phainonsmilk.ru` with fresh
 TLS from the cron (needs-tls ≈ 10 min is normal).
 
-### Profile GIF uploads (10 MiB)
+### Profile GIF uploads (100 MiB)
 
 The browser uploads files over 512 KiB in ordered requests of at most 512 KiB; a standard
-1 MiB nginx body limit supports a complete 10 MiB GIF without a proxy configuration change.
+1 MiB nginx body limit supports a complete 100 MiB GIF without a proxy configuration change.
 The application assembles the temporary file after auth/CSRF, validates it and then commits it.
 
-For direct multipart API clients sending a whole 10 MiB file in one request, the owner can
+For direct multipart API clients sending a whole 100 MiB file in one request, the owner can
 optionally include `deploy/vps/nginx-profile-upload-size.sample.conf` in the nginx `server {}`
-block (`client_max_body_size 11m;`), validate with `nginx -t`, then reload nginx.
+block (`client_max_body_size 101m;`), validate with `nginx -t`, then reload nginx.
 An existing larger effective limit also works. Normal deployment does not install this
-snippet or reload nginx. Node enforces exactly 10 MiB for GIF and 2 MiB for PNG/JPEG.
+snippet or reload nginx. Node enforces exactly 100 MiB for GIF and 2 MiB for PNG/JPEG.

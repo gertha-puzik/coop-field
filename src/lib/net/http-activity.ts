@@ -8,7 +8,6 @@ const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === "elyria";
 
 export type ActivityType =
   | "joined_site"
-  | "entered_game"
   | "moved"
   | "friend_added"
   | "avatar_changed"
@@ -23,7 +22,6 @@ export type ActivityItem = {
 
 const TYPES: readonly ActivityType[] = [
   "joined_site",
-  "entered_game",
   "moved",
   "friend_added",
   "avatar_changed",

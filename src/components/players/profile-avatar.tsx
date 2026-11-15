@@ -1,13 +1,9 @@
 'use client';
 
-/**
- * Аватарка в шапке профиля (спека 2026-11-14-avatar-crop-paint). Владельцу —
- * меню: загрузить целиком в квадратный холст (512×512), дорисовать пикселями 64×64
- * поверх текущей картинки, убрать (второй клик). Загрузка — существующий
- * /cfg/avatars/mine, сервер не меняется.
- */
+/** Portrait fills the inner SVG window. The lower-left pencil opens the
+ * shared avatar/banner menu. GIF bytes bypass the cropper to preserve animation. */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { httpDeleteAvatar, httpUploadAvatar, humanAvatarError } from '@/lib/net/http-avatars';
 
@@ -16,6 +12,7 @@ import { BannerCropper } from './banner-cropper';
 import { BannerPainter } from './banner-painter';
 import { Icon } from './profile-icons';
 import styles from './profile-card.module.css';
+import avatarStyles from './profile-avatar.module.css';
 
 const AVATAR_SIDE = 512;
 const GRID = 64;
@@ -28,6 +25,8 @@ export function ProfileAvatar({
   hasImage,
   onChanged,
   onError,
+  bannerMenu,
+  externalBusy = false,
 }: {
   mine: boolean;
   name: string;
@@ -37,7 +36,10 @@ export function ProfileAvatar({
   hasImage: boolean;
   onChanged?: () => void | Promise<void>;
   onError: (text: string | null) => void;
+  bannerMenu?: (close: () => void) => ReactNode;
+  externalBusy?: boolean;
 }) {
+  const clipId = useId();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [menu, setMenu] = useState(false);
   const [cropFile, setCropFile] = useState<File | null>(null);
@@ -72,8 +74,8 @@ export function ProfileAvatar({
   const selectUpload = async (file: File) => {
     if (busy) return;
     onError(null);
-    if (file.size > 10 * 1024 * 1024) {
-      onError('Файл больше 10 МБ — выберите поменьше.');
+    if (file.size > 100 * 1024 * 1024) {
+      onError('Файл больше 100 МБ — выберите поменьше.');
       return;
     }
     setBusy(true);
@@ -113,8 +115,11 @@ export function ProfileAvatar({
   const loadBase = useCallback(() => imageToPixels(faceUrl, GRID, GRID), [faceUrl]);
 
   const face = <>
-    {faceUrl ? <img src={faceUrl} alt={name} draggable={false} /> : <span aria-hidden>◇</span>}
+    <div className={avatarStyles.image} style={{ clipPath: `url(#${clipId})` }}>
+      {faceUrl ? <img src={faceUrl} alt={name} draggable={false} style={{ objectFit: 'cover', borderRadius: 0 }} /> : <span aria-hidden>◇</span>}
+    </div>
     <svg className={styles.faceFrame} viewBox="0 0 200 260" preserveAspectRatio="none" aria-hidden="true">
+      <defs><clipPath id={clipId} clipPathUnits="objectBoundingBox"><path d="M.18 .0923H.82Q.885 .0923 .885 .15L.93 .1885V.9077Q.93 .9423 .88 .9423H.12Q.07 .9423 .07 .9077V.1885L.115 .15Q.115 .0923 .18 .0923Z" /></clipPath></defs>
       <path d="M100 3 112 17H166Q184 17 184 35L194 45V239Q194 253 180 253H20Q6 253 6 239V45L16 35Q16 17 34 17H88Z" />
       <path d="M100 13 109 24H164Q177 24 177 39L186 49V236Q186 245 176 245H24Q14 245 14 236V49L23 39Q23 24 36 24H91Z" />
       <path d="m100 3 7 10-7 11-7-11Z" />
@@ -125,22 +130,15 @@ export function ProfileAvatar({
 
   return (
     <div className={styles.avatarWrap}>
-      <button
-        type="button"
-        className={`${styles.heroFace} ${styles.heroFaceBtn}`}
-        aria-haspopup="menu"
-        aria-expanded={menu}
-        aria-label="Изменить аватарку"
-        disabled={busy}
-        onClick={() => setMenu((m) => !m)}
-      >
-        {face}
-        <span className={styles.faceEdit} aria-hidden>
-          <Icon name={busy ? 'clock' : 'pencil'} size={16} />
-        </span>
+      <div className={styles.heroFace}>{face}</div>
+      <button type="button" className={`${styles.faceEdit} ${avatarStyles.editButton}`}
+        aria-haspopup="menu" aria-expanded={menu} aria-label="Изменить аватарку и фон профиля"
+        disabled={busy || externalBusy} onClick={() => setMenu((m) => !m)}>
+        <Icon name={busy || externalBusy ? 'clock' : 'pencil'} size={16} />
       </button>
       {menu ? (
-        <div className={`${styles.bannerMenu} ${styles.avatarMenu}`} role="menu">
+        <div className={`${styles.bannerMenu} ${styles.avatarMenu}`} role="menu" aria-label="Изображения профиля">
+          <span className={avatarStyles.menuLabel}>Аватарка</span>
           <button
             type="button"
             role="menuitem"
@@ -149,7 +147,7 @@ export function ProfileAvatar({
               fileRef.current?.click();
             }}
           >
-            <Icon name="image" size={16} /> <span>Загрузить картинку / GIF…<small className={styles.uploadHint}>GIF до 10 МБ, анимация сохраняется</small></span>
+            <Icon name="image" size={16} /> <span>Загрузить картинку / GIF…<small className={styles.uploadHint}>GIF до 100 МБ, анимация сохраняется</small></span>
           </button>
           <button
             type="button"
@@ -166,6 +164,7 @@ export function ProfileAvatar({
               <Icon name="trash" size={16} /> {armed ? 'Точно убрать?' : 'Убрать аватарку'}
             </button>
           ) : null}
+          {bannerMenu ? <><span className={avatarStyles.menuLabel}>Фон профиля</span>{bannerMenu(() => setMenu(false))}</> : null}
         </div>
       ) : null}
       <input
@@ -182,9 +181,9 @@ export function ProfileAvatar({
       {cropFile ? (
         <BannerCropper
           file={cropFile}
-          frameW={AVATAR_SIDE}
+          frameW={400}
           frameH={AVATAR_SIDE}
-          fit="contain"
+          fit="cover"
           title="Аватарка"
           busy={busy}
           onDone={(b) => void upload(b)}

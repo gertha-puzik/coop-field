@@ -1,4 +1,4 @@
-/** Animated profile GIFs: exact 10 MiB limit, byte parity, restart, replacement and deletion. */
+/** Animated profile GIFs: exact 100 MiB limit, byte parity, restart, replacement and deletion. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -16,7 +16,7 @@ await new Promise(resolve => free.listen(0, '127.0.0.1', resolve));
 const port = free.address().port;
 await new Promise(resolve => free.close(resolve));
 const origin = `http://127.0.0.1:${port}`;
-const limit = 10 * 1024 * 1024;
+const limit = 100 * 1024 * 1024;
 let server, logs = '';
 async function start() {
   server = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, AUTH_CSRF_STRICT: '1', AUTH_REGISTER_GAP_MS: '1', AUTH_REGISTER_HOURLY_MAX: '100', AUTH_LOGIN_GAP_MS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -104,7 +104,7 @@ async function proxyUploads() {
       assert.equal(result.row.ok, true);
       await sameGif(result.row[kind], exact);
       assert.ok(bodies.every(bytes => bytes <= 512 * 1024));
-      assert.equal(bodies.length, 20); bodies.length = 0;
+      assert.equal(bodies.length, 200); bodies.length = 0;
       globalThis.fetch = nativeFetch;
     }
     const cookie = await account('chunk_invalid');
@@ -125,7 +125,7 @@ async function proxyUploads() {
     globalThis.fetch = (url, init = {}) => nativeFetch(url, { ...init, headers: { ...init.headers, origin, cookie } });
     const rejected = await postProfileImage('/cfg/banners/mine', new File([base], 'small.gif', { type: 'image/gif' }));
     assert.equal(rejected.status, 413); assert.equal(rejected.row.reason, 'proxy_too_large');
-    console.log('profile-gif proxy: PASS — HTML 413 reproduced, actual client uploads 10 MiB through 1 MiB proxy, chunks ≤512 KiB, auth/CSRF/order/cleanup');
+    console.log('profile-gif proxy: PASS — HTML 413 reproduced, actual client uploads 100 MiB through 1 MiB proxy, chunks ≤512 KiB, auth/CSRF/order/cleanup');
   } finally { globalThis.fetch = nativeFetch; await new Promise(resolve => proxy.close(resolve)); }
 }
 try {
@@ -176,5 +176,5 @@ try {
   const id = /file\/([^.]+)\.gif/.exec(a.row.avatar)[1];
   assert.equal(existsSync(path.join(data, 'avatars', `${id}.gif`)), false);
   await proxyUploads();
-  console.log('profile-gif: PASS — exact 10 MiB, +1 rejection, animation parity, restart, replacement, deletion');
+  console.log('profile-gif: PASS — exact 100 MiB, +1 rejection, animation parity, restart, replacement, deletion');
 } finally { await stop(); rmSync(data, { recursive: true, force: true }); }

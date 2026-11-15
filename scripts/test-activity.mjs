@@ -8,12 +8,12 @@
  *   1. новый аккаунт → лента = [joined_site] (синтез из createdAt), /cfg-обход тот же;
  *      неизвестный id → 404, не GET → 405, public Host → 404;
  *      порченый activity.json на старте не роняет сервер;
- *   2. entered_game (heartbeat game), схлопывание;
+ *   2. heartbeat game не создаёт активность;
  *   3. друзья: accept → friend_added обоим, переименование подхватывается,
  *      remove → записи исчезают у обоих;
  *   4. banner_changed + схлопывание;
  *   5. удаление аккаунта → его лента 404, у друга «кто-то»;
- *   6. лимит 20 (импорт модуля в отдельном процессе).
+ *   6. лимит 15 (импорт модуля в отдельном процессе).
  */
 import { randomFillSync } from "node:crypto";
 import { deflateSync, crc32 } from "node:zlib";
@@ -187,8 +187,7 @@ async function main() {
     await httpJson("/presence/heartbeat", { method: "POST", token: a.token, body: { where: "game", active: true } });
     await httpJson("/presence/heartbeat", { method: "POST", token: a.token, body: { where: "game", active: true } });
     const eg = ofType(await feed(a.accountId), "entered_game");
-    check(eg.length === 1, "two game heartbeats → one entered_game");
-    check(typeof eg[0]?.data?.label === "string", "entered_game carries a location label");
+    check(eg.length === 0, "game heartbeats are not activity");
 
     /* ---- 3. друзья ---- */
     await httpJson("/friends/request", { method: "POST", token: a.token, body: { accountId: b.accountId } });
@@ -224,13 +223,13 @@ async function main() {
 
   if (process.env.ACTIVITY_TASK === "1") return;
 
-  /* ---- 6. лимит 20 (модуль напрямую) ---- */
+  /* ---- 6. лимит 15 (модуль напрямую) ---- */
   const LIM = mkdtempSync(path.join(tmpdir(), "coop-activity-lim-"));
   const code = `
     const m = await import(${JSON.stringify(path.join(ROOT, "server/activity.js"))});
     for (let i = 0; i < 25; i++) m.pushActivity("acc1", "moved", { locationId: i });
     const items = m.activityOf("acc1");
-    console.log(JSON.stringify({ n: items.length, first: items[0]?.data?.locationId }));`;
+    console.log(JSON.stringify({ n: items.length, first: items[0]?.data?.locationId, last: items.at(-1)?.data?.locationId }));`;
   const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
     cwd: ROOT,
     env: { ...process.env, DATA_DIR: LIM },
@@ -242,8 +241,31 @@ async function main() {
   } catch {
     console.error(run.stderr);
   }
-  check(lim?.n === 20 && lim?.first === 24, "journal keeps the newest 20");
+  check(lim?.n === 15 && lim?.first === 24 && lim?.last === 10, "journal keeps the newest 15");
   rmSync(LIM, { recursive: true, force: true });
+
+  /* Retention, removal of legacy game entries, and persistence across restart. */
+  const AGED = mkdtempSync(path.join(tmpdir(), "coop-activity-aged-"));
+  const stamp = Date.now();
+  writeFileSync(path.join(AGED, "activity.json"), JSON.stringify({ v: 1, byAccount: { acc: [
+    { id: 'expired', type: 'banner_changed', at: stamp - 73 * 3600_000 },
+    { id: 'game', type: 'entered_game', at: stamp },
+    { id: 'recent', type: 'avatar_changed', at: stamp - 71 * 3600_000 },
+  ] } }));
+  const agedCode = `
+    import fs from 'node:fs';
+    const m = await import(${JSON.stringify(path.join(ROOT, "server/activity.js"))});
+    const before = m.activityOf('acc').map(item => item.id);
+    m.pushActivity('acc', 'entered_game');
+    const stored = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(AGED, "activity.json"))}, 'utf8')).byAccount.acc.map(item => item.id);
+    Date.now = () => ${stamp + 4 * 3600_000};
+    const after = m.activityOf('acc');
+    console.log(JSON.stringify({before, stored, after}));`;
+  const agedRun = spawnSync(process.execPath, ['--input-type=module', '-e', agedCode], { cwd: ROOT, env: {...process.env, DATA_DIR: AGED}, encoding: 'utf8' });
+  const aged = JSON.parse(agedRun.stdout.trim().split('\n').pop());
+  check(JSON.stringify(aged.before) === '["recent"]' && JSON.stringify(aged.stored) === '["recent"]', 'restart prunes expired and entered_game from disk');
+  check(aged.after.length === 0, 'entries expire after 72 hours even without new activity');
+  rmSync(AGED, { recursive: true, force: true });
 
   /* ---- 7. разные друзья подряд не схлопываются; мусор в журнале не роняет писателя ---- */
   const BAD = mkdtempSync(path.join(tmpdir(), "coop-activity-bad-"));

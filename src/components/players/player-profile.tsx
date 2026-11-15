@@ -22,7 +22,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Lilita_One } from 'next/font/google';
 
 import { Button } from '@/components/ui/button';
-import { Dropdown } from '@/components/ui';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
@@ -38,12 +37,13 @@ import {
 } from '@/lib/sim/settings';
 import styles from './players-elyria.module.css';
 import {
-  MineSpritesSection,
-  SKIN_GROUPS,
   SpChip,
   activeCharOf,
   humanEditError,
 } from './player-profile-ui';
+import { ProfileAppearance } from './profile-appearance';
+import { Icon } from './profile-icons';
+import settingsStyles from './profile-settings.module.css';
 import { ProfileCardView, ProfileCardSkeleton } from './profile-card-view';
 
 /** Латинский шрифт бренда один на обе страницы (Lilita One, только latin:
@@ -122,7 +122,7 @@ export function OwnProfileEditor({
   const [draftBio, setDraftBio] = useState(profile.bio);
   /** День рождения черновика: '' — очищено (в PATCH уедет null). */
   const [draftBirthday, setDraftBirthday] = useState(profile.birthday || '');
-  const [draftAvatar, setDraftAvatar] = useState<string>(profile.avatarCharacterId || '');
+  const [settingsTab, setSettingsTab] = useState<'info' | 'appearance' | 'game' | 'delete'>(mineHighlight ? 'appearance' : 'info');
   const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
   const originChar = activeCharOf(profile);
   const originSprite = originChar?.sprite || '';
@@ -139,11 +139,12 @@ export function OwnProfileEditor({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteFail, setDeleteFail] = useState<string | null>(null);
 
+  useEffect(() => { if (mineHighlight) setSettingsTab('appearance'); }, [mineHighlight]);
+
   useEffect(() => {
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
     setDraftBirthday(profile.birthday || '');
-    setDraftAvatar(profile.avatarCharacterId || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
     setDraftSprite(ch?.sprite || '');
@@ -186,7 +187,6 @@ export function OwnProfileEditor({
     const patch: ProfilePatch = {
       displayName: name,
       bio: draftBio.trim(),
-      avatarCharacterId: draftAvatar || null,
     };
     // день рождения — строка или null, только при отличии от исходного
     if (birthdayChanged) patch.birthday = draftBirthday || null;
@@ -255,16 +255,22 @@ export function OwnProfileEditor({
 
   return (
     <>
+    <div className={settingsStyles.subtabs} role="tablist" aria-label="Мои настройки">
+      {([{ id: 'info', name: 'Основная информация', icon: 'users' }, { id: 'appearance', name: 'Внешность', icon: 'brush' }, { id: 'game', name: 'Игровые параметры', icon: 'gear' }, { id: 'delete', name: 'Удаление персонажа', icon: 'trash' }] as const).map((item) =>
+        <button key={item.id} type="button" role="tab" id={`settings-tab-${item.id}`} aria-controls={`settings-panel-${item.id}`} aria-selected={settingsTab === item.id} className={settingsStyles.subtab} onClick={() => setSettingsTab(item.id)}><Icon name={item.icon} size={16} />{item.name}</button>)}
+    </div>
     {/* id="settings" — якорь /players/?id&mine=#settings: кнопка в карточке и мост Paint */}
     <form
       id="settings"
-      className={styles.edBox}
+      hidden={settingsTab === 'delete'}
+      className={`${styles.edBox} ${settingsStyles.settingsForm}`}
       onSubmit={(ev) => {
         ev.preventDefault();
         void save();
       }}
     >
-      <h3 className={styles.edTitle}>Правка своей карточки</h3>
+      <section role="tabpanel" id="settings-panel-info" aria-labelledby="settings-tab-info" hidden={settingsTab !== 'info'}>
+      <h3 className={styles.edTitle}>Основная информация</h3>
       <div className={styles.edRow}>
         <label className={styles.edField}>
           <span className={styles.edLabel}>Имя (до {NAME_MAX} символов)</span>
@@ -273,18 +279,6 @@ export function OwnProfileEditor({
             value={draftName}
             maxLength={NAME_MAX}
             onChange={(e) => setDraftName(e.target.value)}
-          />
-        </label>
-        <label className={styles.edField}>
-          <span className={styles.edLabel}>Аватар (персонаж)</span>
-          <Dropdown
-            className="mt-1"
-            value={draftAvatar}
-            onChange={(v) => setDraftAvatar(v)}
-            options={[
-              { value: '', label: 'Без аватара' },
-              ...profile.characters.map((c) => ({ value: c.id, label: c.name })),
-            ]}
           />
         </label>
       </div>
@@ -313,74 +307,12 @@ export function OwnProfileEditor({
       </label>
 
 
-      {/* Внешность: скин и рост активного персонажа — выбор хранится в аккаунте
-          и применяется на поле сам; плитки те же группы, что на карусели входа. */}
-      <h3 className={`${styles.edTitle} mt-4`}>Внешность</h3>
-      <div className={styles.edField}>
-        <span className={styles.edLabel}>Скин{originSprite ? '' : ' (не выбран — на поле будет обычный)'}</span>
-        <div className="mt-1.5 max-h-44 overflow-y-auto rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
-          {SKIN_GROUPS.map((g) => (
-            <div key={g.id} className="mb-2 last:mb-0">
-              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[var(--sim-text-soft)]">
-                {g.name}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {g.sprites.map((sp) => {
-                  const active = draftSprite === sp.id;
-                  return (
-                    <button
-                      key={sp.id}
-                      type="button"
-                      title={sp.name}
-                      aria-pressed={active}
-                      onClick={() => setDraftSprite(sp.id)}
-                      className={`flex w-16 flex-col items-center rounded-lg border px-1 pb-1 pt-1 transition-colors ${
-                        active
-                          ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
-                          : 'border-transparent hover:border-[var(--sim-line-hover)]'
-                      }`}
-                    >
-                      <img src={sp.src} alt={sp.name} className="h-10 w-auto object-contain" draggable={false} />
-                      <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
-                        {sp.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* Свой окрас (#83): личные PNG игрока — выбор как у обычных скинов
-          (черновик сохраняется общей кнопкой «Сохранить»), удаление с
-          подтверждением — блок сам ходит в /sprites/mine (edField внутри). */}
-      <MineSpritesSection
-        accountName={profile.displayName || 'игрока'}
-        draftSprite={draftSprite}
-        wornSprite={originSprite}
-        onPick={setDraftSprite}
-        onWear={wearSprite}
-        mineHighlight={mineHighlight}
-      />
-      <label className={styles.edField}>
-        <span className={styles.edLabel}>Рост ({draftScale}%)</span>
-        <div className="mt-1.5 flex items-center gap-2">
-          <Slider
-            className="flex-1"
-            value={[draftScale]}
-            min={60}
-            max={100}
-            step={1}
-            aria-label="Рост персонажа"
-            onValueChange={(vals) => {
-              const v = vals[0];
-              if (typeof v === 'number') setDraftScale(Math.round(v));
-            }}
-          />
-        </div>
-      </label>
-
+      </section>
+      <section role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance" hidden={settingsTab !== 'appearance'}>
+        <ProfileAppearance accountName={profile.displayName || 'игрока'} sprite={draftSprite} wornSprite={originSprite} scale={draftScale}
+          onPick={setDraftSprite} onScale={setDraftScale} onWear={wearSprite} mineHighlight={mineHighlight} />
+      </section>
+      <section role="tabpanel" id="settings-panel-game" aria-labelledby="settings-tab-game" hidden={settingsTab !== 'game'}>
       {/* Игровые параметры: приватные настройки владельца — применяются на
           поле в этой игре; меняются отсюда и на входе больше не спрашиваются. */}
       <h3 className={`${styles.edTitle} mt-4`}>Игровые параметры</h3>
@@ -436,6 +368,7 @@ export function OwnProfileEditor({
           </div>
         </div>
       </div>
+      </section>
       <div className={styles.edActions}>
         <Button
           type="submit"
@@ -454,6 +387,7 @@ export function OwnProfileEditor({
         </div>
       ) : null}
     </form>
+    <section role="tabpanel" id="settings-panel-delete" aria-labelledby="settings-tab-delete" hidden={settingsTab !== 'delete'}>
     <form
       className={`${styles.edBox} ${styles.edDanger}`}
       onSubmit={(ev) => {
@@ -483,6 +417,7 @@ export function OwnProfileEditor({
         {deleteFail ? <span className={styles.edWarn}>{deleteFail}</span> : null}
       </div>
     </form>
+    </section>
     </>
   );
 }
@@ -523,7 +458,7 @@ function OwnEditorSkeleton() {
   return (
     <div style={{ marginTop: 20 }} role="status" aria-label="Загружаем настройки профиля">
       <form className={styles.edBox}>
-        <h3 className={styles.edTitle}>Правка своей карточки</h3>
+<h3 className={styles.edTitle}>Мои настройки</h3>
         <div className={styles.edRow}>
           {field(120)}
           {field(150)}
@@ -563,7 +498,11 @@ export default function PlayerProfile({
   onOpenFriend?: (accountId: string) => void;
   onFriendsChanged?: () => void;
 }) {
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(tick);
+  }, []);
 
   // Своя карточка: myProfile после правок свежее deep-link-карточки каталога.
   const shownCard: ProfileCard =

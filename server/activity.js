@@ -5,11 +5,11 @@
  * Решение владелицы 2026-11-14: ленту видят все, включая названия локаций.
  *
  * Типы: joined_site (не хранится — синтез из createdAt при отдаче),
- * entered_game {label}, moved {locationId,label}, friend_added {friendId},
+ * moved {locationId,label}, friend_added {friendId},
  * avatar_changed, banner_changed.
  *
  * Схлопывание: то же событие (moved — с тем же locationId) моложе
- * COLLAPSE_MS → обновляем его `at`; entered_game — не чаще ENTER_GAP_MS.
+ * COLLAPSE_MS → обновляем его `at`. Вход в игру не считается активностью.
  *
  * Роут (публичный в зоне Элизий, только GET):
  *   GET /activity/:accountId      — { ok, items }
@@ -24,10 +24,10 @@ import { writeFileAtomic } from "./atomic-file.js";
 import { findById } from "./accounts.js";
 
 const FILE = path.join(DATA_DIR, "activity.json");
-export const MAX_PER_ACCOUNT = 20;
+export const MAX_PER_ACCOUNT = 15;
 const COLLAPSE_MS = 2 * 60_000;
-const ENTER_GAP_MS = 10 * 60_000;
-const TYPES = new Set(["entered_game", "moved", "friend_added", "avatar_changed", "banner_changed"]);
+const RETENTION_MS = 3 * 24 * 60 * 60_000;
+const TYPES = new Set(["moved", "friend_added", "avatar_changed", "banner_changed"]);
 const SOMEONE = "кто-то";
 
 /** @type {{ v:number, byAccount: Record<string, Array<{id:string,type:string,at:number,data:object}>> }} */
@@ -40,7 +40,12 @@ function loadStore() {
     const src = raw.byAccount && typeof raw.byAccount === "object" && !Array.isArray(raw.byAccount) ? raw.byAccount : {};
     const byAccount = {};
     for (const [id, list] of Object.entries(src)) byAccount[id] = cleanList(list);
-    return { v: 1, byAccount };
+    const cleaned = { v: 1, byAccount };
+    if (JSON.stringify(src) !== JSON.stringify(byAccount)) {
+      try { writeFileAtomic(FILE, JSON.stringify(cleaned)); }
+      catch (error) { console.warn('activity cleanup failed:', error?.message || error); }
+    }
+    return cleaned;
   } catch {
     return { v: 1, byAccount: {} };
   }
@@ -50,13 +55,14 @@ function loadStore() {
 function cleanList(list) {
   if (!Array.isArray(list)) return [];
   return list
-    .filter((it) => it && typeof it === "object" && (TYPES.has(it.type) || it.type === "joined_site") && Number.isFinite(it.at))
+    .filter((it) => it && typeof it === "object" && (TYPES.has(it.type) || it.type === "joined_site") && Number.isFinite(it.at) && it.at >= Date.now() - RETENTION_MS && it.at <= Date.now())
     .map((it) => ({
       id: String(it.id || ""),
       type: it.type,
       at: it.at,
       data: it.data && typeof it.data === "object" && !Array.isArray(it.data) ? it.data : {},
     }))
+    .sort((a, b) => b.at - a.at)
     .slice(0, MAX_PER_ACCOUNT);
 }
 
@@ -70,7 +76,10 @@ function persist() {
 }
 
 function listOf(accountId) {
-  return cleanList(store.byAccount[accountId]);
+  const before = store.byAccount[accountId];
+  const list = cleanList(before);
+  if (Array.isArray(before) && before.length !== list.length) { store.byAccount[accountId] = list; persist(); }
+  return list;
 }
 
 /** Записать событие в ленту аккаунта (единственный писатель). Никогда не
@@ -98,8 +107,7 @@ function writeActivity(accountId, type, data) {
   const list = listOf(id).slice();
   const same = list.find((it) => it.type === type);
   if (same) {
-    if (type === "entered_game" && now - same.at < ENTER_GAP_MS) return;
-    if (type !== "entered_game" && sameKey(same, type, payload) && now - same.at < COLLAPSE_MS) {
+    if (sameKey(same, type, payload) && now - same.at < COLLAPSE_MS) {
       list.splice(list.indexOf(same), 1);
       list.unshift({ ...same, at: now, data: payload });
       store.byAccount[id] = list;
@@ -158,10 +166,10 @@ function publicItems(acc) {
     const friend = liveAccount(it.data?.friendId);
     return { ...it, data: { ...it.data, friendName: friend ? nameOf(friend) : SOMEONE } };
   });
-  if (!items.some((it) => it.type === "joined_site")) {
+  if (Number(acc.createdAt) >= Date.now() - RETENTION_MS && !items.some((it) => it.type === "joined_site")) {
     items.push({ id: "joined", type: "joined_site", at: Number(acc.createdAt) || 0, data: {} });
   }
-  return items;
+  return items.sort((a, b) => b.at - a.at).slice(0, MAX_PER_ACCOUNT);
 }
 
 function canonPath(p) {
