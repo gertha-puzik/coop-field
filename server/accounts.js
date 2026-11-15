@@ -278,8 +278,8 @@ export function accountsStore() {
  * гарантирует profiles.js на PATCH, DTO лишь не выдаёт мусор). Это вид
  * ВЛАДЕЛЬЦА (/profiles/me и ответ PATCH): чужая карточка в profiles.card
  * подменяет birthday на «ММ-ДД» без года, не трогая стор. avatar —
- * строка-URL «/avatars/file/<accountId>.<png|jpg>?v=<avatarAt>» либо null
- * (строго из пары profile.avatarExt ∈ {png,jpg} и avatarAt > 0 — мусор в
+ * строка-URL «/avatars/file/<accountId>.<png|jpg|gif>?v=<avatarAt>» либо null
+ * (строго из пары profile.avatarExt ∈ {png,jpg,gif} и avatarAt > 0 — мусор в
  * полях не изворачивается в ссылку, файловый маршрут — server/avatars.js).
  * banner — «/banners/file/<id>.<png|jpg|gif>?v=<bannerAt>» либо null.
  * playtimeMs — накопленное время на игровом поле (мс, с момента учёта).
@@ -322,7 +322,7 @@ function birthdayOf(acc) {
   return typeof b === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b) ? b : null;
 }
 
-/** URL аватарки из PROFILE-полей: avatarExt строго 'png' | 'jpg' и avatarAt —
+/** URL аватарки из PROFILE-полей: avatarExt строго 'png' | 'jpg' | 'gif' и avatarAt —
  *  число > 0 (unix-ms, оно же кэш-бастер «?v=» при каждой замене); иное
  *  (в т.ч. мусор или ноль) → null. Ид файла — id аккаунта: маршрут
  *  /avatars/file/<id>.<ext> никогда не строится из клиентских строк. */
@@ -331,7 +331,7 @@ function avatarUrlOf(acc) {
   const ext = p?.avatarExt;
   const at = p?.avatarAt;
   if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return null;
-  if (ext !== "png" && ext !== "jpg") return null;
+  if (ext !== "png" && ext !== "jpg" && ext !== "gif") return null;
   return `/avatars/file/${acc.id}.${ext}?v=${at}`;
 }
 

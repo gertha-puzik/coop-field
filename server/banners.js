@@ -7,7 +7,7 @@
  *   GET    /banners/file/<id>.(png|jpg|gif) — публичная отдача
  *
  * Лимиты: PNG/JPEG/GIF по магии; ширина ≤1200, высота ≤400; файл ≥100 байт
- * и ≤2 МБ; не чаще 1 загрузки / 10 с на аккаунт. Поля профиля:
+ * и ≤2 МБ (GIF: до 10 МБ и 1500×1500 px); не чаще 1 загрузки / 10 с на аккаунт. Поля профиля:
  * bannerExt ('png'|'jpg'|'gif'), bannerAt (unix-ms).
  */
 import fs from "node:fs";
@@ -24,6 +24,9 @@ const DIR = path.join(DATA_DIR, "banners");
 fs.mkdirSync(DIR, { recursive: true });
 
 const MAX_UPLOAD = 2 * 1024 * 1024;
+const MAX_GIF_UPLOAD = 10 * 1024 * 1024;
+const MAX_UPLOAD_BODY = MAX_GIF_UPLOAD + 64 * 1024;
+const GIF_DIM_MAX = 1500;
 const DIM_W_MAX = 1200;
 const DIM_H_MAX = 400;
 const DIM_MIN = 16;
@@ -216,13 +219,13 @@ export async function handleBannersHttp(req, res) {
     }
     let buf;
     try {
-      buf = await readBody(req, MAX_UPLOAD);
+      buf = await readBody(req, MAX_UPLOAD_BODY);
     } catch (e) {
       if (e && e.code === "too_large") {
         json(res, 413, {
           ok: false,
           reason: "too_large",
-          message: "Картинка больше 2 МБ не принимается — уменьшите её и попробуйте снова.",
+          message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.",
         });
         return true;
       }
@@ -260,17 +263,21 @@ export async function handleBannersHttp(req, res) {
       });
       return true;
     }
+    if (img.length > (ext === "gif" ? MAX_GIF_UPLOAD : MAX_UPLOAD)) {
+      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ." });
+      return true;
+    }
     const dims = dimsOf(ext, img);
     if (
       !dims ||
-      dims.w < DIM_MIN || dims.w > DIM_W_MAX ||
-      dims.h < DIM_MIN || dims.h > DIM_H_MAX ||
+      dims.w < DIM_MIN || dims.w > (ext === "gif" ? GIF_DIM_MAX : DIM_W_MAX) ||
+      dims.h < DIM_MIN || dims.h > (ext === "gif" ? GIF_DIM_MAX : DIM_H_MAX) ||
       img.length < MIN_FILE_BYTES
     ) {
       json(res, 400, {
         ok: false,
         reason: "bad_dims",
-        message: "Фон не подходит: ширина до 1200 px, высота до 400 px, файл от 100 байт.",
+        message: "Фон: PNG/JPEG до 1200×400 px, GIF до 1500×1500 px, файл от 100 байт.",
       });
       return true;
     }

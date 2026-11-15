@@ -141,6 +141,8 @@ jobs:
         run: npm run test:my-sprites
       - name: Аватарки профиля
         run: npm run test:avatars
+      - name: Анимированные GIF профиля до 10 МБ
+        run: npm run test:profile-gif
       # test:ws сам сервер не поднимает: ждёт WS_URL. Джоб слушает песочницу.
       # Скрипт не закрывает часть сокетов и заводит много комнат с одного
       # loopback. Прод-потолки WS_MAX_PER_IP=8 и ROOMS_MAX=32 здесь выше

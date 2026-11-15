@@ -429,8 +429,8 @@ try {
   const badId = await httpJson("/avatars/file/$neakier.png");
   check(badId.status === 404 && badId.json?.reason === "not_found",
     "13: мусорный ид файла → 404 (набор [A-Za-z0-9_-])");
-  const badExt = await httpJson(`/avatars/file/${mainId}.gif`);
-  check(badExt.status === 404, "13: не-png/jpg расширение → 404");
+  const badExt = await httpJson(`/avatars/file/${mainId}.webp`);
+  check(badExt.status === 404, "13: неподдерживаемое расширение → 404");
   const noSuchFile = await httpJson("/avatars/file/a00000000000000000000000000bee.png");
   check(noSuchFile.status === 404, "13: несуществующий файл → 404");
   const postToFile = await httpJson("/avatars/file/a00000000000000000000000000bee.png", {

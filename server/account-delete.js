@@ -6,7 +6,7 @@
  * случайным хэшем, день рождения, био, СП и аватарка стираются, отображаемое
  * имя становится «Удалён <id>». Сессии этого accountId отзываются все.
  *
- * Личные файлы только этого аккаунта: avatars/<id>.png|jpg и строки каталога
+ * Личные файлы только этого аккаунта: avatars/<id>.png|jpg|gif и строки каталога
  * спрайтов с ownerAccountId === id (не builtin и не чужой владелец).
  *
  * Книга позиций (server/persist.js) ключуется только именем персонажа, без
@@ -32,7 +32,7 @@ function removeOwnAvatarFiles(accountId) {
     return { error: "bad_id" };
   }
   const dir = path.join(DATA_DIR, "avatars");
-  for (const ext of ["png", "jpg"]) {
+  for (const ext of ["png", "jpg", "gif"]) {
     const file = path.join(dir, `${accountId}.${ext}`);
     if (path.dirname(file) !== dir) return { error: "bad_id" };
     try {

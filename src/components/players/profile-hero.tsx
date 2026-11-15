@@ -108,7 +108,7 @@ export function ProfileHero({
   const upload = async (blob: Blob) => {
     setBusy(true);
     setNote(null);
-    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+    const ext = blob.type === 'image/gif' ? 'gif' : blob.type === 'image/png' ? 'png' : 'jpg';
     const res = await httpUploadBanner(new File([blob], `banner.${ext}`, { type: blob.type }));
     setBusy(false);
     if (!res.ok) {
@@ -118,6 +118,29 @@ export function ProfileHero({
     setCropFile(null);
     setPainting(false);
     await onBannerChanged?.();
+  };
+
+  const selectUpload = async (file: File) => {
+    if (busy) return;
+    setNote(null);
+    if (file.size > 10 * 1024 * 1024) {
+      setNote('Файл больше 10 МБ — выберите поменьше.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const signature = await file.slice(0, 6).text();
+      if (signature === 'GIF87a' || signature === 'GIF89a') {
+        // Оригинальные байты: canvas/cropper уничтожают анимацию.
+        await upload(new File([file], 'banner.gif', { type: 'image/gif' }));
+      } else {
+        setBusy(false);
+        setCropFile(file);
+      }
+    } catch {
+      setBusy(false);
+      setNote('Не удалось прочитать картинку. Попробуйте ещё раз.');
+    }
   };
 
   const remove = async () => {
@@ -170,7 +193,7 @@ export function ProfileHero({
                     fileRef.current?.click();
                   }}
                 >
-                  <Icon name="image" size={16} /> Загрузить картинку…
+                  <Icon name="image" size={16} /> <span>Загрузить картинку / GIF…<small className={styles.uploadHint}>GIF до 10 МБ, анимация сохраняется</small></span>
                 </button>
                 <button
                   type="button"
@@ -197,7 +220,7 @@ export function ProfileHero({
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 e.target.value = '';
-                if (f) setCropFile(f);
+                if (f) void selectUpload(f);
               }}
             />
           </div>
