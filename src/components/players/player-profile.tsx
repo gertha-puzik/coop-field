@@ -373,7 +373,7 @@ export function OwnProfileEditor({
         <Button
           type="submit"
           size="sm"
-          className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+          className={settingsStyles.action}
           disabled={busy}
         >
           {busy ? 'Сохраняем…' : 'Сохранить'}
@@ -433,11 +433,6 @@ export function ProfileSkeleton() {
       <SiteHeader />
       <div className={`${styles.page} ${styles.profilePage}`}>
         <ProfileCardSkeleton />
-        <p className={styles.footNote}>
-          <a className={styles.backLink} href="/">
-            ← Главное меню
-          </a>
-        </p>
       </div>
     </div>
   );
@@ -544,11 +539,6 @@ export default function PlayerProfile({
             ) : null
           }
         />
-        <p className={styles.footNote}>
-          <a className={styles.backLink} href="/">
-            ← Главное меню
-          </a>
-        </p>
       </div>
     </div>
   );

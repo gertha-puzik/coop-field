@@ -20,7 +20,7 @@ export function ProfileAppearance({ accountName, sprite, wornSprite, scale, onPi
         {src ? <img src={src} alt="Выбранный окрас персонажа" draggable={false} /> : <span>Окрас не выбран</span>}
         <figcaption>{selected?.name || 'Свой окрас'}</figcaption>
       </figure>
-      <a className={styles.skinmaker} href="https://paint.phainonsmilk.ru/" target="_blank" rel="noopener noreferrer">Открыть скинмейкер</a>
+      <a className={`${styles.action} ${styles.skinmaker}`} href="https://paint.phainonsmilk.ru/" target="_blank" rel="noopener noreferrer">Нарисовать окрас</a>
       <div className={styles.groups} aria-label="Дополнительные окрасы">
         <p className={styles.label}>Дополнительные окрасы</p>
         {SKIN_GROUPS.map((group) => <details key={group.id} className={styles.group}>

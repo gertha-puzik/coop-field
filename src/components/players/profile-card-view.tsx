@@ -369,12 +369,6 @@ export function ProfileCardView({
           </div>
         </div>
       )}
-
-      <footer className={card2.foot}>
-        <button type="button" className={styles.backLink} onClick={onClose}>
-          ← Вернуться в каталог
-        </button>
-      </footer>
     </main>
   );
 }
