@@ -36,6 +36,7 @@ import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
 import { PawGlyph } from './profile-icons';
 import { avatarOf, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
+import settingsStyles from './profile-settings.module.css';
 
 /** Контур луны (svg-путь): иконка ACH_ICONS и бренд-строки. */
 export const moonPath = 'M20.4 14.2A8.6 8.6 0 1 1 9.8 3.6a7 7 0 0 0 10.6 10.6Z';
@@ -174,7 +175,7 @@ export function Portrait({ card, name }: { card: ProfileCard; name: string }) {
  *  Публичная сигнатура W1 не меняется — потребитель один и тот же. */
 export function SpChip({ active, onClick, children: label }: { active: boolean; onClick: () => void; children: string }) {
   return (
-    <Chip type="button" size="sm" tone={active ? 'active' : 'default'} onClick={onClick} title={label}>
+    <Chip type="button" size="sm" className={settingsStyles.choice} aria-pressed={active} tone={active ? 'active' : 'default'} onClick={onClick} title={label}>
       {label}
     </Chip>
   );
@@ -397,14 +398,6 @@ export function MineSpritesSection({
         <span className="ml-1 text-[var(--sim-text-faint)]">
           {items.length} из {limit}
         </span>
-        {/* #84 ч.2: редактор окрасов сайта — рисуем окрас, не выходя из игры */}
-        <a
-          className="ml-2 rounded border border-[var(--sim-line)] px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)] hover:text-[var(--sim-text)]"
-          href="/paint-demo/?back=profile"
-          title="Открыть редактор окрасов: нарисованный кот сохранится в «Мои окрасы»"
-        >
-          Нарисовать окрас
-        </a>
       </span>
       <div className="mt-1.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
         {status ? (
@@ -438,7 +431,7 @@ export function MineSpritesSection({
           <Button
             type="button"
             size="sm"
-            className="h-8 bg-[var(--sim-accent)] text-xs text-black hover:bg-[var(--sim-accent-hover)]"
+            className={settingsStyles.action}
             disabled={uploading || !file}
             onClick={() => void upload()}
           >
