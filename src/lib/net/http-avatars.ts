@@ -14,7 +14,7 @@
  *   DELETE /avatars/mine   — 200 {ok:true, avatar:null} (после удаления)
  *   Ошибки 4xx JSON {reason}: no_file, bad_multipart, bad_content_type,
  *   bad_magic, bad_dims, too_large, rate, auth_required, io.
- *   Лимиты сервера: PNG/JPEG до 2 МБ или GIF до 10 МБ, каждая сторона 64–1500 px,
+ *   Лимиты сервера: PNG/JPEG до 2 МБ или GIF до 100 МБ, каждая сторона 64–1500 px,
  *   не чаще раза в 10 секунд (rate).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
@@ -87,9 +87,9 @@ export function humanAvatarError(reason: string | undefined, fallback: string): 
     case "bad_magic":
       return "Файл не похож на картинку — нужен PNG, JPEG или GIF.";
     case "bad_dims":
-      return "Картинка: сторона 64–1500 px; GIF до 10 МБ, PNG/JPEG до 2 МБ.";
+      return "Картинка: сторона 64–1500 px; GIF до 100 МБ, PNG/JPEG до 2 МБ.";
     case "too_large":
-      return "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.";
+      return "GIF — до 100 МБ, PNG/JPEG — до 2 МБ.";
     case "proxy_too_large":
       return "Сервер отклонил размер файла. Попробуйте GIF поменьше.";
     case "upload_conflict":

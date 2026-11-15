@@ -23,7 +23,7 @@
  * accounts.avatarUrlOf (поле avatar в publicProfile), он же строит ответ
  * POST: «?v=<avatarAt>» меняется с каждой заменой и обходит кэш браузера.
  *
- * Лимиты: GIF ≤10 МБ, PNG/JPEG ≤2 МБ (файл); multipart запас 64 КиБ; формат по магии
+ * Лимиты: GIF ≤100 МБ, PNG/JPEG ≤2 МБ (файл); multipart запас 64 КиБ; формат по магии
  * байтов; каждая сторона 64–1500 px; суммарно ≤ 2 250 000 px; файл ≥ 100 байт;
  * не чаще одной загрузки в 10 секунд на аккаунт. Сквозного лимита HTTP-тела
  * в net.js нет — зоны держат свои (sprites 3 МБ, my-sprites 1 МБ, profiles
@@ -48,12 +48,12 @@ const DIR = path.join(DATA_DIR, "avatars");
 /** Каталог аватарок создаётся при старте (импорт модуля = старт сервера). */
 fs.mkdirSync(DIR, { recursive: true });
 
-/** Потолок чтения: GIF до 10 МБ плюс multipart; PNG/JPEG до 2 МБ. Запас на
+/** Потолок чтения: GIF до 100 МБ плюс multipart; PNG/JPEG до 2 МБ. Запас на
  *  фотореалистичные JPEG оставлен без «безразмерности» (мultipart-обёртка
  *  добавляет копейки; проверяется по факту прочитанных байтов, не по
  *  Content-Length — отсутствующий заголовок не обходит лимит). */
 const MAX_AVATAR_UPLOAD = 2 * 1024 * 1024;
-const MAX_GIF_UPLOAD = 10 * 1024 * 1024;
+const MAX_GIF_UPLOAD = 100 * 1024 * 1024;
 
 /** Габариты: каждая сторона 64–1500 px, всего ≤ 2 250 000 px — квадратная
  *  аватарка 1500×1500 проходит впритык, «полоса» 1500×1499 тоже. */
@@ -270,7 +270,7 @@ export async function handleAvatarsHttp(req, res) {
       return true;
     }
     if (img.length > (ext === "gif" ? MAX_GIF_UPLOAD : MAX_AVATAR_UPLOAD)) {
-      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ." });
+      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 100 МБ, PNG/JPEG — до 2 МБ." });
       return true;
     }
     const dims = ext === "gif" ? gifDimsOf(img) : ext === "png" ? pngDimsOf(img) : jpegDimsOf(img);

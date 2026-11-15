@@ -15,7 +15,6 @@ import styles from './profile-card.module.css';
 
 const ICON: Record<ActivityItem['type'], IconName> = {
   joined_site: 'paw',
-  entered_game: 'door',
   moved: 'pin',
   friend_added: 'users',
   avatar_changed: 'cat',
@@ -29,8 +28,6 @@ function ActivityText({ item, onOpen }: { item: ActivityItem; onOpen: (id: strin
   switch (item.type) {
     case 'joined_site':
       return <>Регистрация на сайте</>;
-    case 'entered_game':
-      return <>Вход в игру{label ? ` · ${label}` : ''}</>;
     case 'moved':
       return <>Переход в локацию «{label || 'неизвестно'}»</>;
     case 'friend_added':
@@ -82,7 +79,7 @@ export function ProfileActivity({
     };
   }, [accountId, refreshKey]);
 
-  const items = state.id === accountId ? state.items : null;
+  const items = state.id === accountId ? state.items?.filter((item) => item.at >= now - 3 * 24 * 60 * 60_000).slice(0, 15) ?? null : null;
 
   return (
     <section className={styles.card} aria-labelledby="prof-activity">
@@ -101,7 +98,7 @@ export function ProfileActivity({
       ) : state.failed ? (
         <p className={styles.muted}>Ленту не удалось загрузить.</p>
       ) : items.length ? (
-        <ul className={styles.actList}>
+        <ul className={styles.actList} tabIndex={items.length > 6 ? 0 : undefined} aria-label="Действия за последние 3 дня">
           {items.map((it) => (
             <li key={it.id} className={styles.actRow}>
               <Icon name={ICON[it.type]} className={styles.actIcon} />

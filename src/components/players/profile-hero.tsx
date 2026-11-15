@@ -1,12 +1,7 @@
 'use client';
 
-/**
- * Шапка профиля по макету 2026-11-14: широкий баннер (свой или
- * сгенерированный пиксельный пейзаж от accountId), аватар и имя поверх,
- * пилюли «на сайте с / присутствие». Владельцу — меню «Изменить
- * шапку»: загрузить с кадрированием, нарисовать, убрать. Загрузка — через
- * существующий /cfg/banners/mine (сервер не меняется).
- */
+/** Profile banner and identity. Image editing lives in the avatar pencil menu;
+ * banner and avatar keep their existing upload, painting and removal flows. */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -89,21 +84,11 @@ export function ProfileHero({
 }: ProfileHeroProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [idCopied, setIdCopied] = useState(false);
-  const [menu, setMenu] = useState(false);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [painting, setPainting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [armedRemove, setArmedRemove] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement | null)?.closest?.(`.${styles.bannerMenuWrap}`)) setMenu(false);
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [menu]);
 
   const upload = async (blob: Blob) => {
     setBusy(true);
@@ -123,8 +108,8 @@ export function ProfileHero({
   const selectUpload = async (file: File) => {
     if (busy) return;
     setNote(null);
-    if (file.size > 10 * 1024 * 1024) {
-      setNote('Файл больше 10 МБ — выберите поменьше.');
+    if (file.size > 100 * 1024 * 1024) {
+      setNote('Файл больше 100 МБ — выберите поменьше.');
       return;
     }
     setBusy(true);
@@ -149,7 +134,6 @@ export function ProfileHero({
       window.setTimeout(() => setArmedRemove(false), 5000);
       return;
     }
-    setMenu(false);
     setArmedRemove(false);
     setBusy(true);
     const res = await httpDeleteBanner();
@@ -170,61 +154,8 @@ export function ProfileHero({
           <GeneratedBanner seed={accountId} />
         )}
         <div className={styles.heroShade} aria-hidden />
-        {mine ? (
-          <div className={styles.bannerMenuWrap}>
-            <button
-              type="button"
-              className={styles.bannerBtn}
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              disabled={busy}
-              onClick={() => setMenu((m) => !m)}
-            >
-              <Icon name="image" size={16} />
-              {busy ? 'Сохраняем…' : 'Изменить шапку'}
-            </button>
-            {menu ? (
-              <div className={styles.bannerMenu} role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenu(false);
-                    fileRef.current?.click();
-                  }}
-                >
-                  <Icon name="image" size={16} /> <span>Загрузить картинку / GIF…<small className={styles.uploadHint}>GIF до 10 МБ, анимация сохраняется</small></span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenu(false);
-                    setPainting(true);
-                  }}
-                >
-                  <Icon name="brush" size={16} /> Нарисовать…
-                </button>
-                {banner ? (
-                  <button type="button" role="menuitem" className={armedRemove ? styles.menuDanger : undefined} onClick={() => void remove()}>
-                    <Icon name="trash" size={16} /> {armedRemove ? 'Точно убрать?' : 'Убрать шапку'}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void selectUpload(f);
-              }}
-            />
-          </div>
-        ) : null}
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
+          onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void selectUpload(file); }} />
 
         <div className={styles.heroInfo}>
           <ProfileAvatar
@@ -234,6 +165,16 @@ export function ProfileHero({
             hasImage={hasAvatar}
             onChanged={onAvatarChanged}
             onError={setNote}
+            externalBusy={busy}
+            bannerMenu={(close) => <>
+              <button type="button" role="menuitem" onClick={() => { close(); fileRef.current?.click(); }}>
+                <Icon name="image" size={16} /><span>Загрузить фон / GIF…<small className={styles.uploadHint}>GIF до 100 МБ, анимация сохраняется</small></span>
+              </button>
+              <button type="button" role="menuitem" onClick={() => { close(); setPainting(true); }}><Icon name="brush" size={16} />Нарисовать фон…</button>
+              {banner ? <button type="button" role="menuitem" className={armedRemove ? styles.menuDanger : undefined} onClick={() => { if (armedRemove) close(); void remove(); }}>
+                <Icon name="trash" size={16} />{armedRemove ? 'Точно убрать фон?' : 'Убрать фон'}
+              </button> : null}
+            </>}
           />
           <div className={styles.heroText}>
             <h1 className={styles.heroName}>

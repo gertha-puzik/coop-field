@@ -7,7 +7,7 @@
  *   GET    /banners/file/<id>.(png|jpg|gif) — публичная отдача
  *
  * Лимиты: PNG/JPEG/GIF по магии; ширина ≤1200, высота ≤400; файл ≥100 байт
- * и ≤2 МБ (GIF: до 10 МБ и 1500×1500 px); не чаще 1 загрузки / 10 с на аккаунт. Поля профиля:
+ * и ≤2 МБ (GIF: до 100 МБ и 1500×1500 px); не чаще 1 загрузки / 10 с на аккаунт. Поля профиля:
  * bannerExt ('png'|'jpg'|'gif'), bannerAt (unix-ms).
  */
 import fs from "node:fs";
@@ -25,7 +25,7 @@ const DIR = path.join(DATA_DIR, "banners");
 fs.mkdirSync(DIR, { recursive: true });
 
 const MAX_UPLOAD = 2 * 1024 * 1024;
-const MAX_GIF_UPLOAD = 10 * 1024 * 1024;
+const MAX_GIF_UPLOAD = 100 * 1024 * 1024;
 const GIF_DIM_MAX = 1500;
 const DIM_W_MAX = 1200;
 const DIM_H_MAX = 400;
@@ -229,7 +229,7 @@ export async function handleBannersHttp(req, res) {
       return true;
     }
     if (img.length > (ext === "gif" ? MAX_GIF_UPLOAD : MAX_UPLOAD)) {
-      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ." });
+      json(res, 413, { ok: false, reason: "too_large", message: "GIF — до 100 МБ, PNG/JPEG — до 2 МБ." });
       return true;
     }
     const dims = dimsOf(ext, img);

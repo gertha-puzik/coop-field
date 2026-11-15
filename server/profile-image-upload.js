@@ -47,11 +47,11 @@ export async function readProfileImage(req, { owner, kind, maxBytes }) {
   const id = url.searchParams.get('upload');
   const indexText = url.searchParams.get('part') || '';
   const sizeText = url.searchParams.get('size') || '';
-  if (!/^[a-f0-9-]{36}$/.test(id) || !/^\d{1,2}$/.test(indexText) || !/^\d{1,8}$/.test(sizeText) || type !== 'application/octet-stream') {
+  if (!/^[a-f0-9-]{36}$/.test(id) || !/^\d{1,3}$/.test(indexText) || !/^\d{1,9}$/.test(sizeText) || type !== 'application/octet-stream') {
     throw fail(400, 'bad_multipart', 'Неверные параметры загрузки.');
   }
   const index = Number(indexText), size = Number(sizeText);
-  if (size > maxBytes) throw fail(413, 'too_large', 'GIF — до 10 МБ.');
+  if (size > maxBytes) throw fail(413, 'too_large', 'GIF — до 100 МБ.');
   if (size < 100 || index >= Math.ceil(size / CHUNK)) throw fail(400, 'bad_multipart', 'Неверный размер загрузки.');
   const key = `${kind}:${owner}`;
   let upload = uploads.get(key);
@@ -78,6 +78,7 @@ export async function readProfileImage(req, { owner, kind, maxBytes }) {
     const file = path.join(upload.dir, 'image');
     fs.appendFileSync(file, bytes);
     upload.next++;
+    upload.timer.refresh();
     if (upload.next * CHUNK < size) return null;
     return fs.readFileSync(file);
   } catch (error) {

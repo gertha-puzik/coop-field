@@ -3,8 +3,8 @@
 /**
  * Карточка профиля по макету владелицы 2026-11-14
  * (docs/superpowers/specs/2026-11-14-profile-banner-activity-design.md):
- * шапка-баннер с аватаром (ProfileHero), вкладки «Профиль» / «Настройки
- * профиля», две колонки карточек — слева активный персонаж на лугу, краткая
+ * шапка-баннер с аватаром (ProfileHero), вкладки «Профиль» / «Мои
+ * настройки», две колонки карточек — слева активный персонаж на лугу, краткая
  * статистика и «о себе», справа друзья сеткой и «Последние действия».
  * Только честные данные DTO: боевых счётчиков и достижений сервер не
  * собирает — их на странице нет.
@@ -156,8 +156,8 @@ export function ProfileCardView({
   const location = (shown.locationLabel ?? card.locationLabel) || 'неизвестно';
   const rawBio = (shown.bio ?? card.bio) || '';
   const bio = rawBio || 'Пока ничего не рассказано о себе.';
-  const banner = shown.banner ?? card.banner;
-  const avatarUrl = shown.avatar ?? card.avatar;
+  const banner = shown.banner;
+  const avatarUrl = shown.avatar;
   const char = avatarOf(shown);
   const faceUrl = avatarUrl || spriteUrl(char);
   const friendCount = card.friendCount ?? friends.length;
@@ -300,7 +300,7 @@ export function ProfileCardView({
             className={tab === 'settings' ? `${card2.tab} ${card2.tabOn}` : card2.tab}
             onClick={() => pickTab('settings')}
           >
-            <Icon name="gear" size={16} /> Настройки профиля
+            <Icon name="gear" size={16} /> Мои настройки
           </button>
         ) : null}
       </div>

@@ -4,7 +4,7 @@ import { httpOrigin } from './coop';
 
 const CHUNK = 512 * 1024;
 export async function postProfileImage(path: string, file: File): Promise<{ status: number; row: ApiRow | null }> {
-  if (file.size > 10 * 1024 * 1024) return { status: 413, row: { reason: 'too_large' } };
+  if (file.size > 100 * 1024 * 1024) return { status: 413, row: { reason: 'too_large' } };
   try {
     const chunked = file.size > CHUNK;
     const id = chunked ? crypto.randomUUID() : '';

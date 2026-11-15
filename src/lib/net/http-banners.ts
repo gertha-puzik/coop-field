@@ -64,7 +64,7 @@ export function humanBannerError(reason: string | undefined, fallback: string): 
     case "bad_dims":
       return "Фон: PNG/JPEG до 1200×400 px, GIF до 1500×1500 px.";
     case "too_large":
-      return "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.";
+      return "GIF — до 100 МБ, PNG/JPEG — до 2 МБ.";
     case "proxy_too_large":
       return "Сервер отклонил размер файла. Попробуйте GIF поменьше.";
     case "upload_conflict":
