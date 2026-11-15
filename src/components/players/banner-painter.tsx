@@ -7,6 +7,8 @@
  * без сглаживания) → onDone(blob). Загрузку делает вызывающий.
  */
 
+import { createPortal } from 'react-dom';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -201,7 +203,7 @@ export function BannerPainter({
 
   const hex = toHex(color);
 
-  return (
+  return createPortal(
     <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label={title}>
       <div className={styles.modal}>
         <header className={styles.modalHead}>
@@ -291,6 +293,7 @@ export function BannerPainter({
           </Button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

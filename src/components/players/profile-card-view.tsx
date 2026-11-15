@@ -143,7 +143,6 @@ export function ProfileCardView({
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
   const [activityTick, setActivityTick] = useState(0);
-  const [idCopied, setIdCopied] = useState(false);
 
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
   useEffect(() => {
@@ -164,7 +163,6 @@ export function ProfileCardView({
   const friendCount = card.friendCount ?? friends.length;
   const days = daysSince(card.createdAt, now);
   const charCount = shown.characters?.length ?? card.characters.length;
-  const shortId = card.accountId ? `№${card.accountId.slice(0, 8)}` : '№—';
 
   const pickTab = (next: 'profile' | 'settings') => {
     if (next === 'settings' && !mine) return;
@@ -376,25 +374,6 @@ export function ProfileCardView({
         <button type="button" className={styles.backLink} onClick={onClose}>
           ← Вернуться в каталог
         </button>
-        <button
-          type="button"
-          className={card2.copyId}
-          title={`Скопировать ID: ${card.accountId}`}
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(card.accountId);
-              setIdCopied(true);
-              window.setTimeout(() => setIdCopied(false), 2000);
-            } catch {
-              setIdCopied(false);
-            }
-          }}
-        >
-          Профиль {shortId} <span aria-hidden>⧉</span>
-        </button>
-        <span className={card2.copyStatus} role="status">
-          {idCopied ? 'ID скопирован' : ''}
-        </span>
       </footer>
     </main>
   );

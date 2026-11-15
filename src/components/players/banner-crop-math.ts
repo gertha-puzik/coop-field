@@ -1,7 +1,7 @@
 /**
  * Математика кадра шапки 3:1 (спека 2026-11-14). Координаты — в пикселях рамки:
  * off — положение левого-верхнего угла масштабированной картинки относительно
- * рамки (≤ 0, иначе открылся бы край). Без DOM — под unit-тест.
+ * рамки (cover — ≤ 0; contain — центрированные поля). Без DOM — под unit-тест.
  */
 
 export type Offset = { x: number; y: number };
@@ -11,7 +11,7 @@ export function coverScale(imgW: number, imgH: number, frameW: number, frameH: n
   return Math.max(frameW / imgW, frameH / imgH);
 }
 
-/** Сдвиг, при котором края картинки не заходят внутрь рамки. */
+/** Cover ограничивает края; contain центрирует свободную ось целого исходника. */
 export function clampOffset(
   off: Offset,
   imgW: number,
@@ -22,7 +22,10 @@ export function clampOffset(
 ): Offset {
   const minX = Math.min(0, frameW - imgW * scale);
   const minY = Math.min(0, frameH - imgH * scale);
-  return { x: Math.min(0, Math.max(minX, off.x)) || 0, y: Math.min(0, Math.max(minY, off.y)) || 0 };
+  return {
+    x: imgW * scale < frameW ? (frameW - imgW * scale) / 2 : Math.min(0, Math.max(minX, off.x)) || 0,
+    y: imgH * scale < frameH ? (frameH - imgH * scale) / 2 : Math.min(0, Math.max(minY, off.y)) || 0,
+  };
 }
 
 /** Прямоугольник исходника (для drawImage), видимый в рамке. */

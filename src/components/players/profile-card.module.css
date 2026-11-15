@@ -713,3 +713,53 @@
   top: 0;
   z-index: 5;
 }
+
+/* Тонкий золотой кант с вогнутыми углами, общий для блоков профиля. */
+.heroBanner, .card, .statTile, .friendTile, .actRow {
+  border: 14px solid transparent;
+  border-image: url('/ui/ornamental-frame.svg') 20 / 14px / 0 stretch;
+  border-radius: 0;
+  background-clip: padding-box;
+}
+.heroBanner { aspect-ratio: 4.5 / 1; min-height: 220px; overflow: visible; }
+.heroImg, .heroGen, .heroShade { border-radius: 2px; }
+.heroInfo { top: 8px; bottom: 8px; left: 12px; right: 12px; align-items: center; }
+.heroFace {
+  position: relative;
+  width: clamp(110px, 11vw, 146px);
+  aspect-ratio: 0.78;
+  padding: 13px 12px 10px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+  background: transparent;
+}
+.heroFace img { width: 100%; height: 100%; min-height: 0; object-fit: contain; border-radius: 7px; background: rgba(9,12,28,.45); }
+.faceFrame { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: var(--gold, #f6d7a2); stroke-width: 2; filter: drop-shadow(0 2px 3px #080b16); pointer-events: none; }
+.faceFrame path:nth-child(2) { stroke-width: .8; opacity: .8; }
+.faceFrame path:last-child { fill: var(--gold, #f6d7a2); stroke-width: 1; }
+.heroName { flex-wrap: wrap; font-size: clamp(26px, 3vw, 38px); gap: 8px 12px; }
+.heroName .copyId { font-size: 12px; font-weight: 400; white-space: nowrap; }
+.heroName .copyStatus { font-size: 11px; font-weight: 400; }
+.heroPill { border-color: var(--gold, #f6d7a2); }
+.card { padding: 7px 10px 10px; }
+.statTile { padding: 3px 5px; }
+@media (max-width: 760px) {
+  .heroBanner { display: block; min-height: 0; aspect-ratio: auto; }
+  .heroImg, .heroGen { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; }
+  .heroShade { display: block; background: linear-gradient(90deg,rgba(8,8,24,.88),rgba(8,8,24,.52)); }
+  .heroInfo { position: relative; inset: auto; margin: 0; padding: 30px 4px 4px; flex-direction: row; align-items: center; gap: 12px; }
+  .heroFace { width: 112px; }
+  .heroText { flex: 1; }
+  .heroName { font-size: 26px; }
+  .heroPill { font-size: 11px; padding: 4px 8px; }
+  .bannerBtn { padding: 3px 7px; font-size: 11px; }
+  .bannerMenuWrap { top: 0; right: 0; }
+}
+@media (max-width: 420px) {
+  .heroInfo { gap: 8px; }
+  .heroFace { width: 94px; }
+  .heroName { font-size: 24px; }
+  .heroBio { font-size: 12px; }
+}
