@@ -1093,3 +1093,6 @@ option:disabled,
   pointer-events: none;
 }
 
+
+/* Панель главной закрытого сайта: без внешних отступов, на всю ширину. */
+.wander-topbar-wide { position: fixed; inset: 0 0 auto; width: 100%; display: block; z-index: 45; pointer-events: auto; }

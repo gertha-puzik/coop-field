@@ -70,7 +70,7 @@ function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; nam
             className={styles.portrait}
             src={url}
             alt={`Спрайт персонажа: ${name}`}
-            style={{ width: `${scale}%`, height: 'auto' }}
+            style={{ width: `${scale}%`, height: `${scale}%` }}
             draggable={false}
           />
         ) : (

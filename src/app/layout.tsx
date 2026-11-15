@@ -34,8 +34,9 @@ export default function RootLayout({
             CSS-правила [data-theme='night']), иначе мигает и теряются стили кнопок. */}
         <script
           dangerouslySetInnerHTML={{
-            __html:
-              "try{var t=localStorage.getItem('catwar-battle-sim-theme');if(t!=='light'&&t!=='beer')t='night';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','night');}",
+            __html: process.env.NEXT_PUBLIC_SITE === 'elyria'
+              ? "document.documentElement.setAttribute('data-theme','night');"
+              : "try{var t=localStorage.getItem('catwar-battle-sim-theme');if(t!=='light'&&t!=='beer')t='night';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','night');}",
           }}
         />
         {/* Неподвижная лапка задана в CSS; здесь — только волна ЛКМ. */}

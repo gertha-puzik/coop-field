@@ -1,6 +1,7 @@
 /**
  * Темы оформления интерфейса. Ночь — исходная тёмная, светлая — дневная,
  * «Пивная» — тёплая янтарная с пузырьками.
+ * На закрытом сайте Элизии всегда ночная; выбор сохраняется только в гротах.
  *
  * Тема живёт на <html data-theme="...">: все цвета интерфейса — CSS-переменные
  * из globals.css, поэтому переключение мгновенно перекрашивает и поля ввода,
@@ -18,9 +19,12 @@ export const THEMES: Array<{ id: ThemeId; label: string }> = [
   { id: 'beer', label: 'Пивная' },
 ];
 
+const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
+
 const THEME_IDS: ThemeId[] = ['night', 'light', 'beer'];
 
 export function loadTheme(): ThemeId {
+  if (IS_ELYRIA) return 'night';
   if (typeof window === 'undefined') return 'night';
   try {
     const t = localStorage.getItem(THEME_KEY);
@@ -30,7 +34,8 @@ export function loadTheme(): ThemeId {
   }
 }
 
-export function applyTheme(t: ThemeId) {
+export function applyTheme(requested: ThemeId) {
+  const t = IS_ELYRIA ? 'night' : requested;
   try {
     document.documentElement.setAttribute('data-theme', t);
     localStorage.setItem(THEME_KEY, t);

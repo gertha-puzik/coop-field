@@ -1,7 +1,7 @@
 'use client';
 
 /** Общая шапка Elysiae Aedes: бренд, текущие ссылки с иконками,
- * уведомления, профиль, выход и тема. На узком экране тот же набор в меню.
+ * уведомления, профиль и выход. На узком экране тот же набор в меню.
  * Сессия использует общий me-cache; закрытые ссылки остаются за IS_ELYRIA.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,7 +15,6 @@ import {
 } from '@/lib/net/http-notifications';
 import { httpFriendAccept, httpFriendDecline } from '@/lib/net/http-friends';
 import { startPresenceBeat } from '@/lib/net/presence-beat';
-import { ThemeSelect } from '@/components/site/theme-select';
 import styles from './site-header.module.css';
 
 /** Пункт вертикального меню бургера: та же пара цветов, но строка с
@@ -353,9 +352,6 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
                 {logoutButton}
               </div>
             ) : null}
-            <div className="flex items-center px-3 py-2.5">
-              <ThemeSelect />
-            </div>
           </div>
         ) : null}
       </div>
@@ -372,7 +368,6 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
           <NotifyBell inAccount={inAccount} />
           {sessionBadge}
           {logoutButton}
-          <ThemeSelect />
         </div>
       </div>
     </header>
