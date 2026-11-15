@@ -769,7 +769,7 @@
 }
 
 /* Выемки относятся к синей подложке, не к содержимому и внешнему канту. */
-.card { position: relative; isolation: isolate; background: none; }
+.card { position: relative; isolation: isolate; background: none; backdrop-filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.25); }
 .card::before {
   content: '';
   position: absolute;
@@ -777,6 +777,7 @@
   z-index: -1;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(30,26,66,.72), rgba(14,12,34,.72));
+  backdrop-filter: blur(8px);
   mask:
     radial-gradient(circle 12px at 0 0, transparent 11px, #000 12px) top left / 51% 51% no-repeat,
     radial-gradient(circle 12px at 100% 0, transparent 11px, #000 12px) top right / 51% 51% no-repeat,
