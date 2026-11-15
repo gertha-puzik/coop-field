@@ -3,32 +3,11 @@
  * Литералы /cfg/banners/* только здесь (обход прод-nginx через location /cfg).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
-import { httpOrigin } from "./coop";
+import { postProfileImage } from "./http-profile-image";
 
 export type BannerAction =
   | { ok: true; banner: string | null }
   | { ok: false; reason: string; message?: string };
-
-async function postMultipart(path: string, form: FormData): Promise<{ status: number; row: ApiRow | null }> {
-  try {
-    const res = await fetch(`${httpOrigin()}${path}`, {
-      method: "POST",
-      credentials: "include",
-      body: form,
-    });
-    const text = await res.text();
-    let row: ApiRow | null = null;
-    try {
-      const parsed: unknown = JSON.parse(text);
-      row = parsed && typeof parsed === "object" ? (parsed as ApiRow) : null;
-    } catch {
-      row = null;
-    }
-    return { status: res.status, row };
-  } catch {
-    return { status: 0, row: null };
-  }
-}
 
 function parseErrorRow(
   row: ApiRow | null,
@@ -50,9 +29,7 @@ function parseErrorRow(
 }
 
 export async function httpUploadBanner(file: File): Promise<BannerAction> {
-  const form = new FormData();
-  form.append("file", file, file.name || "banner.png");
-  const { status, row } = await postMultipart("/cfg/banners/mine", form);
+  const { status, row } = await postProfileImage("/cfg/banners/mine", file);
   if ((status === 200 || status === 201) && row?.ok === true) {
     return { ok: true, banner: asText(row.banner) || null };
   }
@@ -88,6 +65,11 @@ export function humanBannerError(reason: string | undefined, fallback: string): 
       return "Фон: PNG/JPEG до 1200×400 px, GIF до 1500×1500 px.";
     case "too_large":
       return "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.";
+    case "proxy_too_large":
+      return "Сервер отклонил размер файла. Попробуйте GIF поменьше.";
+    case "upload_conflict":
+    case "upload_expired":
+      return "Загрузка прервалась — выберите файл ещё раз.";
     case "rate":
       return "Слишком часто, подождите немного и попробуйте снова.";
     case "io":

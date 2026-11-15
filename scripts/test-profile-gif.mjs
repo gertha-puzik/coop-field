@@ -6,6 +6,8 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import http from 'node:http';
+import ts from 'typescript';
 
 const root = new URL('..', import.meta.url).pathname;
 const data = mkdtempSync(path.join(tmpdir(), 'coop-gif-'));
@@ -65,6 +67,67 @@ function sizedGif(size) {
   }
   return Buffer.concat([base.subarray(0, -1), Buffer.from([0x21, 0xfe]), ...chunks, Buffer.from([0, 0x3b])]);
 }
+async function proxyUploads() {
+  let requestLimit = 1024 * 1024;
+  const bodies = [];
+  const proxy = http.createServer(async (req, res) => {
+    const chunks = []; let size = 0;
+    for await (const chunk of req) { size += chunk.length; chunks.push(chunk); }
+    bodies.push(size);
+    if (size > requestLimit) { res.writeHead(413, { 'content-type': 'text/html' }); res.end('<h1>413 Request Entity Too Large</h1>'); return; }
+    const upstream = http.request(origin + req.url, { method: req.method, headers: { ...req.headers, host: new URL(origin).host } }, result => {
+      res.writeHead(result.statusCode, result.headers); result.pipe(res);
+    });
+    upstream.on('error', () => { res.writeHead(502); res.end(); });
+    upstream.end(Buffer.concat(chunks));
+  });
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyOrigin = `http://127.0.0.1:${proxy.address().port}`;
+  const nativeFetch = globalThis.fetch;
+  try {
+    // Use the actual frontend sender, replacing only its browser origin dependency.
+    const source = readFileSync(path.join(root, 'src/lib/net/http-profile-image.ts'), 'utf8')
+      .replace("import { httpOrigin } from './coop';", `const httpOrigin = () => ${JSON.stringify(proxyOrigin)};`);
+    const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const { postProfileImage } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+    const exact = sizedGif(limit);
+    const file = new File([exact], 'animated.gif', { type: 'image/gif' });
+    // Reproduce the old failure: a single multipart request receives nginx-like HTML 413.
+    const form = new FormData(); form.append('file', file);
+    assert.equal((await nativeFetch(proxyOrigin + '/cfg/banners/mine', { method: 'POST', body: form })).status, 413);
+    bodies.length = 0;
+    for (const [kind, endpoint] of [['banner', '/cfg/banners/mine'], ['avatar', '/avatars/mine']]) {
+      const cookie = await account('chunk_' + kind);
+      globalThis.fetch = (url, init = {}) => nativeFetch(url, { ...init, headers: { ...init.headers, origin, cookie } });
+      const result = await postProfileImage(endpoint, file);
+      assert.equal(result.status, 200, JSON.stringify(result));
+      assert.equal(result.row.ok, true);
+      await sameGif(result.row[kind], exact);
+      assert.ok(bodies.every(bytes => bytes <= 512 * 1024));
+      assert.equal(bodies.length, 20); bodies.length = 0;
+      globalThis.fetch = nativeFetch;
+    }
+    const cookie = await account('chunk_invalid');
+    const id = crypto.randomUUID();
+    const chunkUrl = `/cfg/banners/mine?upload=${id}&part=0&size=${exact.length}`;
+    const send = (url, bytes, headers = {}) => nativeFetch(origin + url, { method: 'POST', headers: { 'content-type': 'application/octet-stream', origin, cookie, ...headers }, body: bytes });
+    const chunk = exact.subarray(0, 512 * 1024);
+    assert.equal((await send(chunkUrl, chunk, { cookie: '' })).status, 401);
+    assert.equal((await send(chunkUrl, chunk, { origin: 'https://evil.invalid' })).status, 403);
+    assert.equal((await send(chunkUrl, chunk)).status, 202);
+    assert.equal((await json('/profiles/me', cookie)).row.banner, null, 'partial file is not published');
+    assert.equal((await send(chunkUrl.replace('part=0', 'part=2'), chunk)).status, 409);
+    assert.equal((await send(chunkUrl.replace(`size=${limit}`, `size=${limit + 1}`), chunk)).status, 413);
+    assert.equal((await send(chunkUrl, chunk.subarray(0, 10))).status, 400);
+    assert.equal((await send(chunkUrl.replace('part=0', 'part=1'), chunk)).status, 409, 'failed upload is discarded');
+    // A proxy failure must never turn into the vague save-failed message again.
+    requestLimit = 1;
+    globalThis.fetch = (url, init = {}) => nativeFetch(url, { ...init, headers: { ...init.headers, origin, cookie } });
+    const rejected = await postProfileImage('/cfg/banners/mine', new File([base], 'small.gif', { type: 'image/gif' }));
+    assert.equal(rejected.status, 413); assert.equal(rejected.row.reason, 'proxy_too_large');
+    console.log('profile-gif proxy: PASS — HTML 413 reproduced, actual client uploads 10 MiB through 1 MiB proxy, chunks ≤512 KiB, auth/CSRF/order/cleanup');
+  } finally { globalThis.fetch = nativeFetch; await new Promise(resolve => proxy.close(resolve)); }
+}
 try {
   await start();
   const owner = await account('gif_owner');
@@ -112,5 +175,6 @@ try {
   assert.equal((await fetch(origin + b.row.banner)).status, 404);
   const id = /file\/([^.]+)\.gif/.exec(a.row.avatar)[1];
   assert.equal(existsSync(path.join(data, 'avatars', `${id}.gif`)), false);
+  await proxyUploads();
   console.log('profile-gif: PASS — exact 10 MiB, +1 rejection, animation parity, restart, replacement, deletion');
 } finally { await stop(); rmSync(data, { recursive: true, force: true }); }

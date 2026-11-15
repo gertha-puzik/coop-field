@@ -311,10 +311,12 @@ TLS from the cron (needs-tls ≈ 10 min is normal).
 
 ### Profile GIF uploads (10 MiB)
 
-The Elysiae vhost must allow the 10 MiB file plus multipart overhead. The owner can include
-`deploy/vps/nginx-profile-upload-size.sample.conf` in its nginx `server {}` block
-(`client_max_body_size 11m;`), validate with `nginx -t`, then reload nginx.
-An existing larger effective limit also works. This repository does not contain the active
-Elysiae vhost, and normal application deployment does not install this snippet or reload nginx.
-Node still enforces exactly 10 MiB for GIF and 2 MiB for PNG/JPEG. Local tests verify the
-application contract; they do not establish the effective production proxy limit.
+The browser uploads files over 512 KiB in ordered requests of at most 512 KiB; a standard
+1 MiB nginx body limit supports a complete 10 MiB GIF without a proxy configuration change.
+The application assembles the temporary file after auth/CSRF, validates it and then commits it.
+
+For direct multipart API clients sending a whole 10 MiB file in one request, the owner can
+optionally include `deploy/vps/nginx-profile-upload-size.sample.conf` in the nginx `server {}`
+block (`client_max_body_size 11m;`), validate with `nginx -t`, then reload nginx.
+An existing larger effective limit also works. Normal deployment does not install this
+snippet or reload nginx. Node enforces exactly 10 MiB for GIF and 2 MiB for PNG/JPEG.
