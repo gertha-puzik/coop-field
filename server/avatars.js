@@ -39,8 +39,9 @@ import { DATA_DIR, csrfDecision, siteClassOfRequest } from "./config.js";
 import { sessionFromRequest } from "./auth.js";
 import { json, setCors } from "./runtime-config.js";
 import { flushAccounts, avatarUrlOf } from "./accounts.js";
-import { readBody, parseMultipart, PNG_MAGIC } from "./sprites.js";
+import { PNG_MAGIC } from "./sprites.js";
 import { writeFileAtomic } from "./atomic-file.js";
+import { readProfileImage } from "./profile-image-upload.js";
 import { pushActivity } from "./activity.js";
 
 const DIR = path.join(DATA_DIR, "avatars");
@@ -53,7 +54,6 @@ fs.mkdirSync(DIR, { recursive: true });
  *  Content-Length — отсутствующий заголовок не обходит лимит). */
 const MAX_AVATAR_UPLOAD = 2 * 1024 * 1024;
 const MAX_GIF_UPLOAD = 10 * 1024 * 1024;
-const MAX_UPLOAD_BODY = MAX_GIF_UPLOAD + 64 * 1024; // multipart overhead
 
 /** Габариты: каждая сторона 64–1500 px, всего ≤ 2 250 000 px — квадратная
  *  аватарка 1500×1500 проходит впритык, «полоса» 1500×1499 тоже. */
@@ -249,52 +249,17 @@ export async function handleAvatarsHttp(req, res) {
       });
       return true;
     }
-    const contentType = String(req.headers["content-type"] || "");
-    if (!/^multipart\/form-data/i.test(contentType)) {
-      json(res, 400, {
-        ok: false,
-        reason: "bad_content_type",
-        message: "Ожидается multipart/form-data.",
-      });
-      return true;
-    }
-    let buf;
+    let img;
     try {
-      buf = await readBody(req, MAX_UPLOAD_BODY);
-    } catch (e) {
-      if (e && e.code === "too_large") {
-        json(res, 413, {
-          ok: false,
-          reason: "too_large",
-          message: "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.",
-        });
+      img = await readProfileImage(req, { owner: accountId, kind: "avatars", maxBytes: MAX_GIF_UPLOAD });
+      if (img === null) {
+        json(res, 202, { ok: true, pending: true });
         return true;
       }
-      json(res, 400, {
-        ok: false,
-        reason: "bad_multipart",
-        message: "Загрузка не читается — попробуйте ещё раз.",
-      });
+    } catch (error) {
+      json(res, error?.status || 500, { ok: false, reason: error?.reason || "io", message: error?.reason ? error.message : "Не удалось прочитать файл." });
       return true;
     }
-    const form = parseMultipart(buf, contentType);
-    if (!form) {
-      json(res, 400, {
-        ok: false,
-        reason: "bad_multipart",
-        message: "Форма загрузки не читается — файл не найден.",
-      });
-      return true;
-    }
-    if (!form.file || !form.file.data || !form.file.data.length) {
-      json(res, 400, {
-        ok: false,
-        reason: "no_file",
-        message: "Файл картинки не приложен.",
-      });
-      return true;
-    }
-    const img = form.file.data;
     const ext = sniffImage(img);
     if (!ext) {
       json(res, 400, {

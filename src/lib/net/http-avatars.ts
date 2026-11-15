@@ -2,7 +2,7 @@
  * Своя аватарка профиля (/avatars/mine*) — клиент блока «Аватар» редактора
  * своего профиля. Отдельный модуль по образцу http-my-sprites.ts: те же
  * сессионные маршруты (apiZone-CSRF по Origin, как у личных окрасов),
- * multipart-отправка FormData (boundary ставит браузер), человеко-русские
+ * multipart или части по 512 КиБ для крупных файлов, человеко-русские
  * тексты отказов. Литералы /avatars/* живут ТОЛЬКО здесь — как /sprites/mine
  * только в http-my-sprites.ts; импортирует их один потребитель — страница
  * профиля (src/components/players/player-profile.tsx), каталог и админ-панель
@@ -18,7 +18,7 @@
  *   не чаще раза в 10 секунд (rate).
  */
 import { apiFetch, asText, type ApiRow } from "./http-auth";
-import { httpOrigin } from "./coop";
+import { postProfileImage } from "./http-profile-image";
 
 /** Мутация аватара: успех несёт avatar (новый URL или null после удаления),
  *  отказ — reason сервера (человеко-текст даёт humanAvatarError). */
@@ -26,30 +26,7 @@ export type AvatarAction =
   | { ok: true; avatar: string | null }
   | { ok: false; reason: string; message?: string };
 
-/** POST multipart — boundary ставит браузер, руками content-type НЕ задаём. */
-async function postMultipart(path: string, form: FormData): Promise<{ status: number; row: ApiRow | null }> {
-  try {
-    const res = await fetch(`${httpOrigin()}${path}`, {
-      method: "POST",
-      credentials: "include",
-      body: form,
-    });
-    const text = await res.text();
-    let row: ApiRow | null = null;
-    try {
-      const parsed: unknown = JSON.parse(text);
-      row = parsed && typeof parsed === "object" ? (parsed as ApiRow) : null;
-    } catch {
-      row = null;
-    }
-    return { status: res.status, row };
-  } catch {
-    return { status: 0, row: null };
-  }
-}
-
-/** Разбор отказного тела: статус важнее пустого reason (401/403/сеть),
- *  message сервера уже человекочитаемый — показываем рядом с переводом. */
+/** HTTP status takes precedence when a proxy returns an empty/non-JSON response. */
 function parseErrorRow(
   row: ApiRow | null,
   status: number,
@@ -74,9 +51,7 @@ function parseErrorRow(
  * cache-busting ?v=<unixMs> назначает сервер. Ответ — свежий avatar-URL.
  */
 export async function httpUploadAvatar(file: File): Promise<AvatarAction> {
-  const form = new FormData();
-  form.append("file", file, file.name || "avatar.png");
-  const { status, row } = await postMultipart("/avatars/mine", form);
+  const { status, row } = await postProfileImage("/avatars/mine", file);
   if ((status === 200 || status === 201) && row?.ok === true) {
     return { ok: true, avatar: asText(row.avatar) || null };
   }
@@ -115,6 +90,11 @@ export function humanAvatarError(reason: string | undefined, fallback: string): 
       return "Картинка: сторона 64–1500 px; GIF до 10 МБ, PNG/JPEG до 2 МБ.";
     case "too_large":
       return "GIF — до 10 МБ, PNG/JPEG — до 2 МБ.";
+    case "proxy_too_large":
+      return "Сервер отклонил размер файла. Попробуйте GIF поменьше.";
+    case "upload_conflict":
+    case "upload_expired":
+      return "Загрузка прервалась — выберите файл ещё раз.";
     case "rate":
       return "Слишком часто, подождите немного и попробуйте снова.";
     case "io":
