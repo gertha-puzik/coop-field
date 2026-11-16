@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
+import { httpOrigin } from '@/lib/net/coop';
 import { Button } from '@/components/ui/button';
 import type { ProfileCard, ProfileFriend, PublicProfile } from '@/lib/net/http-profiles';
 import {
@@ -26,6 +27,8 @@ import {
   humanFriendError,
   type FriendRelation,
 } from '@/lib/net/http-friends';
+import { ProfileUserInfo } from './profile-user-info';
+import userInfoStyles from './profile-user-info.module.css';
 import { ProfileActivity } from './profile-activity';
 import { ProfileFriendsGrid } from './profile-friends-grid';
 import { ProfileHero } from './profile-hero';
@@ -34,10 +37,16 @@ import { avatarOf, daysSince, plural, presenceLabel, playtimeShort, playtimeText
 import styles from './players-elyria.module.css';
 import card2 from './profile-card.module.css';
 
+function portraitUrl(char: Parameters<typeof spriteUrl>[0]) {
+  const url=spriteUrl(char);
+  const file=url?.indexOf('/sprites/file/') ?? -1;
+  return url && file>=0 ? `${httpOrigin()}${url.slice(file)}` : url;
+}
+
 /** Активный персонаж всегда на лугу — аватар-фото живёт в шапке баннера. */
 function MeadowPortrait({ card, name }: { card: ProfileCard | PublicProfile; name: string }) {
   const char = avatarOf(card);
-  const url = spriteUrl(char);
+  const url = portraitUrl(char);
   const scale = Math.min(120, Math.max(60, char?.size || 100));
   return (
     <figure className={styles.avatar}>
@@ -159,7 +168,7 @@ export function ProfileCardView({
   const banner = shown.banner;
   const avatarUrl = shown.avatar;
   const char = avatarOf(shown);
-  const faceUrl = avatarUrl || spriteUrl(char);
+  const faceUrl = avatarUrl || portraitUrl(char);
   const friendCount = card.friendCount ?? friends.length;
   const days = daysSince(card.createdAt, now);
   const charCount = shown.characters?.length ?? card.characters.length;
@@ -310,7 +319,8 @@ export function ProfileCardView({
           {settingsSlot}
         </div>
       ) : (
-        <div className={card2.grid} role="tabpanel">
+        <div className={userInfoStyles.columns} role="tabpanel">
+          <ProfileUserInfo profile={shown} mine={mine} onEdit={() => pickTab('settings')} />
           <div className={card2.col}>
             <section className={card2.card} aria-labelledby="prof-char">
               <header className={card2.cardHead}>

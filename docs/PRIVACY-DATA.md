@@ -194,3 +194,6 @@ code path that adds a real account outside a sandbox is the owner CLI
 `scripts/make-admin.mjs <login> [pass]` (creates or promotes an admin in the
 target `DATA_DIR`, server stopped) and the live admin API
 `POST /admin/players/promote` (panel «Игроки на поле»).
+
+
+Admin console v0.6.7: `access-roles.json` stores role names and permission lists; assignments are in accounts.profile.accessRoleId. `admin-audit.json` retains the newest 50 administrative changes (time, group, description and actor); no passwords or invite code values are recorded. Public profile socials are intentionally public HTTPS links; foreign birthday still omits the year. Only authenticated authorized console users receive access assignments/permission lists.

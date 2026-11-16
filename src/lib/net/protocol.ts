@@ -256,6 +256,7 @@ export type CoopCharacter = {
 
 /** Ответ на auth / снимок сессии. token — только владельцу сокета. */
 export type CoopWhoami = {
+  permissions?: string[];
   ok: boolean;
   role?: "guest" | "registered" | "admin";
   login?: string;

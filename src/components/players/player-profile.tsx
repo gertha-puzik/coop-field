@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { SiteHeader } from '@/components/site/site-header';
-import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type PublicProfile } from '@/lib/net/http-profiles';
+import { httpDeleteAccount, httpMyProfile, httpPatchProfile, type ProfileCard, type ProfileMe, type ProfilePatch, type ProfileSp, type ProfileSocials, type PublicProfile } from '@/lib/net/http-profiles';
 import { httpLogout } from '@/lib/net/http-auth';
 import {
   DAMAGE_LEVELS,
@@ -41,6 +41,7 @@ import {
   activeCharOf,
   humanEditError,
 } from './player-profile-ui';
+import { ProfileSocialFields } from './profile-social-fields';
 import { ProfileAppearance } from './profile-appearance';
 import { Icon } from './profile-icons';
 import settingsStyles from './profile-settings.module.css';
@@ -120,6 +121,8 @@ export function OwnProfileEditor({
 }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
+  const [birthday,setBirthday] = useState(profile.birthday || '');
+  const [socials,setSocials] = useState<ProfileSocials>(profile.socials || {});
   const [settingsTab, setSettingsTab] = useState<'info' | 'appearance' | 'game' | 'delete'>(mineHighlight ? 'appearance' : 'info');
   const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
   const originChar = activeCharOf(profile);
@@ -142,6 +145,8 @@ export function OwnProfileEditor({
   useEffect(() => {
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
+    setBirthday(profile.birthday || '');
+    setSocials(profile.socials || {});
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
     setDraftSprite(ch?.sprite || '');
@@ -176,6 +181,8 @@ export function OwnProfileEditor({
     const patch: ProfilePatch = {
       displayName: name,
       bio: draftBio.trim(),
+      socials,
+      ...(birthday !== (profile.birthday || '') ? {birthday: birthday || null} : {}),
     };
     if (spChanged) patch.sp = { ...draftSp };
     // скин и рост персонажа — плоские поля активной записи; сервер валидирует
@@ -278,6 +285,7 @@ export function OwnProfileEditor({
           onChange={(e) => setDraftBio(e.target.value)}
         />
       </label>
+      <ProfileSocialFields birthday={birthday} socials={socials} onBirthday={setBirthday} onSocials={setSocials}/>
       </section>
       <section role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance" hidden={settingsTab !== 'appearance'}>
         <ProfileAppearance accountName={profile.displayName || 'игрока'} sprite={draftSprite} wornSprite={originSprite} scale={draftScale}

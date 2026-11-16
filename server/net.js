@@ -1,3 +1,5 @@
+import { handleAdminConsoleHttp } from "./admin-console.js";
+import { observeAdminChanges } from "./admin-audit-http.js";
 import { withTestLocation } from "./testmap.js";
 import { locationFromRoom, travel, handleLocationsHttp } from "./location-world.js";
 /**
@@ -298,6 +300,7 @@ export function startServer() {
         p.startsWith("/cfg/notifications/") ||
         p === "/cfg/announcements" ||
         p.startsWith("/cfg/announcements/") ||
+        p === "/cfg/console" || p.startsWith("/cfg/console/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
         p === "/cfg/export" ||
@@ -404,6 +407,8 @@ export function startServer() {
         return;
       }
     }
+    observeAdminChanges(req, res);
+    if (p === "/cfg/console" || p.startsWith("/cfg/console/")) return handleAdminConsoleHttp(req, res);
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
       // Админ-операции «Игроки на поле» (/admin/players*): разбираются ДО

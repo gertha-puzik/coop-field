@@ -1,3 +1,4 @@
+import { cleanSocials, validSocials } from "./profile-links.js";
 /**
  * HTTP-профили игроков — P4: рабочий каталог и правка СВОЕГО профиля.
  *
@@ -300,7 +301,7 @@ function parseQuery(raw) {
  * (accounts.applyProfileAppearance — канонический сеттер вне room-join).
  * Спрайт — только id из живого каталога (whitelist, как attachSprite);
  * размер — проценты роста 60–100, зажим и округление как в room-join. */
-const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId", "birthday", "sprite", "scale"];
+const PATCH_FLAT = ["displayName", "bio", "avatarCharacterId", "birthday", "socials", "sprite", "scale"];
 
 /* Birthday: формат хранения — строка «ГГГГ-ММ-ДД» либо null (не заполнено).
  * Диапазон: от 01.01.1900 до сегодняшнего дня по UTC включительно. */
@@ -437,6 +438,11 @@ function sanitizePatch(body, account) {
         return;
       }
       values.avatarCharacterId = raw;
+      return;
+    }
+    if (key === "socials") {
+      if (validSocials(raw)) values.socials = cleanSocials(raw);
+      else invalid.push({key,error:"нужны HTTPS-ссылки разрешённых соцсетей"});
       return;
     }
     if (key === "birthday") {
@@ -584,6 +590,7 @@ export async function handleProfilesHttp(req, res) {
       // Birthday — partial-merge как у соседей: поля нет — сохранённое не
       // трогаем; null — сброс в null (пустая дата = дня рождения нет).
       if (values.birthday !== undefined) acc.profile.birthday = values.birthday;
+      if (values.socials !== undefined) acc.profile.socials = values.socials;
       // СП — partial-merge: в PATCH нет поля → сохранённое не трогаем.
       if (values.sp) {
         const cur =

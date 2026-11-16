@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Админ-операции «Игроки на поле» — HTTP-стык панели /admin (образец слайса:
  * room-config.js). Домен живёт в room.js (adminOccupancy/resetPlayerPosition)
@@ -32,7 +33,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт администратора." });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, new URL(req.url, "http://localhost").pathname.endsWith("/promote") ? "roles" : "world")) {
     json(res, 403, { ok: false, reason: "forbidden", message: "Раздел открыт только администраторам." });
     return null;
   }
@@ -88,6 +89,7 @@ export async function handleAdminOpsHttp(req, res) {
     return true;
   }
   if (p === PROMOTE && req.method === "POST") {
+    if (session.account.role !== "admin") { json(res,403,{ok:false,reason:"forbidden"}); return true; }
     let body;
     try {
       body = await readJson(req);

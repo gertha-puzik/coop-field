@@ -1,3 +1,4 @@
+import { pushAdminAudit } from "./admin-audit.js";
 /**
  * Sessions, password actions, HTTP /auth/* and WS `auth` frames.
  * Token is an opaque hex string stored in DATA_DIR/sessions.json; the server
@@ -522,6 +523,7 @@ async function handleAuthFrame(ws, payload = {}, ip = "0") {
     // Захват кода — ТОЛЬКО после успешного createAccount: отказ 'taken'
     // не сжигает валидный код, повторная регистрация им же невозможна.
     if (invite) claimInvite(invite, out.account);
+    pushAdminAudit("registrations", `Зарегистрирован новый пользователь: ${out.account.login}`, out.account.login);
     const token = createSession(out.account.id);
     bindAccount(ws, out.account, token);
     sendWhoami(ws, whoamiBody(ws, { token }));

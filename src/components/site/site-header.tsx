@@ -235,7 +235,7 @@ export function SiteHeader({ ghost = false, home = false }: { ghost?: boolean; h
   }, []);
   const me = useMeRow();
   const inAccount = meHasAccount(me);
-  const isAdmin = inAccount && me?.role === 'admin';
+  const isAdmin = inAccount && (me?.role === 'admin' || !!me?.permissions?.length);
 
   useEffect(() => {
     if (!IS_ELYRIA || !inAccount) return;

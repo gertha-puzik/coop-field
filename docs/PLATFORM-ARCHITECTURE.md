@@ -323,3 +323,14 @@ PR-превью (`pr-<N>.*`) сняты 2026-11-14 по решению влад�
 сервера по классу хоста; `?t=` на Элизии выключен по умолчанию (env-тумблер на переход),
 на public/local — прежние пути живы. Инварианты шага/координат/`update cat`/leave-маркера
 не тронуты. `?room=combat` не ломается: алиас RETIRED_ROOMS ведёт в grot-1.
+
+
+### Admin console v0.6.7 (2026-11-16)
+
+The current access contract supersedes earlier admin-only descriptions above. Legacy `account.role=admin` retains full access. Configurable roles live in `DATA_DIR/access-roles.json`, assigned through `profile.accessRoleId`; permissions are overview, players, roles, world, config, sprites, textures, invites, news, announcements and statuses. Cosmetic `profile.statusId` is independent and never grants privileges. Auth HTTP/WS replies include `permissions`; server gates enforce each section independently. Map save requires world permission or legacy admin.
+
+`server/admin-console.js` owns `/cfg/console`: overview statistics/system/version, users, role CRUD/assignment, field occupancy/spawns, teleport and account deletion. Cookie Origin/CSRF and public-host hiding apply; OPTIONS permits preflight without bypassing mutation authorization. Deletion checks a separate server password with rate limiting, rejects self-deletion and protects legacy admins from custom roles; the existing eraseAccount workflow cleans account files and sessions. `server/admin-world.js` resolves explicit map spawns, falling back to the existing free-spawn algorithm on older maps; only trusted server options bypass join cooldown.
+
+`server/admin-audit.js` atomically stores the newest 50 changes in `admin-audit.json`. HTTP success hooks, registration and map-save hooks record grouped events; passwords and invite values are excluded. The general view shows system status above the journal, with filters and scrolling after ten rows. Invites, news and announcements are general subtabs; users/administration, access roles and cosmetic statuses share a separate section. World settings retain config and armor; assets retain sprite/texture tools. Game version is v0.6.7.
+
+Profile sidebar `profile-user-info.tsx` shows birthday (public month/day), cosmetic position and social links. `profile-social-fields.tsx` edits these from primary information. `server/profile-links.js` validates HTTPS and official network hosts; public DTOs expose links but never access-role assignments or permissions. Regression: `scripts/test-console-profile.mjs` covers RBAC/cosmetic separation, host/CSRF/CORS, deletion, persistence, social validation, teleport and journal retention.

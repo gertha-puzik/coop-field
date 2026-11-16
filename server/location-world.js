@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /** Location model mirror and trusted world travel. No client coordinates are accepted for arrival. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -179,7 +180,7 @@ function locationsAdminGate(req, res) {
         json(res, 401, { ok: false, reason: 'auth_required', message: 'Нужен вход в аккаунт администратора.' });
         return null;
     }
-    if (session.account?.role !== 'admin') {
+    if (!hasPermission(session.account, "world")) {
         json(res, 403, { ok: false, reason: 'forbidden', message: 'Раздел открыт только администраторам.' });
         return null;
     }

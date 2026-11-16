@@ -1,3 +1,5 @@
+import { cleanSocials } from "./profile-links.js";
+import { permissionsOf } from "./access-roles.js";
 /**
  * Account / profile / character JSON store in DATA_DIR/accounts.json.
  * Passwords never leave this module as plaintext. Writes are atomic (same
@@ -237,6 +239,7 @@ function publicAccount(acc) {
     accountId: acc.id,
     login: acc.login,
     role: acc.role,
+    permissions: permissionsOf(acc),
     profile: {
       displayName: acc.profile?.displayName || acc.login,
       statusId,
@@ -297,6 +300,7 @@ function publicProfile(acc) {
     displayName: acc.profile?.displayName || acc.login,
     bio: typeof acc.profile?.bio === "string" ? acc.profile.bio : "",
     birthday: birthdayOf(acc),
+    socials: cleanSocials(acc.profile?.socials),
     avatarCharacterId: avatar,
     avatar: avatarUrlOf(acc),
     banner: bannerUrlOf(acc),

@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Runtime-конфиг v2 (P2, спек §6): в DATA_DIR/runtime-config.json лежат ТОЛЬКО
  * значения { v: 1, atmo, universes, combat } — whitelist-модель: что можно
@@ -229,7 +230,7 @@ function adminFromReq(req) {
     const rec = raw?.sessions?.[token];
     if (!rec || Date.now() > Number(rec.expiresAt)) return null;
     const account = findById(rec.accountId);
-    return account && account.role === "admin" ? account : null;
+    return hasPermission(account, "config") ? account : null;
   } catch {
     return null;
   }

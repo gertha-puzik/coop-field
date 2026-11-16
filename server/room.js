@@ -355,7 +355,7 @@ function join(ws,payload={},options={}){
 }
 function joinInWorld(ws, payload = {},options={}) {
   const now = Date.now();
-  if (now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
+  if (!options.adminTeleport && now - (ws.lastJoin || 0) < JOIN_COOLDOWN_MS) {
     send(ws, EV.INFO, "Слишком часто. Подождите секунду.");
     return;
   }
@@ -384,7 +384,7 @@ function joinInWorld(ws, payload = {},options={}) {
     refuseJoin(ws, room, `В комнате уже ${MAX_PLAYERS} котов — мест нет. Смените ?room=.`);
     return;
   }
-  const cell = spawnCell(room);
+  const cell = options.adminTeleport && options.arrival ? [options.arrival.x, options.arrival.y] : spawnCell(room);
   if (!cell) {
     // Двух котов в одну клетку не ставим: нет свободной клетки — отказ, не очередь.
     refuseJoin(ws, room, "На поле нет свободных клеток.");
@@ -577,6 +577,8 @@ function adminOccupancy() {
         fx: Number.isFinite(pc.fx) ? pc.fx : null,
         fy: Number.isFinite(pc.fy) ? pc.fy : null,
         accountLogin: acc ? String(acc.login || "") : null,
+        accountId: acc?.id || null,
+        locationLabel: cat.locationId ? withTestLocation(cat.locationId,()=>`${placeOf(testMap,cat.locationId).zoneName} · ${placeOf(testMap,cat.locationId).name}`) : null,
         accountRole: acc ? (acc.role === "admin" ? "admin" : "registered") : null,
       });
     }

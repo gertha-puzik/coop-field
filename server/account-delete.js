@@ -95,6 +95,12 @@ export async function deleteOwnAccount(acc, password) {
   const matches = await verifyPassword(pass, acc.pass);
   if (!matches) return { error: "bad_password" };
 
+  return eraseAccount(acc);
+}
+
+/** Called only after the console has checked admin permission and its deletion password. */
+export async function eraseAccount(acc) {
+  if (!acc || typeof acc.id !== 'string') return { error: 'bad_id' };
   const sprites = await removeOwnSprites(acc.id);
   if (sprites.error) return { error: "io" };
   const avatars = removeOwnAvatarFiles(acc.id);

@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Новости главной доски («Что нового?»): публичное чтение для обоих сайтов,
  * запись только admin. Хранилище DATA_DIR/home-news.json (атомарная запись).
@@ -219,7 +220,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required" });
     return null;
   }
-  if (session.account.role !== "admin") {
+  if (!hasPermission(session.account, "news")) {
     json(res, 403, { ok: false, reason: "forbidden" });
     return null;
   }

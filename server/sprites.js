@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Менеджер спрайтов — единый источник каталога скинов (владелица: «загрузка
  * и удаление скинов/персонажей с категориями»). Домен живёт в DATA_DIR/sprites/:
@@ -497,7 +498,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт администратора." });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, "sprites")) {
     json(res, 403, { ok: false, reason: "forbidden", message: "Раздел открыт только администраторам." });
     return null;
   }
