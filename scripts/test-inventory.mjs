@@ -178,9 +178,28 @@ try {
         name: "Наггетс",
         weight: 3,
         sprite,
+        glows: true,
       })
     ).status,
     200,
+  );
+  assert.equal(
+    (await req("/cfg/items", admin.cookie)).row.items.find(
+      (i) => i.id === "nugget",
+    ).glows,
+    true,
+  );
+  assert.equal(
+    (
+      await req("/cfg/items", admin.cookie, "POST", {
+        id: "nugget",
+        name: "Наггетс",
+        weight: 3,
+        sprite,
+        glows: "yes",
+      })
+    ).status,
+    400,
   );
   assert.equal(
     (
@@ -371,6 +390,13 @@ try {
     (await grant(a.id, a.characterId, "nugget", 6, op)).row.replayed,
     true,
     "grant idempotency survives restart",
+  );
+  assert.equal(
+    (await req("/cfg/items", admin.cookie)).row.items.find(
+      (i) => i.id === "nugget",
+    ).glows,
+    true,
+    "glow survives edits by old clients and restart",
   );
   assert.equal((await fetch(origin + sprite)).status, 200);
   const log = (await req("/cfg/console", admin.cookie)).row.items;

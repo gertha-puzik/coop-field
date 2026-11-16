@@ -6,7 +6,10 @@ import {
   type InventorySnapshot,
   type InventorySlot,
 } from "@/lib/net/http-inventory";
-export function useInventory(characterId: string | undefined) {
+export function useInventory(
+  characterId: string | undefined,
+  catId?: number | null,
+) {
   const [snapshot, setSnapshot] = useState<InventorySnapshot | null>(null),
     [busy, setBusy] = useState(false),
     [loadError, setLoadError] = useState(""),
@@ -90,11 +93,17 @@ export function useInventory(characterId: string | undefined) {
     },
     [characterId, refresh],
   );
+  useEffect(() => {
+    if (!actionError) return;
+    const timer = setTimeout(() => setActionError(""), 4500);
+    return () => clearTimeout(timer);
+  }, [actionError]);
   const worldAction = useCallback(
     async (raw: Record<string, unknown>) => {
       const prior = snapshotRef.current;
       if (
         !characterId ||
+        catId == null ||
         locked.current ||
         !prior ||
         prior.characterId !== characterId
@@ -108,7 +117,7 @@ export function useInventory(characterId: string | undefined) {
         const row = await inventoryRequest<{ inventory?: InventorySnapshot }>(
           "/cfg/inventory/world",
           "POST",
-          { ...raw, characterId, version: prior.version },
+          { ...raw, characterId, catId, version: prior.version },
         );
         if (current.current !== characterId) return false;
         if (row.inventory) setSnapshot(row.inventory);
@@ -123,7 +132,7 @@ export function useInventory(characterId: string | undefined) {
         window.dispatchEvent(new Event("world-items:refresh"));
       }
     },
-    [characterId, refresh],
+    [characterId, catId, refresh],
   );
   return {
     worldAction,

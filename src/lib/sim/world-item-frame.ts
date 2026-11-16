@@ -4,7 +4,14 @@ import {
   type ElisionActor,
 } from "./elision-scene";
 import type { WorldItemsSnapshot, ItemDefinition } from "../net/http-inventory";
-import { supportLevelAt, TERRAIN_LIFT_PX } from "./test-field";
+import {
+  currentTestMap,
+  testPointInIsland,
+  supportLevelAt,
+  TERRAIN_LIFT_PX,
+} from "./test-field";
+import { createNightLightModel, itemGlowAmount } from "./night-lights";
+const fallbackLights = createNightLightModel();
 export const ITEM_REACH_PX = 70;
 export const WORLD_ITEM_SIZE = 30;
 export type WorldItemFrame = { frame: ElisionFrame; rect: DOMRect };
@@ -67,6 +74,7 @@ export function appendWorldItems(frame: ElisionFrame) {
       ...size,
       lift: supportLevelAt(item.x, item.y) * TERRAIN_LIFT_PX,
       url: src,
+      glows: !!items.find((i) => i.id === item.itemId)?.glows,
       mirror: false,
       rot: 0,
     });
@@ -89,7 +97,8 @@ export function appendWorldItems(frame: ElisionFrame) {
       ...size,
       lift: 0,
       url: src,
-      mirror: false,
+      glows: !!items.find((i) => i.id === player.mouth?.itemId)?.glows,
+      mirror: parent.mirror,
       rot: parent.rot + ((parent.pose?.rot ?? 0) * 180) / Math.PI,
       attachment: {
         parentId: parent.id,
@@ -185,7 +194,7 @@ function drawFallback(
     );
     g.restore();
   };
-  for (const item of items) {
+  const paintItem = (item: ElisionActor) => {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, w, h);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -204,14 +213,15 @@ function drawFallback(
           (a.x + a.w / 2) * Math.sin(frame.yaw) +
           (a.y + a.h) * Math.cos(frame.yaw);
         if (
-          actor.id === item.attachment?.parentId ||
+          actor.id !== item.attachment?.parentId &&
           depth(actor) >= depth(itemFoot)
         )
           draw(actor, true);
       }
     g.globalCompositeOperation = "source-over";
-    out.drawImage(itemCanvas, 0, 0);
-  }
+    out.drawImage(itemCanvas!, 0, 0);
+  };
+  for (const item of items) paintItem(item);
   if (!alphaCanvas) alphaCanvas = scratch();
   alphaCanvas.width = w;
   alphaCanvas.height = h;
@@ -223,6 +233,56 @@ function drawFallback(
   out.globalCompositeOperation = "destination-in";
   out.drawImage(alphaCanvas, 0, 0);
   out.globalCompositeOperation = "source-over";
+  const glowAmount = frame.editor ? 0 : itemGlowAmount(frame.dayProgress);
+  if (glowAmount) {
+    out.globalAlpha = glowAmount * 0.65;
+    for (const item of items) if (item.glows) paintItem(item);
+    out.globalAlpha = 1;
+  }
+  const now = performance.now();
+  const sources = fallbackLights.update(
+    frame,
+    now,
+    currentTestMap(),
+    (x, z) => testPointInIsland(x / frame.cellW, z / frame.cellH),
+    (x, z) =>
+      supportLevelAt(x / frame.cellW, z / frame.cellH) * TERRAIN_LIFT_PX,
+  );
+  out.save();
+  out.setTransform(dpr, 0, 0, dpr, 0, 0);
+  for (const source of sources) {
+    const p = project(source.x, source.z, source.y),
+      radius = 120 * frame.zoom;
+    if (
+      p.x < -radius ||
+      p.x > frame.viewW + radius ||
+      p.y < -radius ||
+      p.y > frame.viewH + radius
+    )
+      continue;
+    const light = out.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+    light.addColorStop(
+      0,
+      `rgba(255,223,112,${source.energy * (source.kind === "firefly" ? 0.1 : 0.18)})`,
+    );
+    light.addColorStop(1, "rgba(255,223,112,0)");
+    out.fillStyle = light;
+    out.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+    const r = (source.kind === "firefly" ? 9 : 45) * frame.zoom;
+    const halo = out.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+    halo.addColorStop(
+      0,
+      `rgba(255,247,159,${source.energy * (source.kind === "firefly" ? 1 : 0.22)})`,
+    );
+    halo.addColorStop(
+      0.16,
+      `rgba(255,235,116,${source.energy * (source.kind === "firefly" ? 0.45 : 0.14)})`,
+    );
+    halo.addColorStop(1, "rgba(255,220,100,0)");
+    out.fillStyle = halo;
+    out.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+  }
+  out.restore();
 }
 export function publishWorldItemFrame(
   frame: ElisionFrame,

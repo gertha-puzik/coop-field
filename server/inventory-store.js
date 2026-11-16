@@ -96,7 +96,15 @@ export function saveItem(raw) {
     return { error: "invalid_sprite" };
   if (!store.items[id] && Object.keys(store.items).length >= 500)
     return { error: "catalogue_full" };
-  const item = { id, name, weight, sprite },
+  if (raw.glows !== undefined && typeof raw.glows !== "boolean")
+    return { error: "invalid_item" };
+  const item = {
+      id,
+      name,
+      weight,
+      sprite,
+      glows: raw.glows ?? store.items[id]?.glows ?? false,
+    },
     items = { ...store.items, [id]: item };
   if (
     Object.values(store.inventories).some(

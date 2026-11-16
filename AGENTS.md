@@ -350,10 +350,26 @@ mouse transfer uses two clicks (no held-button drag), Escape cancels. `test:worl
 covers real multiplayer HTTP/WS, races, weight, consent, travel and persistence.
 
 Item interaction fixes: pickup uses a 70px circular radius in canonical 100×150
-world pixels; hover selects a reachable item. R with a full mouth releases at the
+world pixels; hover shows any item, with pickup disabled outside reach. R with a full mouth releases at the
 server-authoritative feet. `stash` atomically moves one mouth unit into a chosen
 bag/hotbar slot with weight/occupancy checks. Items are scene decals, mouth decals
-inherit the actual model root and render behind opaque model pixels; both ground
+inherit the actual model root and render in front of their owner; both ground
 and mouth fit the same 30px box, preserving aspect. 2D fallback uses a masked,
 tinted world layer below weather/UI. Renderer regression: test-world-item-view
 in test:unit. World item snapshots no longer insert DOM images over dialogs.
+
+Night lighting (2026-11-16): item definitions have optional boolean `glows`, edited
+in Resources → Items and retained by older clients' saves. `night-lights.ts`
+shares smooth phase fades, world-space emission points and random continuous
+firefly paths across WebGL (`elision-glow.ts` StandardMaterial plugin + halo
+quads) and 2D fallback (`world-item-frame.ts`). Morning/day emit no light;
+items emit in evening/night, fireflies at night. Population scales with map area
+(16–96), shader light array is capped at 24 nearest sources; offscreen fallback
+lights are skipped. Mouth sprites mirror the actor and stay in front of the
+owner while remaining below weather/UI. Hover information is available at any
+distance; all pickup buttons/keys still require server-authoritative 70px reach.
+
+World-item actions/snapshots now carry the current owned `catId` (game tab),
+never another account's actor. Reach UI combines visual and authoritative feet;
+InventoryPanel is the sole inventory error surface. Two-tab regression is in
+`test:world-items`.

@@ -34,31 +34,38 @@ const EMPTY: WorldItemsSnapshot = {
 export function WorldItems({
   controller,
   characterId,
+  meId,
   blocked,
 }: {
   controller: InventoryController;
   characterId?: string;
+  meId: number | null;
   blocked: boolean;
 }) {
   const [world, setWorld] = useState(EMPTY),
     [near, setNear] = useState<string | null>(null),
-    [target, setTarget] = useState<number | null>(null);
+    [target, setTarget] = useState<number | null>(null),
+    [reachable, setReachable] = useState<string[]>([]);
   const root = useRef<HTMLDivElement>(null),
     current = useRef({ world, controller, blocked }),
     nearRef = useRef<string | null>(null),
     targetRef = useRef<number | null>(null),
     pointer = useRef({ x: -10000, y: -10000 });
+  const reachableRef = useRef(new Set<string>());
   current.current = { world, controller, blocked };
   useEffect(() => {
     let disposed = false,
       loading = false;
     setWorld(EMPTY);
     async function load() {
-      if (!characterId || loading || document.hidden) return;
+      if (!characterId || meId === null || loading || document.hidden) return;
       loading = true;
       try {
         const row = await inventoryRequest<{ world: WorldItemsSnapshot }>(
-          "/cfg/inventory/world?characterId=" + encodeURIComponent(characterId),
+          "/cfg/inventory/world?characterId=" +
+            encodeURIComponent(characterId) +
+            "&catId=" +
+            meId,
         );
         if (!disposed) {
           setWorld(row.world);
@@ -83,7 +90,7 @@ export function WorldItems({
       clearInterval(timer);
       window.removeEventListener("world-items:refresh", load);
     };
-  }, [characterId]);
+  }, [characterId, meId]);
   useEffect(() => {
     setWorldItemScene(
       world,
@@ -112,6 +119,7 @@ export function WorldItems({
             (a) => a.id === (id === w.selfId ? f.controlledId : `p${id}`),
           );
         const self = w.selfId === null ? undefined : actor(w.selfId);
+        const serverSelf = w.players.find((p) => p.id === w.selfId);
         const project = (x: number, y: number, lift = 0) => ({
           x:
             rect.left +
@@ -151,24 +159,32 @@ export function WorldItems({
           hovered: string | null = null,
           promptHovered: string | null = null,
           distance = Infinity;
+        const canReach: string[] = [];
         for (const item of w.ground) {
           const lift = supportLevelAt(item.x, item.y) * TERRAIN_LIFT_PX;
           const p = project(item.x * f.cellW, item.y * f.cellH, lift);
 
           at(`prompt-${item.id}`, { x: p.x, y: p.y - 36 * f.zoom });
           if (self) {
-            const d = Math.hypot(
+            const visualDistance = Math.hypot(
               ((self.x + self.w / 2) / f.cellW - item.x) * 100,
               ((self.y + self.h) / f.cellH - item.y) * 150,
             );
+            const serverDistance = serverSelf
+              ? Math.hypot(
+                  (serverSelf.x - item.x) * 100,
+                  (serverSelf.y - item.y) * 150,
+                )
+              : Infinity;
+            const d = Math.max(visualDistance, serverDistance);
             if (
-              d <= ITEM_REACH_PX &&
               Math.abs(pointer.current.x - p.x) <= 20 * f.zoom &&
               pointer.current.y >= p.y - 36 * f.zoom &&
               pointer.current.y <= p.y + 4 * f.zoom
             )
               hovered = item.id;
-            if (d <= ITEM_REACH_PX && nearRef.current === item.id) {
+            if (d <= ITEM_REACH_PX) canReach.push(item.id);
+            if (nearRef.current === item.id) {
               const prompt = root.current
                 ?.querySelector<HTMLElement>(
                   `[data-world-key="prompt-${item.id}"]`,
@@ -213,6 +229,10 @@ export function WorldItems({
             }
           }
         }
+        if ([...reachableRef.current].join() !== canReach.join()) {
+          reachableRef.current = new Set(canReach);
+          setReachable(canReach);
+        }
         closest = hovered || promptHovered || closest;
         if (nearRef.current !== closest) {
           nearRef.current = closest;
@@ -253,7 +273,11 @@ export function WorldItems({
       }
       const action =
         e.code === "KeyR" ? "mouth" : e.code === "KeyF" ? "take" : null;
-      if (action && nearRef.current) {
+      if (
+        action &&
+        nearRef.current &&
+        reachableRef.current.has(nearRef.current)
+      ) {
         e.preventDefault();
         e.stopImmediatePropagation();
         void current.current.controller.worldAction({
@@ -322,14 +346,25 @@ export function WorldItems({
           {near === row.id && !blocked ? (
             <div data-world-key={`prompt-${row.id}`} className={s.prompt}>
               <strong>{item(row.itemId)?.name}</strong>
+              <span>
+                Вес: {item(row.itemId)?.weight}
+                {item(row.itemId)?.glows ? " · Светится вечером и ночью" : ""}
+              </span>
+              {!reachable.includes(row.id) ? (
+                <small>Подойдите ближе, чтобы поднять</small>
+              ) : null}
               <button
-                disabled={controller.busy || !!world.mouth}
+                disabled={
+                  controller.busy ||
+                  !!world.mouth ||
+                  !reachable.includes(row.id)
+                }
                 onClick={() => act({ action: "mouth", id: row.id })}
               >
                 <kbd>R</kbd> Взять в пасть
               </button>
               <button
-                disabled={controller.busy}
+                disabled={controller.busy || !reachable.includes(row.id)}
                 onClick={() => act({ action: "take", id: row.id })}
               >
                 <kbd>F</kbd> Убрать в инвентарь
@@ -379,11 +414,6 @@ export function WorldItems({
               ))}
         </div>
       ))}
-      {controller.error && !blocked ? (
-        <p className={s.error} role="status">
-          {controller.error}
-        </p>
-      ) : null}
     </div>,
     document.body,
   );

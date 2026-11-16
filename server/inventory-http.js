@@ -65,7 +65,15 @@ export async function handleInventoryHttp(req, res) {
         return json(res, 200, {
           ok: true,
           ...(p.endsWith("/world")
-            ? { world: worldItemsView(actor.id, character.id) }
+            ? {
+                world: worldItemsView(
+                  actor.id,
+                  character.id,
+                  url.searchParams.has("catId")
+                    ? Number(url.searchParams.get("catId"))
+                    : undefined,
+                ),
+              }
             : { inventory: inventoryView(actor.id, character.id) }),
         });
       }

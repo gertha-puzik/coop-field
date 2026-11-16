@@ -7,6 +7,7 @@
  * Engine, не WebGPUEngine. Камера ортографическая и совпадает с
  * screenToWorld (формулы — elision-scene.ts), поэтому клики не переезжают.
  */
+import {createWorldGlow,itemGlowAmount} from './elision-glow';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
@@ -66,6 +67,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const webgl: ElisionView['webgl'] = version >= 2 ? 'webgl2' : 'webgl1';
 
   const scene = new Scene(engine);
+  const glow=createWorldGlow(scene);
   // RH даёт экранный +X вправо без отражённой ортопроекции.
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(9 / 255, 9 / 255, 11 / 255, 1);
@@ -82,6 +84,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
 
   const groundMat = new StandardMaterial('elision-ground', scene);
   groundMat.disableLighting = true;
+  glow.attach(groundMat);
   groundMat.specularColor = new Color3(0, 0, 0);
   groundMat.emissiveColor = GRASS.clone();
   groundMat.backFaceCulling = false;
@@ -96,6 +99,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   let terrainFringe: Mesh | null = null;
   const wallMat = new StandardMaterial('elision-cliff', scene);
   wallMat.disableLighting = true;
+  glow.attach(wallMat);
   wallMat.specularColor = Color3.Black();
   wallMat.backFaceCulling = false;
   wallMat.transparencyMode = Material.MATERIAL_ALPHATEST;
@@ -365,6 +369,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         }
         const mat = new StandardMaterial(`decal-${actor.id}`, scene);
         mat.disableLighting = true;
+        glow.attach(mat);
         mat.forceDepthWrite = !actor.isProp;
         mat.specularColor = new Color3(0, 0, 0);
         const tex = textureFor(actor.url,actor.image);
@@ -403,7 +408,8 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const texture=textureFor(actor.url,actor.image);
       if(node.mat.diffuseTexture!==texture)node.mat.diffuseTexture=texture;
       node.sig = sig;
-      node.mat.emissiveColor.set(...tint);
+      const e=actor.glows&&!frame.editor?itemGlowAmount(frame.dayProgress)*.8:0;
+      node.mat.emissiveColor.set(tint[0]+(1-tint[0])*e,tint[1]+(1-tint[1])*e,tint[2]+(1-tint[2])*e);
       const targetAlpha = actor.opacity ?? elisionObstacleAlpha(actor, self, frame.yaw);
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
         : node.mat.alpha + (targetAlpha - node.mat.alpha) * 0.18;
@@ -413,7 +419,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const parent = actor.attachment ? decals.get(actor.attachment.parentId) : null;
       if(parent && actor.attachment){
         node.root.parent=parent.root;
-        node.root.position.set(actor.attachment.x,actor.attachment.y,-0.3);
+        node.root.position.set(actor.attachment.x,actor.attachment.y+0.3,0.3);
         node.root.rotation.set(0,0,0);
         node.mat.zOffset=0;
       }else{
@@ -469,6 +475,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       placeCamera(frame);
       syncGround(frame);
       syncDecals(frame);
+      glow.update(frame,now);
       scene.render();
     },
     destroy() {
@@ -480,6 +487,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         node.root.dispose();
       }
       decals.clear();
+      glow.destroy();
       for (const tex of textures.values()) tex.dispose();
       textures.clear();
       groundDyn?.dispose();

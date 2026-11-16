@@ -555,7 +555,7 @@ behavior. The client displays newest first. Elysiae chatlog may contain 80 rows.
 | `/cfg/inventory/world` GET/POST | `server/world-items.js` | Live authenticated room + captured character ID, exact ground mask and 70px circular pickup reach (offers: 1.5 cells); clients cannot choose another room/character |
 | `inventories.json` v1 extension | `server/inventory-store.js` | Ground rows keyed by UUID with room/point; optional inventory mouth; every drop/pickup/accepted handoff is one atomic file commit |
 | Offers | `server/world-items.js` in-memory | 20 seconds, both original live cats, same room, empty recipient mouth and proximity rechecked; item stays with sender until accept |
-| Scene → UI | `world-item-frame.ts` → `inventory/world-items.tsx` | Scene decals inherit camera, tint, weather and depth; mouth uses a parent-root attachment behind opaque cat pixels; ground uses world coordinates |
+| Scene → UI | `world-item-frame.ts` → `inventory/world-items.tsx` | Scene decals inherit camera, tint, weather and depth; mouth uses a parent-root attachment in front of its owner, mirrored with its facing; ground uses world coordinates |
 
 No WebSocket event changes. HTTP snapshots poll while visible and refresh after
 mutations; existing HTTP host/Origin/ownership gates apply. Regression:
@@ -566,3 +566,24 @@ held-button drag is removed. A separate mouth slot beside the hotbar can be move
 into bag/hotbar. R releases at authoritative feet; failed weight/occupied-slot
 stashes retain mouth ownership. Ground and mouth share the same 30px fitted size.
 Hover changes the selected ground prompt only within the 70px pickup circle.
+
+### Night lighting and item inspection (2026-11-16)
+
+| Boundary | Implementation |
+| --- | --- |
+| Item catalogue / admin | Optional boolean `glows` in inventory-store + http-inventory; ItemsTab checkbox. Old rows default off; old clients preserve the stored flag. PNG bytes unchanged. |
+| Shared cosmetic simulation | `night-lights.ts`: smooth phase factors, 16–96 random fireflies depending on map area, valid ground paths, bobbing/lifetimes and item light positions. No WS/persistent firefly state. |
+| WebGL | `elision-glow.ts`: StandardMaterial fragment shader adds warm distance falloff to terrain, models and items; at most 24 nearest lights. Soft billboard halos mark sources. |
+| 2D fallback | `world-item-frame.ts`: same simulation, clipped world-space light gradients and self-lit item compositing, below weather and all UI. |
+| Inspection | Pointer hover selects any ground item; name/weight/glow info remains visible outside pickup range. Buttons and keyboard pickup require 70px reach; server checks remain unchanged. |
+
+Tests: `test-world-item-view.mjs` covers phase boundaries, movement continuity,
+item mirror/glow metadata and actual Babylon shader injection/compilation;
+`test:inventory` covers boolean validation, old-client edits and restart.
+
+Current-tab item authority: HTTP GET/POST carries `catId`; server resolves it
+against owned character sockets, including offers. UI conservatively combines
+rendered and polled authoritative feet for pickup availability. `test:world-items`
+now covers two live tabs with different positions, explicit selection, release
+coordinates and foreign actor denial. One InventoryPanel alert replaces duplicate
+world/hotbar alerts.
