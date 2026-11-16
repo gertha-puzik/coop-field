@@ -5,7 +5,7 @@
  * (docs/superpowers/specs/2026-11-14-profile-banner-activity-design.md):
  * шапка-баннер с аватаром (ProfileHero), вкладки «Профиль» / «Мои
  * настройки», две колонки карточек — слева активный персонаж на лугу, краткая
- * статистика и «о себе», справа друзья сеткой и «Последние действия».
+ * статистика, справа друзья сеткой и «Последние действия».
  * Только честные данные DTO: боевых счётчиков и достижений сервер не
  * собирает — их на странице нет.
  *
@@ -164,7 +164,6 @@ export function ProfileCardView({
   const playMs = shown.playtimeMs ?? card.playtimeMs ?? 0;
   const location = (shown.locationLabel ?? card.locationLabel) || 'неизвестно';
   const rawBio = (shown.bio ?? card.bio) || '';
-  const bio = rawBio || 'Пока ничего не рассказано о себе.';
   const banner = shown.banner;
   const avatarUrl = shown.avatar;
   const char = avatarOf(shown);
@@ -320,50 +319,39 @@ export function ProfileCardView({
         </div>
       ) : (
         <div className={userInfoStyles.columns} role="tabpanel">
-          <ProfileUserInfo profile={shown} mine={mine} onEdit={() => pickTab('settings')} />
-          <div className={card2.col}>
-            <section className={card2.card} aria-labelledby="prof-char">
-              <header className={card2.cardHead}>
-                <h2 className={card2.cardTitle} id="prof-char">
-                  <Icon name="paw" className={card2.cardIcon} />
-                  Активный персонаж
-                </h2>
-                {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
-              </header>
-              <div className={card2.charBody}>
-                <MeadowPortrait card={shown} name={name} />
-              </div>
-            </section>
+          <div className={userInfoStyles.primary}>
+            <ProfileUserInfo profile={shown} />
+            <div className={card2.col}>
+              <section className={card2.card} aria-labelledby="prof-char">
+                <header className={card2.cardHead}>
+                  <h2 className={card2.cardTitle} id="prof-char">
+                    <Icon name="paw" className={card2.cardIcon} />
+                    Активный персонаж
+                  </h2>
+                  {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
+                </header>
+                <div className={card2.charBody}>
+                  <MeadowPortrait card={shown} name={name} />
+                </div>
+              </section>
 
-            <section className={card2.card} aria-labelledby="prof-stats">
-              <header className={card2.cardHead}>
-                <h2 className={card2.cardTitle} id="prof-stats">
-                  <Icon name="chart" className={card2.cardIcon} />
-                  Краткая статистика
-                </h2>
-              </header>
-              <ul className={card2.stats}>
-                <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
-                <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
-                <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
-                <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
-                <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
-              </ul>
-            </section>
+              <section className={card2.card} aria-labelledby="prof-stats">
+                <header className={card2.cardHead}>
+                  <h2 className={card2.cardTitle} id="prof-stats">
+                    <Icon name="chart" className={card2.cardIcon} />
+                    Краткая статистика
+                  </h2>
+                </header>
+                <ul className={card2.stats}>
+                  <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
+                  <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
+                  <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
+                  <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
+                  <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
+                </ul>
+              </section>
 
-            <section className={card2.card} aria-labelledby="prof-about">
-              <header className={card2.cardHead}>
-                <h2 className={card2.cardTitle} id="prof-about">
-                  <Icon name="leaf" className={card2.cardIcon} />О себе
-                </h2>
-                {mine ? (
-                  <button type="button" className={card2.iconBtn} aria-label="Изменить «о себе»" onClick={() => pickTab('settings')}>
-                    <Icon name="pencil" size={16} />
-                  </button>
-                ) : null}
-              </header>
-              <p className={card2.bio}>{bio}</p>
-            </section>
+            </div>
           </div>
 
           <div className={card2.col}>
@@ -411,7 +399,7 @@ export function ProfileCardSkeleton() {
       </div>
       <div className={card2.grid}>
         <div className={card2.col}>
-          {(['Активный персонаж', 'Краткая статистика', 'О себе'] as const).map((t) => (
+          {(['Активный персонаж', 'Краткая статистика'] as const).map((t) => (
             <section key={t} className={card2.card}>
               <header className={card2.cardHead}>
                 <h2 className={card2.cardTitle}>{t}</h2>

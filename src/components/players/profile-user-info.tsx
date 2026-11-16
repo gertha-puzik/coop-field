@@ -1,6 +1,5 @@
 'use client';
 import type { PublicProfile } from '@/lib/net/http-profiles';
-import { Icon } from './profile-icons';
 import card from './profile-card.module.css';
 import s from './profile-user-info.module.css';
 const LINKS=[['discord','Discord','DC'],['telegram','Telegram','➤'],['youtube','YouTube','▶'],['vk','ВКонтакте','VK'],['website','Сайт','↗']] as const;
@@ -16,11 +15,10 @@ function birthdayLabel(value:string|null) {
   const months=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
   return day && months[month-1] ? `${day} ${months[month-1]}` : 'Не указан';
 }
-export function ProfileUserInfo({profile,mine,onEdit}:{profile:PublicProfile;mine:boolean;onEdit:()=>void}) {
+export function ProfileUserInfo({profile}:{profile:PublicProfile}) {
   const links=LINKS.filter(([key])=>profile.socials?.[key]);
   return <aside className={`${card.card} ${s.info}`} aria-label="О пользователе">
-    <header className={card.cardHead}><h2 className={card.cardTitle}><Icon name="paw" size={16}/>О пользователе</h2>
-      {mine?<button type="button" className={card.iconBtn} aria-label="Изменить сведения о пользователе" onClick={onEdit}>✏</button>:null}</header>
+    <header className={card.cardHead}><h2 className={card.cardTitle}><span aria-hidden>✍️</span>О пользователе</h2></header>
     <div className={s.fact}><span aria-hidden>📅</span><div><strong>{birthdayLabel(profile.birthday)}</strong><small>День рождения</small></div></div>
     <div className={s.fact}><span aria-hidden>💸</span><div><strong>{profile.statusLabel || 'Не указана'}</strong><small>Должность на сервере</small></div></div>
     <div className={s.socials}><h3>Мои соцсети</h3>{links.length?<div className={s.links}>{links.map(([key,label])=><a key={key} href={profile.socials?.[key]} target="_blank" rel="noopener noreferrer" aria-label={label} title={label}><SocialGlyph network={key}/></a>)}</div>:<p>Пока не указаны</p>}</div>
