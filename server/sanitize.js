@@ -7,7 +7,7 @@
  * limits themselves are imported from ./protocol.js (W3 canon).
  */
 import { EV, CHAT_MAX_LEN, CHAT_COOLDOWN_MS, CHAT_HISTORY } from "./protocol.js";
-import { send, broadcast } from "./room.js";
+import { send, broadcast, rooms } from "./room.js";
 
 /**
  * Невидимые и bidi-символы: нулевая ширина даёт подмену имён («Сы\u200Bрь» выглядит
@@ -60,6 +60,8 @@ function uniqueLogin(room, base) {
  * Всем в комнате, включая отправителя → ["chat", { seq, id, login, color, text, ts }].
  * Новичку после field приходит ["chatlog", те же объекты], не больше CHAT_HISTORY.
  */
+const globalChat=[];let globalChatSeq=0;
+export function chatHistoryFor(room,ws){return ws.account && room.fmt==='test'?[...globalChat,...(room.chat || [])].sort((a,b)=>a.ts-b.ts):room.chat || [];}
 function chat(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
@@ -77,19 +79,14 @@ function chat(ws, payload = {}) {
     return;
   }
   cat.lastChat = now;
+  const global=payload?.channel==='global' && room.fmt==='test' && !!ws.account;
   if (!room.chat) room.chat = [];
-  room.chatSeq = (room.chatSeq || 0) + 1;
-  const entry = {
-    seq: room.chatSeq,
-    id: cat.id,
-    login: cat.login,
-    color: cat.color,
-    text,
-    ts: now,
-  };
-  room.chat.push(entry);
-  if (room.chat.length > CHAT_HISTORY) room.chat.splice(0, room.chat.length - CHAT_HISTORY);
-  broadcast(room, EV.CHAT, entry);
+  if(global)globalChatSeq++;else room.chatSeq=(room.chatSeq || 0)+1;
+  const entry={seq:global?globalChatSeq:room.chatSeq,id:cat.id,login:cat.login,color:cat.color,text,ts:now,channel:global?'global':'near',room:room.code,...(ws.account?{characterId:ws.account.activeCharacterId}:{})};
+  const history=global?globalChat:room.chat;history.push(entry);
+  if(history.length>CHAT_HISTORY)history.splice(0,history.length-CHAT_HISTORY);
+  if(global){for(const target of rooms.values())if(target.fmt==='test')for(const peer of target.sockets.keys())if(peer.account)send(peer,EV.CHAT,entry);}
+  else broadcast(room,EV.CHAT,entry);
 }
 
 export { clipChars, sanitizeChat, sanitizeLogin, uniqueLogin, chat };

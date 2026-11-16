@@ -68,7 +68,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       // ловим раньше всех ранних выходов, зажатие не зависит от контекста
       if (ev.key === 'Shift') sprintRef.current = true;
       if (!enteredRef.current) return;
-      if (isForm(ev.target)) return;
+      if (isForm(ev.target) || document.querySelector('[data-game-dialog]')) return;
       // Редактор локации: Esc — закрыть (черновик без записи), игровые клавиши молчат.
       // [ ] — камера; Alt+[ ] — размер инструмента, как Alt+колесо; ловим по code,
       // чтобы скобки работали на любой раскладке.
@@ -245,13 +245,16 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
         netRef.current?.emit('block', { on: false });
       }
     };
+    const pause=()=>{blur();engineRef.current.ptarget=null;engineRef.current.path=[];};
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', blur);
+    window.addEventListener('game-ui:pause-controls',pause);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
+      window.removeEventListener('game-ui:pause-controls',pause);
     };
   }, []);
 

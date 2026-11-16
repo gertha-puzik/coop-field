@@ -244,6 +244,7 @@ function asChat(payload: unknown): CoopChatMessage | null {
   if (typeof row.text !== "string" || !row.text) return null;
   if (typeof row.seq !== "number" || typeof row.id !== "number") return null;
   return {
+    channel: row.channel==='global'?'global':'near',room:typeof row.room==='string'?row.room:undefined,characterId:typeof row.characterId==='string'?row.characterId:undefined,
     seq: row.seq,
     id: row.id,
     login: typeof row.login === "string" ? row.login : "",

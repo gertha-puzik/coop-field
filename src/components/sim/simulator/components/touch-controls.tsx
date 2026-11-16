@@ -34,7 +34,7 @@ export function TouchControls(props: TouchControlsDeps) {
       <div
         role="group"
         aria-label="Джойстик движения — 8 направлений"
-        className="pointer-events-auto absolute bottom-3 left-3 h-32 w-32 touch-none rounded-full border border-[var(--sim-line-strong)] bg-[var(--sim-inset)] shadow-lg [-webkit-tap-highlight-color:transparent]"
+        className={`${process.env.NEXT_PUBLIC_SITE === 'elyria'?'bottom-[112px]':'bottom-3'} pointer-events-auto absolute left-3 h-32 w-32 touch-none rounded-full border border-[var(--sim-line-strong)] bg-[var(--sim-inset)] shadow-lg [-webkit-tap-highlight-color:transparent]`}
         onPointerDown={t.stickDown}
         onPointerMove={t.stickMove}
         onPointerUp={t.stickUp}
@@ -77,7 +77,7 @@ export function TouchControls(props: TouchControlsDeps) {
         ref={t.jumpElRef}
         role="button"
         aria-label="Прыжок — удержание заряжает"
-        className="pointer-events-auto absolute bottom-3 right-3 h-24 w-24 touch-none select-none rounded-full border border-[var(--sim-line-strong)] bg-[var(--sim-inset)] shadow-lg [-webkit-tap-highlight-color:transparent]"
+        className={`${process.env.NEXT_PUBLIC_SITE === 'elyria'?'bottom-[112px]':'bottom-3'} pointer-events-auto absolute right-3 h-24 w-24 touch-none select-none rounded-full border border-[var(--sim-line-strong)] bg-[var(--sim-inset)] shadow-lg [-webkit-tap-highlight-color:transparent]`}
         onPointerDown={t.jumpDown}
         onPointerUp={t.jumpUp}
         onPointerCancel={t.jumpUp}

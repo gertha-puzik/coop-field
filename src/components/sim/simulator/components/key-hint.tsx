@@ -33,7 +33,7 @@ const SHOW_EVENT = 'coop-field:key-hint-show';
 
 type Row = { keys: readonly string[]; label: string };
 
-const ROWS: readonly Row[] = IS_ELYRIA
+export const CONTROL_ROWS: readonly Row[] = IS_ELYRIA
   ? [
       { keys: ['W', 'A', 'S', 'D'], label: 'идти' },
       { keys: ['Q', 'E', 'Z', 'X'], label: 'идти по диагонали' },
@@ -41,6 +41,10 @@ const ROWS: readonly Row[] = IS_ELYRIA
       { keys: ['Пробел'], label: 'присесть, отпустить — прыжок' },
       { keys: ['[', ']'], label: 'повернуть обзор' },
       { keys: ['Enter'], label: 'чат' },
+      { keys: ['B / И'], label: 'открыть инвентарь' },
+      { keys: ['1–5'], label: 'выбрать слот хотбара' },
+      { keys: ['Shift + ЛКМ'], label: 'перенести предмет в хотбар или обратно' },
+      { keys: ['Esc'], label: 'закрыть окно' },
     ]
   : [
       { keys: ['W', 'A', 'S', 'D'], label: 'шаг' },
@@ -153,7 +157,7 @@ export function KeyHint() {
       ) : (
         <>
           <ul className="mt-2 flex flex-col gap-1.5 text-xs">
-            {ROWS.map((row) => (
+            {CONTROL_ROWS.map((row) => (
               <li key={row.label} className="flex items-center gap-2">
                 <span className="flex shrink-0 gap-0.5">
                   {row.keys.map((k) => (

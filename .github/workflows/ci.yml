@@ -132,6 +132,10 @@ jobs:
         run: npm run test:weather-rotation
       # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
       # строго по cookie-сессии.
+      - name: Инвентарь и предметы
+        run: npm run test:inventory
+      - name: Глобальный и локальный чат
+        run: npm run test:chat-channels
       - name: HTTP-профили
         run: npm run test:profiles
       # Скрипты сами поднимают песочницу (свой порт и DATA_DIR).

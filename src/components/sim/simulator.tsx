@@ -126,7 +126,7 @@ import {
   type RemoteDraw,
 } from '@/lib/net/move-book';
 import { FightLog } from './fight-log';
-import { RoomChat } from './room-chat';
+import { GameHud } from './inventory/game-hud';
 import { ThemeBackdrop } from './theme-backdrop';
 import { applyTheme, FIELD_PRESETS, fieldPaletteOf, loadTheme, type ThemeId } from '@/lib/sim/theme';
 import { stepRemoteAim, type RemoteAim } from '@/lib/sim/remote-aim';
@@ -251,7 +251,7 @@ import { useBootSignal } from './simulator/hooks/use-boot-signal';
 import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget, drawElisionNameplates } from './simulator/hud-canvas';
 import { drawNameplate } from '@/lib/sim/nameplate';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
-import { ColResize, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
+import { ColResize, LegacyChatDock, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
 import { EditorOverlay } from './simulator/components/editor-overlay';
 import { FieldStage } from './simulator/components/field-stage';
 import { TouchControls } from './simulator/components/touch-controls';
@@ -4465,10 +4465,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     }
   }, []);
 
-  const sendChat = useCallback((text: string) => {
+  const sendChat = useCallback((text: string, channel?: 'global' | 'near') => {
     const net = netRef.current;
     if (!net?.ready) return false;
-    net.emit('chat', { text });
+    net.emit('chat', { text, channel });
     return true;
   }, []);
 
@@ -4696,6 +4696,39 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const chatUnread = Math.max(0, chatLines.length - chatSeenRef.current);
   const logUnread = Math.max(0, combat.log.length - logSeenRef.current);
 
+  const advancedSettings=(<SettingsPanelOverlay embedded={IS_ELYRIA}
+        setSettingsOpen={setSettingsOpen}
+        role={whoami?.permissions?.includes('world') ? 'admin' : whoami?.role}
+        settings={settings}
+        testField={testField}
+        atmoState={atmoState}
+        changeAtmo={changeAtmo}
+        changeAtmoCfg={changeAtmoCfg}
+        atmoLayerOn={atmoLayerOn}
+        toggleAtmoLayer={toggleAtmoLayer}
+        dummyOn={dummyOn}
+        toggleDummy={toggleDummy}
+        dummySprite={dummySprite}
+        changeDummySprite={changeDummySprite}
+        rabOn={rabOn}
+        toggleRab={toggleRab}
+        patchField={patchField}
+        patchCharacter={patchCharacter}
+        patchArrow={patchArrow}
+        patchSlowdown={patchSlowdown}
+        patchWindow={patchWindow}
+        patchTier={patchTier}
+        patchHud={patchHud}
+        patchCombat={patchCombat}
+        patchZone={patchZone}
+        onResetCombat={onResetCombat}
+        onResetAll={onResetAll}
+        onExport={onExport}
+        onImport={onImport}
+        getEngineAngle={getEngineAngle}
+        setEngineAngle={setEngineAngle}
+      />);
+
   if (stage === 'entry') {
     return (
       <div className="app-bg relative h-dvh text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
@@ -4749,7 +4782,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   return (
     <div className="app-bg relative flex h-dvh min-h-0 flex-col overflow-hidden text-[var(--sim-text)]" style={IS_ELYRIA ? { height: 'calc(100dvh - var(--site-header-height, 52px))' } : undefined}>
       <ThemeBackdrop theme={theme} />
-      <div className={editorOpen?'hidden':'contents'}><SimulatorHeader
+      <div className={editorOpen || IS_ELYRIA?'hidden':'contents'}><SimulatorHeader
         settings={settings}
         roomCode={roomCode}
         peerCount={peerCount}
@@ -4780,40 +4813,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
           Ширины колонок тянутся разделителями и запоминаются. */}
       <main
-        className="relative z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"
+        className={IS_ELYRIA?"relative z-10 flex min-h-0 flex-1 overflow-hidden":"relative z-10 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden lg:p-3"}
         style={{ '--chat-w': `${layout.chatW}px`, '--log-w': `${layout.logW}px` } as CSSProperties}
       >
-        <div className={editorOpen?'hidden':"flex w-full shrink-0 flex-col gap-1 lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)] lg:gap-0"}>
-          {/* <lg: тонкая плашка-тумблер; номер — сколько новых строк пришло в свёрнутый чат */}
-          <button
-            type="button"
-            id="mobileChatTab"
-            aria-expanded={mobilePanel === 'chat'}
-            aria-controls="mobileChatPanel"
-            onClick={() => setMobilePanel((p) => (p === 'chat' ? null : 'chat'))}
-            className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--sim-panel)] px-3 text-sm font-bold tracking-wide text-[var(--sim-text)] lg:hidden"
-          >
-            <span className="flex items-center gap-2">
-              Чат
-              {mobilePanel !== 'chat' && chatUnread > 0 ? (
-                <span className="min-w-4 rounded-full bg-[var(--sim-accent)] px-1 text-center text-[10px] font-normal leading-4 text-[var(--sim-deep)]">
-                  {chatUnread > 99 ? '99+' : chatUnread}
-                </span>
-              ) : null}
-            </span>
-            <span className="text-[11px] font-normal text-[var(--sim-text-faint)]">
-              {mobilePanel === 'chat' ? 'свернуть' : 'раскрыть'}
-            </span>
-          </button>
-          {/* Панель: на <lg появляется по тапу (~55vh); на lg — колонка на всю высоту ряда */}
-          <div
-            id="mobileChatPanel"
-            className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} h-[55vh] w-full shrink-0 flex-col lg:flex lg:h-full lg:min-h-0`}
-          >
-            <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} onClose={mobilePanel === 'chat' ? () => setMobilePanel(null) : undefined} />
-          </div>
-        </div>
-        {!editorOpen ? <ColResize
+        {!IS_ELYRIA?<LegacyChatDock editorOpen={editorOpen} mobilePanel={mobilePanel} setMobilePanel={setMobilePanel} chatUnread={chatUnread} chatLines={chatLines} meId={meId} netReady={netReady} sendChat={sendChat}/>:null}
+        {!IS_ELYRIA && !editorOpen ? <ColResize
           onDrag={(dx) => setLayout((p) => ({ ...p, chatW: clampLayout({ ...p, chatW: p.chatW + dx }).chatW }))}
           onEnd={() => saveLayout(layoutRef.current)}
         /> : null}
@@ -4914,7 +4918,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           }
         />
 
-        {!editorOpen && settings.arrow.battleMode && settings.combat.showLog ? (
+        {!IS_ELYRIA && !editorOpen && settings.arrow.battleMode && settings.combat.showLog ? (
           <>
             <ColResize
               onDrag={(dx) => setLayout((p) => ({ ...p, logW: clampLayout({ ...p, logW: p.logW - dx }).logW }))}
@@ -4958,7 +4962,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       </main>
 
       {/* Надпись об авторах внизу страницы поля */}
-      <footer className="relative z-10 shrink-0 pb-1 text-center">
+      <footer className={IS_ELYRIA?'hidden':"relative z-10 shrink-0 pb-1 text-center"}>
         <p className="text-[10px] leading-tight text-[var(--sim-text-faint)]">{GAME_CREDITS}</p>
       </footer>
 
@@ -4974,38 +4978,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       ) : null}
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
-      {settingsOpen ? <SettingsPanelOverlay
-        setSettingsOpen={setSettingsOpen}
-        role={whoami?.permissions?.includes('world') ? 'admin' : whoami?.role}
-        settings={settings}
-        testField={testField}
-        atmoState={atmoState}
-        changeAtmo={changeAtmo}
-        changeAtmoCfg={changeAtmoCfg}
-        atmoLayerOn={atmoLayerOn}
-        toggleAtmoLayer={toggleAtmoLayer}
-        dummyOn={dummyOn}
-        toggleDummy={toggleDummy}
-        dummySprite={dummySprite}
-        changeDummySprite={changeDummySprite}
-        rabOn={rabOn}
-        toggleRab={toggleRab}
-        patchField={patchField}
-        patchCharacter={patchCharacter}
-        patchArrow={patchArrow}
-        patchSlowdown={patchSlowdown}
-        patchWindow={patchWindow}
-        patchTier={patchTier}
-        patchHud={patchHud}
-        patchCombat={patchCombat}
-        patchZone={patchZone}
-        onResetCombat={onResetCombat}
-        onResetAll={onResetAll}
-        onExport={onExport}
-        onImport={onImport}
-        getEngineAngle={getEngineAngle}
-        setEngineAngle={setEngineAngle}
-      /> : null}
+      {IS_ELYRIA ? <GameHud characterId={whoami?.activeCharacterId} characterName={whoami?.characters?.find(character=>character.id===whoami.activeCharacterId)?.name || playerName || 'Персонаж'} editorOpen={editorOpen}
+        lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} weather={weatherFxOn} day={dayTintOn} battle={settings.arrow.battleMode}
+        onWeather={toggleWeatherFx} onDay={toggleDayTint} onBattle={toggleBattleMode} onEditor={openEditor} canEdit={whoami?.role==='admin' || !!whoami?.permissions?.includes('world')}
+        advanced={advancedSettings} status={netStatus} peers={peerCount} credits={GAME_CREDITS}
+        battleLog={settings.arrow.battleMode && settings.combat.showLog?<FightLog lines={combat.log.map(formatLogLine)} onClear={()=>setCombat(c=>({...c,log:[]}))}/>:null}
+      /> : settingsOpen ? advancedSettings : null}
 
       {/* Переход в другую комнату — модалка с тем же выбором гротов.
           Текущая комната помечена «вы здесь», клик по ней disabled. */}

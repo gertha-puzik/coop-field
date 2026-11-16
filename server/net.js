@@ -1,3 +1,4 @@
+import { handleInventoryHttp } from './inventory-http.js';
 import { handleSiteDesignHttp } from './site-design.js';
 import { handleAdminConsoleHttp } from "./admin-console.js";
 import { observeAdminChanges } from "./admin-audit-http.js";
@@ -301,6 +302,7 @@ export function startServer() {
         p.startsWith("/cfg/notifications/") ||
         p === "/cfg/announcements" ||
         p.startsWith("/cfg/announcements/") ||
+        p === "/cfg/inventory" || p.startsWith("/cfg/inventory/") || p === "/cfg/items" || p.startsWith("/cfg/items/") ||
         p === "/cfg/site-design" || p.startsWith("/cfg/site-design/") ||
         p === "/cfg/console" || p.startsWith("/cfg/console/") ||
         p === "/cfg/admin" ||
@@ -410,6 +412,7 @@ export function startServer() {
       }
     }
     observeAdminChanges(req, res);
+    if (p === "/cfg/inventory" || p.startsWith("/cfg/inventory/") || p === "/cfg/items" || p.startsWith("/cfg/items/")) return handleInventoryHttp(req,res);
     if (p === "/cfg/site-design" || p.startsWith("/cfg/site-design/")) return handleSiteDesignHttp(req, res);
     if (p === "/cfg/console" || p.startsWith("/cfg/console/")) return handleAdminConsoleHttp(req, res);
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {

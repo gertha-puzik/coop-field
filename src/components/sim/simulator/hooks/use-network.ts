@@ -549,7 +549,7 @@ export function useSimNet(deps: SimNetDeps) {
       onFight: (fight) => applyNetFight(fight),
       onChat: (message) => {
         setChatLines((prev) => {
-          if (prev.some((line) => line.seq === message.seq)) return prev;
+          if (prev.some((line) => line.seq === message.seq && line.channel===message.channel && line.room===message.room)) return prev;
           return [...prev, message].slice(-80);
         });
       },

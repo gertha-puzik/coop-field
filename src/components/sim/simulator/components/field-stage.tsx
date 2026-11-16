@@ -79,7 +79,7 @@ export function FieldStage(props: FieldStageProps) {
             ref={fieldFrameRef}
             role="region"
             aria-label="Игровое поле"
-            className={`${styles.frame} absolute inset-0 overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2`}
+            className={process.env.NEXT_PUBLIC_SITE === 'elyria' && !editorOverlay ? `${styles.frame} absolute inset-0 overflow-hidden bg-[var(--sim-frame)]` : `${styles.frame} absolute inset-0 overflow-hidden rounded-xl border border-[var(--sim-line)] bg-[var(--sim-frame)] p-2`}
           >
             <div
               className={
@@ -155,7 +155,7 @@ export function FieldStage(props: FieldStageProps) {
               </div>
             ) : null}
             {/* Подсказка по клавишам при первом входе (#124); в редакторе не нужна. */}
-            {editorOverlay ? null : <KeyHint />}
+            {editorOverlay || process.env.NEXT_PUBLIC_SITE === 'elyria' ? null : <KeyHint />}
           {editorOverlay}
           </div>
         </div>

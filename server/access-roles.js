@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 import { writeFileAtomic } from './atomic-file.js';
-export const PERMISSIONS = Object.freeze(['overview','players','roles','world','config','sprites','textures','invites','news','announcements','statuses']);
+export const PERMISSIONS = Object.freeze(['overview','players','roles','world','config','sprites','textures','invites','news','announcements','statuses','items']);
 const file = path.join(DATA_DIR, 'access-roles.json');
 let roles = [];
 try { const raw = JSON.parse(fs.readFileSync(file,'utf8')); if (Array.isArray(raw.roles)) roles = raw.roles.filter(r => r && /^[a-z0-9-]{2,40}$/.test(r.id) && typeof r.name === 'string').map(r => ({id:r.id,name:r.name.slice(0,48),permissions:Array.isArray(r.permissions)?r.permissions.filter(p=>PERMISSIONS.includes(p)):[]})); } catch {}
