@@ -120,8 +120,6 @@ export function OwnProfileEditor({
 }) {
   const [draftName, setDraftName] = useState(profile.displayName);
   const [draftBio, setDraftBio] = useState(profile.bio);
-  /** День рождения черновика: '' — очищено (в PATCH уедет null). */
-  const [draftBirthday, setDraftBirthday] = useState(profile.birthday || '');
   const [settingsTab, setSettingsTab] = useState<'info' | 'appearance' | 'game' | 'delete'>(mineHighlight ? 'appearance' : 'info');
   const [draftSp, setDraftSp] = useState<SpDraft>(() => spDefaults(profile.sp));
   const originChar = activeCharOf(profile);
@@ -144,7 +142,6 @@ export function OwnProfileEditor({
   useEffect(() => {
     setDraftName(profile.displayName);
     setDraftBio(profile.bio);
-    setDraftBirthday(profile.birthday || '');
     setDraftSp(spDefaults(profile.sp));
     const ch = activeCharOf(profile);
     setDraftSprite(ch?.sprite || '');
@@ -166,14 +163,6 @@ export function OwnProfileEditor({
    *  пустой скин не сохраняем (сервер требует валидный id). */
   const appearanceChanged = draftSprite !== originSprite || draftScale !== originScale;
 
-  /** День рождения: едет в PATCH только тронутое; '' → null (сброс). */
-  const originBirthday = profile.birthday || null;
-  const birthdayChanged = (draftBirthday || null) !== originBirthday;
-
-  /** Верхняя граница календаря — сегодня локали (нижняя — 1900-01-01). */
-  const todayDate = new Date();
-  const birthdayMax = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
-
   const save = async () => {
     setFail(null);
     const name = draftName.replace(/\s+/g, ' ').trim();
@@ -188,8 +177,6 @@ export function OwnProfileEditor({
       displayName: name,
       bio: draftBio.trim(),
     };
-    // день рождения — строка или null, только при отличии от исходного
-    if (birthdayChanged) patch.birthday = draftBirthday || null;
     if (spChanged) patch.sp = { ...draftSp };
     // скин и рост персонажа — плоские поля активной записи; сервер валидирует
     // id по каталогу и зажимает рост в 60–100
@@ -263,7 +250,7 @@ export function OwnProfileEditor({
     <form
       id="settings"
       hidden={settingsTab === 'delete'}
-      className={`${styles.edBox} ${settingsStyles.settingsForm}`}
+      className={settingsStyles.settingsForm}
       onSubmit={(ev) => {
         ev.preventDefault();
         void save();
@@ -291,37 +278,21 @@ export function OwnProfileEditor({
           onChange={(e) => setDraftBio(e.target.value)}
         />
       </label>
-      <label className={styles.edField}>
-        <span className={styles.edLabel}>День рождения</span>
-        <input
-          type="date"
-          className="mt-1 h-8 w-full rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-2 text-sm text-[var(--sim-text)]"
-          min="1900-01-01"
-          max={birthdayMax}
-          value={draftBirthday}
-          onChange={(e) => setDraftBirthday(e.target.value)}
-        />
-        <span className="mt-1 block text-[10px] text-[var(--sim-text-faint)]">
-          виден на карточке; пусто — показываем дату регистрации
-        </span>
-      </label>
-
-
       </section>
       <section role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance" hidden={settingsTab !== 'appearance'}>
         <ProfileAppearance accountName={profile.displayName || 'игрока'} sprite={draftSprite} wornSprite={originSprite} scale={draftScale}
           onPick={setDraftSprite} onScale={setDraftScale} onWear={wearSprite} mineHighlight={mineHighlight} />
       </section>
-      <section role="tabpanel" id="settings-panel-game" aria-labelledby="settings-tab-game" hidden={settingsTab !== 'game'}>
+      <section className={settingsStyles.gamePanel} role="tabpanel" id="settings-panel-game" aria-labelledby="settings-tab-game" hidden={settingsTab !== 'game'}>
       {/* Игровые параметры: приватные настройки владельца — применяются на
           поле в этой игре; меняются отсюда и на входе больше не спрашиваются. */}
       <h3 className={`${styles.edTitle} mt-4`}>Игровые параметры</h3>
-      <div className={styles.edRow}>
-        <label className={styles.edField}>
+      <div className={settingsStyles.gameBlocks}>
+        <label className={settingsStyles.parameter}>
           <span className={styles.edLabel}>Скорость стрелы ({fmtSec(SP_PROFILE_PERIOD_MIN)}–{fmtSec(SP_PROFILE_PERIOD_MAX)})</span>
-          <div className="mt-2 flex items-center gap-2">
+          <div className={settingsStyles.arrowControl}>
             <Slider
-              className="flex-1"
+              className={settingsStyles.arrowSlider}
               value={[draftSp.periodSec]}
               min={SP_PROFILE_PERIOD_MIN}
               max={SP_PROFILE_PERIOD_MAX}
@@ -338,8 +309,8 @@ export function OwnProfileEditor({
           </div>
         </label>
       </div>
-      <div className={styles.edRow}>
-        <div className={styles.edField}>
+      <div className={settingsStyles.gameBlocks}>
+        <div className={settingsStyles.parameter}>
           <span className={styles.edLabel}>Урон</span>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {DAMAGE_LEVELS.map((k) => (
@@ -353,7 +324,7 @@ export function OwnProfileEditor({
             ))}
           </div>
         </div>
-        <div className={styles.edField}>
+        <div className={settingsStyles.parameter}>
           <span className={styles.edLabel}>Броня</span>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {DAMAGE_LEVELS.map((k) => (
@@ -369,7 +340,7 @@ export function OwnProfileEditor({
         </div>
       </div>
       </section>
-      <div className={styles.edActions}>
+      <div className={`${styles.edActions} ${settingsTab === 'game' ? settingsStyles.gameActions : ''}`}>
         <Button
           type="submit"
           size="sm"
@@ -389,7 +360,7 @@ export function OwnProfileEditor({
     </form>
     <section role="tabpanel" id="settings-panel-delete" aria-labelledby="settings-tab-delete" hidden={settingsTab !== 'delete'}>
     <form
-      className={`${styles.edBox} ${styles.edDanger}`}
+      className={`${settingsStyles.settingsForm} ${styles.edDanger}`}
       onSubmit={(ev) => {
         ev.preventDefault();
         void removeAccount();
@@ -439,7 +410,7 @@ export function ProfileSkeleton() {
 }
 
 /** Каркас блока «Правка своей карточки» на время полёта /profiles/me:
- *  панель .edBox той же природы (заголовок статичен, поля — полосы), чтобы
+ *  форма без внутренней рамки (заголовок статичен, поля — полосы), чтобы
  *  собственный профиль не «выезжал» вторым этажом после карточки. */
 function OwnEditorSkeleton() {
   const field = (w: number) => (
@@ -452,8 +423,8 @@ function OwnEditorSkeleton() {
   );
   return (
     <div style={{ marginTop: 20 }} role="status" aria-label="Загружаем настройки профиля">
-      <form className={styles.edBox}>
-<h3 className={styles.edTitle}>Мои настройки</h3>
+      <form className={settingsStyles.settingsForm}>
+        <h3 className={styles.edTitle}>Мои настройки</h3>
         <div className={styles.edRow}>
           {field(120)}
           {field(150)}

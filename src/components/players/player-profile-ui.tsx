@@ -32,7 +32,7 @@ import {
   SPRITES,
   SPRITE_GROUPS,
 } from '@/lib/sim/settings';
-import { spriteAssetUrl } from '@/lib/sim/sprite-asset';
+import { httpOrigin } from '@/lib/net/coop';
 import { PawGlyph } from './profile-icons';
 import { avatarOf, spriteUrl } from './players-format';
 import styles from './players-elyria.module.css';
@@ -392,128 +392,57 @@ export function MineSpritesSection({
   }, []);
 
   return (
-    <div className={styles.edField}>
-      <span className={styles.edLabel}>
-        Свой окрас{' '}
-        <span className="ml-1 text-[var(--sim-text-faint)]">
-          {items.length} из {limit}
-        </span>
-      </span>
-      <div className="mt-1.5 rounded-md border border-[var(--sim-line-strong)] bg-[var(--sim-inset-strong)] p-2">
-        {status ? (
-          <div
-            className={`mb-2 rounded-lg border p-2 ${
-              status.kind === 'ok' ? 'border-emerald-900/60 bg-emerald-950/40' : 'border-red-900/60 bg-red-950/40'
-            }`}
-          >
-            <p className={`text-[11px] font-semibold ${status.kind === 'ok' ? 'text-emerald-300' : 'text-red-300'}`}>
-              {status.text}
-            </p>
-            {status.details ? <p className="mt-1 text-[11px] text-red-200">{status.details}</p> : null}
-          </div>
-        ) : null}
-        <p className="mb-1.5 text-[10px] text-[var(--sim-text-faint)]">{MINE_LIMIT_HINT}</p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png"
-            className="h-8 max-w-full rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-xs text-[var(--sim-text-soft)] file:mr-2 file:rounded file:border-0 file:bg-black/40 file:px-2 file:py-1 file:text-xs file:text-[var(--sim-text-soft)]"
-            onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
-          />
-          <Input
-            className="h-8 w-44 text-xs"
-            value={upName}
-            maxLength={24}
-            placeholder="Имя окраса (2–24)"
-            onChange={(e) => setUpName(e.target.value)}
-          />
-          <Button
-            type="button"
-            size="sm"
-            className={settingsStyles.action}
-            disabled={uploading || !file}
-            onClick={() => void upload()}
-          >
-            {uploading ? 'Загружаем…' : 'Загрузить'}
-          </Button>
-        </div>
-        {loaded && items.length === 0 ? (
-          <p className="mt-2 text-[11px] text-[var(--sim-text-soft)]">
-            Своих окрасов пока нет — загрузите PNG из редактора окрасов.
-          </p>
-        ) : null}
-        {items.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {items.map((it) => {
-              const worn = wornSprite === it.id;
-              const picked = draftSprite === it.id && !worn;
-              const flashed = flashId === it.id;
-              return (
-                <div
-                  key={it.id}
-                  className={`flex w-24 flex-col items-center rounded-lg border p-1 transition-colors ${
-                    worn || picked
-                      ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)]'
-                      : flashed
-                        ? 'border-[var(--sim-accent-hover)] bg-[var(--sim-accent-tint)] shadow-[0_0_0_2px_var(--sim-accent)]'
-                        : 'border-transparent hover:border-[var(--sim-line-hover)]'
-                  }`}
-                >
-                  <img src={spriteAssetUrl(it.src)} alt={it.name} className="h-10 w-auto object-contain" draggable={false} />
-                  <span className="w-full truncate text-center text-[10px] font-medium text-[var(--sim-text-soft)]">
-                    {it.name}
-                  </span>
-                  {worn ? (
-                    <span className="mt-0.5 rounded bg-[var(--sim-accent)] px-1 text-[9px] font-bold text-black">
-                      Сейчас на вас
-                    </span>
-                  ) : null}
-                  {it.hidden ? (
-                    <span className="mt-0.5 rounded bg-red-950 px-1 text-[9px] font-bold text-red-300">
-                      Скрыт администратором
-                    </span>
-                  ) : null}
-                  <div className="mt-1 flex items-center gap-1">
-                    <button
-                      type="button"
-                      aria-pressed={picked || worn}
-                      disabled={worn || busyId === it.id}
-                      title={worn ? 'Окрас уже надет' : 'Надеть окрас на персонажа'}
-                      onClick={() => {
-                        if (onWear) {
-                          setBusyId(it.id);
-                          void Promise.resolve(onWear(it.id)).finally(() => setBusyId((cur) => (cur === it.id ? null : cur)));
-                          return;
-                        }
-                        onPick(it.id);
-                      }}
-                      className="rounded border border-[var(--sim-line)] px-1.5 py-0.5 text-[10px] text-[var(--sim-text-soft)] transition-colors hover:border-[var(--sim-line-hover)] disabled:opacity-50"
-                    >
-                      {worn ? 'Надет' : busyId === it.id ? 'Надеваем…' : 'Надеть'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyId === it.id}
-                      onClick={() => {
-                        if (armedId === it.id) void remove(it.id);
-                        else armRemove(it.id);
-                      }}
-                      className={`rounded border px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50 ${
-                        armedId === it.id
-                          ? 'border-red-500 bg-red-950 font-bold text-red-300'
-                          : 'border-[var(--sim-line)] text-[var(--sim-text-soft)] hover:border-[var(--sim-line-hover)]'
-                      }`}
-                    >
-                      {armedId === it.id ? 'Точно удалить?' : 'Удалить'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
+    <section className={settingsStyles.skinLibrary} aria-labelledby="saved-skins-title">
+      <header className={settingsStyles.libraryHead}>
+        <h3 id="saved-skins-title">Установка окраса</h3>
+        <span>{items.length} из {limit} сохранено</span>
+      </header>
+      <p className={settingsStyles.label}>Сохранённые окрасы — выберите для просмотра или наденьте на персонажа.</p>
+      {status ? <div className={settingsStyles.notice} role={status.kind === 'err' ? 'alert' : 'status'}>
+        <p>{status.text}</p>{status.details ? <p>{status.details}</p> : null}
+        {!loaded ? <button type="button" className={settingsStyles.action} onClick={() => void reload()}>Повторить</button> : null}
+      </div> : null}
+      <input ref={fileRef} type="file" accept="image/png" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
+      <div className={settingsStyles.skinGallery} aria-label="Галерея сохранённых окрасов">
+        {items.map((it) => {
+          const worn = wornSprite === it.id;
+          const picked = draftSprite === it.id;
+          return <article key={it.id} className={settingsStyles.skinTile} data-selected={picked || worn} data-highlight={flashId === it.id}>
+            <button type="button" className={settingsStyles.skinArt} onClick={() => onPick(it.id)} aria-pressed={picked} disabled={!!it.hidden} title={`Посмотреть: ${it.name}`}>
+              <img src={it.src.startsWith('/') ? `${httpOrigin()}${it.src}` : it.src} alt={it.name} draggable={false} />
+            </button>
+            <h4 title={it.name}>{it.name}</h4>
+            {worn ? <span className={settingsStyles.skinBadge}>Сейчас на вас</span> : null}
+            {it.hidden ? <span className={settingsStyles.dangerText}>Скрыт администратором</span> : null}
+            <div className={settingsStyles.skinActions}>
+              <button type="button" className={settingsStyles.action} aria-pressed={picked || worn}
+                disabled={worn || !!it.hidden || busyId === it.id}
+                onClick={() => {
+                  if (onWear) { setBusyId(it.id); void Promise.resolve(onWear(it.id)).finally(() => setBusyId((cur) => cur === it.id ? null : cur)); }
+                  else onPick(it.id);
+                }}>{worn ? 'Надет' : busyId === it.id ? 'Надеваем…' : 'Надеть'}</button>
+              <button type="button" className={settingsStyles.removeSkin} disabled={busyId === it.id}
+                onClick={() => { if (armedId === it.id) void remove(it.id); else armRemove(it.id); }}>
+                {armedId === it.id ? 'Точно удалить?' : 'Удалить'}
+              </button>
+            </div>
+          </article>;
+        })}
+        {Array.from({ length: Math.max(0, limit - items.length) }, (_, index) =>
+          <button key={`empty-${index}`} type="button" className={settingsStyles.addSkin} disabled={!loaded || uploading}
+            aria-label={`Добавить окрас в слот ${items.length + index + 1}`} onClick={() => fileRef.current?.click()}>
+            <span aria-hidden>+</span>{loaded ? 'Добавить окрас' : 'Загружаем…'}
+          </button>)}
       </div>
-    </div>
+      {file ? <div className={settingsStyles.uploadSkin}>
+        <p className={settingsStyles.label}>Выбран файл: {file.name}</p>
+        <label>Название окраса<Input value={upName} maxLength={24} placeholder="Имя окраса (2–24)" onChange={(e) => setUpName(e.target.value)} /></label>
+        <div className={settingsStyles.skinActions}>
+          <Button type="button" className={settingsStyles.action} disabled={uploading} onClick={() => void upload()}>{uploading ? 'Загружаем…' : 'Сохранить окрас'}</Button>
+          <button type="button" className={settingsStyles.removeSkin} disabled={uploading} onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ''; }}>Отмена</button>
+        </div>
+      </div> : null}
+      <p className={settingsStyles.label}>{MINE_LIMIT_HINT}</p>
+    </section>
   );
 }

@@ -306,7 +306,7 @@ export function ProfileCardView({
       </div>
 
       {tab === 'settings' && mine ? (
-        <div className={`${styles.panel} ${card2.settingsBody}`} role="tabpanel">
+        <div className={`${card2.card} ${card2.settingsBody}`} role="tabpanel">
           {settingsSlot}
         </div>
       ) : (

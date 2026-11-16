@@ -793,3 +793,5 @@
 }
 
 .uploadHint { display: block; margin-top: 3px; font-size: 10px; color: var(--muted, #b9b3d9); }
+
+.card.settingsBody { padding: 18px; }
