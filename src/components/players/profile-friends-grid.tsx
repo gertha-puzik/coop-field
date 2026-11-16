@@ -6,6 +6,7 @@
  * и перейти в каталог плиткой «Добавить».
  */
 
+import { useSiteDesign } from '@/components/site/site-design';
 import { useState } from 'react';
 
 import type { ProfileFriend } from '@/lib/net/http-profiles';
@@ -36,13 +37,14 @@ export function ProfileFriendsGrid({
   onRemove: (id: string) => void;
   onFind: () => void;
 }) {
+  const {labels}=useSiteDesign();
   const [armed, setArmed] = useState<string | null>(null);
   return (
     <section className={styles.card} aria-labelledby="prof-friends">
       <header className={styles.cardHead}>
         <h2 className={styles.cardTitle} id="prof-friends">
           <Icon name="users" className={styles.cardIcon} />
-          Друзья{count ? ` · ${count}` : ''}
+          {labels.friends}{count ? ` · ${count}` : ''}
         </h2>
       </header>
       {friends.length || mine ? (

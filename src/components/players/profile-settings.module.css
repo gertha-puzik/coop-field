@@ -80,3 +80,5 @@
 .socialFields h3 { grid-column: 1 / -1; margin: 4px 0 0; }
 .socialFields label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted,#b9b3d9); }
 @media(max-width:600px) { .socialFields {grid-template-columns:minmax(0,1fr);} }
+
+.group { border-bottom:0; padding-bottom:var(--site-divider-height,28px); background:var(--site-divider,url('/ui/site-divider.svg')) bottom center / 100% var(--site-divider-height,28px) no-repeat; }

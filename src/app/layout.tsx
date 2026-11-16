@@ -3,6 +3,7 @@ import { Geist_Mono, Inter } from "next/font/google";
 import { PawCursor } from "@/components/ui";
 import { PUBLIC_NAME } from "@/lib/net/modes";
 import "./globals.css";
+import { SiteDesignProvider } from "@/components/site/site-design";
 
 const interSans = Inter({
   variable: "--font-geist-sans",
@@ -41,7 +42,7 @@ export default function RootLayout({
         />
         {/* Неподвижная лапка задана в CSS; здесь — только волна ЛКМ. */}
         <PawCursor />
-        {children}
+        {process.env.NEXT_PUBLIC_SITE === 'elyria' ? <SiteDesignProvider>{children}</SiteDesignProvider> : children}
       </body>
     </html>
   );

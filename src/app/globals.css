@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../components/site/site-design.css";
 /* UI-kit semantic tokens (--uk-*): aliases over the --sim-* theme variables,
    declared once in :root — they follow <html data-theme> automatically via
    computed-value resolution, so the theme switchers keep working untouched.

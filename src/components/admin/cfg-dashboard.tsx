@@ -76,6 +76,7 @@ import { ApplyPreview } from './cfg-apply-preview';
 // Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
+import { SiteTexturesTab } from './site-textures-tab';
 import { TexturesTab } from './textures-tab';
 // Вкладка «Коды приглашений»: генерация/отзыв инвайтов регистрации
 // закрытого сайта (ходоки /admin/invites* — http-admin-ops.ts).
@@ -564,6 +565,7 @@ export default function CfgDashboard() {
     {id:'assets',title:'Ресурсы',render:can('sprites','textures')?()=> <ConsoleSubtabs tabs={[
       ...(can('sprites')?[{id:'sprites',label:'Спрайты',content:<SpritesTab/>}]:[]),
       ...(can('textures')?[{id:'textures',label:'Текстуры',content:<TexturesTab/>}]:[]),
+      ...(can('textures')?[{id:'site-textures',label:'Сайтовые текстуры',content:<SiteTexturesTab/>}]:[]),
     ]}/>:null},
   ];
 

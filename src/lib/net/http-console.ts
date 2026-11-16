@@ -1,5 +1,5 @@
 import { apiFetch, asText } from './http-auth';
-export const PERMISSION_LABELS:Record<string,string>={overview:'Общее и журнал',players:'Игроки и удаление',roles:'Роли доступа',world:'Мир и телепортация',config:'Настройки мира и броня',sprites:'Спрайты',textures:'Текстуры',invites:'Коды приглашений',news:'Новостная доска',announcements:'Объявления',statuses:'Косметические статусы'};
+export const PERMISSION_LABELS:Record<string,string>={overview:'Общее и журнал',players:'Игроки и удаление',roles:'Роли доступа',world:'Мир и телепортация',config:'Настройки мира и броня',sprites:'Спрайты',textures:'Текстуры и оформление сайта',invites:'Коды приглашений',news:'Новостная доска',announcements:'Объявления',statuses:'Косметические статусы'};
 export const AUDIT_LABELS:Record<string,string>={'location-updates':'Локации',statuses:'Статусы',registrations:'Регистрации',sprites:'Спрайты',textures:'Текстуры',invites:'Приглашения',news:'Новостная доска',announcements:'Объявления',roles:'Роли доступа',players:'Игроки'};
 export type ConsoleRole={id:string;name:string;permissions:string[]};
 export type ConsoleUser={accountId:string;login:string;displayName:string;statusLabel:string;statusId:string;accessRoleId:string;permissions:string[];presence:string;avatar:string|null};
