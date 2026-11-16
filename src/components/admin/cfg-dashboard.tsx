@@ -69,7 +69,6 @@ import { RoomConfigPanel } from './room-config-panel';
 import { BoolFieldRow, ListFieldRow, RangeFieldRow } from './cfg-fields';
 // Вкладка «Игроки на поле»: список живых комнат/котов и сброс положения —
 // вынесена в отдельный файл, дашборд держим под лимитом 800 строк (W4).
-import { PlayersFieldTab } from './players-field-tab';
 // Вкладка «Броня» (мандат владелицы 2026-11-08): редактор кривой защиты
 // combat.armorCurve + предпросмотр «было → станет» — общие сателлиты.
 import { ArmorTab } from './armor-tab';
@@ -80,14 +79,15 @@ import { SpritesTab } from './sprites-tab';
 import { TexturesTab } from './textures-tab';
 // Вкладка «Коды приглашений»: генерация/отзыв инвайтов регистрации
 // закрытого сайта (ходоки /admin/invites* — http-admin-ops.ts).
-import { InvitesTab } from './invites-tab';
-import { StatusesTab } from './statuses-tab';
-import { NewsTab } from './news-tab';
-import { AnnouncementsTab } from './announcements-tab';
 // Пересводка W2 (2026-11-08): ThemeSelect из шапки панели убран — селект темы
 // несёт общая шапка сайта (SiteHeader), дублей быть не должно.
 // Оболочка панели (ночь + звёзды + стеклянный сайд-меню из дескрипторов вкладок)
 // вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
+import { ConsoleGeneral } from './console-general';
+import { ConsoleUsers } from './console-users';
+import { ConsoleWorld } from './console-world';
+import { ConsoleSubtabs } from './console-subtabs';
+import { PERMISSION_LABELS } from '@/lib/net/http-console';
 import { DashShell, type DashTab } from './dash-shell';
 
 const IS_ELYRIA = process.env.NEXT_PUBLIC_SITE === 'elyria';
@@ -106,8 +106,8 @@ type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
  *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
  *  «пункт, который мы смотрели», сохраняется между визитами. */
 const TAB_KEY = 'elyria-admin-tab';
-const TAB_IDS = ['cfg', 'field', 'armor', 'sprites', 'textures', 'invites', 'statuses', 'news', 'announce'] as const;
-const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'cfg';
+const TAB_IDS = ['general', 'users', 'world', 'assets'] as const;
+const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'general';
 
 /** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
 function readSavedTab(): (typeof TAB_IDS)[number] {
@@ -123,6 +123,7 @@ function readSavedTab(): (typeof TAB_IDS)[number] {
 /* ================================ дашборд ================================ */
 
 export default function CfgDashboard() {
+  const [permissions,setPermissions] = useState<string[]>([]);
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
   /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
    *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив).
@@ -175,10 +176,13 @@ export default function CfgDashboard() {
     (async () => {
       const me = await httpMe();
       if (dead) return;
-      if (me.ok !== true || me.role !== 'admin') {
+      if (me.ok !== true || (me.role !== 'admin' && !me.permissions?.length)) {
         setPhase('denied');
         return;
       }
+      const grants = me.permissions || (me.role === 'admin' ? Object.keys(PERMISSION_LABELS) : []);
+      setPermissions(grants);
+      if (!grants.includes('config')) { setPhase('ready'); return; }
       const res = await httpCfgAdmin();
       if (dead) return;
       if (res.ok && res.snapshot) {
@@ -541,14 +545,7 @@ export default function CfgDashboard() {
   /* Дескрипторы вкладок панели — источник сайд-меню и контента. Все волны
    * сведены (2026-11-08): «Броня» (кривая защиты) и «Спрайты» (менеджер
    * скинов) — live-рендеры, рендер Брони гаснет без снапшота реестра. */
-  const tabs: DashTab[] = [
-    { id: 'field', title: 'Игроки на поле', render: () => <PlayersFieldTab /> },
-    { id: 'cfg', title: 'Конфиг', render: renderCfg },
-    {
-      id: 'armor',
-      title: 'Броня',
-      render: () =>
-        snap && draft && snap.registry['combat.armorCurve'] ? (
+  const armorPanel = snap && draft && snap.registry['combat.armorCurve'] ? (
           <ArmorTab
             snap={snap}
             meta={snap.registry['combat.armorCurve']}
@@ -558,17 +555,19 @@ export default function CfgDashboard() {
             onPoints={(pts) => setPoints('armorCurve', pts)}
             onApply={requestApply}
           />
-        ) : null,
-    },
-    { id: 'sprites', title: 'Спрайты', render: () => <SpritesTab /> },
-    { id: 'textures', title: 'Текстуры', render: () => <TexturesTab /> },
-    { id: 'invites', title: 'Коды приглашений', render: () => <InvitesTab /> },
-    { id: 'statuses', title: 'Статусы', render: () => <StatusesTab /> },
-    { id: 'news', title: 'Новости доски', render: () => <NewsTab /> },
-    { id: 'announce', title: 'Объявления', render: () => <AnnouncementsTab /> },
+        ) : null;
+  const can = (...names:string[]) => names.some(name=>permissions.includes(name));
+  const tabs: DashTab[] = [
+    {id:'general',title:'Общее',render:can('overview','invites','news','announcements')?()=> <ConsoleGeneral permissions={permissions}/>:null},
+    {id:'users',title:'Игроки и администрация',render:can('players','roles','statuses')?()=> <ConsoleUsers permissions={permissions}/>:null},
+    {id:'world',title:'Мир',render:can('world','config')?()=> <ConsoleWorld permissions={permissions} settings={renderCfg()} armor={armorPanel}/>:null},
+    {id:'assets',title:'Ресурсы',render:can('sprites','textures')?()=> <ConsoleSubtabs tabs={[
+      ...(can('sprites')?[{id:'sprites',label:'Спрайты',content:<SpritesTab/>}]:[]),
+      ...(can('textures')?[{id:'textures',label:'Текстуры',content:<TexturesTab/>}]:[]),
+    ]}/>:null},
   ];
 
-  const activeTab = tabs.find((t) => t.id === tab) ?? null;
+  const activeTab = tabs.find((t) => t.id === tab && t.render) ?? tabs.find(t=>t.render) ?? null;
 
   return (
     <>
@@ -577,13 +576,13 @@ export default function CfgDashboard() {
       <SiteHeader />
       <DashShell
         tabs={tabs}
-        active={tab}
+        active={activeTab?.id || tab}
         onPick={pickTab}
-        title="Панель управления"
+        title="Админ-панель"
         headerExtra={
         <>
           <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
-            роль: админ
+            Доступ по роли
           </span>
           <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
             ← Главное меню

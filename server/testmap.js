@@ -1,3 +1,5 @@
+import { hasPermission } from "./access-roles.js";
+import { pushAdminAudit } from "./admin-audit.js";
 /**
  * «Test» location config domain (W4 carve, behavior-preserving): the canonical
  * map JSON (load → sanitize → save, editor setmap handler) and SOLE OWNER of
@@ -581,10 +583,11 @@ function backupTestMap() {
   }
 }
 
-function saveTestMap() {
+function saveTestMap(actor = "Система") {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   backupTestMap();
   writeFileAtomic(locationFile(activeLocationId), JSON.stringify(testMap, null, 2));
+  pushAdminAudit("location-updates", `Обновлена локация ${testMap.place?.name || activeLocationId}`, actor);
 }
 
 rebuildTestGeometry();
@@ -605,7 +608,7 @@ const SETMAP_MIN_GAP_MS = 10000;
 
 function setMap(ws, payload = {}) {
   // Сохраняет локацию только админ (лечит «Сохранять может любой игрок»).
-  if (ws.account?.role !== "admin") {
+  if (!hasPermission(ws.account, "world")) {
     send(ws, EV.INFO, 'Редактор: сохранение локации доступно только администраторам.');
     return;
   }
@@ -635,7 +638,7 @@ function setMap(ws, payload = {}) {
   // Не сохранившаяся на диск правка умерла бы при первом же рестарте («карта
   // слетела») — ошибка записи видна автору сразу, а не после деплоя.
   try {
-    saveTestMap();
+    saveTestMap(ws.account?.profile?.displayName || ws.account?.login);
   } catch (e) {
     console.warn('map save failed:', e?.message || e);
     testMap = previousMap;

@@ -1081,7 +1081,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       sprintRef.current=false;engineRef.current.leap=null;engineRef.current.leapZ=0;
       sprintPartsRef.current.length=0;groundEffectsRef.current.rain.length=0;groundEffectsRef.current.rainBudget=0;
     },
-    openEditor:()=>{if(whoami?.role==='admin')openEditorBase();},closeEditor,
+    openEditor:()=>{if(whoami?.role==='admin'||whoami?.permissions?.includes('world'))openEditorBase();},closeEditor,
   });
   const changeLocationDraft=(change:(d:EditorDraft)=>void)=>{
     const d=editorRef.current;if(!d)return;
@@ -1150,7 +1150,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    *  не-админ не попадёт в редактор даже программно (hotkey/консоль). Кнопка
    *  скрыта в chrome.tsx (role === 'admin'), сервер вдобавок гейтит сам кадр
    *  setmap по роли WS-сессии (server/testmap.js). */
-  const openEditor = whoami?.role === 'admin' ? openEditorBase : () => {};
+  const openEditor = whoami?.role === 'admin' || whoami?.permissions?.includes('world') ? openEditorBase : () => {};
 
   /** Обновление ?room=/&name= в адресной строке после выбора/смены комнаты: ссылкой
    *  можно вернуться прямо в тот же грот (и имя подставится в пикер персонажа). */
@@ -4774,7 +4774,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         setRoomsStale={setRoomsStale}
         setSwitchOpen={setSwitchOpen}
         canSwitch={roomsForMode(mode).length > 1}
-        role={whoami?.role}
+        role={whoami?.permissions?.includes('world') ? 'admin' : whoami?.role}
       /></div>
 
       {/* Один ряд: чат слева · поле в центре · лог ударов справа.
@@ -4976,7 +4976,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
       {settingsOpen ? <SettingsPanelOverlay
         setSettingsOpen={setSettingsOpen}
-        role={whoami?.role}
+        role={whoami?.permissions?.includes('world') ? 'admin' : whoami?.role}
         settings={settings}
         testField={testField}
         atmoState={atmoState}

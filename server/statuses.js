@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Статусы игроков на поле (Элизия): каталог подписей + присвоение аккаунту.
  * Хранилище DATA_DIR/statuses.json (каталог); statusId живёт в
@@ -212,7 +213,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт администратора." });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, "statuses")) {
     json(res, 403, { ok: false, reason: "forbidden", message: "Раздел открыт только администраторам." });
     return null;
   }

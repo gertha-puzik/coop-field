@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Каталог текстур редактора локации (деревья/камни/растения/настилы/пол).
  * Builtin PNG — статика /tex/<id>.png; замены и кастомные — DATA_DIR/tex/
@@ -259,7 +260,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт администратора." });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, "textures")) {
     json(res, 403, { ok: false, reason: "forbidden", message: "Раздел открыт только администраторам." });
     return null;
   }

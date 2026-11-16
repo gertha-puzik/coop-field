@@ -1,7 +1,7 @@
 {
   "name": "coop-field",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.6.7",
   "description": "abnocw canvas on the coop-field WebSocket room",
   "type": "module",
   "scripts": {
@@ -51,7 +51,8 @@
     "test:locations": "node scripts/test-locations.mjs",
     "test:textures": "node scripts/test-textures.mjs",
     "test:statuses": "node scripts/test-statuses.mjs",
-    "test:home-news": "node scripts/test-home-news.mjs"
+    "test:home-news": "node scripts/test-home-news.mjs",
+    "test:console-profile": "node scripts/test-console-profile.mjs"
   },
   "engines": {
     "node": ">=18"

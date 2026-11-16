@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Одноразовые инвайт-коды регистрации (закрытый сайт Wanderpaws/Elyria):
  * регистрация аккаунта — только по приглашению администрации. Домен живёт
@@ -226,7 +227,7 @@ function adminGate(req, res) {
     json(res, 401, { ok: false, reason: "auth_required", message: "Нужен вход в аккаунт администратора." });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, "invites")) {
     json(res, 403, { ok: false, reason: "forbidden", message: "Раздел открыт только администраторам." });
     return null;
   }

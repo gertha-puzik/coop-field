@@ -56,7 +56,11 @@ export type ProfileFriend = {
   presence: PresenceTone;
 };
 
+export type ProfileSocials = Partial<Record<"discord" | "telegram" | "youtube" | "vk" | "website", string>>;
 export type PublicProfile = {
+  socials?: ProfileSocials;
+  statusId?: string;
+  statusLabel?: string;
   displayName: string;
   bio: string;
   /** День рождения. Свой /profiles/me — полная «ГГГГ-ММ-ДД» (чтобы править).
@@ -101,6 +105,7 @@ export type ProfileSp = {
 export type ProfileMe = PublicProfile & { sp?: ProfileSp };
 
 export type ProfilePatch = {
+  socials?: ProfileSocials;
   displayName?: string;
   bio?: string;
   /** День рождения: строка ГГГГ-ММ-ДД или null (сброс) — уезжает в PATCH
@@ -189,12 +194,21 @@ function parseFriends(raw: unknown): ProfileFriend[] | undefined {
   return out;
 }
 
+function parseSocials(raw: unknown): ProfileSocials {
+  const row = raw && typeof raw === 'object' ? raw as Record<string,unknown> : {};
+  const out: ProfileSocials = {};
+  for (const key of ['discord','telegram','youtube','vk','website'] as const) if (typeof row[key] === 'string' && String(row[key]).startsWith('https://')) out[key] = String(row[key]);
+  return out;
+}
 function parseProfile(row: ApiRow): ProfileMe {
   const playtimeMs = Number(row.playtimeMs);
   return {
     displayName: asText(row.displayName),
     bio: asText(row.bio),
     birthday: asBirthday(row.birthday),
+    socials: parseSocials(row.socials),
+    statusId: asText(row.statusId),
+    statusLabel: asText(row.statusLabel),
     avatar: asId(row.avatar),
     banner: asId(row.banner),
     avatarCharacterId: asId(row.avatarCharacterId),

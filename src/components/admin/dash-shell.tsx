@@ -4,7 +4,9 @@ import type { ReactNode } from 'react';
 
 import { StarBackdrop } from '@/components/menu/star-backdrop';
 import nightStyles from '@/components/site/site-night.module.css';
-import s from './dash-side.module.css';
+import s from './admin-console.module.css';
+import { Icon, type IconName } from '@/components/players/profile-icons';
+import { ConsoleHero } from './console-hero';
 
 /**
  * Оболочка контентной панели с сайд-меню (/admin — Elysiae; стиль: ночь
@@ -28,7 +30,6 @@ export function DashShell({
   active,
   onPick,
   title,
-  headerExtra = null,
   notice = null,
   children,
 }: {
@@ -40,6 +41,7 @@ export function DashShell({
   notice?: ReactNode;
   children: ReactNode;
 }) {
+  const icons: Record<string,IconName> = {general:'chart',users:'users',world:'pin',assets:'gear'};
   const visible = tabs.filter((t) => t.render !== null);
   return (
     <main className={`${nightStyles.pageNight} relative min-h-screen`}>
@@ -48,34 +50,11 @@ export function DashShell({
       <div className="star-backdrop" aria-hidden>
         <StarBackdrop />
       </div>
-      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 p-4 sm:p-6">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-bold text-[var(--sim-text)]">{title}</h1>
-          <div className="flex flex-wrap items-center gap-3">{headerExtra}</div>
-        </header>
+      <div className={`${s.wrap} ${s.shell}`}>
+        <ConsoleHero title={title}/>
         {notice}
-        <div className="flex min-h-0 flex-col gap-4 md:flex-row md:items-start">
-          {/* Сайд-меню категорий: слева стеклянная колонка (sticky), на
-              мобильном (<768px) — горизонтальная лента с прокруткой. */}
-          <aside className={`${s.dashSide} md:sticky md:top-6 md:w-56 md:shrink-0`}>
-            <nav className={s.dashSideNav} aria-label="Разделы панели">
-              {visible.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={s.dashSideItem}
-                  data-active={t.id === active}
-                  onClick={() => onPick(t.id)}
-                >
-                  {t.title}
-                </button>
-              ))}
-            </nav>
-          </aside>
-          {/* Контент выбранной категории: вся остальная ширина, прокрутка —
-              общая у страницы, сайдбар на десктопе залипает сверху. */}
-          <section className="min-w-0 flex-1">{children}</section>
-        </div>
+        <nav className={s.nav} aria-label="Разделы админ-панели">{visible.map(tab=><button key={tab.id} type="button" aria-selected={tab.id===active} onClick={()=>onPick(tab.id)}><Icon name={icons[tab.id] || 'gear'} size={22}/>{tab.title}</button>)}</nav>
+        <section className="min-w-0">{children}</section>
       </div>
     </main>
   );

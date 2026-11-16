@@ -1,3 +1,4 @@
+import { hasPermission } from "./access-roles.js";
 /**
  * Админ-анонсы → фан-аут в личные уведомления всех живых аккаунтов.
  * Журнал DATA_DIR/announcements.json (для вкладки админки).
@@ -78,7 +79,7 @@ function requireAdmin(req, res) {
     json(res, 401, { ok: false, reason: "auth_required" });
     return null;
   }
-  if (session.account?.role !== "admin") {
+  if (!hasPermission(session.account, "announcements")) {
     json(res, 403, { ok: false, reason: "forbidden" });
     return null;
   }
