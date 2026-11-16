@@ -92,6 +92,7 @@ export function inventoryError(error: unknown) {
         weight_in_use: "Новый вес перегрузит инвентарь одного из персонажей.",
         stale_inventory:
           "Инвентарь изменился. Данные обновлены — повторите перемещение.",
+        slot_occupied: "Этот слот занят другим предметом.",
         invalid_slot: "Выберите другой слот.",
         operation_conflict: "Операция уже использована. Обновите страницу.",
         catalogue_full: "В каталоге уже 500 предметов.",

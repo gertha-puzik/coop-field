@@ -232,7 +232,38 @@ export function worldItemAction(accountId, characterId, room, raw) {
     return { error: "stale_inventory", status: 409 };
   const inventory = copy(old),
     ground = { ...store.ground };
-  if (raw.action === "drop") {
+  if (raw.action === "stash") {
+    const stack = inventory.mouth;
+    if (!stack) return { error: "empty_mouth" };
+    if (raw.expectedItemId && stack.itemId !== raw.expectedItemId)
+      return { error: "stale_inventory", status: 409 };
+    if (
+      weightUnits(inventory) + units(store.items[stack.itemId].weight) >
+      MAX_WEIGHT * 100
+    )
+      return { error: "weight_limit" };
+    const area = raw.to?.area || "hotbar";
+    if (!["bag", "hotbar"].includes(area)) return { error: "invalid_slot" };
+    let index = raw.to?.index;
+    if (index === undefined) {
+      index = inventory[area].findIndex((s) => s?.itemId === stack.itemId);
+      if (index < 0) index = inventory[area].indexOf(null);
+    }
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= inventory[area].length
+    )
+      return { error: "no_free_slot" };
+    const other = inventory[area][index];
+    if (other && other.itemId !== stack.itemId)
+      return { error: "slot_occupied" };
+    inventory[area][index] = {
+      itemId: stack.itemId,
+      quantity: (other?.quantity || 0) + 1,
+    };
+    inventory.mouth = null;
+  } else if (raw.action === "drop") {
     let itemId;
     if (raw.from === "mouth") {
       if (!inventory.mouth) return { error: "empty_mouth" };

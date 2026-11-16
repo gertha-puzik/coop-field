@@ -401,3 +401,29 @@
   inset: 0;
   pointer-events: none;
 }
+.mouthSlot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: #e3ceb2;
+  font-size: 11px;
+  pointer-events: auto;
+}
+.mouthSlot button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #a08057;
+  border-radius: 9px;
+  background: #2b2337;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.mouthSlot img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}

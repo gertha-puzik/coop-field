@@ -10,6 +10,9 @@ import {
   currentWorldItemFrame,
   markWorldItemDrop,
   observeWorldItemFrame,
+  setWorldItemScene,
+  clearWorldItemScene,
+  ITEM_REACH_PX,
   type WorldItemFrame,
 } from "@/lib/sim/world-item-frame";
 import { screenToWorld } from "@/lib/sim/geometry";
@@ -18,7 +21,6 @@ import {
   groundPointAtWorld,
   TERRAIN_LIFT_PX,
 } from "@/lib/sim/test-field";
-import type { ElisionActor } from "@/lib/sim/elision-scene";
 import type { InventoryController } from "./inventory-panel";
 import s from "./world-items.module.css";
 const EMPTY: WorldItemsSnapshot = {
@@ -44,7 +46,8 @@ export function WorldItems({
   const root = useRef<HTMLDivElement>(null),
     current = useRef({ world, controller, blocked }),
     nearRef = useRef<string | null>(null),
-    targetRef = useRef<number | null>(null);
+    targetRef = useRef<number | null>(null),
+    pointer = useRef({ x: -10000, y: -10000 });
   current.current = { world, controller, blocked };
   useEffect(() => {
     let disposed = false,
@@ -81,6 +84,25 @@ export function WorldItems({
       window.removeEventListener("world-items:refresh", load);
     };
   }, [characterId]);
+  useEffect(() => {
+    setWorldItemScene(
+      world,
+      (controller.snapshot?.items || []).map((item) => ({
+        ...item,
+        sprite: item.sprite ? itemSprite(item.sprite) : null,
+      })),
+    );
+  }, [world, controller.snapshot?.items]);
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener("pointermove", move);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      clearWorldItemScene();
+    };
+  }, []);
   useEffect(
     () =>
       observeWorldItemFrame(({ frame: f, rect }: WorldItemFrame) => {
@@ -126,18 +148,42 @@ export function WorldItems({
           }
         };
         let closest: string | null = null,
+          hovered: string | null = null,
+          promptHovered: string | null = null,
           distance = Infinity;
         for (const item of w.ground) {
           const lift = supportLevelAt(item.x, item.y) * TERRAIN_LIFT_PX;
           const p = project(item.x * f.cellW, item.y * f.cellH, lift);
-          at(`ground-${item.id}`, p, Math.max(12, 30 * f.zoom));
+
           at(`prompt-${item.id}`, { x: p.x, y: p.y - 36 * f.zoom });
           if (self) {
             const d = Math.hypot(
-              (self.x + self.w / 2) / f.cellW - item.x,
-              (self.y + self.h) / f.cellH - item.y,
+              ((self.x + self.w / 2) / f.cellW - item.x) * 100,
+              ((self.y + self.h) / f.cellH - item.y) * 150,
             );
-            if (d < 1.5 && d < distance) {
+            if (
+              d <= ITEM_REACH_PX &&
+              Math.abs(pointer.current.x - p.x) <= 20 * f.zoom &&
+              pointer.current.y >= p.y - 36 * f.zoom &&
+              pointer.current.y <= p.y + 4 * f.zoom
+            )
+              hovered = item.id;
+            if (d <= ITEM_REACH_PX && nearRef.current === item.id) {
+              const prompt = root.current
+                ?.querySelector<HTMLElement>(
+                  `[data-world-key="prompt-${item.id}"]`,
+                )
+                ?.getBoundingClientRect();
+              if (
+                prompt &&
+                pointer.current.x >= prompt.left &&
+                pointer.current.x <= prompt.right &&
+                pointer.current.y >= prompt.top &&
+                pointer.current.y <= prompt.bottom
+              )
+                promptHovered = item.id;
+            }
+            if (d <= ITEM_REACH_PX && d < distance) {
               closest = item.id;
               distance = d;
             }
@@ -147,27 +193,6 @@ export function WorldItems({
           best = Infinity;
         for (const player of w.players) {
           const a = actor(player.id);
-          if (player.mouth) {
-            // Authored test1 muzzle: 6% from left, 29% down. Mirror and pose about the feet.
-            const p = a ? muzzle(a) : null;
-            const foot = a
-              ? project(a.x + a.w / 2, a.y + a.h, a.lift + (a.pose?.lift || 0))
-              : null;
-            at(
-              `mouth-${player.id}`,
-              p && foot
-                ? {
-                    x: foot.x + (p.x + (a?.pose?.sway || 0)) * f.zoom,
-                    y:
-                      foot.y -
-                      p.y * f.zoom +
-                      (a ? Math.max(8, a.h * 0.145 * f.zoom) : 18) / 2,
-                  }
-                : null,
-              a ? Math.max(8, a.h * 0.145 * f.zoom) : 18,
-              a?.pose?.rot || 0,
-            );
-          }
           const p = a ? project(a.x + a.w / 2, a.y + a.h, a.lift) : null;
           at(
             `player-${player.id}`,
@@ -188,6 +213,7 @@ export function WorldItems({
             }
           }
         }
+        closest = hovered || promptHovered || closest;
         if (nearRef.current !== closest) {
           nearRef.current = closest;
           setNear(closest);
@@ -209,10 +235,22 @@ export function WorldItems({
         e.altKey ||
         (e.target instanceof HTMLElement &&
           e.target.closest(
-            'input,textarea,select,[contenteditable="true"],button,[data-game-dialog]',
+            'input,textarea,select,[contenteditable="true"],[data-game-dialog]',
           ))
       )
         return;
+      const mouth = current.current.controller.snapshot
+        ? current.current.controller.snapshot.mouth
+        : current.current.world.mouth;
+      if (e.code === "KeyR" && mouth) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        void current.current.controller.worldAction({
+          action: "release",
+          expectedItemId: mouth.itemId,
+        });
+        return;
+      }
       const action =
         e.code === "KeyR" ? "mouth" : e.code === "KeyF" ? "take" : null;
       if (action && nearRef.current) {
@@ -230,6 +268,7 @@ export function WorldItems({
         expectedItemId?: string;
         x: number;
         y: number;
+        onResult?: (ok: boolean) => void;
       }>;
       const value = currentWorldItemFrame();
       if (!value || value.frame.editor) return;
@@ -254,13 +293,15 @@ export function WorldItems({
       );
       // Use the same terrain ray pick as movement, including cliffs and rotated views.
       const p = groundPointAtWorld(flat.x, flat.y, f.cellW, f.cellH, f.yaw);
-      void current.current.controller.worldAction({
-        action: "drop",
-        from: e.detail.from,
-        expectedItemId: e.detail.expectedItemId,
-        x: p.x / f.cellW,
-        y: p.y / f.cellH,
-      });
+      void current.current.controller
+        .worldAction({
+          action: "drop",
+          from: e.detail.from,
+          expectedItemId: e.detail.expectedItemId,
+          x: p.x / f.cellW,
+          y: p.y / f.cellH,
+        })
+        .then((ok) => e.detail.onResult?.(ok));
     };
     window.addEventListener("keydown", key, true);
     window.addEventListener("world-items:drop", drop);
@@ -278,12 +319,6 @@ export function WorldItems({
     <div ref={root} className={s.layer}>
       {world.ground.map((row) => (
         <div key={row.id}>
-          <img
-            data-world-key={`ground-${row.id}`}
-            className={s.item}
-            src={itemSprite(item(row.itemId)?.sprite || "/items/nugget.png")}
-            alt={item(row.itemId)?.name || "Предмет"}
-          />
           {near === row.id && !blocked ? (
             <div data-world-key={`prompt-${row.id}`} className={s.prompt}>
               <strong>{item(row.itemId)?.name}</strong>
@@ -305,16 +340,6 @@ export function WorldItems({
       ))}
       {world.players.map((player) => (
         <div key={player.id}>
-          {player.mouth ? (
-            <img
-              data-world-key={`mouth-${player.id}`}
-              className={s.mouth}
-              src={itemSprite(
-                item(player.mouth.itemId)?.sprite || "/items/nugget.png",
-              )}
-              alt={`${player.name}: ${item(player.mouth.itemId)?.name || "предмет"} в пасти`}
-            />
-          ) : null}
           {world.mouth && player.id === target && !blocked ? (
             <div data-world-key={`player-${player.id}`} className={s.prompt}>
               <button
@@ -325,46 +350,36 @@ export function WorldItems({
               </button>
             </div>
           ) : null}
-          {world.offers
-            .filter((o) => o.fromId === player.id)
-            .map((offer) => (
-              <div
-                key={offer.id}
-                data-world-key={`offer-${player.id}`}
-                className={s.prompt}
-                data-world-drop-block
-              >
-                <strong>
-                  {offer.name} предлагает «{item(offer.itemId)?.name}»
-                </strong>
-                <button
-                  disabled={controller.busy}
-                  onClick={() => act({ action: "accept", offerId: offer.id })}
+          {!blocked &&
+            world.offers
+              .filter((o) => o.fromId === player.id)
+              .map((offer) => (
+                <div
+                  key={offer.id}
+                  data-world-key={`offer-${player.id}`}
+                  className={s.prompt}
+                  data-world-drop-block
                 >
-                  Принять в пасть
-                </button>
-                <button
-                  disabled={controller.busy}
-                  onClick={() => act({ action: "cancel", offerId: offer.id })}
-                >
-                  Отмена
-                </button>
-              </div>
-            ))}
+                  <strong>
+                    {offer.name} предлагает «{item(offer.itemId)?.name}»
+                  </strong>
+                  <button
+                    disabled={controller.busy}
+                    onClick={() => act({ action: "accept", offerId: offer.id })}
+                  >
+                    Принять в пасть
+                  </button>
+                  <button
+                    disabled={controller.busy}
+                    onClick={() => act({ action: "cancel", offerId: offer.id })}
+                  >
+                    Отмена
+                  </button>
+                </div>
+              ))}
         </div>
       ))}
-      {controller.snapshot?.mouth ? (
-        <button
-          className={s.carried}
-          data-mouth-item
-          onClick={() =>
-            window.dispatchEvent(new CustomEvent("world-items:carry-mouth"))
-          }
-        >
-          В пасти: {item(controller.snapshot.mouth.itemId)?.name} · положить
-        </button>
-      ) : null}
-      {controller.error ? (
+      {controller.error && !blocked ? (
         <p className={s.error} role="status">
           {controller.error}
         </p>
@@ -372,14 +387,4 @@ export function WorldItems({
     </div>,
     document.body,
   );
-}
-function muzzle(a: ElisionActor) {
-  const pose = a.pose,
-    x = (a.mirror ? 1 : -1) * a.w * 0.44 * (pose?.scaleX ?? 1),
-    y = a.h * 0.71 * (pose?.scaleY ?? 1),
-    angle = -((a.rot * Math.PI) / 180 + (pose?.rot ?? 0));
-  return {
-    x: x * Math.cos(angle) - y * Math.sin(angle),
-    y: x * Math.sin(angle) + y * Math.cos(angle),
-  };
 }

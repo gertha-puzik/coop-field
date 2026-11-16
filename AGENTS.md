@@ -346,5 +346,14 @@ and recipient consent. `/cfg/inventory/world` GET/POST is cookie/Origin protecte
 and a per-character mouth (excluded from weight). Mouth offers are transient,
 20-second, proximity/session-bound and require recipient accept. Client world-items
 uses actual camera/animated actor frames via world-item-frame; R/F interact nearby,
-mouse drop supports drag-release or click-carry, Escape cancels. `test:world-items`
+mouse transfer uses two clicks (no held-button drag), Escape cancels. `test:world-items`
 covers real multiplayer HTTP/WS, races, weight, consent, travel and persistence.
+
+Item interaction fixes: pickup uses a 70px circular radius in canonical 100×150
+world pixels; hover selects a reachable item. R with a full mouth releases at the
+server-authoritative feet. `stash` atomically moves one mouth unit into a chosen
+bag/hotbar slot with weight/occupancy checks. Items are scene decals, mouth decals
+inherit the actual model root and render behind opaque model pixels; both ground
+and mouth fit the same 30px box, preserving aspect. 2D fallback uses a masked,
+tinted world layer below weather/UI. Renderer regression: test-world-item-view
+in test:unit. World item snapshots no longer insert DOM images over dialogs.

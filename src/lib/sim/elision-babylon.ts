@@ -360,10 +360,12 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         if (node) {
           node.mat.emissiveTexture = null;
           node.mat.dispose(false, false);
+          for(const child of decals.values())if(child.root.parent===node.root)child.root.parent=null;
           node.root.dispose();
         }
         const mat = new StandardMaterial(`decal-${actor.id}`, scene);
         mat.disableLighting = true;
+        mat.forceDepthWrite = !actor.isProp;
         mat.specularColor = new Color3(0, 0, 0);
         const tex = textureFor(actor.url,actor.image);
         mat.emissiveColor = Color3.White();
@@ -408,16 +410,26 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       node.mat.alpha = alpha;
       node.mat.alphaCutOff = 0.01;
       node.mat.transparencyMode = Material.MATERIAL_ALPHATESTANDBLEND;
-      const foot = elisionActorFoot(actor);
-      node.root.position.set(foot.x + (pose?.sway ?? 0)*Math.cos(frame.yaw),
-        foot.y + (pose?.lift ?? 0), foot.z - (pose?.sway ?? 0)*Math.sin(frame.yaw));
-      // Вертикальные билборды имеют глубину по точке опоры, а не общей плоскости земли.
-      node.root.rotation.set(0, frame.yaw, 0);
+      const parent = actor.attachment ? decals.get(actor.attachment.parentId) : null;
+      if(parent && actor.attachment){
+        node.root.parent=parent.root;
+        node.root.position.set(actor.attachment.x,actor.attachment.y,-0.3);
+        node.root.rotation.set(0,0,0);
+        node.mat.zOffset=0;
+      }else{
+        node.root.parent=null;
+        const foot = elisionActorFoot(actor);
+        node.root.position.set(foot.x + (pose?.sway ?? 0)*Math.cos(frame.yaw),
+          foot.y + (pose?.lift ?? 0), foot.z - (pose?.sway ?? 0)*Math.sin(frame.yaw));
+        node.root.rotation.set(0, frame.yaw, 0);
+      }
     }
+
     for (const [id, node] of decals) {
       if (seen.has(id)) continue;
       node.mat.emissiveTexture = null;
       node.mat.dispose(false, false);
+      for(const child of decals.values())if(child.root.parent===node.root)child.root.parent=null;
       node.root.dispose();
       decals.delete(id);
     }

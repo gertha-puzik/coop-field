@@ -4210,7 +4210,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 objects: currentTestMap().objects ?? [],
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });
-            if (IS_ELYRIA) publishWorldItemFrame(frame, cv);
+            if (IS_ELYRIA) publishWorldItemFrame(frame, cv, !!elision);
             elision?.frame(frame);
             drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
               atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
