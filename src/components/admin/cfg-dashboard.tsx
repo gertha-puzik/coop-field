@@ -100,57 +100,20 @@ type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
-/* ========================= Персист активной вкладки ======================== */
-
-/** Ключ активной вкладки панели в localStorage — тот же API, что тема
- *  оформления (THEME_KEY/loadTheme из lib/sim/theme.ts: window-guard,
- *  валидация по списку id, тихий фолбэк). Третья дельта 2026-11-08:
- *  «пункт, который мы смотрели», сохраняется между визитами. */
-const TAB_KEY = 'elyria-admin-tab';
 const TAB_IDS = ['general', 'users', 'world', 'assets'] as const;
-const TAB_DEFAULT: (typeof TAB_IDS)[number] = 'general';
-
-/** Сохранённая вкладка: мусор/чужой id/недоступное хранилище → дефолт 'cfg'. */
-function readSavedTab(): (typeof TAB_IDS)[number] {
-  if (typeof window === 'undefined') return TAB_DEFAULT;
-  try {
-    const raw = localStorage.getItem(TAB_KEY) as (typeof TAB_IDS)[number] | null;
-    return raw && TAB_IDS.includes(raw) ? raw : TAB_DEFAULT;
-  } catch {
-    return TAB_DEFAULT;
-  }
-}
 
 /* ================================ дашборд ================================ */
 
 export default function CfgDashboard() {
   const [permissions,setPermissions] = useState<string[]>([]);
   const [phase, setPhase] = useState<'loading' | 'denied' | 'ready'>('loading');
-  /** Активная вкладка (id из массива дескрипторов tabs ниже: конфиг, «Игроки
-   *  на поле», «Броня», «Спрайты» — все волны кладут вкладку в массив).
-   *  Стартует с дефолта 'cfg' (SSR/export и первый рендер совпадают — без
-   *  hydration-варнингов), эффектом подхватывает сохранённую вкладку, если
-   *  она есть (мусор/чужой id в хранилище → дефолт); переход на сохранённую
-   *  'field' поведением не отличается от ручного клика — вкладка просто
-   *  рендерится. */
-  const [tab, setTabState] = useState<(typeof TAB_IDS)[number]>(TAB_DEFAULT);
-  useEffect(() => {
-    setTabState(readSavedTab());
-  }, []);
-
-  /** Единственный переключатель вкладок: сначала localStorage, затем state —
-   *  старт на сохранённой и ручной клик идут одним путём. ОБЯЗАТЕЛЬНО выше
-   *  условных return ниже: ранний выход loading/denied между рендерами менял
-   *  число вызванных хуков и валил панель React #310 (owner report: пустой
-   *  /admin/ вместо интерфейса, 2026-11-08). */
+  // Each visit begins collapsed; retain the last mounted group for its closing animation.
+  const [tab, setTabState] = useState('');
+  const [renderedTab,setRenderedTab] = useState('');
   const pickTab = useCallback((id: string) => {
     if (!TAB_IDS.includes(id as (typeof TAB_IDS)[number])) return;
-    try {
-      localStorage.setItem(TAB_KEY, id);
-    } catch {
-      /* приватный режим/квота — переключаем и без персиста */
-    }
-    setTabState(id as (typeof TAB_IDS)[number]);
+    setRenderedTab(id);
+    setTabState(current=>current===id?'':id);
   }, []);
   const [snap, setSnap] = useState<CfgAdminSnapshot | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -569,7 +532,7 @@ export default function CfgDashboard() {
     ]}/>:null},
   ];
 
-  const activeTab = tabs.find((t) => t.id === tab && t.render) ?? tabs.find(t=>t.render) ?? null;
+  const activeTab = tabs.find((t) => t.id === renderedTab && t.render) ?? null;
 
   return (
     <>
@@ -578,7 +541,7 @@ export default function CfgDashboard() {
       <SiteHeader />
       <DashShell
         tabs={tabs}
-        active={activeTab?.id || tab}
+        active={tab}
         onPick={pickTab}
         title="Админ-панель"
         headerExtra={
@@ -617,7 +580,7 @@ export default function CfgDashboard() {
       {pending && snap && draft ? (
         <ApplyPreview pending={pending} busy={busy} onConfirm={confirmApply} onCancel={() => setPending(null)} />
       ) : null}
-      {activeTab?.render ? activeTab.render() : null}
+      {activeTab?.render ? <div key={activeTab.id}>{activeTab.render()}</div> : null}
       </DashShell>
     </>
   );

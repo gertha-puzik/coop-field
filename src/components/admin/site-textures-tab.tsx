@@ -10,7 +10,7 @@ const ASSETS:{key:DesignSlot;label:string;hint:string}[]=[
  {key:'button',label:'Фон кнопок',hint:'Текстура для кнопок сайта.'},
  {key:'fontFile',label:'Свой шрифт',hint:'Файл WOFF2 с поддержкой кириллицы.'},
 ];
-const RANGES={textSize:['Основной текст',10,24],headingSize:['Заголовки блоков',14,36],titleSize:['Крупные заголовки',20,56],frameSlice:['Срез рамки (пиксели исходника)',4,150],frameWidth:['Толщина рамки',8,60],dividerHeight:['Высота разделителя',12,80],panelOpacity:['Непрозрачность блоков (%)',30,100]} as const;
+const RANGES={textSize:['Основной текст',10,24],headingSize:['Заголовки блоков',14,36],titleSize:['Крупные заголовки',20,56],frameSlice:['Срез рамки (пиксели исходника)',4,150],frameWidth:['Толщина рамки',8,60],dividerHeight:['Высота разделителя',1,80],panelOpacity:['Непрозрачность блоков (%)',30,100]} as const;
 const COLORS={textColor:'Основной текст',mutedColor:'Второстепенный текст',accentColor:'Акценты',panelColor:'Подложка блоков',backgroundColor:'Фон страницы'} as const;
 const LABELS={userInfo:'Информация о пользователе',character:'Персонаж',statistics:'Статистика',friends:'Друзья',activity:'Последние действия'} as const;
 const errorText=(error:unknown)=>{const code=error instanceof Error?error.message:'';return ({auth_required:'Войдите в аккаунт.',forbidden:'Нет права «Текстуры и оформление сайта».',invalid_settings:'Проверьте значения настроек.',invalid_file:'Файл не подходит. Для изображений используйте PNG, JPEG, WebP или GIF, для шрифта — WOFF2.',too_large:'Размер файла превышает 2 МБ.'} as Record<string,string>)[code] || 'Не удалось выполнить действие. Проверьте соединение и попробуйте снова.';};

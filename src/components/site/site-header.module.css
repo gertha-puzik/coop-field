@@ -51,5 +51,6 @@
   .brand strong { font-size: 15px; }
   .brand small { letter-spacing: .21em; }
 }
-.header { border-bottom:0; padding-bottom:calc(var(--site-divider-height,28px) + 8px); }
-.header::after { content:''; position:absolute; left:0; right:0; bottom:0; height:var(--site-divider-height,28px); background:var(--site-divider,url('/ui/site-divider.svg')) center / contain no-repeat; pointer-events:none; }
+
+:global(html[data-site-custom-divider]) .header { border-bottom:0; padding-bottom:calc(var(--site-divider-height) + 8px); }
+:global(html[data-site-custom-divider]) .header::after { content:''; position:absolute; inset:auto 0 0; height:var(--site-divider-height); background:var(--site-divider) center / contain no-repeat; }

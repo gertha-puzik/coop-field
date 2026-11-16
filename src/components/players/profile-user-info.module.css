@@ -16,8 +16,8 @@
 @media (max-width: 1000px) { .heroRow { grid-template-columns: minmax(0,1fr) minmax(220px,270px); } }
 @media (max-width: 760px) { .heroRow, .columns { grid-template-columns: minmax(0,1fr); } }
 
-.socials { position: relative; border-top: 0; padding-top: calc(var(--site-divider-height,28px) + 10px); }
-.socials::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--site-divider-height,28px); background: var(--site-divider,url('/ui/site-divider.svg')) center / contain no-repeat; }
 .info { justify-content: center; }
 .fact strong { font-size: var(--site-text-size,14px); }
 .fact small { font-size: calc(var(--site-text-size,14px) - 2px); }
+
+:global(html[data-site-custom-divider]) .socials { border-top:0; padding-top:calc(var(--site-divider-height) + 10px); background:var(--site-divider) top center / 100% var(--site-divider-height) no-repeat; }

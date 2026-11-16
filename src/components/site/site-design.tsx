@@ -16,10 +16,11 @@ export function SiteDesignProvider({children}:{children:ReactNode}){
  },[]);
  useEffect(()=>{
   const root=document.documentElement;root.dataset.siteDesign='true';if(settings.button)root.dataset.siteButton='true';else delete root.dataset.siteButton;
+  root.toggleAttribute('data-site-custom-frame',settings.frame!==DEFAULT_SITE_DESIGN.frame);root.toggleAttribute('data-site-custom-divider',settings.divider!==DEFAULT_SITE_DESIGN.divider);
   const vars=designVariables(settings);for(const [key,value] of Object.entries(vars))root.style.setProperty(key,value);
   let font:FontFace|null=null;
   if(settings.fontFile){font=new FontFace('SiteCustom',`url("${siteAsset(settings.fontFile)}")`);void font.load().then(loaded=>{if(font)document.fonts.add(loaded);}).catch(()=>{});}
-  return()=>{for(const key of Object.keys(vars))root.style.removeProperty(key);delete root.dataset.siteDesign;delete root.dataset.siteButton;if(font){document.fonts.delete(font);font=null;}};
+  return()=>{for(const key of Object.keys(vars))root.style.removeProperty(key);root.removeAttribute('data-site-custom-frame');root.removeAttribute('data-site-custom-divider');delete root.dataset.siteDesign;delete root.dataset.siteButton;if(font){document.fonts.delete(font);font=null;}};
  },[settings]);
  return <DesignContext.Provider value={settings}>{children}</DesignContext.Provider>;
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { ConsoleNavigationContext } from './console-subtabs';
 
 import { StarBackdrop } from '@/components/menu/star-backdrop';
 import nightStyles from '@/components/site/site-night.module.css';
@@ -41,6 +42,7 @@ export function DashShell({
   notice?: ReactNode;
   children: ReactNode;
 }) {
+  const [subnavTarget,setSubnavTarget]=useState<HTMLDivElement|null>(null);
   const icons: Record<string,IconName> = {general:'chart',users:'users',world:'pin',assets:'gear'};
   const visible = tabs.filter((t) => t.render !== null);
   return (
@@ -53,8 +55,15 @@ export function DashShell({
       <div className={`${s.wrap} ${s.shell}`}>
         <ConsoleHero title={title}/>
         {notice}
-        <nav className={s.nav} aria-label="Разделы админ-панели">{visible.map(tab=><button key={tab.id} type="button" aria-selected={tab.id===active} onClick={()=>onPick(tab.id)}><Icon name={icons[tab.id] || 'gear'} size={22}/>{tab.title}</button>)}</nav>
-        <section className="min-w-0">{children}</section>
+        <ConsoleNavigationContext.Provider value={{target:subnavTarget,expanded:!!active}}>
+          <div className={s.navigation}>
+            <nav className={s.nav} aria-label="Разделы админ-панели">{visible.map(tab=><button key={tab.id} type="button" aria-expanded={tab.id===active} aria-controls="admin-subsections" onClick={()=>onPick(tab.id)}><Icon name={icons[tab.id] || 'gear'} size={22}/>{tab.title}<span className={s.chevron} aria-hidden>⌄</span></button>)}</nav>
+            <div className={s.submenu} data-open={!!active} id="admin-subsections" inert={!active}>
+              <div className={s.submenuClip}><div ref={setSubnavTarget}/></div>
+            </div>
+          </div>
+          <section className="min-w-0" hidden={!active}>{children}</section>
+        </ConsoleNavigationContext.Provider>
       </div>
     </main>
   );

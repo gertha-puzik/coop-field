@@ -320,3 +320,9 @@ CSS variables in Elysiae only. Admin Resources → Site textures supports upload
 fonts, sizes, colours, profile headings, draft preview, save and reset. Profile
 user information sits next to the reduced-width hero. HTTP/storage contract:
 PLATFORM-ARCHITECTURE.md «Оформление сайта»; regression test: test:console-profile.
+
+Admin navigation now starts collapsed on each visit (no saved selected tab).
+DashShell provides the combined animated navigation block; ConsoleSubtabs portals
+its buttons into that block. Site-design defaults use original gold frames and
+plain dividers; old built-in ornament settings migrate without resetting uploads
+or typography. See PLATFORM-ARCHITECTURE.md and test:console-profile.
