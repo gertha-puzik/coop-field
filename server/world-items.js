@@ -12,6 +12,9 @@ import {
 } from "./inventory-store.js";
 const offers = new Map();
 const range = 1.5;
+export const ITEM_REACH_PX = 70;
+const itemClose = (a, b) =>
+  Math.hypot((a.x - b.x) * 100, (a.y - b.y) * 150) <= ITEM_REACH_PX;
 function live(accountId, characterId) {
   for (const room of rooms.values()) {
     if (room.fmt !== "test") continue;
@@ -143,6 +146,10 @@ export function actOnWorldItem(accountId, characterId, raw) {
       ? { ok: true }
       : transferMouth(offer.from, offer.to, offer);
   }
+  if (raw.action === "stash")
+    return worldItemAction(accountId, characterId, self.room.code, raw);
+  if (raw.action === "release")
+    raw = { ...raw, action: "drop", from: "mouth", ...foot(self.cat) };
   if (raw.action === "drop") {
     if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y))
       return { error: "invalid_point" };
@@ -156,7 +163,7 @@ export function actOnWorldItem(accountId, characterId, raw) {
   } else {
     const row = state.ground.find((row) => row.id === raw.id);
     if (!row) return { error: "item_gone", status: 409 };
-    if (!close(foot(self.cat), row)) return { error: "too_far" };
+    if (!itemClose(foot(self.cat), row)) return { error: "too_far" };
   }
   return worldItemAction(accountId, characterId, self.room.code, raw);
 }

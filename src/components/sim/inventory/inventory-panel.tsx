@@ -1,32 +1,13 @@
 "use client";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/players/profile-icons";
 import { createPortal } from "react-dom";
-import {
-  itemSprite,
-  type InventorySlot,
-  type ItemStack,
-  type ItemDefinition,
-} from "@/lib/net/http-inventory";
+import { itemSprite, type InventorySlot } from "@/lib/net/http-inventory";
+import { currentWorldItemFrame } from "@/lib/sim/world-item-frame";
 import { useInventory } from "./use-inventory";
 import s from "./inventory.module.css";
 export type InventoryController = ReturnType<typeof useInventory>;
 type Point = { x: number; y: number };
-type Drag = {
-  from: InventorySlot;
-  stack: ItemStack;
-  item: ItemDefinition;
-  start: Point;
-  point: Point;
-  active: boolean;
-  tilt: number;
-};
 type Flight = { id: number; sprite: string; start: Point; end: Point };
 const center = (el: Element): Point => {
   const r = el.getBoundingClientRect();
@@ -94,8 +75,7 @@ export function InventoryPanel({
 }) {
   const { snapshot, busy, error, move } = controller;
   const finishFlight = useCallback(() => setFlight(null), []);
-  const [drag, setDrag] = useState<Drag | null>(null),
-    [flight, setFlight] = useState<Flight | null>(null),
+  const [flight, setFlight] = useState<Flight | null>(null),
     [landed, setLanded] = useState(""),
     [selectedBag, setSelectedBag] = useState<number | null>(null);
   const [carried, setCarried] = useState<{
@@ -107,34 +87,28 @@ export function InventoryPanel({
   const carryRef = useRef(carried);
   carryRef.current = carried;
   useEffect(() => {
-    let dropping = false;
-    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
-    const stopDropClick = (e: Event) => {
-      if (!dropping) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (e.type === "click") dropping = false;
-      else
-        releaseTimer = setTimeout(() => {
-          dropping = false;
-        }, 250);
-    };
     const move = (e: PointerEvent) => {
       if (carryRef.current)
         setCarried((old) =>
           old ? { ...old, point: { x: e.clientX, y: e.clientY } } : null,
         );
     };
-    const down = (e: PointerEvent) => {
+    const click = (e: MouseEvent) => {
       const value = carryRef.current;
       if (!value || e.button !== 0) return;
+      const node = e.target instanceof Element ? e.target : null;
+      if (node?.closest("button,input,textarea,a,nav,[data-world-drop-block]"))
+        return;
+      const valueFrame = currentWorldItemFrame();
+      if (!valueFrame) return;
+      const { rect } = valueFrame;
       if (
-        (e.target as HTMLElement).closest(
-          "button,input,textarea,a,nav,[data-world-drop-block]",
-        )
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
       )
         return;
-      dropping = true;
       e.preventDefault();
       e.stopImmediatePropagation();
       window.dispatchEvent(new Event("game-ui:pause-controls"));
@@ -145,51 +119,35 @@ export function InventoryPanel({
             expectedItemId: value.itemId,
             x: e.clientX,
             y: e.clientY,
+            onResult: (ok: boolean) => {
+              if (ok) setCarried(null);
+            },
           },
         }),
       );
-      setCarried(null);
     };
     const cancel = (e: KeyboardEvent) => {
       if (e.code === "Escape") setCarried(null);
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerdown", down, true);
-    window.addEventListener("pointerup", stopDropClick, true);
-    window.addEventListener("click", stopDropClick, true);
+    window.addEventListener("click", click, true);
     window.addEventListener("keydown", cancel, true);
     return () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerdown", down, true);
-      window.removeEventListener("pointerup", stopDropClick, true);
-      window.removeEventListener("click", stopDropClick, true);
-      if (releaseTimer) clearTimeout(releaseTimer);
+      window.removeEventListener("click", click, true);
       window.removeEventListener("keydown", cancel, true);
     };
   }, []);
-  useEffect(() => {
-    const carry = () => {
-      const mouth = snapshot?.mouth,
-        item = snapshot?.items.find((i) => i.id === mouth?.itemId);
-      if (item?.sprite)
-        setCarried({
-          from: "mouth",
-          itemId: item.id,
-          sprite: itemSprite(item.sprite),
-          point: { x: innerWidth / 2, y: innerHeight / 2 },
-        });
-    };
-    window.addEventListener("world-items:carry-mouth", carry);
-    return () => window.removeEventListener("world-items:carry-mouth", carry);
-  }, [snapshot]);
   useEffect(() => setCarried(null), [snapshot?.characterId]);
-  const dragging = useRef<Drag | null>(null),
-    flightId = useRef(0),
-    landingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    setDrag(null);
-    dragging.current = null;
-  }, [snapshot?.characterId, open]);
+    setCarried((old) =>
+      old?.from === "mouth" && old.itemId !== snapshot?.mouth?.itemId
+        ? null
+        : old,
+    );
+  }, [snapshot?.mouth?.itemId]);
+  const flightId = useRef(0),
+    landingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
       if (landingTimer.current) clearTimeout(landingTimer.current);
@@ -211,7 +169,7 @@ export function InventoryPanel({
       source = element(from);
     const origin = start || (source ? center(source) : null);
     const target = await move(from, to, quick);
-    if (!target) return;
+    if (!target) return false;
     const targetElement = element(target);
     if (item?.sprite && origin && targetElement)
       setFlight({
@@ -223,95 +181,27 @@ export function InventoryPanel({
     setLanded(`${target.area}:${target.index}`);
     if (landingTimer.current) clearTimeout(landingTimer.current);
     landingTimer.current = setTimeout(() => setLanded(""), 650);
+    return true;
   }
-  function down(
-    event: ReactPointerEvent<HTMLButtonElement>,
-    slot: InventorySlot,
-    stack: ItemStack | null,
-  ) {
-    if (event.button !== 0 || busy || !stack) return;
-    const item = snapshot?.items.find((item) => item.id === stack.itemId);
-    if (!item) return;
-    setCarried(null);
-    event.stopPropagation();
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const point = { x: event.clientX, y: event.clientY };
-    dragging.current = {
-      from: slot,
-      stack,
-      item,
-      start: point,
-      point,
-      active: false,
-      tilt: 0,
-    };
-  }
-  function pointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    const old = dragging.current;
-    if (!old) return;
-    event.preventDefault();
-    const point = { x: event.clientX, y: event.clientY },
-      active =
-        old.active ||
-        Math.hypot(point.x - old.start.x, point.y - old.start.y) > 4;
-    const next = {
-      ...old,
-      point,
-      active,
-      tilt: Math.max(-14, Math.min(14, (point.x - old.point.x) * 1.6)),
-    };
-    dragging.current = next;
-    if (active) setDrag(next);
-  }
-  function up(event: ReactPointerEvent<HTMLButtonElement>) {
-    const value = dragging.current;
-    if (!value) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragging.current = null;
-    setDrag(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId))
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    if (!value.active) {
-      if (event.shiftKey) void transfer(value.from, undefined, true);
-      else {
-        if (value.from.area === "hotbar") onSelect(value.from.index);
-        if (value.item.sprite)
-          setCarried({
-            from: value.from,
-            itemId: value.item.id,
-            sprite: itemSprite(value.item.sprite),
-            point: value.point,
-          });
+  async function place(to: InventorySlot) {
+    const held = carried;
+    if (!held || busy) return;
+    if (held.from === "mouth") {
+      if (
+        await controller.worldAction({
+          action: "stash",
+          to,
+          expectedItemId: held.itemId,
+        })
+      )
+        setCarried(null);
+    } else {
+      if (held.from.area === to.area && held.from.index === to.index) {
+        setCarried(null);
+        return;
       }
-      return;
+      if (await transfer(held.from, to, false, held.point)) setCarried(null);
     }
-    const target = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>("[data-inventory-slot]")?.dataset.inventorySlot;
-    if (!target) {
-      const hit = document.elementFromPoint(event.clientX, event.clientY);
-      if (!hit?.closest("button,input,textarea,a,nav,[data-world-drop-block]"))
-        window.dispatchEvent(
-          new CustomEvent("world-items:drop", {
-            detail: {
-              from: value.from,
-              expectedItemId: value.item.id,
-              x: event.clientX,
-              y: event.clientY,
-            },
-          }),
-        );
-      return;
-    }
-    const [area, index] = target.split(":");
-    if (area !== "bag" && area !== "hotbar") return;
-    if (value.from.area === area && value.from.index === Number(index)) return;
-    void transfer(value.from, { area, index: Number(index) }, false, {
-      x: event.clientX,
-      y: event.clientY,
-    });
   }
   function slot(area: "bag" | "hotbar", index: number) {
     const stack = snapshot?.[area][index] || null,
@@ -334,18 +224,24 @@ export function InventoryPanel({
               ? `${item.name}\nВес одной штуки: ${item.weight}\nShift + щелчок — перенести`
               : "Свободный слот"
           }
-          onPointerDown={(event) => down(event, { area, index }, stack)}
-          onPointerMove={pointerMove}
-          onPointerUp={up}
-          onPointerCancel={() => {
-            dragging.current = null;
-            setDrag(null);
-          }}
           onClick={(event) => {
+            if (carried) {
+              void place({ area, index });
+              return;
+            }
             if (area === "hotbar") onSelect(index);
             else setSelectedBag(index);
-            if (event.detail === 0 && event.shiftKey && stack)
+            if (!stack || !item?.sprite) return;
+            if (event.shiftKey) {
               void transfer({ area, index }, undefined, true);
+              return;
+            }
+            setCarried({
+              from: { area, index },
+              itemId: item.id,
+              sprite: itemSprite(item.sprite),
+              point: center(event.currentTarget),
+            });
           }}
         >
           {stack && item ? (
@@ -405,7 +301,7 @@ export function InventoryPanel({
         <div
           className={s.backdrop}
           onPointerDown={(event) => {
-            if (event.target === event.currentTarget) onClose();
+            if (event.target === event.currentTarget && !carried) onClose();
           }}
         >
           <section className={s.window} data-world-drop-block>
@@ -446,8 +342,8 @@ export function InventoryPanel({
               </p>
             ) : null}
             <p className={s.note}>
-              Перетащите в хотбар или на землю. Щелчок — взять, следующий щелчок
-              по полю — положить одну штуку. Shift + ЛКМ — перенести стек.
+              ЛКМ — взять предмет, следующий ЛКМ — положить в слот или одну
+              штуку на землю. Shift + ЛКМ — перенести стек. Escape — отменить.
             </p>
             <p className={s.note}>
               Количество — слева сверху, суммарный вес — справа снизу.
@@ -464,6 +360,44 @@ export function InventoryPanel({
         </div>
       ) : null}
       <section className={s.hotbar} aria-label="Хотбар">
+        {snapshot?.mouth ? (
+          <div className={s.mouthSlot}>
+            <button
+              type="button"
+              disabled={busy}
+              aria-label="Взять предмет из пасти для переноса в слот"
+              onClick={(e) => {
+                const item = snapshot.items.find(
+                  (i) => i.id === snapshot.mouth?.itemId,
+                );
+                if (!item?.sprite) return;
+                if (carried?.from === "mouth") {
+                  setCarried(null);
+                  return;
+                }
+                setCarried({
+                  from: "mouth",
+                  itemId: item.id,
+                  sprite: itemSprite(item.sprite),
+                  point: center(e.currentTarget),
+                });
+              }}
+            >
+              <img
+                src={itemSprite(
+                  snapshot.items.find((i) => i.id === snapshot.mouth?.itemId)
+                    ?.sprite || "/items/nugget.png",
+                )}
+                alt="Предмет в пасти"
+                draggable={false}
+              />
+            </button>
+            <span>
+              В пасти · ЛКМ — перенести в слот
+              <br />R повторно — положить под себя
+            </span>
+          </div>
+        ) : null}
         <div className={s.hotbarSlots}>
           {Array.from({ length: 5 }, (_, index) => slot("hotbar", index))}
         </div>
@@ -479,26 +413,6 @@ export function InventoryPanel({
           </p>
         ) : null}
       </section>
-      {typeof document !== "undefined" && drag?.active && drag.item.sprite
-        ? createPortal(
-            <div
-              className={s.dragGhost}
-              style={{
-                left: drag.point.x,
-                top: drag.point.y,
-                transform: `translate(-50%,-55%) rotate(${drag.tilt}deg)`,
-              }}
-            >
-              <img
-                src={itemSprite(drag.item.sprite)}
-                draggable={false}
-                alt=""
-              />
-              <span>{drag.stack.quantity}</span>
-            </div>,
-            document.body,
-          )
-        : null}
       {typeof document !== "undefined" && flight
         ? createPortal(
             <FlyingSprite

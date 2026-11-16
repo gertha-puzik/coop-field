@@ -268,6 +268,12 @@ try {
     (await act(c, { action: "take", id: dropped.id })).reason,
     "too_far",
   );
+  await move(cc, 3.3, 5);
+  assert.equal(
+    (await act(c, { action: "mouth", id: dropped.id })).reason,
+    "too_far",
+    "75px lies outside the circular 70px interaction radius",
+  );
   assert.equal(
     (await act(b, { action: "take", id: dropped.id })).reason,
     "weight_limit",
@@ -282,6 +288,22 @@ try {
   assert.equal(
     (await act(a, { action: "take", id: dropped.id })).reason,
     "item_gone",
+  );
+  assert.equal(
+    (await act(b, { action: "stash", to: { area: "hotbar", index: 0 } }))
+      .reason,
+    "weight_limit",
+  );
+  assert((await inv(b)).mouth, "failed stash preserves mouth");
+  assert.equal((await act(b, { action: "release" })).status, 200);
+  const releasedWorld = await world(b),
+    released = releasedWorld.ground[0],
+    bFoot = releasedWorld.players.find((p) => p.id === releasedWorld.selfId);
+  assert.equal(released.x, bFoot.x);
+  assert.equal(released.y, bFoot.y);
+  assert.equal(
+    (await act(b, { action: "mouth", id: released.id })).status,
+    200,
   );
   assert.equal(
     (
@@ -337,7 +359,7 @@ try {
     "offer_expired",
   );
   // Competing pickup requests can never duplicate one world item.
-  await move(cc, 3.5, 5);
+  await move(cc, 3.1, 5);
   dropped = (await world(a)).ground[0];
   const race = await Promise.all([
     act(a, { action: "take", id: dropped.id }),
@@ -345,6 +367,26 @@ try {
   ]);
   assert.equal(race.filter((r) => r.status === 200).length, 1);
   assert.equal(race.filter((r) => r.reason === "item_gone").length, 1);
+  assert.equal(
+    (
+      await act(a, {
+        action: "drop",
+        from: { area: "bag", index: 0 },
+        x: 3,
+        y: 6,
+      })
+    ).status,
+    200,
+  );
+  const toStash = (await world(c)).ground[0];
+  assert.equal((await act(c, { action: "mouth", id: toStash.id })).status, 200);
+  assert.equal(
+    (await act(c, { action: "stash", to: { area: "hotbar", index: 4 } }))
+      .status,
+    200,
+  );
+  assert.equal((await inv(c)).hotbar[4].quantity, 1);
+  assert(!(await inv(c)).mouth);
   // Hotbar drops are also one unit; F uses the first empty bag slot.
   const bagBefore = await inv(a);
   assert.equal(

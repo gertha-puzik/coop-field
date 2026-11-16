@@ -552,11 +552,17 @@ behavior. The client displays newest first. Elysiae chatlog may contain 80 rows.
 
 | Boundary | Authority | Data flow |
 | --- | --- | --- |
-| `/cfg/inventory/world` GET/POST | `server/world-items.js` | Live authenticated room + captured character ID, exact ground mask and 1.5-cell reach; clients cannot choose another room/character |
+| `/cfg/inventory/world` GET/POST | `server/world-items.js` | Live authenticated room + captured character ID, exact ground mask and 70px circular pickup reach (offers: 1.5 cells); clients cannot choose another room/character |
 | `inventories.json` v1 extension | `server/inventory-store.js` | Ground rows keyed by UUID with room/point; optional inventory mouth; every drop/pickup/accepted handoff is one atomic file commit |
 | Offers | `server/world-items.js` in-memory | 20 seconds, both original live cats, same room, empty recipient mouth and proximity rechecked; item stays with sender until accept |
-| Scene → UI | `world-item-frame.ts` → `inventory/world-items.tsx` | Actual camera and animated actor geometry; muzzle follows reflection, scale, squash, jump and sway; ground uses world coordinates |
+| Scene → UI | `world-item-frame.ts` → `inventory/world-items.tsx` | Scene decals inherit camera, tint, weather and depth; mouth uses a parent-root attachment behind opaque cat pixels; ground uses world coordinates |
 
 No WebSocket event changes. HTTP snapshots poll while visible and refresh after
 mutations; existing HTTP host/Origin/ownership gates apply. Regression:
 `npm run test:world-items` with isolated real HTTP and authenticated WS clients.
+
+Item UI uses click-to-pick/click-to-place with server success acknowledgement;
+held-button drag is removed. A separate mouth slot beside the hotbar can be moved
+into bag/hotbar. R releases at authoritative feet; failed weight/occupied-slot
+stashes retain mouth ownership. Ground and mouth share the same 30px fitted size.
+Hover changes the selected ground prompt only within the 70px pickup circle.

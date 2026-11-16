@@ -454,7 +454,8 @@ room ground, player mouth state and incoming offers. POST to the same path accep
 (ground UUID), `offer` (target live cat ID), `accept`/`cancel` (offer UUID).
 Inventory mutations include the current `version`; stale/racing writes fail.
 Ground coordinates are checked against the location's actual mask and trees.
-Pickup and offers require distance <=1.5 cell units from the authoritative feet.
+Pickup uses a 70px circle: hypot(dx×100,dy×150)<=70 from authoritative feet.
+Offers retain distance <=1.5 cell units.
 A drop removes one unit; mouth holds one unit outside the 30-weight sum and stays
 with its character across passage travel/reconnect/restart. F merges into an
 existing bag stack or the first empty bag slot, enforcing weight and bag capacity.
@@ -466,3 +467,11 @@ old inventories default to no mouth/ground. No item properties or categories add
 
 Mouse drops include expectedItemId so a concurrently replaced slot/mouth cannot
 drop a different item than the one displayed on the cursor.
+
+`release` derives the drop point from the live character's feet (repeat R).
+`stash` takes `to:{area,index}` (or first free/matching hotbar slot if omitted),
+adds exactly one mouth unit, applies the shared 30-weight limit and requires an
+empty or matching target. Failure leaves the mouth unchanged. Client transfers
+use two clicks, preserving the held cursor item after a rejected operation.
+World items render within the scene below weather and all UI, at identical
+30px fitted size on the ground/in the mouth; no raw sprite bytes are changed.

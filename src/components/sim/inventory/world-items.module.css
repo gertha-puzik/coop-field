@@ -6,15 +6,6 @@
   overflow: hidden;
   color: #f1ddbd;
 }
-.item,
-.mouth {
-  z-index: 1;
-  position: absolute;
-  object-fit: contain;
-  image-rendering: pixelated;
-  pointer-events: none;
-  filter: drop-shadow(0 2px 2px #0008);
-}
 .prompt {
   z-index: 2;
   position: absolute;
@@ -32,8 +23,7 @@
   text-align: center;
   animation: appear 0.18s ease-out;
 }
-.prompt button,
-.carried {
+.prompt button {
   border: 1px solid #826b58;
   border-radius: 7px;
   color: #f6dfb7;
@@ -41,8 +31,7 @@
   padding: 7px 9px;
   cursor: pointer;
 }
-.prompt button:hover,
-.carried:hover {
+.prompt button:hover {
   background: #55405a;
 }
 .prompt button:disabled {
@@ -52,14 +41,6 @@
 .prompt kbd {
   color: #ffcf7e;
   margin-right: 5px;
-}
-.carried {
-  position: absolute;
-  bottom: 115px;
-  left: 50%;
-  transform: translateX(-50%);
-  pointer-events: auto;
-  font-size: 12px;
 }
 .error {
   position: absolute;
