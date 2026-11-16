@@ -1,0 +1,88 @@
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 48;
+  pointer-events: none;
+  overflow: hidden;
+  color: #f1ddbd;
+}
+.item,
+.mouth {
+  z-index: 1;
+  position: absolute;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px #0008);
+}
+.prompt {
+  z-index: 2;
+  position: absolute;
+  display: grid;
+  gap: 5px;
+  min-width: 190px;
+  max-width: 280px;
+  padding: 10px;
+  border: 1px solid #b79366;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #302439f5, #15131df5);
+  box-shadow: 0 6px 20px #0008;
+  pointer-events: auto;
+  font-size: 13px;
+  text-align: center;
+  animation: appear 0.18s ease-out;
+}
+.prompt button,
+.carried {
+  border: 1px solid #826b58;
+  border-radius: 7px;
+  color: #f6dfb7;
+  background: #342a3e;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.prompt button:hover,
+.carried:hover {
+  background: #55405a;
+}
+.prompt button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.prompt kbd {
+  color: #ffcf7e;
+  margin-right: 5px;
+}
+.carried {
+  position: absolute;
+  bottom: 115px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  font-size: 12px;
+}
+.error {
+  position: absolute;
+  bottom: 150px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  background: #291c2def;
+  border-radius: 8px;
+  color: #ffc6bb;
+  max-width: 360px;
+  font-size: 13px;
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt {
+    animation: none;
+  }
+}

@@ -1,4 +1,5 @@
 /** Server-authoritative item catalogue and per-character inventories. */
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "./config.js";
@@ -211,4 +212,99 @@ export function forgetInventories(accountId) {
     if (key.startsWith(accountId + ":") || JSON.parse(value)[0] === accountId)
       delete operations[key];
   commit({ ...store, inventories, operations });
+}
+
+/** One atomic ownership transaction: inventory, mouth and world never diverge. */
+export function worldItemState(accountId, characterId, room) {
+  return {
+    ground: Object.values(store.ground || {})
+      .filter((row) => row.room === room)
+      .map(copy),
+    mouth: copy(
+      store.inventories[keyOf(accountId, characterId)]?.mouth || null,
+    ),
+  };
+}
+export function worldItemAction(accountId, characterId, room, raw) {
+  const key = keyOf(accountId, characterId),
+    old = store.inventories[key] || empty();
+  if (raw.version !== old.version)
+    return { error: "stale_inventory", status: 409 };
+  const inventory = copy(old),
+    ground = { ...store.ground };
+  if (raw.action === "drop") {
+    let itemId;
+    if (raw.from === "mouth") {
+      if (!inventory.mouth) return { error: "empty_mouth" };
+      itemId = inventory.mouth.itemId;
+      inventory.mouth = null;
+    } else {
+      const slot = raw.from;
+      if (
+        !slot ||
+        !["bag", "hotbar"].includes(slot.area) ||
+        !Number.isInteger(slot.index) ||
+        slot.index < 0 ||
+        slot.index >= inventory[slot.area].length
+      )
+        return { error: "invalid_slot" };
+      const stack = inventory[slot.area][slot.index];
+      if (!stack) return { error: "empty_slot" };
+      itemId = stack.itemId;
+      if (--stack.quantity === 0) inventory[slot.area][slot.index] = null;
+    }
+    if (Object.values(ground).filter((row) => row.room === room).length >= 1000)
+      return { error: "ground_full" };
+    const id = randomUUID();
+    ground[id] = { id, room, itemId, x: raw.x, y: raw.y };
+  } else if (raw.action === "mouth" || raw.action === "take") {
+    const row = ground[raw.id];
+    if (!row || row.room !== room) return { error: "item_gone", status: 409 };
+    if (raw.action === "mouth") {
+      if (inventory.mouth) return { error: "mouth_full" };
+      inventory.mouth = { itemId: row.itemId, quantity: 1 };
+    } else {
+      const item = store.items[row.itemId];
+      if (weightUnits(inventory) + units(item.weight) > MAX_WEIGHT * 100)
+        return { error: "weight_limit" };
+      let index = inventory.bag.findIndex(
+        (stack) => stack?.itemId === row.itemId,
+      );
+      if (index < 0) index = inventory.bag.indexOf(null);
+      if (index < 0) return { error: "no_free_slot" };
+      if (inventory.bag[index]) inventory.bag[index].quantity++;
+      else inventory.bag[index] = { itemId: row.itemId, quantity: 1 };
+    }
+    delete ground[row.id];
+  } else return { error: "invalid_action" };
+  inventory.version++;
+  commit({
+    ...store,
+    ground,
+    inventories: { ...store.inventories, [key]: inventory },
+  });
+  return { inventory: inventoryView(accountId, characterId) };
+}
+export function transferMouth(sender, recipient, expected) {
+  const from = keyOf(sender.accountId, sender.characterId),
+    to = keyOf(recipient.accountId, recipient.characterId);
+  const a = copy(store.inventories[from] || empty()),
+    b = copy(store.inventories[to] || empty());
+  if (
+    from === to ||
+    !a.mouth ||
+    a.version !== expected.version ||
+    a.mouth.itemId !== expected.itemId
+  )
+    return { error: "offer_expired", status: 409 };
+  if (b.mouth) return { error: "mouth_full" };
+  b.mouth = a.mouth;
+  a.mouth = null;
+  a.version++;
+  b.version++;
+  commit({
+    ...store,
+    inventories: { ...store.inventories, [from]: a, [to]: b },
+  });
+  return { ok: true };
 }

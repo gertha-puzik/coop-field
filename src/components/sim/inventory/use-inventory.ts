@@ -90,7 +90,43 @@ export function useInventory(characterId: string | undefined) {
     },
     [characterId, refresh],
   );
+  const worldAction = useCallback(
+    async (raw: Record<string, unknown>) => {
+      const prior = snapshotRef.current;
+      if (
+        !characterId ||
+        locked.current ||
+        !prior ||
+        prior.characterId !== characterId
+      )
+        return false;
+      locked.current = true;
+      setBusy(true);
+      setActionError("");
+      requestSeq.current++;
+      try {
+        const row = await inventoryRequest<{ inventory?: InventorySnapshot }>(
+          "/cfg/inventory/world",
+          "POST",
+          { ...raw, characterId, version: prior.version },
+        );
+        if (current.current !== characterId) return false;
+        if (row.inventory) setSnapshot(row.inventory);
+        return true;
+      } catch (e) {
+        if (current.current === characterId) setActionError(inventoryError(e));
+        return false;
+      } finally {
+        locked.current = false;
+        setBusy(false);
+        void refresh();
+        window.dispatchEvent(new Event("world-items:refresh"));
+      }
+    },
+    [characterId, refresh],
+  );
   return {
+    worldAction,
     snapshot: snapshot?.characterId === characterId ? snapshot : null,
     busy,
     error: actionError || loadError,

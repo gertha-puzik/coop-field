@@ -210,3 +210,10 @@ shared item definitions/sprite assets remain. Original uploaded PNG bytes live i
 DATA_DIR/items, addressed by SHA-256; metadata is validated and PNGs are served
 with a fixed MIME. Global/near chat histories are bounded in process memory and
 are cleared on restart; near messages are sent only inside their location.
+
+World-item extension: the same atomic file stores each character's optional mouth
+and ground item UUID/type/room/coordinates (no dropper account ID). Mouth state is
+visible to authenticated players in the same live room; bag contents stay private.
+Consent offers are memory-only, contain sender/recipient character references,
+and expire after 20 seconds or on distance/session changes. Account deletion
+removes its mouth with its inventory; already dropped anonymous ground items remain.
