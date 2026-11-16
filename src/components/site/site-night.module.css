@@ -18,3 +18,4 @@
 .pageNight li button:not(:disabled) {
   cursor: var(--paw-cursor-hover, var(--paw-cursor, url('/lapka.svg') 16 22)), pointer;
 }
+.pageNight { background:var(--site-background-color,#070b18) var(--site-background,none) center / cover fixed; color:var(--site-text-color,#f4f0ff); font-family:var(--site-font,inherit); font-size:var(--site-text-size,14px); }

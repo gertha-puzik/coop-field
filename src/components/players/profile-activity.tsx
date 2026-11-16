@@ -5,6 +5,7 @@
  * GET /cfg/activity/:id. Пола в DTO нет — тексты нейтральные.
  */
 
+import { useSiteDesign } from '@/components/site/site-design';
 import { useEffect, useState } from 'react';
 
 import { httpActivity, type ActivityItem } from '@/lib/net/http-activity';
@@ -62,6 +63,7 @@ export function ProfileActivity({
   refreshKey?: number;
   onOpenFriend: (id: string) => void;
 }) {
+  const {labels}=useSiteDesign();
   const [state, setState] = useState<{ id: string; items: ActivityItem[] | null; failed: boolean }>({
     id: '',
     items: null,
@@ -86,7 +88,7 @@ export function ProfileActivity({
       <header className={styles.cardHead}>
         <h2 className={styles.cardTitle} id="prof-activity">
           <Icon name="pulse" className={styles.cardIcon} />
-          Последние действия
+          {labels.activity}
         </h2>
       </header>
       {items === null ? (

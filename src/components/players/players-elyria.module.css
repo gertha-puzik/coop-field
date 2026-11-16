@@ -1692,8 +1692,15 @@
 
 /* Оформление рамок согласовано с шапкой профиля. */
 .panel, .edBox {
-  border: 14px solid transparent;
-  border-image: url('/ui/ornamental-frame.svg') 20 / 14px / 0 stretch;
+  border: var(--site-frame-width, 26px) solid transparent;
+  border-image: var(--site-frame, url('/ui/site-frame.png')) var(--site-frame-slice, 44) / var(--site-frame-width, 26px) / 0 stretch;
   border-radius: 0;
   background-clip: padding-box;
 }
+
+.sky { --text:var(--site-text-color,#f4f0ff); --muted:var(--site-muted-color,#b9b3d9); --gold:var(--site-accent-color,#d9c4bc); --bg:var(--site-background-color,#080c1a); font-family:var(--site-font,system-ui); font-size:var(--site-text-size,14px); background:var(--site-background,none) center / cover fixed, var(--bg); }
+.badges,.panelFoot { border-top:0; padding-top:calc(var(--site-divider-height,28px) + 12px); background:var(--site-divider,url('/ui/site-divider.svg')) top center / 100% var(--site-divider-height,28px) no-repeat; }
+.thead,.profileTabs { border-bottom:0; padding-bottom:calc(var(--site-divider-height,28px) + 8px); background:var(--site-divider,url('/ui/site-divider.svg')) bottom center / 100% var(--site-divider-height,28px) no-repeat; }
+
+.panel,.edBox { position:relative; }
+.panel::after,.edBox::after { content:''; position:absolute; inset:calc(-1 * var(--site-frame-width,26px)); pointer-events:none; background-image:var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')); background-position:center 6px,center calc(100% - 6px),2px center,calc(100% - 2px) center; background-size:14px 14px; background-repeat:no-repeat; }

@@ -26,6 +26,28 @@ try{
  const publicStatus=await new Promise(resolve=>{const r=http.request(origin+'/cfg/console',{headers:{host:'abnocw.phainonsmilk.ru',cookie:admin.cookie}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});r.end();});assert.equal(publicStatus,404);
  let stats=await req('/cfg/console',admin.cookie);assert.equal(stats.status,200,JSON.stringify(stats));assert.equal(stats.row.registered,4);assert.equal(stats.row.version,'0.6.7');assert.ok(stats.row.locations>0);
  assert.ok(stats.row.items.some(i=>i.group==='registrations'));
+ // Site chrome: public reads, permission/CSRF/host gates, safe uploads, durable settings.
+ const design=await req('/cfg/site-design',null);assert.equal(design.status,200);const defaults=design.row.settings;
+ assert.equal(defaults.labels.userInfo,'О пользователе');
+ assert.equal((await req('/cfg/site-design',null,'POST',defaults)).status,401);
+ assert.equal((await req('/cfg/site-design',member.cookie,'POST',defaults)).status,403);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',defaults,{origin:'https://evil.example'})).status,403);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,textSize:999})).status,400);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,frame:'https://evil.example/frame.svg'})).status,400);
+ const png=readFileSync(path.join(root,'public/tex/grass-ground.png'));
+ const upload=await fetch(origin+'/cfg/site-design/assets/frame',{method:'POST',headers:{origin,cookie:admin.cookie,'content-type':'application/octet-stream'},body:png});assert.equal(upload.status,200);const uploaded=await upload.json();
+ const image=await fetch(origin+uploaded.url);assert.equal(image.status,200);assert.equal(image.headers.get('content-type'),'image/png');assert.deepEqual(Buffer.from(await image.arrayBuffer()),png);
+ assert.equal((await fetch(origin+'/cfg/site-design/assets/frame',{method:'POST',headers:{origin,cookie:admin.cookie},body:'<svg onload="alert(1)"></svg>'})).status,400);
+ assert.equal((await fetch(origin+'/cfg/site-design/assets/frame',{method:'POST',headers:{origin,cookie:admin.cookie},body:Buffer.alloc(2*1024*1024+1)})).status,413);
+ assert.equal((await req('/cfg/site-design',null,'POST',defaults)).status,401);
+ assert.equal((await req('/cfg/site-design',member.cookie,'POST',defaults)).status,403);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',defaults,{origin:'https://evil.example'})).status,403);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,frame:'https://evil.example/frame.svg'})).status,400);
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,textSize:999})).status,400);
+ const customDesign={...defaults,textSize:17,frame:uploaded.url,labels:{...defaults.labels,userInfo:'Об игроке'}};
+ assert.equal((await req('/cfg/site-design',admin.cookie,'POST',customDesign)).status,200);
+ const hiddenDesign=await new Promise(resolve=>{const r=http.request(origin+'/cfg/site-design',{headers:{host:'abnocw.phainonsmilk.ru'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});r.end();});assert.equal(hiddenDesign,404);
+
  const socials={discord:'https://discord.gg/test',telegram:'https://t.me/example',youtube:'https://www.youtube.com/@example',vk:'https://vk.com/example',website:'https://example.com/'};
  let r=await req('/profiles/me',member.cookie,'PATCH',{socials,birthday:'2000-05-14'});assert.equal(r.status,200,JSON.stringify(r.row));assert.equal(r.row.socials.telegram,socials.telegram);
  r=await req('/profiles/'+member.id,null);assert.equal(r.row.birthday,'05-14');assert.equal(r.row.socials.website,socials.website);assert.equal('permissions' in r.row,false);
@@ -69,7 +91,7 @@ try{
  assert.equal((await req('/cfg/console/teleport',admin.cookie,'POST',{accountId:member.id,locationId:1,spawnIndex:999})).status,400);
  ws.close();await once(ws,'close');
 
- await stop();await start();assert.equal((await req('/cfg/console',member.cookie)).status,200,'role persists');
+ await stop();await start();assert.equal((await req('/cfg/site-design',null)).row.settings.labels.userInfo,'Об игроке','site design persists');assert.equal((await fetch(origin+uploaded.url)).status,200,'uploaded frame persists');assert.equal((await req('/cfg/site-design',admin.cookie,'POST',defaults)).status,200,'restore defaults');assert.equal((await req('/cfg/console',member.cookie)).status,200,'role persists');
  assert.equal((await req('/profiles/'+member.id,null)).row.socials.telegram,socials.telegram);
  assert.equal((await req('/cfg/console/roles/observer',admin.cookie,'DELETE')).status,200);
  assert.equal((await req('/cfg/console',member.cookie)).status,403,'role deletion revokes access');

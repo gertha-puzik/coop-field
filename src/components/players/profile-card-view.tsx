@@ -27,6 +27,7 @@ import {
   humanFriendError,
   type FriendRelation,
 } from '@/lib/net/http-friends';
+import { useSiteDesign } from '@/components/site/site-design';
 import { ProfileUserInfo } from './profile-user-info';
 import userInfoStyles from './profile-user-info.module.css';
 import { ProfileActivity } from './profile-activity';
@@ -144,6 +145,7 @@ export function ProfileCardView({
   onFriendsChanged,
   onBannerChanged,
 }: ProfileCardViewProps) {
+  const {labels}=useSiteDesign();
   const [tab, setTab] = useState<'profile' | 'settings'>(() =>
     typeof window !== 'undefined' && window.location.hash === '#settings' && mine ? 'settings' : 'profile',
   );
@@ -268,6 +270,7 @@ export function ProfileCardView({
 
   return (
     <main className={card2.page}>
+      <div className={userInfoStyles.heroRow}>
       <ProfileHero
         accountId={card.accountId}
         mine={mine}
@@ -290,6 +293,8 @@ export function ProfileCardView({
         }}
       />
 
+        <ProfileUserInfo profile={shown} />
+      </div>
       <div className={card2.tabs} role="tablist" aria-label="Разделы профиля">
         <button
           type="button"
@@ -319,39 +324,36 @@ export function ProfileCardView({
         </div>
       ) : (
         <div className={userInfoStyles.columns} role="tabpanel">
-          <div className={userInfoStyles.primary}>
-            <ProfileUserInfo profile={shown} />
-            <div className={card2.col}>
-              <section className={card2.card} aria-labelledby="prof-char">
-                <header className={card2.cardHead}>
-                  <h2 className={card2.cardTitle} id="prof-char">
-                    <Icon name="paw" className={card2.cardIcon} />
-                    Активный персонаж
-                  </h2>
-                  {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
-                </header>
-                <div className={card2.charBody}>
-                  <MeadowPortrait card={shown} name={name} />
-                </div>
-              </section>
+          <div className={card2.col}>
+            <section className={card2.card} aria-labelledby="prof-char">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-char">
+                  <Icon name="paw" className={card2.cardIcon} />
+                  {labels.character}
+                </h2>
+                {charCount > 1 ? <span className={card2.cardMeta}>{charCount} {plural(charCount, 'персонаж', 'персонажа', 'персонажей')}</span> : null}
+              </header>
+              <div className={card2.charBody}>
+                <MeadowPortrait card={shown} name={name} />
+              </div>
+            </section>
 
-              <section className={card2.card} aria-labelledby="prof-stats">
-                <header className={card2.cardHead}>
-                  <h2 className={card2.cardTitle} id="prof-stats">
-                    <Icon name="chart" className={card2.cardIcon} />
-                    Краткая статистика
-                  </h2>
-                </header>
-                <ul className={card2.stats}>
-                  <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
-                  <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
-                  <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
-                  <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
-                  <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
-                </ul>
-              </section>
+            <section className={card2.card} aria-labelledby="prof-stats">
+              <header className={card2.cardHead}>
+                <h2 className={card2.cardTitle} id="prof-stats">
+                  <Icon name="chart" className={card2.cardIcon} />
+                  {labels.statistics}
+                </h2>
+              </header>
+              <ul className={card2.stats}>
+                <StatTile icon="cat" value={days === null ? '—' : `${days} ${plural(days, 'день', 'дня', 'дней')}`} label="В стае" />
+                <StatTile icon="paw" value={String(charCount)} label={plural(charCount, 'Персонаж', 'Персонажа', 'Персонажей')} />
+                <StatTile icon="pin" value={location} label="Текущая локация" title={location} wide />
+                <StatTile icon="clock" value={playtimeShort(playMs)} label="В игре" title={playtimeText(playMs)} />
+                <StatTile icon="users" value={String(friendCount)} label={plural(friendCount, 'Друг', 'Друга', 'Друзей')} />
+              </ul>
+            </section>
 
-            </div>
           </div>
 
           <div className={card2.col}>

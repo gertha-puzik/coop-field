@@ -1,7 +1,8 @@
-.columns { display: grid; grid-template-columns: minmax(0,1.85fr) minmax(0,1.25fr); gap: 16px; align-items: start; }
-.primary { display: grid; grid-template-columns: minmax(185px,.6fr) minmax(0,1.25fr); gap: 16px; align-items: center; }
-.info { min-width: 0; font-size: 13px; }
-.info h2 { font-size: 12px; gap: 5px; min-width: 0; }
+.heroRow { display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,310px); gap: 18px; align-items: stretch; }
+.heroRow > * { min-width: 0; }
+.columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; align-items: start; }
+.info { min-width: 0; font-size: var(--site-text-size,13px); }
+.info h2 { font-size: var(--site-heading-size,16px); gap: 5px; min-width: 0; }
 .fact { display: flex; gap: 10px; align-items: center; padding: 9px 0; }
 .fact > span { font-size: 25px; }
 .fact strong { display: block; overflow-wrap: anywhere; font-size: 14px; color: var(--text,#f4f0ff); }
@@ -12,5 +13,11 @@
 .links { display: flex; flex-wrap: wrap; gap: 6px; }
 .links a { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #625077; border-radius: 10px; background: #211a3d; color: #eee4ff; font-size: 12px; font-weight: 700; }
 .links a:hover,.links a:focus-visible { border-color: #f6d7a2; outline-color: #f6d7a2; }
-@media (max-width: 1000px) { .columns { grid-template-columns: minmax(0,1fr); } }
-@media (max-width: 720px) { .primary { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 1000px) { .heroRow { grid-template-columns: minmax(0,1fr) minmax(220px,270px); } }
+@media (max-width: 760px) { .heroRow, .columns { grid-template-columns: minmax(0,1fr); } }
+
+.socials { position: relative; border-top: 0; padding-top: calc(var(--site-divider-height,28px) + 10px); }
+.socials::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--site-divider-height,28px); background: var(--site-divider,url('/ui/site-divider.svg')) center / contain no-repeat; }
+.info { justify-content: center; }
+.fact strong { font-size: var(--site-text-size,14px); }
+.fact small { font-size: calc(var(--site-text-size,14px) - 2px); }

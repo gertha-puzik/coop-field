@@ -1,4 +1,5 @@
 'use client';
+import { useSiteDesign } from '@/components/site/site-design';
 import type { PublicProfile } from '@/lib/net/http-profiles';
 import card from './profile-card.module.css';
 import s from './profile-user-info.module.css';
@@ -16,9 +17,10 @@ function birthdayLabel(value:string|null) {
   return day && months[month-1] ? `${day} ${months[month-1]}` : 'Не указан';
 }
 export function ProfileUserInfo({profile}:{profile:PublicProfile}) {
+  const {labels}=useSiteDesign();
   const links=LINKS.filter(([key])=>profile.socials?.[key]);
-  return <aside className={`${card.card} ${s.info}`} aria-label="О пользователе">
-    <header className={card.cardHead}><h2 className={card.cardTitle}><span aria-hidden>✍️</span>О пользователе</h2></header>
+  return <aside className={`${card.card} ${s.info}`} aria-label={labels.userInfo}>
+    <header className={card.cardHead}><h2 className={card.cardTitle}><span aria-hidden>✍️</span>{labels.userInfo}</h2></header>
     <div className={s.fact}><span aria-hidden>📅</span><div><strong>{birthdayLabel(profile.birthday)}</strong><small>День рождения</small></div></div>
     <div className={s.fact}><span aria-hidden>💸</span><div><strong>{profile.statusLabel || 'Не указана'}</strong><small>Должность на сервере</small></div></div>
     <div className={s.socials}><h3>Мои соцсети</h3>{links.length?<div className={s.links}>{links.map(([key,label])=><a key={key} href={profile.socials?.[key]} target="_blank" rel="noopener noreferrer" aria-label={label} title={label}><SocialGlyph network={key}/></a>)}</div>:<p>Пока не указаны</p>}</div>

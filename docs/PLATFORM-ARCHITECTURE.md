@@ -334,3 +334,32 @@ The current access contract supersedes earlier admin-only descriptions above. Le
 `server/admin-audit.js` atomically stores the newest 50 changes in `admin-audit.json`. HTTP success hooks, registration and map-save hooks record grouped events; passwords and invite values are excluded. The general view shows system status above the journal, with filters and scrolling after ten rows. Invites, news and announcements are general subtabs; users/administration, access roles and cosmetic statuses share a separate section. World settings retain config and armor; assets retain sprite/texture tools. Game version is v0.6.7.
 
 Profile sidebar `profile-user-info.tsx` shows birthday (public month/day), cosmetic position and social links. `profile-social-fields.tsx` edits these from primary information. `server/profile-links.js` validates HTTPS and official network hosts; public DTOs expose links but never access-role assignments or permissions. Regression: `scripts/test-console-profile.mjs` covers RBAC/cosmetic separation, host/CSRF/CORS, deletion, persistence, social validation, teleport and journal retention.
+
+### Оформление сайта (2026-11-16)
+
+`server/site-design.js` обслуживает `GET /cfg/site-design` (публичные безопасные
+настройки оформления) и `POST /cfg/site-design` (полный валидированный снимок,
+право `textures`). `POST /cfg/site-design/assets/{frame|divider|background|button|fontFile}`
+принимает до 2 МиБ PNG/JPEG/WebP/GIF или WOFF2 для шрифта. SVG-загрузки запрещены;
+исходные SVG-орнаменты и PNG для девятисегментной рамки входят в статику. Файлы адресуются SHA-256 и читаются через
+`GET /cfg/site-design/files/<hash>.<ext>` с фиксированным MIME и immutable cache.
+Все маршруты скрыты на public-хосте; запись проходит общий cookie/Origin/CSRF-гейт
+`net.js`, затем проверку сессии и права `textures`. Значения CSS, произвольные URL
+и пути не принимаются: только разрешённые шрифты, диапазоны, hex-цвета, серверные
+ресурсы и исходные пути. Снимок и файлы записываются атомарно в
+`DATA_DIR/site-design/`; смена оформления попадает в журнал `textures`.
+
+`src/lib/site-design.ts` зеркалит JSON-схему и исходные значения сервера.
+`SiteDesignProvider` монтируется только в Elysiae, применяет CSS-переменные и
+обновляет настройки раз в минуту. Шрифт WOFF2 загружается через FontFace API.
+`Ресурсы → Сайтовые текстуры` позволяет загрузить ресурсы, настроить срез рамки,
+размеры текста/заголовков, цвета, прозрачность и подписи пяти карточек профиля.
+Предпросмотр локален для вкладки администратора; загрузка ресурса сама по себе
+не публикует его. Кнопка сохранения применяет снимок всем посетителям. Отмена
+и уход со вкладки снимают предпросмотр; сброс сначала меняет черновик и требует
+сохранения. Серверный перезапуск сохраняет настройки. Оригиналы и старые версии
+загруженных ресурсов сохраняются для отката. Игровые текстуры поля независимы.
+
+Регрессия: `npm run test:console-profile` проверяет публичное чтение,
+ограничение доступа, CSRF/host-гейты, загрузку, лимит размера, запрет SVG,
+сохранение после перезапуска и восстановление исходного оформления.

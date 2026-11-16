@@ -723,8 +723,8 @@
 
 /* Тонкий золотой кант с вогнутыми углами, общий для блоков профиля. */
 .heroBanner, .card {
-  border: 14px solid transparent;
-  border-image: url('/ui/ornamental-frame.svg') 20 / 14px / 0 stretch;
+  border: var(--site-frame-width, 26px) solid transparent;
+  border-image: var(--site-frame, url('/ui/site-frame.png')) var(--site-frame-slice, 44) / var(--site-frame-width, 26px) / 0 stretch;
   border-radius: 0;
   background-clip: padding-box;
 }
@@ -775,23 +775,23 @@
   .heroBio { font-size: 12px; }
 }
 
-/* Выемки относятся к синей подложке, не к содержимому и внешнему канту. */
-.card { position: relative; isolation: isolate; background: none; backdrop-filter: none; box-shadow: 0 12px 30px rgba(0,0,0,.25); }
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(30,26,66,.72), rgba(14,12,34,.72));
-  backdrop-filter: blur(8px);
-  mask:
-    radial-gradient(circle 12px at 0 0, transparent 11px, #000 12px) top left / 51% 51% no-repeat,
-    radial-gradient(circle 12px at 100% 0, transparent 11px, #000 12px) top right / 51% 51% no-repeat,
-    radial-gradient(circle 12px at 0 100%, transparent 11px, #000 12px) bottom left / 51% 51% no-repeat,
-    radial-gradient(circle 12px at 100% 100%, transparent 11px, #000 12px) bottom right / 51% 51% no-repeat;
-}
+/* Подложка следует мягкому силуэту новой рамки. */
+.card { background-clip: padding-box; background: color-mix(in srgb, var(--site-panel-color, #17132d) var(--site-panel-opacity,90%), transparent); background-clip: padding-box; border-radius: 28px; }
+.cardHead { position: relative; border-bottom: 0; padding-bottom: calc(var(--site-divider-height,28px) + 8px); }
+.cardHead::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: var(--site-divider-height,28px); background: var(--site-divider,url('/ui/site-divider.svg')) center / contain no-repeat; pointer-events: none; }
+.cardTitle { font-size: var(--site-heading-size,20px); }
+.page { font-size: var(--site-text-size,14px); }
+.heroName { font-size: var(--site-title-size,34px); }
+.heroBanner { min-height: 310px; aspect-ratio: auto; height: 100%; }
+.heroText { overflow-wrap: anywhere; }
+@media(max-width:760px) { .heroBanner { min-height: 0; height: auto; } }
 
 .uploadHint { display: block; margin-top: 3px; font-size: 10px; color: var(--muted, #b9b3d9); }
 
 .card.settingsBody { padding: 18px; }
+
+.card,.heroBanner { position:relative; }
+.card::after,.heroBanner::after { content:''; position:absolute; inset:calc(-1 * var(--site-frame-width,26px)); pointer-events:none; background-image:var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')),var(--site-frame-marks,url('/ui/site-frame-mark.svg')); background-position:center 6px,center calc(100% - 6px),2px center,calc(100% - 2px) center; background-size:14px 14px; background-repeat:no-repeat; }
+.heroFace { border:18px solid transparent; border-image:var(--site-frame,url('/ui/site-frame.png')) var(--site-frame-slice,44) / 18px / 0 stretch; padding:6px; }
+.faceFrame { display:none; }
+.card { border-radius:50px; }

@@ -1,3 +1,4 @@
+import { handleSiteDesignHttp } from './site-design.js';
 import { handleAdminConsoleHttp } from "./admin-console.js";
 import { observeAdminChanges } from "./admin-audit-http.js";
 import { withTestLocation } from "./testmap.js";
@@ -300,6 +301,7 @@ export function startServer() {
         p.startsWith("/cfg/notifications/") ||
         p === "/cfg/announcements" ||
         p.startsWith("/cfg/announcements/") ||
+        p === "/cfg/site-design" || p.startsWith("/cfg/site-design/") ||
         p === "/cfg/console" || p.startsWith("/cfg/console/") ||
         p === "/cfg/admin" ||
         p.startsWith("/cfg/admin/") ||
@@ -408,6 +410,7 @@ export function startServer() {
       }
     }
     observeAdminChanges(req, res);
+    if (p === "/cfg/site-design" || p.startsWith("/cfg/site-design/")) return handleSiteDesignHttp(req, res);
     if (p === "/cfg/console" || p.startsWith("/cfg/console/")) return handleAdminConsoleHttp(req, res);
     Promise.resolve(handleAuthHttp(req, res)).then((hit) => {
       if (hit) return;
