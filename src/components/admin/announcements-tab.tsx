@@ -166,7 +166,7 @@ export function AnnouncementsTab() {
             {rows.map((row) => (
               <li
                 key={row.id}
-                className="rounded-lg border border-[rgba(226,220,255,0.12)] bg-[rgba(10,14,32,0.35)] p-3"
+                className="rounded-lg border border-[rgba(226,220,255,0.12)] bg-[var(--uk-panel-soft-bg)] p-3"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">

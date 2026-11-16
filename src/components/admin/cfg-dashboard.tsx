@@ -513,7 +513,7 @@ export default function CfgDashboard() {
               <ul className="mt-2 space-y-2">
                 {snap.history.map((name, i) => (
                   <li key={name} className="flex flex-wrap items-center justify-between gap-2">
-                    <code className="rounded bg-black/30 px-1.5 py-0.5 text-[11px] text-[var(--sim-text-soft)]">
+                    <code className="rounded bg-[var(--uk-inset-bg)] px-1.5 py-0.5 text-[11px] text-[var(--sim-text-soft)]">
                       {i + 1}. {name}
                     </code>
                     <Button
@@ -581,7 +581,7 @@ export default function CfgDashboard() {
         title="Админ-панель"
         headerExtra={
         <>
-          <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
+          <span className="rounded-full border border-[rgba(226,220,255,0.28)] bg-[var(--uk-panel-soft-bg)] px-2.5 py-0.5 text-[11px] text-[#efe7ff]">
             Доступ по роли
           </span>
           <a className="text-sm text-[var(--sim-text-soft)] underline-offset-2 hover:underline" href="/">
@@ -602,7 +602,7 @@ export default function CfgDashboard() {
               {status.text}
             </p>
             {status.details ? (
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--uk-inset-bg)] p-2 text-[11px] text-red-200">
                 {status.details}
               </pre>
             ) : null}

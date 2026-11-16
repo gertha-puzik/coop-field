@@ -132,7 +132,7 @@ function CategoryField({
       aria-label="Существующие категории"
       title="Существующие категории"
       onClick={() => setOpen((v) => !v)}
-      className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-sm font-bold leading-none text-[var(--sim-text)] hover:bg-black/40"
+      className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-sm font-bold leading-none text-[var(--sim-text)] hover:bg-[var(--uk-inset-bg)]"
     >
       ▾
     </button>
@@ -161,8 +161,8 @@ function CategoryField({
                 }}
                 className={`block w-full px-2 py-1 text-left text-xs ${
                   c === value
-                    ? 'bg-black/40 font-semibold text-[var(--sim-text)]'
-                    : 'text-[var(--sim-text)] hover:bg-black/40'
+                    ? 'bg-[var(--uk-inset-bg)] font-semibold text-[var(--sim-text)]'
+                    : 'text-[var(--sim-text)] hover:bg-[var(--uk-inset-bg)]'
                 }`}
               >
                 {c}
@@ -348,7 +348,7 @@ export function SpritesTab() {
             {status.text}
           </p>
           {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--uk-inset-bg)] p-2 text-[11px] text-red-200">
               {status.details}
             </pre>
           ) : null}
@@ -366,7 +366,7 @@ export function SpritesTab() {
             ref={fileRef}
             type="file"
             accept="image/png"
-            className="h-8 max-w-full rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-xs text-[var(--sim-text-soft)] file:mr-2 file:rounded file:border-0 file:bg-black/40 file:px-2 file:py-1 file:text-xs file:text-[var(--sim-text-soft)]"
+            className="h-8 max-w-full rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 text-xs text-[var(--sim-text-soft)] file:mr-2 file:rounded file:border-0 file:bg-[var(--uk-inset-bg)] file:px-2 file:py-1 file:text-xs file:text-[var(--sim-text-soft)]"
             onChange={(e) => setUpFile(e.target.files ? e.target.files[0] : null)}
           />
           <input
@@ -375,14 +375,14 @@ export function SpritesTab() {
             onChange={(e) => setUpName(e.target.value)}
             placeholder="Имя (2–24)"
             maxLength={24}
-            className="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-black/20 px-2 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
+            className="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
           />
           <CategoryField
             categories={categories}
             value={upCategory}
             onChange={setUpCategory}
             placeholder="Категория (1–32)"
-            inputClassName="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-black/20 text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
+            inputClassName="h-8 w-44 rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] text-sm text-[var(--sim-text)] placeholder:text-[var(--sim-text-faint)]"
           />
           <Button
             type="button"
@@ -412,7 +412,7 @@ export function SpritesTab() {
               return (
                 <li
                   key={it.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-black/20 px-2 py-1.5"
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 py-1.5"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- файловый каталог спрайтов, не next/image */}
                   <img
@@ -429,14 +429,14 @@ export function SpritesTab() {
                         onChange={(e) => setEditName(e.target.value)}
                         maxLength={24}
                         placeholder="Имя"
-                        className="h-7 w-40 rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)]"
+                        className="h-7 w-40 rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 text-sm text-[var(--sim-text)]"
                       />
                       <CategoryField
                         categories={categories}
                         value={editCategory}
                         onChange={setEditCategory}
                         placeholder="Категория"
-                        inputClassName="h-7 w-36 rounded-md border border-[var(--sim-line)] bg-black/30 text-sm text-[var(--sim-text)]"
+                        inputClassName="h-7 w-36 rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] text-sm text-[var(--sim-text)]"
                       />
                       <Button
                         type="button"
@@ -476,7 +476,7 @@ export function SpritesTab() {
                       {/* #83: владелец строки — логин игрока (личный окрас) или
                           админский/uploads-builtin без владельца. */}
                       {!it.builtin ? (
-                        <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-bold text-[var(--sim-text-soft)]">
+                        <span className="rounded bg-[var(--uk-inset-bg)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--sim-text-soft)]">
                           {it.owner ? `владелец: ${it.owner}` : 'владелец: админ'}
                         </span>
                       ) : null}

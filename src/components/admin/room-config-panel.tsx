@@ -233,12 +233,12 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
             const candidate: RoomConfigValue | null = isBool ? (boolEdit ?? (typeof row.effective === 'boolean' ? row.effective : null)) : numEdit;
             const changed = candidate !== null && candidate !== row.effective;
             return (
-              <li key={key} className="rounded-lg border border-[var(--sim-line)] bg-black/20 p-2 text-xs">
+              <li key={key} className="rounded-lg border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] p-2 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-[var(--sim-text)]">{meta.label}</span>
                   <span
                     className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                      badge(view, key) === 'overridden' ? 'bg-amber-500/20 text-amber-300' : 'bg-black/30 text-[var(--sim-text-faint)]'
+                      badge(view, key) === 'overridden' ? 'bg-amber-500/20 text-amber-300' : 'bg-[var(--uk-inset-bg)] text-[var(--sim-text-faint)]'
                     }`}
                   >
                     {badge(view, key) === 'overridden' ? `переопределено (${view.overrideCount})` : 'наследует'}

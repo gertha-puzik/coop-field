@@ -200,7 +200,7 @@ function ListFieldRow({
         />
         <button
           type="button"
-          className="rounded-md border border-[var(--sim-line-strong)] px-2 py-1 text-xs hover:bg-black/30"
+          className="rounded-md border border-[var(--sim-line-strong)] px-2 py-1 text-xs hover:bg-[var(--uk-inset-bg)]"
           onClick={tryAdd}
         >
           Добавить

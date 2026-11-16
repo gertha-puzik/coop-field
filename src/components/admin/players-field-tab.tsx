@@ -160,7 +160,7 @@ export function PlayersFieldTab() {
             {status.text}
           </p>
           {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--uk-inset-bg)] p-2 text-[11px] text-red-200">
               {status.details}
             </pre>
           ) : null}
@@ -179,7 +179,7 @@ export function PlayersFieldTab() {
             onChange={(e) => setPromoteLogin(e.target.value)}
             placeholder="логин аккаунта"
             maxLength={24}
-            className="h-8 min-w-[10rem] flex-1 rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)] outline-none focus:border-[var(--sim-line-strong)]"
+            className="h-8 min-w-[10rem] flex-1 rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 text-sm text-[var(--sim-text)] outline-none focus:border-[var(--sim-line-strong)]"
             disabled={busy !== null}
           />
           {armed === 'promote-form' ? (
@@ -244,7 +244,7 @@ export function PlayersFieldTab() {
                 return (
                   <li
                     key={c.id}
-                    className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-black/20 px-2 py-1.5"
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 py-1.5"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element -- статические файлы вариантов, не next/image */}
                     <img
