@@ -12,7 +12,13 @@ import {
 import s from "./admin-console.module.css";
 export function ItemsTab() {
   const [items, setItems] = useState<ItemDefinition[]>([]),
-    [draft, setDraft] = useState({ id: "", name: "", weight: 3, sprite: "" }),
+    [draft, setDraft] = useState({
+      id: "",
+      name: "",
+      weight: 3,
+      sprite: "",
+      glows: false,
+    }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [note, setNote] = useState("");
@@ -64,8 +70,8 @@ export function ItemsTab() {
     <section className={s.panel}>
       <h2>Создание предмета</h2>
       <p className={s.muted}>
-        Спрайты сохраняются без изменения пикселей и прозрачности. Свойств и
-        категорий пока нет.
+        Спрайты сохраняются без изменения пикселей и прозрачности. Для
+        светящихся предметов эффект включается вечером и ночью.
       </p>
       <div className={s.actions}>
         {items.map((item) => (
@@ -74,7 +80,11 @@ export function ItemsTab() {
             type="button"
             aria-pressed={draft.id === item.id}
             onClick={() => {
-              setDraft({ ...item, sprite: item.sprite || "" });
+              setDraft({
+                ...item,
+                sprite: item.sprite || "",
+                glows: !!item.glows,
+              });
               setNote("");
             }}
           >
@@ -92,7 +102,9 @@ export function ItemsTab() {
         ))}
         <Button
           variant="outline"
-          onClick={() => setDraft({ id: "", name: "", weight: 3, sprite: "" })}
+          onClick={() =>
+            setDraft({ id: "", name: "", weight: 3, sprite: "", glows: false })
+          }
         >
           + Новый предмет
         </Button>
@@ -140,6 +152,15 @@ export function ItemsTab() {
                 setDraft({ ...draft, weight: Number(e.target.value) })
               }
             />
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.glows}
+              disabled={busy}
+              onChange={(e) => setDraft({ ...draft, glows: e.target.checked })}
+            />{" "}
+            Светится вечером и ночью
           </label>
           <label>
             PNG-спрайт

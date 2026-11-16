@@ -475,3 +475,19 @@ empty or matching target. Failure leaves the mouth unchanged. Client transfers
 use two clicks, preserving the held cursor item after a rejected operation.
 World items render within the scene below weather and all UI, at identical
 30px fitted size on the ground/in the mouth; no raw sprite bytes are changed.
+
+Optional catalogue property `glows:boolean` (default false) is editable with the
+existing items permission. Invalid non-boolean input is rejected; omitted fields
+retain existing values for older clients. It changes appearance only, with no
+inventory weight/effect changes. Items emit light at progress [2,4), with smooth
+fade at dusk/dawn; fireflies appear at [3,4). Both use the room's atmosphere clock.
+Ground item hover now reveals name/weight/glow information regardless of distance;
+all pickup buttons and R/F remain disabled beyond authoritative pickup range.
+
+World-item GET/POST accepts the current socket's `catId`. It is resolved only
+inside the authenticated account and character. This distinguishes simultaneous
+game tabs and avoids checking actions against another tab's feet/location.
+Reachable UI requires both the rendered and the latest authoritative feet to be
+within 70px. Offers stay bound to their original sender/recipient actor IDs.
+Inventory errors render once (inside the inventory or beside the hotbar), and
+transient action errors clear after 4.5 seconds.

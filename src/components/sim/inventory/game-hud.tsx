@@ -69,7 +69,7 @@ export function GameHud(props: GameHudProps) {
       "basic",
     ),
     [selected, setSelected] = useState(0);
-  const inventory = useInventory(props.characterId),
+  const inventory = useInventory(props.characterId, props.meId),
     close = () => setPanel(null),
     panelRef = useRef(panel),
     editor = useRef(props.editorOpen),
@@ -166,6 +166,7 @@ export function GameHud(props: GameHudProps) {
   return (
     <div className={s.hud} onKeyDown={trap}>
       <WorldItems
+        meId={props.meId}
         controller={inventory}
         characterId={props.characterId}
         blocked={!!panel}

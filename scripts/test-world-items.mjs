@@ -440,7 +440,56 @@ try {
     ).status,
     200,
   );
-  const persistentGround = (await world(a)).ground[0];
+  let persistentGround = (await world(a)).ground[0];
+  // Two game tabs for the same character must use their own live actor/feet.
+  const secondTab = await connect(a),
+    secondCatId = (await secondTab.wait((f) => f[0] === "you")).id;
+  await move(secondTab, 2, 5);
+  const secondWorld = (
+    await req(
+      "/cfg/inventory/world?characterId=" +
+        a.characterId +
+        "&catId=" +
+        secondCatId,
+      a,
+    )
+  ).world;
+  assert.equal(
+    secondWorld.selfId,
+    secondCatId,
+    "view selects the current game tab",
+  );
+  assert.equal(
+    (await act(a, { action: "mouth", id: persistentGround.id })).reason,
+    "too_far",
+    "first tab is still far away",
+  );
+  assert.equal(
+    (
+      await act(a, {
+        action: "mouth",
+        id: persistentGround.id,
+        catId: secondCatId,
+      })
+    ).status,
+    200,
+    "nearby second tab can pick up",
+  );
+  assert.equal(
+    (await act(a, { action: "release", catId: secondCatId })).status,
+    200,
+  );
+  persistentGround = (await world(a)).ground[0];
+  assert.equal(persistentGround.x, 2.45);
+  assert.equal(persistentGround.y, 5.95);
+  assert.equal(
+    (await act(a, { action: "release", catId: (await world(b)).selfId }))
+      .reason,
+    "not_on_field",
+    "foreign actor ids cannot select another account's socket",
+  );
+  secondTab.ws.close();
+
   // Trusted passage travel carries the mouth, but leaves ground in its original room.
   await move(cb, 2, 5);
   await sleep(1100);
