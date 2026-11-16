@@ -225,7 +225,12 @@ export function WorldItems({
       }
     };
     const drop = (event: Event) => {
-      const e = event as CustomEvent<{ from: unknown; x: number; y: number }>;
+      const e = event as CustomEvent<{
+        from: unknown;
+        expectedItemId?: string;
+        x: number;
+        y: number;
+      }>;
       const value = currentWorldItemFrame();
       if (!value || value.frame.editor) return;
       const { frame: f, rect } = value;
@@ -252,6 +257,7 @@ export function WorldItems({
       void current.current.controller.worldAction({
         action: "drop",
         from: e.detail.from,
+        expectedItemId: e.detail.expectedItemId,
         x: p.x / f.cellW,
         y: p.y / f.cellH,
       });

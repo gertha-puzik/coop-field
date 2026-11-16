@@ -221,6 +221,20 @@ try {
     "invalid_point",
   );
   assert.equal((await inv(a)).weight, 30);
+  assert.equal(
+    (
+      await act(a, {
+        action: "drop",
+        from: { area: "bag", index: 0 },
+        expectedItemId: "different-item",
+        x: 3,
+        y: 6,
+      })
+    ).reason,
+    "stale_inventory",
+    "a changed slot cannot drop a different item from the cursor",
+  );
+  assert.equal((await inv(a)).bag[0].quantity, 10);
   const prior = (await inv(a)).version;
   assert.equal(
     (

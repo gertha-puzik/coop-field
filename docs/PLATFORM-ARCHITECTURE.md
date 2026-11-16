@@ -463,3 +463,6 @@ changing either bag. Offers retain ownership at sender, expire in 20 seconds and
 invalidate on departure, distance, version change or occupied recipient mouth.
 Ground and mouth are additive fields in the same inventories.json v1 file;
 old inventories default to no mouth/ground. No item properties or categories added.
+
+Mouse drops include expectedItemId so a concurrently replaced slot/mouth cannot
+drop a different item than the one displayed on the cursor.

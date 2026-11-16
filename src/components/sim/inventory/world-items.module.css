@@ -86,3 +86,7 @@
     animation: none;
   }
 }
+
+.layer [hidden] {
+  display: none;
+}

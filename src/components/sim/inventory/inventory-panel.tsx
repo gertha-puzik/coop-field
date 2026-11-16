@@ -101,6 +101,7 @@ export function InventoryPanel({
   const [carried, setCarried] = useState<{
     from: InventorySlot | "mouth";
     sprite: string;
+    itemId: string;
     point: Point;
   } | null>(null);
   const carryRef = useRef(carried);
@@ -139,7 +140,12 @@ export function InventoryPanel({
       window.dispatchEvent(new Event("game-ui:pause-controls"));
       window.dispatchEvent(
         new CustomEvent("world-items:drop", {
-          detail: { from: value.from, x: e.clientX, y: e.clientY },
+          detail: {
+            from: value.from,
+            expectedItemId: value.itemId,
+            x: e.clientX,
+            y: e.clientY,
+          },
         }),
       );
       setCarried(null);
@@ -168,6 +174,7 @@ export function InventoryPanel({
       if (item?.sprite)
         setCarried({
           from: "mouth",
+          itemId: item.id,
           sprite: itemSprite(item.sprite),
           point: { x: innerWidth / 2, y: innerHeight / 2 },
         });
@@ -273,6 +280,7 @@ export function InventoryPanel({
         if (value.item.sprite)
           setCarried({
             from: value.from,
+            itemId: value.item.id,
             sprite: itemSprite(value.item.sprite),
             point: value.point,
           });
@@ -287,7 +295,12 @@ export function InventoryPanel({
       if (!hit?.closest("button,input,textarea,a,nav,[data-world-drop-block]"))
         window.dispatchEvent(
           new CustomEvent("world-items:drop", {
-            detail: { from: value.from, x: event.clientX, y: event.clientY },
+            detail: {
+              from: value.from,
+              expectedItemId: value.item.id,
+              x: event.clientX,
+              y: event.clientY,
+            },
           }),
         );
       return;

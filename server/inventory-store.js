@@ -253,6 +253,8 @@ export function worldItemAction(accountId, characterId, room, raw) {
       itemId = stack.itemId;
       if (--stack.quantity === 0) inventory[slot.area][slot.index] = null;
     }
+    if (raw.expectedItemId && raw.expectedItemId !== itemId)
+      return { error: "stale_inventory", status: 409 };
     if (Object.values(ground).filter((row) => row.room === room).length >= 1000)
       return { error: "ground_full" };
     const id = randomUUID();
