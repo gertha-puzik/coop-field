@@ -11,7 +11,7 @@ html[data-site-design] :is(h1) { font-size:var(--site-title-size) !important; }
 html[data-site-design] :is(h2,h3) { font-size:var(--site-heading-size) !important; }
 html[data-site-design] :is(button,input,select,textarea) { font-family:var(--site-font); }
 html[data-site-button='true'] button { background-image:var(--site-button); background-position:center; background-size:cover; }
-html[data-site-design] hr { border:0; height:var(--site-divider-height); background:var(--site-divider) center / contain no-repeat; }
+html[data-site-custom-divider] hr { border:0; height:var(--site-divider-height); background:var(--site-divider) center / contain no-repeat; }
 
 html[data-site-design] :where(h1) { font-size:var(--site-title-size) !important; }
 html[data-site-design] :where(h2,h3) { font-size:var(--site-heading-size) !important; }

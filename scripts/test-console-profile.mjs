@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
-import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
@@ -96,6 +96,12 @@ try{
  assert.equal((await req('/cfg/console/roles/observer',admin.cookie,'DELETE')).status,200);
  assert.equal((await req('/cfg/console',member.cookie)).status,403,'role deletion revokes access');
  r=await req('/cfg/console',admin.cookie);assert.ok(r.row.items.some(i=>i.group==='statuses'));assert.ok(r.row.items.some(i=>i.group==='roles'));
+ await stop();
+ writeFileSync(path.join(data,'site-design','settings.json'),JSON.stringify({...defaults,font:'serif',textSize:19,frame:'/ui/site-frame.png',frameSlice:44,frameWidth:26,divider:'/ui/site-divider.svg',dividerHeight:28}));
+ await start();const restored=(await req('/cfg/site-design',null)).row.settings;
+ assert.equal(restored.frame,'/ui/ornamental-frame.svg');assert.equal(restored.frameSlice,20);assert.equal(restored.frameWidth,14);
+ assert.equal(restored.divider,'/ui/site-line.svg');assert.equal(restored.dividerHeight,1);
+ assert.equal(restored.textSize,19);assert.equal(restored.font,'serif','ornament rollback preserves typography');
  await stop();
  const code=`const m=await import(${JSON.stringify(path.join(root,'server/admin-audit.js'))});for(let i=0;i<70;i++)m.pushAdminAudit('location-updates','change '+i,'test');console.log(JSON.stringify(m.auditItems()));`;
  const audit=spawnSync(process.execPath,['--input-type=module','-e',code],{cwd:root,env,encoding:'utf8'});assert.equal(audit.status,0,audit.stderr);const rows=JSON.parse(audit.stdout.trim().split('\n').at(-1));assert.equal(rows.length,50);assert.equal(rows[0].text,'change 69');assert.equal(rows.at(-1).text,'change 20');

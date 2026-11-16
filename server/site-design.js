@@ -10,9 +10,9 @@ import { json, setCors } from './runtime-config.js';
 import { readBody } from './sprites.js';
 import { pushAdminAudit } from './admin-audit.js';
 const dir=path.join(DATA_DIR,'site-design'), file=path.join(dir,'settings.json');
-export const DEFAULT_SITE_DESIGN=Object.freeze({font:'inter',textSize:14,headingSize:20,titleSize:34,textColor:'#f4f0ff',mutedColor:'#b9b3d9',accentColor:'#d9c4bc',panelColor:'#17132d',backgroundColor:'#080c1a',frame:'/ui/site-frame.png',divider:'/ui/site-divider.svg',background:'',button:'',fontFile:'',frameSlice:44,frameWidth:26,dividerHeight:28,panelOpacity:90,labels:{userInfo:'О пользователе',character:'Активный персонаж',statistics:'Краткая статистика',friends:'Друзья',activity:'Последние действия'}});
+export const DEFAULT_SITE_DESIGN=Object.freeze({font:'inter',textSize:14,headingSize:20,titleSize:34,textColor:'#f4f0ff',mutedColor:'#b9b3d9',accentColor:'#f6d7a2',panelColor:'#17132d',backgroundColor:'#080c1a',frame:'/ui/ornamental-frame.svg',divider:'/ui/site-line.svg',background:'',button:'',fontFile:'',frameSlice:20,frameWidth:14,dividerHeight:1,panelOpacity:90,labels:{userInfo:'О пользователе',character:'Активный персонаж',statistics:'Краткая статистика',friends:'Друзья',activity:'Последние действия'}});
 const slots=['frame','divider','background','button','fontFile'];
-const ranges={textSize:[10,24],headingSize:[14,36],titleSize:[20,56],frameSlice:[4,150],frameWidth:[8,60],dividerHeight:[12,80],panelOpacity:[30,100]};
+const ranges={textSize:[10,24],headingSize:[14,36],titleSize:[20,56],frameSlice:[4,150],frameWidth:[8,60],dividerHeight:[1,80],panelOpacity:[30,100]};
 const colors=['textColor','mutedColor','accentColor','panelColor','backgroundColor'];
 const assetRe=/^\/cfg\/site-design\/files\/[a-f0-9]{64}\.(png|jpg|webp|gif|woff2)$/;
 function validAsset(key,value){return typeof value==='string' && (value===DEFAULT_SITE_DESIGN[key] || (assetRe.test(value) && (key==='fontFile'?value.endsWith('.woff2'):!value.endsWith('.woff2')) && fs.existsSync(path.join(dir,path.basename(value)))));}
@@ -27,7 +27,12 @@ export function validateSiteDesign(raw){
  return next;
 }
 let settings={...DEFAULT_SITE_DESIGN,labels:{...DEFAULT_SITE_DESIGN.labels}};
-try{settings=validateSiteDesign(JSON.parse(fs.readFileSync(file,'utf8'))) || settings;}catch{}
+try{
+ const raw=JSON.parse(fs.readFileSync(file,'utf8'));
+ if(raw.frame==='/ui/site-frame.png'){if(raw.accentColor==='#d9c4bc')raw.accentColor=DEFAULT_SITE_DESIGN.accentColor;raw.frame=DEFAULT_SITE_DESIGN.frame;if(raw.frameSlice===44)raw.frameSlice=20;if(raw.frameWidth===26)raw.frameWidth=14;}
+ if(raw.divider==='/ui/site-divider.svg'){raw.divider=DEFAULT_SITE_DESIGN.divider;if(raw.dividerHeight===28)raw.dividerHeight=1;}
+ settings=validateSiteDesign(raw) || settings;
+}catch{}
 export async function handleSiteDesignHttp(req,res){
  setCors(req,res);
  if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
