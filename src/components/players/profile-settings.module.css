@@ -3,9 +3,9 @@
 .subtab[aria-selected='true'] { border-color: var(--gold, #f6d7a2); background: linear-gradient(120deg, #5a4635, #29213f); color: var(--gold, #f6d7a2); }
 .subtab:focus-visible, .skinmaker:focus-visible, .group summary:focus-visible, .swatch:focus-visible { outline: 2px solid var(--gold, #f6d7a2); outline-offset: 3px; }
 .heading { margin: 0 0 16px; font-size: 17px; font-weight: 700; }
-.appearance { display: grid; grid-template-columns: 180px minmax(180px, 1fr) minmax(210px, 1fr); align-items: center; gap: 20px; padding: 18px; border: 1px solid var(--line-soft, #34304e); border-radius: 14px; background: rgba(10,10,28,.55); }
-.preview { margin: 0; text-align: center; color: var(--gold, #f6d7a2); font-size: 13px; }
-.preview img { display: block; width: 100%; height: 150px; object-fit: contain; margin-bottom: 8px; }
+.appearance { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 290px); justify-content: center; align-items: center; gap: 24px 36px; padding: 24px; background: rgba(12,15,38,.6); border-radius: 14px; }
+.preview { margin: 0; min-width: 0; text-align: center; color: var(--gold, #f6d7a2); font-size: 16px; }
+.preview img { width: 100%; height: 100%; object-fit: contain; display: block; image-rendering: pixelated; }
 .skinmaker { justify-self: center; width: fit-content; text-align: center; }
 .groups { max-height: 260px; overflow-y: auto; scrollbar-width: thin; padding: 3px; }
 .label { margin: 0 0 10px; color: var(--muted, #b9b3d9); font-size: 12px; }
@@ -16,16 +16,15 @@
 .swatch { display: flex; flex-direction: column; align-items: center; width: 78px; padding: 6px; border: 1px solid transparent; border-radius: 8px; color: var(--text, #f4f0ff); cursor: pointer; font-size: 11px; }
 .swatch img { width: 60px; height: 48px; object-fit: contain; }
 .swatch[aria-pressed='true'] { border-color: var(--gold, #f6d7a2); background: rgba(246,215,162,.12); }
-.growth { display: flex; flex-direction: column; gap: 14px; max-width: 480px; margin: 22px 0; font-size: 14px; }
-@media (max-width: 850px) { .appearance { grid-template-columns: 140px 1fr; } .groups { grid-column: 1 / -1; } }
-@media (max-width: 500px) { .subtab { flex-basis: 40%; padding: 9px; font-size: 12px; } .appearance { grid-template-columns: 1fr; } .preview img { height: 160px; } }
+.growth { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 500px; justify-self: center; margin: 0; font-size: 14px; }
+@media (max-width: 500px) { .subtab { flex-basis: 40%; padding: 9px; font-size: 12px; } }
 
 .settingsForm[hidden] { display: none; }
 
 .swatch span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Profile controls share the gold/plum treatment of the selected subtabs. */
-.settingsForm { --primary: #e7c48d; --sim-accent: #e7c48d; --sim-accent-hover: #f6d7a2; --sim-accent-tint: rgba(246,215,162,.12); --uk-focus-ring: #f6d7a2; }
+.settingsForm { --primary: #e7c48d; --sim-accent: #e7c48d; --sim-accent-hover: #f6d7a2; --sim-accent-tint: rgba(246,215,162,.12); --uk-focus-ring: #f6d7a2; display: flex; flex-direction: column; gap: 18px; min-width: 0; width: 100%; margin: 0; }
 .action.action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; height: auto; padding: 7px 14px; border: 1px solid var(--gold, #f6d7a2); border-radius: 10px; background: linear-gradient(120deg, #5a4635, #29213f); color: var(--gold, #f6d7a2); font-size: 12px; font-weight: 600; cursor: pointer; }
 .action.action:hover { background: linear-gradient(120deg, #71573e, #3a2b50); color: #ffe6b8; }
 .action.action:focus-visible { outline: 2px solid var(--gold, #f6d7a2); outline-offset: 3px; }
@@ -33,3 +32,46 @@
 .choice.choice { border: 1px solid var(--line-soft, #34304e); border-radius: 7px; background: #17162d; color: var(--text, #f4f0ff); }
 .choice.choice[aria-pressed='true'] { border-color: var(--gold, #f6d7a2); background: linear-gradient(120deg, #5a4635, #29213f); color: var(--gold, #f6d7a2); }
 .choice.choice:hover { border-color: var(--gold, #f6d7a2); background: #29213f; }
+
+.grassPreview { width: 100%; height: 280px; margin-top: 14px; padding: 22px; border-radius: 14px; background: url('/tex/grass-ground.png') repeat center / 240px 240px; }
+.draftHint { display: block; margin-top: 10px; color: var(--muted, #b9b3d9); font-size: 12px; }
+.appearanceActions { display: flex; flex-direction: column; align-items: center; gap: 14px; min-width: 0; }
+.extraSkins { width: 100%; text-align: center; }
+.extraSkins > summary { list-style: none; }
+.extraSkins > summary::-webkit-details-marker { display: none; }
+.extraSkins[open] > summary { margin-bottom: 12px; }
+.extraSkins .groups { text-align: left; }
+.gamePanel { width: 100%; max-width: 540px; margin: 0 auto; }
+.gamePanel h3 { text-align: center; }
+.gameBlocks { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.parameter { display: block; min-width: 0; width: 100%; padding: 20px; border-radius: 12px; background: rgba(10,13,34,.7); }
+.arrowControl { display: flex; align-items: center; gap: 14px; margin-top: 14px; min-width: 0; }
+.arrowSlider { flex: 1; min-width: 0; }
+.skinLibrary { padding: 24px; margin-top: 26px; border-radius: 14px; background: linear-gradient(145deg, rgba(31,28,65,.8), rgba(13,15,36,.85)); }
+.libraryHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+.libraryHead h3 { margin: 0; font-size: 18px; font-weight: 700; color: var(--gold, #f6d7a2); }
+.libraryHead > span { color: var(--muted, #b9b3d9); font-size: 12px; }
+.skinGallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 20px 0; }
+.skinTile { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 0; padding: 16px; border: 1px solid var(--line-soft, #34304e); border-radius: 14px; background: rgba(9,12,30,.65); }
+.skinTile[data-selected='true'], .skinTile[data-highlight='true'] { border-color: var(--gold, #f6d7a2); }
+.skinArt { position: relative; width: 100%; height: 170px; flex: 0 0 170px; overflow: hidden; cursor: pointer; }
+.skinArt img { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; image-rendering: pixelated; }
+.skinTile h4 { width: 100%; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; font-size: 13px; }
+.skinBadge { color: var(--gold, #f6d7a2); font-size: 11px; }
+.dangerText { color: #e7b4b4; font-size: 11px; }
+.skinActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+.removeSkin { padding: 7px 10px; color: var(--muted, #b9b3d9); cursor: pointer; font-size: 12px; }
+.removeSkin:disabled { opacity: .45; }
+.addSkin { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 16px; border: 1px dashed #8e795e; border-radius: 14px; background: rgba(9,12,30,.45); color: var(--gold, #f6d7a2); cursor: pointer; font-size: 14px; }
+.addSkin > span { font-size: 48px; line-height: 1; font-weight: 300; }
+.addSkin:hover { background: rgba(70,52,65,.55); border-color: var(--gold, #f6d7a2); }
+.addSkin:disabled { opacity: .4; cursor: default; }
+.addSkin:focus-visible, .skinArt:focus-visible, .removeSkin:focus-visible { outline: 2px solid var(--gold, #f6d7a2); outline-offset: 3px; }
+.uploadSkin { max-width: 460px; margin: 18px auto; padding: 18px; border-radius: 12px; background: rgba(9,12,30,.65); }
+.uploadSkin label { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; font-size: 13px; }
+.notice { padding: 14px; border-radius: 10px; background: rgba(246,215,162,.08); color: var(--gold, #f6d7a2); font-size: 13px; }
+.notice p { margin: 0 0 6px; }
+@media (max-width: 760px) { .appearance { grid-template-columns: minmax(0, 1fr); padding: 18px; } .preview { max-width: 320px; width: 100%; justify-self: center; } .appearanceActions { width: 100%; } .skinGallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } .skinLibrary { padding: 18px; } }
+@media (max-width: 460px) { .skinGallery { grid-template-columns: minmax(0, 1fr); } .parameter { padding: 14px; } .grassPreview { height: 250px; } }
+
+.gameActions { width: 100%; max-width: 540px; margin: 0 auto; justify-content: center; }
