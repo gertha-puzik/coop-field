@@ -7,7 +7,12 @@ export const BAG_SLOTS = 10,
   HOTBAR_SLOTS = 5,
   MAX_WEIGHT = 30;
 const file = path.join(DATA_DIR, "inventories.json");
-const seed = { id: "nugget", name: "Наггетс", weight: 3, sprite: null };
+const seed = {
+  id: "nugget",
+  name: "Наггетс",
+  weight: 3,
+  sprite: "/items/nugget.png",
+};
 let store = { v: 1, items: { nugget: seed }, inventories: {}, operations: {} };
 try {
   const raw = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -18,6 +23,8 @@ try {
     items: { nugget: seed, ...raw.items },
     operations: raw.operations || {},
   };
+  if (!store.items.nugget.sprite)
+    store.items.nugget = { ...store.items.nugget, sprite: seed.sprite };
 } catch (error) {
   if (error?.code !== "ENOENT") {
     console.error("inventory store load failed:", error.message);
@@ -79,8 +86,11 @@ export function saveItem(raw) {
   const sprite = raw.sprite;
   if (
     typeof sprite !== "string" ||
-    !/^\/cfg\/items\/files\/[a-f0-9]{64}\.png$/.test(sprite) ||
-    !fs.existsSync(path.join(DATA_DIR, "items", path.basename(sprite)))
+    !(
+      sprite === seed.sprite ||
+      (/^\/cfg\/items\/files\/[a-f0-9]{64}\.png$/.test(sprite) &&
+        fs.existsSync(path.join(DATA_DIR, "items", path.basename(sprite))))
+    )
   )
     return { error: "invalid_sprite" };
   if (!store.items[id] && Object.keys(store.items).length >= 500)

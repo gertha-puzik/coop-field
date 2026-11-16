@@ -126,6 +126,20 @@ try {
     r.end();
   });
   assert.equal(hidden, 404);
+  const initial = (await req("/cfg/items", admin.cookie)).row.items.find(
+    (item) => item.id === "nugget",
+  );
+  assert.equal(initial.name, "Наггетс");
+  assert.equal(initial.weight, 3);
+  assert.equal(initial.sprite, "/items/nugget.png");
+  assert.equal(
+    (await req("/cfg/items", admin.cookie, "POST", initial)).status,
+    200,
+    "built-in sprite survives metadata edits",
+  );
+  const original = readFileSync(path.join(root, "public/items/nugget.png"));
+  assert.equal(original.readUInt32BE(16), 30);
+  assert.equal(original.readUInt32BE(20), 30);
   const png = readFileSync(path.join(root, "public/tex/grass-ground.png"));
   const uploaded = await fetch(origin + "/cfg/items/sprite", {
     method: "POST",
@@ -377,6 +391,22 @@ try {
     ),
     false,
     "account deletion erases inventories",
+  );
+  await stop();
+  remaining.items.nugget.sprite = null;
+  writeFileSync(path.join(data, "inventories.json"), JSON.stringify(remaining));
+  await start();
+  assert.equal(
+    (await req("/cfg/items", admin.cookie)).row.items.find(
+      (item) => item.id === "nugget",
+    ).sprite,
+    "/items/nugget.png",
+    "existing missing sprites migrate to the supplied original",
+  );
+  assert.equal(
+    (await req("/cfg/inventory", a.cookie)).row.inventory.weight,
+    30,
+    "sprite migration preserves stacks",
   );
   console.log(
     "inventory: PASS — ownership, fifteen slots, stacks, shared weight, transactions, replay protection, sprites, logs and restart",
