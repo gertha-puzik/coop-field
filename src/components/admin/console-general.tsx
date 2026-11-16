@@ -15,11 +15,12 @@ function Overview() {
   const items=data.items.filter(item=>!groups.length || groups.includes(item.group));
   return <div className={s.stack}>
     {error?<p className={s.error}>{error}</p>:null}
+    <section className={`${s.panel} ${s.quick}`}><h2>ϟ Быстрые действия</h2><div className={s.placeholder}>Панель быстрых действий</div></section>
+    <div className={s.overview}>
     <section className={s.panel}><h2>▥ Краткая статистика</h2><div className={s.stats}>
       <div className={s.stat}><strong>{data.registered}</strong><span>Зарегистрировано пользователей · в сети и путешествуют: {data.online}</span></div>
       <div className={s.stat}><strong>{data.locations}</strong><span>Всего локаций</span></div>
     </div></section>
-    <section className={s.panel}><h2>ϟ Быстрые действия</h2><div className={s.placeholder}>Панель быстрых действий</div></section>
     <section className={s.panel}><h2>ⓘ Состояние системы</h2><div className={s.system}>
       <div><span>Сервер</span><strong>Доступен</strong></div><div><span>Версия игры</span><strong>v{data.version}</strong></div>
       <div><span>Время работы</span><strong>{Math.floor(data.uptime/60)} мин</strong></div><div><span>Память процесса</span><strong>{data.memoryMb} МБ</strong></div>
@@ -31,6 +32,7 @@ function Overview() {
       <time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</time>
       <span className={s.badge}>{AUDIT_LABELS[item.group] || item.group}</span><div>{item.text}<small>{item.actor}</small></div>
     </li>)}</ul>{!items.length?<p className={s.muted}>Изменений пока нет.</p>:null}</section>
+    </div>
   </div>;
 }
 export function ConsoleGeneral({permissions}:{permissions:string[]}) {

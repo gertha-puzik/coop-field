@@ -178,7 +178,7 @@ export function StatusesTab() {
           {(statuses || []).map((row) => (
             <li
               key={row.id}
-              className="flex flex-wrap items-center gap-2 rounded-md border border-[rgba(226,220,255,0.18)] bg-[rgba(10,14,32,0.45)] px-3 py-2"
+              className="flex flex-wrap items-center gap-2 rounded-md border border-[rgba(226,220,255,0.18)] bg-[var(--uk-panel-soft-bg)] px-3 py-2"
             >
               <span className="min-w-[10rem] flex-1 text-sm text-[#efe7ff]">{row.label}</span>
               <span className="font-mono text-[11px] text-[var(--sim-text-soft)]">{row.id}</span>
@@ -210,7 +210,7 @@ export function StatusesTab() {
           <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs text-[var(--sim-text-soft)]">
             Новый статус
             <input
-              className="rounded-md border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2 py-1.5 text-sm text-[#efe7ff]"
+              className="rounded-md border border-[rgba(226,220,255,0.28)] bg-[var(--uk-panel-soft-bg)] px-2 py-1.5 text-sm text-[#efe7ff]"
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               maxLength={48}
@@ -228,7 +228,7 @@ export function StatusesTab() {
         <label className="flex max-w-md flex-col gap-1 text-xs text-[var(--sim-text-soft)]">
           Поиск
           <input
-            className="rounded-md border border-[rgba(226,220,255,0.28)] bg-[rgba(10,14,32,0.62)] px-2 py-1.5 text-sm text-[#efe7ff]"
+            className="rounded-md border border-[rgba(226,220,255,0.28)] bg-[var(--uk-panel-soft-bg)] px-2 py-1.5 text-sm text-[#efe7ff]"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Логин, имя, id…"
@@ -236,7 +236,7 @@ export function StatusesTab() {
         </label>
         <div className="overflow-x-auto rounded-md border border-[rgba(226,220,255,0.18)]">
           <table className="w-full min-w-[36rem] text-left text-sm">
-            <thead className="bg-[rgba(10,14,32,0.72)] text-[11px] uppercase tracking-wide text-[var(--sim-text-soft)]">
+            <thead className="bg-[var(--uk-panel-soft-bg)] text-[11px] uppercase tracking-wide text-[var(--sim-text-soft)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Логин</th>
                 <th className="px-3 py-2 font-medium">Имя</th>

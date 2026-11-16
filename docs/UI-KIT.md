@@ -200,3 +200,5 @@ touch and reduced motion); it never rotates or reshapes the cursor or cancels in
 - Light-theme soft pairs sit marginally under 4.5:1 on the very top gradient
   point (documented above); tightening means deviating from the live
   `--sim-danger` hue — owner's call, not a drive-by change.
+
+Admin compact layout (2026-11-16): the admin shell scopes purple surfaces, lavender text and gold borders through existing sim/uk token pairs. Neutral inset surfaces in all admin tabs use these tokens. Overview puts a small quick-actions strip above one desktop row of statistics, system and journal; tablet uses two columns and mobile stacks the cards.

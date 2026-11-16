@@ -221,7 +221,7 @@ export function TexturesTab() {
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-white/10 bg-[rgba(10,14,32,0.45)] p-4">
+      <section className="rounded-xl border border-white/10 bg-[var(--uk-panel-soft-bg)] p-4">
         <h3 className="text-sm font-semibold text-[var(--sim-text)]">Добавить объект или поверхность</h3>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs text-[var(--sim-text-soft)]">
@@ -231,7 +231,7 @@ export function TexturesTab() {
               onChange={(e) => setNewLabel(e.target.value)}
               maxLength={48}
               placeholder="Например: Дуб малый"
-              className="mt-1 w-full rounded-md border border-white/15 bg-black/30 px-3 py-2 text-sm text-[var(--sim-text)]"
+              className="mt-1 w-full rounded-md border border-white/15 bg-[var(--uk-inset-bg)] px-3 py-2 text-sm text-[var(--sim-text)]"
             />
           </label>
           <label className="text-xs text-[var(--sim-text-soft)]">
@@ -239,7 +239,7 @@ export function TexturesTab() {
             <select
               value={newCategory}
               onChange={(e) => setNewCategory(e.target.value)}
-              className="mt-1 w-full rounded-md border border-white/15 bg-black/30 px-3 py-2 text-sm text-[var(--sim-text)]"
+              className="mt-1 w-full rounded-md border border-white/15 bg-[var(--uk-inset-bg)] px-3 py-2 text-sm text-[var(--sim-text)]"
             >
               {categories.map((cat) => (
                 <option key={cat.id} value={cat.id}>{cat.label}</option>
@@ -253,7 +253,7 @@ export function TexturesTab() {
               onChange={(e) => setNewGroup(e.target.value)}
               maxLength={48}
               placeholder="Например: Мои деревья"
-              className="mt-1 w-full rounded-md border border-white/15 bg-black/30 px-3 py-2 text-sm text-[var(--sim-text)]"
+              className="mt-1 w-full rounded-md border border-white/15 bg-[var(--uk-inset-bg)] px-3 py-2 text-sm text-[var(--sim-text)]"
             />
           </label>
           <div className="flex items-end">
@@ -305,7 +305,7 @@ export function TexturesTab() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Поиск по имени, тегу или id"
           aria-label="Поиск текстур"
-          className="ml-auto min-w-[12rem] rounded-md border border-white/15 bg-black/30 px-3 py-1.5 text-sm"
+          className="ml-auto min-w-[12rem] rounded-md border border-white/15 bg-[var(--uk-inset-bg)] px-3 py-1.5 text-sm"
         />
       </div>
 
@@ -313,12 +313,12 @@ export function TexturesTab() {
         {visible.map((item) => (
           <article
             key={item.id}
-            className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[rgba(10,14,32,0.55)] p-3"
+            className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[var(--uk-panel-soft-bg)] p-3"
           >
             <div className="flex items-center gap-3">
               <span
                 className="h-16 w-16 shrink-0 rounded-md border border-white/10 bg-[length:contain] bg-center bg-no-repeat"
-                style={{ backgroundImage: `url(${item.src})`, backgroundColor: '#1a2238' }}
+                style={{ backgroundImage: `url(${item.src})`, backgroundColor: 'var(--uk-inset-bg)' }}
                 aria-hidden
               />
               <div className="min-w-0 flex-1">
@@ -328,13 +328,13 @@ export function TexturesTab() {
                       value={editLabel}
                       onChange={(e) => setEditLabel(e.target.value)}
                       maxLength={48}
-                      className="w-full rounded border border-white/20 bg-black/40 px-2 py-1 text-sm"
+                      className="w-full rounded border border-white/20 bg-[var(--uk-inset-bg)] px-2 py-1 text-sm"
                       aria-label="Название текстуры"
                     />
                     <select
                       value={editCategory}
                       onChange={(e) => setEditCategory(e.target.value)}
-                      className="w-full rounded border border-white/20 bg-black/40 px-2 py-1 text-xs"
+                      className="w-full rounded border border-white/20 bg-[var(--uk-inset-bg)] px-2 py-1 text-xs"
                       aria-label="Вкладка редактора"
                     >
                       {categories.map((cat) => (
@@ -346,7 +346,7 @@ export function TexturesTab() {
                       onChange={(e) => setEditGroup(e.target.value)}
                       maxLength={48}
                       placeholder="Тег / группа"
-                      className="w-full rounded border border-white/20 bg-black/40 px-2 py-1 text-xs"
+                      className="w-full rounded border border-white/20 bg-[var(--uk-inset-bg)] px-2 py-1 text-xs"
                       aria-label="Тег текстуры"
                     />
                   </div>

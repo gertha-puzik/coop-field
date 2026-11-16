@@ -99,7 +99,7 @@ function inviteChip(row: AdminInviteRow): { text: string; cls: string } {
     case 'used':
       return {
         text: 'использован',
-        cls: 'border-[rgba(239,231,255,0.28)] bg-[rgba(10,14,32,0.62)] text-[#efe7ff]',
+        cls: 'border-[rgba(239,231,255,0.28)] bg-[var(--uk-panel-soft-bg)] text-[#efe7ff]',
       };
     case 'expired':
       return {
@@ -232,7 +232,7 @@ export function InvitesTab() {
             {status.text}
           </p>
           {status.details ? (
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[11px] text-red-200">
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--uk-inset-bg)] p-2 text-[11px] text-red-200">
               {status.details}
             </pre>
           ) : null}
@@ -275,7 +275,7 @@ export function InvitesTab() {
                   setStatus({ kind: 'err', text: 'Заметка длиннее 80 символов — сократите её.' });
                 }
               }}
-              className="h-8 w-full rounded-md border border-[var(--sim-line)] bg-black/30 px-2 text-sm text-[var(--sim-text)] outline-none focus:border-[var(--sim-line-strong)] disabled:opacity-50"
+              className="h-8 w-full rounded-md border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 text-sm text-[var(--sim-text)] outline-none focus:border-[var(--sim-line-strong)] disabled:opacity-50"
             />
           </label>
           <Button
@@ -291,7 +291,7 @@ export function InvitesTab() {
         </div>
 
         {fresh.length > 0 ? (
-          <div className="mt-3 rounded-lg border border-[var(--sim-line)] bg-black/20 p-3">
+          <div className="mt-3 rounded-lg border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] p-3">
             <p className="text-[11px] font-semibold text-[var(--sim-text)]">
               Новые коды — скопируйте и передайте (действуют 24 часа)
             </p>
@@ -302,7 +302,7 @@ export function InvitesTab() {
                     type="button"
                     title="Скопировать код"
                     onClick={() => void copyCode(row.code)}
-                    className="rounded-md border border-[rgba(246,215,162,0.45)] bg-[rgba(10,14,32,0.62)] px-2 py-1 font-mono text-[13px] tracking-wide text-[#f6d7a2] transition-colors hover:bg-[rgba(226,220,255,0.14)]"
+                    className="rounded-md border border-[rgba(246,215,162,0.45)] bg-[var(--uk-panel-soft-bg)] px-2 py-1 font-mono text-[13px] tracking-wide text-[#f6d7a2] transition-colors hover:bg-[rgba(226,220,255,0.14)]"
                   >
                     {row.code}
                   </button>
@@ -355,13 +355,13 @@ export function InvitesTab() {
               return (
                 <li
                   key={row.code}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-black/20 px-2 py-1.5"
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--uk-inset-bg)] px-2 py-1.5"
                 >
                   <button
                     type="button"
                     title="Скопировать код"
                     onClick={() => void copyCode(row.code)}
-                    className="rounded-md border border-[rgba(226,220,255,0.16)] bg-black/30 px-2 py-0.5 font-mono text-[12.5px] tracking-wide text-[#efe7ff] transition-colors hover:bg-[rgba(226,220,255,0.14)]"
+                    className="rounded-md border border-[rgba(226,220,255,0.16)] bg-[var(--uk-inset-bg)] px-2 py-0.5 font-mono text-[12.5px] tracking-wide text-[#efe7ff] transition-colors hover:bg-[rgba(226,220,255,0.14)]"
                   >
                     {row.code}
                   </button>
