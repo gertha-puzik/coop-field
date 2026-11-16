@@ -264,8 +264,8 @@ import { useAimPublisher, useAtmosphereLayer, useSpriteCache, useWalkGifCache } 
 import { walkFrameAt, walkPhaseOf, type WalkGif } from '@/lib/sim/gif-walk';
 import { useElisionView } from './simulator/hooks/use-elision-view';
 import { collectElisionFrame } from './simulator/elision-present';
+import { publishWorldItemFrame, consumeWorldItemDrop } from '@/lib/sim/world-item-frame';
 import { elisionLeapClearance, elisionRotatedSize, elisionScreenX, type ElisionFrame, type ElisionView } from '@/lib/sim/elision-scene';
-
 /** Мобильный масштаб карты (<lg, viewport <1024 css-px): базовый зум вида 1:1
  *  показывал на телефоне всего 2–3 клетки; умножаем базу на коэффициент, чтобы
  *  было видно больше поля. Колесо (camUserZoomRef) работает поверх как раньше;
@@ -273,7 +273,6 @@ import { elisionLeapClearance, elisionRotatedSize, elisionScreenX, type ElisionF
 const MOBILE_MAP_ZOOM = 0.55; // 0.3..1
 const mobileMapZoomFactor = () =>
   typeof window !== 'undefined' && window.innerWidth < 1024 ? Math.min(1, Math.max(0.3, MOBILE_MAP_ZOOM)) : 1;
-
 export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const [settings, setSettings] = useState<SimSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
@@ -4159,7 +4158,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         }
         tickAtmo();
         const elision = elisionViewRef.current;
-        if ((elision || editorState().on || sprintPartsRef.current.length > 0) && (!paintActive() || paintReady())) {
+        if ((IS_ELYRIA || elision || editorState().on || sprintPartsRef.current.length > 0) && (!paintActive() || paintReady())) {
           try {
             const sNow = settingsRef.current;
             const selfDummy = sNow.dummies.find((d) => d.id === sNow.controlled);
@@ -4211,6 +4210,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
                 objects: currentTestMap().objects ?? [],
                 rab: rabOnRef.current ? { col: RAB_POS.col, row: RAB_POS.row, scale: RAB_SCALE } : null,
               });
+            if (IS_ELYRIA) publishWorldItemFrame(frame, cv);
             elision?.frame(frame);
             drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
               atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
@@ -4839,7 +4839,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           onUp={onUp}
           onLeave={onLeave}
           onContextMenu={onContextMenu}
-          onClick={onClick}
+          onClick={(event) => { if (!IS_ELYRIA || !consumeWorldItemDrop(event)) onClick(event); }}
           pixiRef={pixiRef}
           elisionHostRef={mode === 'elision' ? onElisionHost : undefined}
           /* WebGL всегда: mid-stroke — dirty атлас + texSubImage2D без mipmaps

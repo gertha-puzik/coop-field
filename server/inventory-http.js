@@ -17,6 +17,7 @@ import {
   moveStack,
   grantItems,
 } from "./inventory-store.js";
+import { worldItemsView, actOnWorldItem } from "./world-items.js";
 const dir = path.join(DATA_DIR, "items");
 const fail = (res, out) =>
   json(res, out.status || 400, { ok: false, reason: out.error });
@@ -54,7 +55,7 @@ export async function handleInventoryHttp(req, res) {
     return json(res, 403, { ok: false, reason: "forbidden" });
   try {
     if (req.method === "GET") {
-      if (p === "/cfg/inventory") {
+      if (p === "/cfg/inventory" || p === "/cfg/inventory/world") {
         const character = characterOf(
           actor,
           url.searchParams.get("characterId") || activeCharacter(actor)?.id,
@@ -63,7 +64,9 @@ export async function handleInventoryHttp(req, res) {
           return json(res, 404, { ok: false, reason: "character_not_found" });
         return json(res, 200, {
           ok: true,
-          inventory: inventoryView(actor.id, character.id),
+          ...(p.endsWith("/world")
+            ? { world: worldItemsView(actor.id, character.id) }
+            : { inventory: inventoryView(actor.id, character.id) }),
         });
       }
       if (p === "/cfg/items")
@@ -104,11 +107,13 @@ export async function handleInventoryHttp(req, res) {
     }
     if (req.method === "POST") {
       const raw = JSON.parse((await readBody(req, 8192)).toString());
-      if (p === "/cfg/inventory/move") {
+      if (p === "/cfg/inventory/move" || p === "/cfg/inventory/world") {
         const character = characterOf(actor, raw.characterId);
         if (!character)
           return json(res, 404, { ok: false, reason: "character_not_found" });
-        const out = moveStack(actor.id, character.id, raw);
+        const out = p.endsWith("/world")
+          ? actOnWorldItem(actor.id, character.id, raw)
+          : moveStack(actor.id, character.id, raw);
         return out.error
           ? fail(res, out)
           : json(res, 200, { ok: true, ...out });

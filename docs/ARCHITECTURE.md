@@ -99,7 +99,7 @@ server.js             комната: комнаты, клетки, бой, ча
 | `server/testmap.js` | 708 | конфиг локации: defaultTestMap, sanitizeTestMap, атомарная запись, карантин битых конфигов, setmap-хендлер (сохранение — только админ: гейт ws.account.role==='admin' в setMap, ux/admin-gate admin, бэкапы, рассылка map+field) |
 | `server/world.js` | 780 | чистая геометрия по конфигу: PNG-кисть, марширующие квадраты+Чайкин, island/cells, препятствия (блокируют только деревья), высоты по эффективному уровню (testElev = elev + камень STONE_LEVEL, stoneCellsOf с кэшем по конфигу), обрывы (`cliffBetween`), entry-клетки |
 | `server/sanitize.js` | 92 | чистые валидаторы входа: clipChars/sanitizeChat/sanitizeLogin/uniqueLogin + chat-хендлер (450 мс, история 40) |
-| `server/room.js` | 668 | комнаты: roomOf (+ алиас RETIRED_ROOMS combat→grot-1 для легаси ?room=combat), жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move, Элизия без сессии → auth_required; надетый спрайт профиля из живого вайтлиста важнее payload.sprite), leave, publicCat/поле, send/broadcast, спрайт, block, space, roomsinfo с призраком: гость про registered-комнату слышит `count 0, logins []` — как про несуществующую; S5b: потолок ЖИВЫХ комнат ROOMS_MAX (деф. 32) — новая комната сверх лимита → noplace `rooms_full`; F2: стартовый якорь atmo из per-room initialRoomAtmo (override комнаты → effective, без overrides → прежняя глобальная инициализация) |
+| `server/room.js` | 669 | комнаты: roomOf (+ алиас RETIRED_ROOMS combat→grot-1 для легаси ?room=combat), жизнь пустой комнаты 10 мин, join (кулдаун 1/с, свободная клетка, you+field+chatlog+move, Элизия без сессии → auth_required; надетый спрайт профиля из живого вайтлиста важнее payload.sprite), leave, publicCat/поле, send/broadcast, спрайт, block, space, roomsinfo с призраком: гость про registered-комнату слышит `count 0, logins []` — как про несуществующую; S5b: потолок ЖИВЫХ комнат ROOMS_MAX (деф. 32) — новая комната сверх лимита → noplace `rooms_full`; F2: стартовый якорь atmo из per-room initialRoomAtmo (override комнаты → effective, без overrides → прежняя глобальная инициализация) |
 | `server/movement.js` | 318 | очередь шагов 80 мс×3, move-хендлер с refuse-кодами, freemove, cellsync, jump |
 | `server/combat.js` | 295 | aim (коалесценция 20 мс)/strike: aimedNeighbor — зеркало pickStrikeTarget, зоны удара, броня по ARMOR_CURVE; P2-клэмпы: урон s.events дополнительно зажат сверху по максимальному разрешённому уровню (`maxStrikeDamage` горло-формула), входящая броня снапится вниз к разрешённым десятым (`snapArmorToUniverse`), капы берутся из runtime-config на каждом событии |
 | `server/dummy-rab.js` | 133 | манекен (доли клетки, перенос grab/drop), мишень РАБ, toggle-режимы |
@@ -547,3 +547,16 @@ joined snapshots. Optional channel/room/characterId fields are mirrored in the
 client DTO/parser; use-network deduplicates by channel+room+seq. Global never
 broadcasts to public grid rooms, while missing channel preserves legacy local
 behavior. The client displays newest first. Elysiae chatlog may contain 80 rows.
+
+### World item ownership (2026-11-16)
+
+| Boundary | Authority | Data flow |
+| --- | --- | --- |
+| `/cfg/inventory/world` GET/POST | `server/world-items.js` | Live authenticated room + captured character ID, exact ground mask and 1.5-cell reach; clients cannot choose another room/character |
+| `inventories.json` v1 extension | `server/inventory-store.js` | Ground rows keyed by UUID with room/point; optional inventory mouth; every drop/pickup/accepted handoff is one atomic file commit |
+| Offers | `server/world-items.js` in-memory | 20 seconds, both original live cats, same room, empty recipient mouth and proximity rechecked; item stays with sender until accept |
+| Scene → UI | `world-item-frame.ts` → `inventory/world-items.tsx` | Actual camera and animated actor geometry; muzzle follows reflection, scale, squash, jump and sway; ground uses world coordinates |
+
+No WebSocket event changes. HTTP snapshots poll while visible and refresh after
+mutations; existing HTTP host/Origin/ownership gates apply. Regression:
+`npm run test:world-items` with isolated real HTTP and authenticated WS clients.

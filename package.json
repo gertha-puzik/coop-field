@@ -54,7 +54,8 @@
     "test:home-news": "node scripts/test-home-news.mjs",
     "test:console-profile": "node scripts/test-console-profile.mjs",
     "test:inventory": "node scripts/test-inventory.mjs",
-    "test:chat-channels": "node scripts/test-chat-channels.mjs"
+    "test:chat-channels": "node scripts/test-chat-channels.mjs",
+    "test:world-items": "node scripts/test-world-items.mjs"
   },
   "engines": {
     "node": ">=18"

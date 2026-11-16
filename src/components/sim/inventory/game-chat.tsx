@@ -49,6 +49,7 @@ export function GameChat({
   }
   return (
     <section
+      data-world-drop-block
       className={s.chat}
       aria-label="Игровой чат"
       data-collapsed={collapsed}

@@ -11,6 +11,7 @@ export type InventorySlot = { area: InventoryArea; index: number };
 export type InventorySnapshot = {
   characterId: string;
   version: number;
+  mouth?: ItemStack | null;
   bag: (ItemStack | null)[];
   hotbar: (ItemStack | null)[];
   weight: number;
@@ -63,6 +64,15 @@ export function inventoryError(error: unknown) {
   return (
     (
       {
+        mouth_full: "Пасть уже занята.",
+        empty_mouth: "В пасти нет предмета.",
+        too_far: "Подойдите ближе к предмету или игроку.",
+        item_gone: "Предмет уже подняли.",
+        invalid_point: "Здесь нельзя положить предмет.",
+        not_on_field: "Сначала войдите на игровое поле.",
+        offer_pending: "Дождитесь ответа на предложение.",
+        offer_expired: "Предложение больше недоступно.",
+        ground_full: "На локации слишком много предметов.",
         auth_required: "Войдите в аккаунт.",
         forbidden: "Нет права «Предметы и выдача».",
         character_not_found: "Персонаж не найден. Обновите список.",
@@ -89,3 +99,31 @@ export function inventoryError(error: unknown) {
     )[reason] || "Нет связи с сервером. Попробуйте ещё раз."
   );
 }
+
+export type WorldItem = {
+  id: string;
+  room: string;
+  itemId: string;
+  x: number;
+  y: number;
+};
+export type WorldItemsSnapshot = {
+  room: string | null;
+  selfId: number | null;
+  mouth?: ItemStack | null;
+  ground: WorldItem[];
+  players: {
+    id: number;
+    name: string;
+    x: number;
+    y: number;
+    mouth: ItemStack | null;
+  }[];
+  offers: {
+    id: string;
+    fromId: number;
+    name: string;
+    itemId: string;
+    until: number;
+  }[];
+};

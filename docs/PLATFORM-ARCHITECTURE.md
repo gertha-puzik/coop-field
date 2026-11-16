@@ -445,3 +445,24 @@ channel/room/seq, рисует новые сверху и сохраняет п�
 конкурентные переносы, повтор выдачи, PNG, журнал, перезапуск, удаление аккаунта)
 и test:chat-channels (две локации, глобальный/локальный канал, история, гроты,
 общий cooldown). Обе входят в CI.
+
+### World items and mouth (2026-11-16)
+
+GET `/cfg/inventory/world?characterId=…` returns only the active live character's
+room ground, player mouth state and incoming offers. POST to the same path accepts
+`drop` (`from` bag/hotbar slot or `"mouth"`, x/y in cell fractions), `mouth`/`take`
+(ground UUID), `offer` (target live cat ID), `accept`/`cancel` (offer UUID).
+Inventory mutations include the current `version`; stale/racing writes fail.
+Ground coordinates are checked against the location's actual mask and trees.
+Pickup and offers require distance <=1.5 cell units from the authoritative feet.
+A drop removes one unit; mouth holds one unit outside the 30-weight sum and stays
+with its character across passage travel/reconnect/restart. F merges into an
+existing bag stack or the first empty bag slot, enforcing weight and bag capacity.
+Accepted transfers atomically empty sender mouth and fill recipient mouth, without
+changing either bag. Offers retain ownership at sender, expire in 20 seconds and
+invalidate on departure, distance, version change or occupied recipient mouth.
+Ground and mouth are additive fields in the same inventories.json v1 file;
+old inventories default to no mouth/ground. No item properties or categories added.
+
+Mouse drops include expectedItemId so a concurrently replaced slot/mouth cannot
+drop a different item than the one displayed on the cursor.

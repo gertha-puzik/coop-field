@@ -4,6 +4,7 @@ import type { CoopChatMessage } from "@/lib/net/coop";
 import { Icon } from "@/components/players/profile-icons";
 import { CONTROL_ROWS } from "../simulator/components/key-hint";
 import { GameChat } from "./game-chat";
+import { WorldItems } from "./world-items";
 import { InventoryPanel } from "./inventory-panel";
 import { useInventory } from "./use-inventory";
 import s from "./game-hud.module.css";
@@ -164,6 +165,11 @@ export function GameHud(props: GameHudProps) {
   if (props.editorOpen) return null;
   return (
     <div className={s.hud} onKeyDown={trap}>
+      <WorldItems
+        controller={inventory}
+        characterId={props.characterId}
+        blocked={!!panel}
+      />
       <GameChat
         lines={props.lines}
         characterId={props.characterId}

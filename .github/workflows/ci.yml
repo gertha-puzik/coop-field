@@ -132,6 +132,8 @@ jobs:
         run: npm run test:weather-rotation
       # HTTP-профили (P4): каталог карточек, публичный DTO, PATCH /profiles/me
       # строго по cookie-сессии.
+      - name: Предметы на земле, в пасти и передача
+        run: npm run test:world-items
       - name: Инвентарь и предметы
         run: npm run test:inventory
       - name: Глобальный и локальный чат

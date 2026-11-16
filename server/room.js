@@ -415,6 +415,7 @@ function joinInWorld(ws, payload = {},options={}) {
     login,
     accountLogin,
     accountId,
+    characterId: fromAccount?.id,
     afk: accountId ? isAfk(accountId) : false,
     statusLabel: ws.account ? statusLabelOf(statusId) : "",
     color: PALETTE[slot % PALETTE.length],

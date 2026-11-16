@@ -98,6 +98,91 @@ export function InventoryPanel({
     [flight, setFlight] = useState<Flight | null>(null),
     [landed, setLanded] = useState(""),
     [selectedBag, setSelectedBag] = useState<number | null>(null);
+  const [carried, setCarried] = useState<{
+    from: InventorySlot | "mouth";
+    sprite: string;
+    itemId: string;
+    point: Point;
+  } | null>(null);
+  const carryRef = useRef(carried);
+  carryRef.current = carried;
+  useEffect(() => {
+    let dropping = false;
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopDropClick = (e: Event) => {
+      if (!dropping) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.type === "click") dropping = false;
+      else
+        releaseTimer = setTimeout(() => {
+          dropping = false;
+        }, 250);
+    };
+    const move = (e: PointerEvent) => {
+      if (carryRef.current)
+        setCarried((old) =>
+          old ? { ...old, point: { x: e.clientX, y: e.clientY } } : null,
+        );
+    };
+    const down = (e: PointerEvent) => {
+      const value = carryRef.current;
+      if (!value || e.button !== 0) return;
+      if (
+        (e.target as HTMLElement).closest(
+          "button,input,textarea,a,nav,[data-world-drop-block]",
+        )
+      )
+        return;
+      dropping = true;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window.dispatchEvent(new Event("game-ui:pause-controls"));
+      window.dispatchEvent(
+        new CustomEvent("world-items:drop", {
+          detail: {
+            from: value.from,
+            expectedItemId: value.itemId,
+            x: e.clientX,
+            y: e.clientY,
+          },
+        }),
+      );
+      setCarried(null);
+    };
+    const cancel = (e: KeyboardEvent) => {
+      if (e.code === "Escape") setCarried(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", stopDropClick, true);
+    window.addEventListener("click", stopDropClick, true);
+    window.addEventListener("keydown", cancel, true);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", stopDropClick, true);
+      window.removeEventListener("click", stopDropClick, true);
+      if (releaseTimer) clearTimeout(releaseTimer);
+      window.removeEventListener("keydown", cancel, true);
+    };
+  }, []);
+  useEffect(() => {
+    const carry = () => {
+      const mouth = snapshot?.mouth,
+        item = snapshot?.items.find((i) => i.id === mouth?.itemId);
+      if (item?.sprite)
+        setCarried({
+          from: "mouth",
+          itemId: item.id,
+          sprite: itemSprite(item.sprite),
+          point: { x: innerWidth / 2, y: innerHeight / 2 },
+        });
+    };
+    window.addEventListener("world-items:carry-mouth", carry);
+    return () => window.removeEventListener("world-items:carry-mouth", carry);
+  }, [snapshot]);
+  useEffect(() => setCarried(null), [snapshot?.characterId]);
   const dragging = useRef<Drag | null>(null),
     flightId = useRef(0),
     landingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,6 +232,7 @@ export function InventoryPanel({
     if (event.button !== 0 || busy || !stack) return;
     const item = snapshot?.items.find((item) => item.id === stack.itemId);
     if (!item) return;
+    setCarried(null);
     event.stopPropagation();
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -189,13 +275,36 @@ export function InventoryPanel({
       event.currentTarget.releasePointerCapture(event.pointerId);
     if (!value.active) {
       if (event.shiftKey) void transfer(value.from, undefined, true);
-      else if (value.from.area === "hotbar") onSelect(value.from.index);
+      else {
+        if (value.from.area === "hotbar") onSelect(value.from.index);
+        if (value.item.sprite)
+          setCarried({
+            from: value.from,
+            itemId: value.item.id,
+            sprite: itemSprite(value.item.sprite),
+            point: value.point,
+          });
+      }
       return;
     }
     const target = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest<HTMLElement>("[data-inventory-slot]")?.dataset.inventorySlot;
-    if (!target) return;
+    if (!target) {
+      const hit = document.elementFromPoint(event.clientX, event.clientY);
+      if (!hit?.closest("button,input,textarea,a,nav,[data-world-drop-block]"))
+        window.dispatchEvent(
+          new CustomEvent("world-items:drop", {
+            detail: {
+              from: value.from,
+              expectedItemId: value.item.id,
+              x: event.clientX,
+              y: event.clientY,
+            },
+          }),
+        );
+      return;
+    }
     const [area, index] = target.split(":");
     if (area !== "bag" && area !== "hotbar") return;
     if (value.from.area === area && value.from.index === Number(index)) return;
@@ -275,6 +384,23 @@ export function InventoryPanel({
       aria-labelledby={open ? "inventory-heading" : undefined}
       data-game-dialog={open ? "" : undefined}
     >
+      {carried
+        ? createPortal(
+            <img
+              className={s.flying}
+              src={carried.sprite}
+              style={{
+                left: carried.point.x,
+                top: carried.point.y,
+                width: 32,
+                height: 32,
+                transform: "translate(-50%,-50%)",
+              }}
+              alt=""
+            />,
+            document.body,
+          )
+        : null}
       {open ? (
         <div
           className={s.backdrop}
@@ -282,7 +408,7 @@ export function InventoryPanel({
             if (event.target === event.currentTarget) onClose();
           }}
         >
-          <section className={s.window}>
+          <section className={s.window} data-world-drop-block>
             <header>
               <span aria-hidden>
                 <Icon name="paw" size={32} />
@@ -320,7 +446,8 @@ export function InventoryPanel({
               </p>
             ) : null}
             <p className={s.note}>
-              Перетащите предмет в хотбар или нажмите Shift + ЛКМ.
+              Перетащите в хотбар или на землю. Щелчок — взять, следующий щелчок
+              по полю — положить одну штуку. Shift + ЛКМ — перенести стек.
             </p>
             <p className={s.note}>
               Количество — слева сверху, суммарный вес — справа снизу.
