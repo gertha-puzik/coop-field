@@ -13,7 +13,7 @@ import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM, ROOMS_MAX } 
 import { clearMoveTimer } from "./movement.js";
 import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition, forgetCat, lastLocationFor } from "./persist.js";
-import { sanitizeLogin, uniqueLogin } from "./sanitize.js";
+import { sanitizeLogin, uniqueLogin, chatHistoryFor } from "./sanitize.js";
 import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 // F2 (спек §3): per-room overrides атмосферных параметров — начальный якорь
 // НОВОЙ комнаты из effective-слоёв (нет overrides → null → прежняя ленивая
@@ -449,7 +449,7 @@ function joinInWorld(ws, payload = {},options={}) {
   if(room.fmt==='test')rememberCat(cat);
   send(ws, EV.YOU, publicCat(cat, room));
   send(ws, EV.FIELD, fieldPayload(room));
-  if (room.chat?.length) send(ws, EV.CHATLOG, room.chat);
+  const chatHistory=chatHistoryFor(room,ws);if(chatHistory.length)send(ws, EV.CHATLOG, chatHistory);
   broadcast(room, EV.MOVE, publicCat(cat, room), ws);
 }
 

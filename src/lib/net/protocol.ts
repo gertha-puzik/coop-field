@@ -229,6 +229,9 @@ export type CoopRabHit = { zone: string; part: string; damage: number };
 
 /** Строка чата комнаты. id — кот, который написал. seq уникален в комнате. */
 export type CoopChatMessage = {
+  channel?: "global" | "near";
+  room?: string;
+  characterId?: string;
   seq: number;
   id: number;
   login: string;

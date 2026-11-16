@@ -76,6 +76,7 @@ import { ApplyPreview } from './cfg-apply-preview';
 // Вкладка «Спрайты» (мандат владелицы 2026-11-08): менеджер скинов —
 // загрузка/удаление/категории, динамический каталог сервера.
 import { SpritesTab } from './sprites-tab';
+import { ItemsTab, ItemGrantTab } from './items-tab';
 import { SiteTexturesTab } from './site-textures-tab';
 import { TexturesTab } from './textures-tab';
 // Вкладка «Коды приглашений»: генерация/отзыв инвайтов регистрации
@@ -525,7 +526,8 @@ export default function CfgDashboard() {
     {id:'general',title:'Общее',render:can('overview','invites','news','announcements')?()=> <ConsoleGeneral permissions={permissions}/>:null},
     {id:'users',title:'Игроки и администрация',render:can('players','roles','statuses')?()=> <ConsoleUsers permissions={permissions}/>:null},
     {id:'world',title:'Мир',render:can('world','config')?()=> <ConsoleWorld permissions={permissions} settings={renderCfg()} armor={armorPanel}/>:null},
-    {id:'assets',title:'Ресурсы',render:can('sprites','textures')?()=> <ConsoleSubtabs tabs={[
+    {id:'assets',title:'Ресурсы',render:can('sprites','textures','items')?()=> <ConsoleSubtabs tabs={[
+      ...(can('items')?[{id:'items',label:'Предметы',content:<ItemsTab/>},{id:'item-grants',label:'Выдача предметов',content:<ItemGrantTab/>}]:[]),
       ...(can('sprites')?[{id:'sprites',label:'Спрайты',content:<SpritesTab/>}]:[]),
       ...(can('textures')?[{id:'textures',label:'Текстуры',content:<TexturesTab/>}]:[]),
       ...(can('textures')?[{id:'site-textures',label:'Сайтовые текстуры',content:<SiteTexturesTab/>}]:[]),

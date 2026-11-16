@@ -11,6 +11,8 @@
 import { useEffect, useRef, useState, type ComponentProps, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dropdown } from '@/components/ui';
+import { RoomChat } from '../../room-chat';
+import type { CoopChatMessage } from '@/lib/net/coop';
 import { RoomPicker, type RoomRow } from '../../room-picker';
 import { SettingsPanel } from '../../settings-panel';
 import { fmtSec } from '../sim-model';
@@ -346,6 +348,7 @@ export function SimulatorHeader(props: SimulatorHeaderProps) {
 type PanelProps = ComponentProps<typeof SettingsPanel>;
 
 export interface SettingsPanelOverlayProps {
+  embedded?: boolean;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   settings: PanelProps['settings'];
   testField: PanelProps['testField'];
@@ -412,22 +415,7 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
     setEngineAngle,
     role,
   } = props;
-  return (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
-          <aside
-            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl"
-            onKeyDown={(ev) => {
-              if (ev.key === 'Escape') setSettingsOpen(false);
-            }}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
-              <h2 className="text-sm font-bold text-[var(--sim-text)]">Настройки</h2>
-              <Button size="sm" variant="outline" className="btn-neutral h-7 text-xs" onClick={() => setSettingsOpen(false)}>
-                Закрыть
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+  const panel=(
               <SettingsPanel
                 settings={settings}
                 testField={testField}
@@ -460,6 +448,25 @@ export function SettingsPanelOverlay(props: SettingsPanelOverlayProps) {
                 onManualAngle={setEngineAngle}
                 role={role}
               />
+  );
+  if(props.embedded)return panel;
+  return (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSettingsOpen(false)} />
+          <aside
+            className="fixed inset-y-0 right-0 z-40 flex w-[min(400px,92vw)] flex-col border-l border-[var(--sim-line)] bg-[var(--sim-panel)] shadow-2xl"
+            onKeyDown={(ev) => {
+              if (ev.key === 'Escape') setSettingsOpen(false);
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--sim-line)] px-3 py-2">
+              <h2 className="text-sm font-bold text-[var(--sim-text)]">{IS_ELYRIA ? 'Расширенные настройки' : 'Настройки'}</h2>
+              <Button size="sm" variant="outline" className="btn-neutral h-7 text-xs" onClick={() => setSettingsOpen(false)}>
+                Закрыть
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              {panel}
             </div>
           </aside>
         </>
@@ -492,4 +499,40 @@ export function RoomSwitchOverlay(props: RoomSwitchOverlayProps) {
           </div>
         </>
   );
+}
+
+/** Legacy public-room chat column; account worlds use the compact overlay HUD. */
+export function LegacyChatDock({editorOpen,mobilePanel,setMobilePanel,chatUnread,chatLines,meId,netReady,sendChat}:{editorOpen:boolean;mobilePanel:'chat'|'log'|null;setMobilePanel:Dispatch<SetStateAction<'chat'|'log'|null>>;chatUnread:number;chatLines:CoopChatMessage[];meId:number|null;netReady:boolean;sendChat:(text:string)=>boolean}) {
+ return (
+        <div className={editorOpen?'hidden':"flex w-full shrink-0 flex-col gap-1 lg:h-auto lg:min-h-0 lg:w-[var(--chat-w)] lg:gap-0"}>
+          {/* <lg: тонкая плашка-тумблер; номер — сколько новых строк пришло в свёрнутый чат */}
+          <button
+            type="button"
+            id="mobileChatTab"
+            aria-expanded={mobilePanel === 'chat'}
+            aria-controls="mobileChatPanel"
+            onClick={() => setMobilePanel((p) => (p === 'chat' ? null : 'chat'))}
+            className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[var(--sim-line)] bg-[var(--sim-panel)] px-3 text-sm font-bold tracking-wide text-[var(--sim-text)] lg:hidden"
+          >
+            <span className="flex items-center gap-2">
+              Чат
+              {mobilePanel !== 'chat' && chatUnread > 0 ? (
+                <span className="min-w-4 rounded-full bg-[var(--sim-accent)] px-1 text-center text-[10px] font-normal leading-4 text-[var(--sim-deep)]">
+                  {chatUnread > 99 ? '99+' : chatUnread}
+                </span>
+              ) : null}
+            </span>
+            <span className="text-[11px] font-normal text-[var(--sim-text-faint)]">
+              {mobilePanel === 'chat' ? 'свернуть' : 'раскрыть'}
+            </span>
+          </button>
+          {/* Панель: на <lg появляется по тапу (~55vh); на lg — колонка на всю высоту ряда */}
+          <div
+            id="mobileChatPanel"
+            className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} h-[55vh] w-full shrink-0 flex-col lg:flex lg:h-full lg:min-h-0`}
+          >
+            <RoomChat lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} onClose={mobilePanel === 'chat' ? () => setMobilePanel(null) : undefined} />
+          </div>
+        </div>
+ );
 }

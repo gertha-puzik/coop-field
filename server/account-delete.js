@@ -1,3 +1,4 @@
+import { forgetInventories } from './inventory-store.js';
 /**
  * Самоудаление аккаунта (DELETE /profiles/me).
  *
@@ -115,6 +116,7 @@ export async function eraseAccount(acc) {
       if (ch && removed.has(ch.sprite)) ch.sprite = "";
     }
   }
+  try{forgetInventories(acc.id);}catch{return {error:'io'};}
   acc.login = `x${acc.id}`;
   acc.pass = await hashPassword(randomBytes(32).toString("hex"));
   acc.profile = {

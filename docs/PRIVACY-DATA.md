@@ -197,3 +197,16 @@ target `DATA_DIR`, server stopped) and the live admin API
 
 
 Admin console v0.6.7: `access-roles.json` stores role names and permission lists; assignments are in accounts.profile.accessRoleId. `admin-audit.json` retains the newest 50 administrative changes (time, group, description and actor); no passwords or invite code values are recorded. Public profile socials are intentionally public HTTPS links; foreign birthday still omits the year. Only authenticated authorized console users receive access assignments/permission lists.
+
+## Character inventory (2026-11-16)
+
+DATA_DIR/inventories.json stores item definitions, per-account/per-character slot
+arrays and the latest 1000 grant replay fingerprints. Own inventory endpoints
+require cookie ownership; public profiles do not expose these arrays. The items
+permission permits recipient character IDs/names/weight and administrative grants.
+Grants log actor, target login/character, item and quantity in the bounded admin
+journal. Account deletion removes its inventory rows and replay identifiers;
+shared item definitions/sprite assets remain. Original uploaded PNG bytes live in
+DATA_DIR/items, addressed by SHA-256; metadata is validated and PNGs are served
+with a fixed MIME. Global/near chat histories are bounded in process memory and
+are cleared on restart; near messages are sent only inside their location.
