@@ -14,8 +14,10 @@ import {
   itemCatalogue,
   inventoryView,
   saveItem,
+  deleteItem,
   moveStack,
   grantItems,
+  grantItemBatch,
 } from "./inventory-store.js";
 import { worldItemsView, actOnWorldItem } from "./world-items.js";
 const dir = path.join(DATA_DIR, "items");
@@ -115,6 +117,8 @@ export async function handleInventoryHttp(req, res) {
     }
     if (req.method === "POST") {
       const raw = JSON.parse((await readBody(req, 8192)).toString());
+      if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return json(res, 400, { ok: false, reason: "invalid_request" });
       if (p === "/cfg/inventory/move" || p === "/cfg/inventory/world") {
         const character = characterOf(actor, raw.characterId);
         if (!character)
@@ -134,6 +138,43 @@ export async function handleInventoryHttp(req, res) {
           `Сохранён предмет «${out.item.name}» (${out.item.id}), вес ${out.item.weight}`,
           actor.login,
         );
+        return json(res, 200, { ok: true, ...out });
+      }
+      if (p === "/cfg/items/delete") {
+        const out = deleteItem(String(raw.id || ""));
+        if (out.error) return fail(res, out);
+        pushAdminAudit(
+          "items",
+          `Удалён из базы предмет «${out.item.name}» (${out.item.id})`,
+          actor.login,
+        );
+        return json(res, 200, { ok: true });
+      }
+      if (p === "/cfg/items/grant-batch") {
+        if (
+          !Array.isArray(raw.recipients) ||
+          raw.recipients.some(
+            (r) =>
+              !r ||
+              !characterOf(findById(String(r.accountId)), r.characterId) ||
+              findById(String(r.accountId))?.profile?.deletedAt,
+          )
+        )
+          return json(res, 404, { ok: false, reason: "character_not_found" });
+        const out = grantItemBatch(
+          actor.id,
+          raw.recipients,
+          raw.items,
+          raw.comment || "",
+          raw.operationId,
+        );
+        if (out.error) return fail(res, out);
+        if (!out.replayed)
+          pushAdminAudit(
+            "items",
+            `Выдача: ${raw.items.map((r) => `${r.itemId} ×${r.quantity}`).join(", ")} → ${raw.recipients.map((r) => `${findById(r.accountId)?.login}/${r.characterId}`).join(", ")}${raw.comment ? `; ${raw.comment}` : ""}`,
+            actor.login,
+          );
         return json(res, 200, { ok: true, ...out });
       }
       if (p === "/cfg/items/grant") {

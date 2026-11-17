@@ -514,3 +514,25 @@ profile fetches its full card immediately instead of waiting for the 20-second
 poll. Missing friends metadata displays «Загружаем друзей…» with role=status and
 aria-busy; an empty list is rendered only after data arrives. Own-profile friends
 come from the fresh full card, with /profiles/me as the initial fallback.
+
+Item catalogue/admin redesign (2026-11-17): optional metadata includes
+`description` (trimmed text ≤200 chars), `category` (food/resources/materials/
+consumables/special/decor/other) and `maxStack` (integer 1–10000). Old saves
+preserve omitted metadata; old items retain 10000 as their effective cap, while
+the creation form defaults to 10. Explicit create requests reject existing IDs.
+Grant/pickup/stash/merge enforce the cap; large grants fill multiple slots.
+Reducing a cap redistributes overflow into partial/free bag/hotbar slots,
+increments affected inventory versions, or rejects atomically if it cannot fit.
+POST /cfg/items/delete sets deletedAt: admin catalogue/grants hide the item,
+but existing bag/hotbar/mouth/ground units retain metadata, weight and sprites.
+Deleted IDs cannot be reused; even the seeded nugget stays hidden after restart.
+POST /cfg/items/grant-batch accepts 1–20 recipients (accountId,characterId),
+1–20 item/quantity rows, a ≤200-char single-line comment and an operationId.
+Every character is validated; all changes commit together or none do. Replay
+protection covers the exact batch, and successful non-replayed batches append
+one admin audit action with recipients/items/comment. Same items permission,
+Origin/host boundaries and sprite-byte preservation apply to all new routes.
+ItemEditor supplies creation and database editing with live day/night preview;
+ItemGrantTab contains grants and the searchable/category-filtered paged database.
+Descriptions are also visible in world hover/slot tooltips. Tests: test:inventory,
+test:world-items and test-item-catalogue.mjs (part of test:unit).

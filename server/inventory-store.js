@@ -45,9 +45,57 @@ function commit(next) {
   writeFileAtomic(file, JSON.stringify(next));
   store = next;
 }
-export const itemCatalogue = () => Object.values(store.items).map(copy);
+export const ITEM_CATEGORIES = [
+  "food",
+  "resources",
+  "materials",
+  "consumables",
+  "special",
+  "decor",
+  "other",
+];
+export const itemCatalogue = ({ includeDeleted = false } = {}) =>
+  Object.values(store.items)
+    .filter((i) => includeDeleted || !i.deletedAt)
+    .map(copy);
+const stackLimit = (item) => item?.maxStack ?? 10000;
+function addToSlots(
+  inventory,
+  itemId,
+  quantity,
+  areas = ["bag", "hotbar"],
+  items = store.items,
+) {
+  const limit = stackLimit(items[itemId]);
+  for (const area of areas)
+    for (const stack of inventory[area]) {
+      if (stack?.itemId !== itemId || stack.quantity >= limit) continue;
+      const amount = Math.min(quantity, limit - stack.quantity);
+      stack.quantity += amount;
+      quantity -= amount;
+      if (!quantity) return true;
+    }
+  for (const area of areas)
+    for (let i = 0; i < inventory[area].length; i++) {
+      if (inventory[area][i]) continue;
+      const amount = Math.min(quantity, limit);
+      inventory[area][i] = { itemId, quantity: amount };
+      quantity -= amount;
+      if (!quantity) return true;
+    }
+  return false;
+}
+export function deleteItem(id) {
+  const item = Object.hasOwn(store.items, id) ? store.items[id] : null;
+  if (!item || item.deletedAt) return { error: "item_not_found", status: 404 };
+  commit({
+    ...store,
+    items: { ...store.items, [id]: { ...item, deletedAt: Date.now() } },
+  });
+  return { item: copy(item) };
+}
 export const itemById = (id) =>
-  store.items[id] ? copy(store.items[id]) : null;
+  Object.hasOwn(store.items, id) ? copy(store.items[id]) : null;
 function weightUnits(inventory, items = store.items) {
   return [...inventory.bag, ...inventory.hotbar].reduce(
     (sum, stack) =>
@@ -63,7 +111,7 @@ export function inventoryView(accountId, characterId) {
     characterId,
     weight: weightUnits(inventory) / 100,
     maxWeight: MAX_WEIGHT,
-    items: itemCatalogue(),
+    items: itemCatalogue({ includeDeleted: true }),
   };
 }
 export function saveItem(raw) {
@@ -74,6 +122,22 @@ export function saveItem(raw) {
     !name ||
     name.length > 64 ||
     /[\u0000-\u001f]/.test(name)
+  )
+    return { error: "invalid_item" };
+  if (store.items[id]?.deletedAt) return { error: "item_deleted" };
+  if (raw.create === true && store.items[id])
+    return { error: "item_exists", status: 409 };
+  const description = raw.description ?? store.items[id]?.description ?? "";
+  const category = raw.category ?? store.items[id]?.category ?? "other";
+  const maxStack = raw.maxStack ?? store.items[id]?.maxStack ?? 10000;
+  if (
+    typeof description !== "string" ||
+    description.length > 200 ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(description) ||
+    !ITEM_CATEGORIES.includes(category) ||
+    !Number.isInteger(maxStack) ||
+    maxStack < 1 ||
+    maxStack > 10000
   )
     return { error: "invalid_item" };
   const weight = raw.weight;
@@ -118,6 +182,9 @@ export function saveItem(raw) {
       name,
       weight,
       sprite,
+      description: description.trim(),
+      category,
+      maxStack,
       glows: raw.glows ?? store.items[id]?.glows ?? false,
       glowIntensity: raw.glowIntensity ?? store.items[id]?.glowIntensity ?? 1,
       glowPeriod: raw.glowPeriod ?? store.items[id]?.glowPeriod ?? 0,
@@ -130,7 +197,21 @@ export function saveItem(raw) {
     )
   )
     return { error: "weight_in_use" };
-  commit({ ...store, items });
+  const inventories = copy(store.inventories);
+  for (const inventory of Object.values(inventories)) {
+    let overflow = 0;
+    for (const stack of [...inventory.bag, ...inventory.hotbar])
+      if (stack?.itemId === id && stack.quantity > maxStack) {
+        overflow += stack.quantity - maxStack;
+        stack.quantity = maxStack;
+      }
+    if (overflow) {
+      if (!addToSlots(inventory, id, overflow, ["bag", "hotbar"], items))
+        return { error: "stack_limit_in_use", status: 409 };
+      inventory.version++;
+    }
+  }
+  commit({ ...store, items, inventories });
   return { item: copy(item) };
 }
 export function moveStack(accountId, characterId, raw) {
@@ -153,7 +234,11 @@ export function moveStack(accountId, characterId, raw) {
   let target = to;
   if (raw.quick === true) {
     const area = from.area === "bag" ? "hotbar" : "bag";
-    let index = next[area].findIndex((row) => row?.itemId === stack.itemId);
+    let index = next[area].findIndex(
+      (row) =>
+        row?.itemId === stack.itemId &&
+        row.quantity < stackLimit(store.items[stack.itemId]),
+    );
     if (index < 0) index = next[area].findIndex((row) => row === null);
     if (index < 0) return { error: "no_free_slot" };
     target = { area, index };
@@ -165,8 +250,14 @@ export function moveStack(accountId, characterId, raw) {
     return { error: "invalid_slot" };
   const other = next[target.area][target.index];
   if (other?.itemId === stack.itemId) {
-    other.quantity += stack.quantity;
-    next[from.area][from.index] = null;
+    const amount = Math.min(
+      stack.quantity,
+      stackLimit(store.items[stack.itemId]) - other.quantity,
+    );
+    if (amount <= 0) return { error: "stack_full" };
+    other.quantity += amount;
+    stack.quantity -= amount;
+    if (!stack.quantity) next[from.area][from.index] = null;
   } else {
     next[target.area][target.index] = stack;
     next[from.area][from.index] = other;
@@ -182,8 +273,8 @@ export function grantItems(actorId, accountId, characterId, raw) {
     !/^[a-zA-Z0-9-]{16,80}$/.test(operationId)
   )
     return { error: "invalid_operation" };
-  const item = store.items[itemId];
-  if (!item) return { error: "item_not_found" };
+  const item = Object.hasOwn(store.items, itemId) ? store.items[itemId] : null;
+  if (!item || item.deletedAt) return { error: "item_not_found" };
   if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000)
     return { error: "invalid_quantity" };
   const opKey = `${actorId}:${operationId}`,
@@ -196,23 +287,7 @@ export function grantItems(actorId, accountId, characterId, raw) {
     next = copy(store.inventories[key] || empty());
   if (weightUnits(next) + units(item.weight) * quantity > MAX_WEIGHT * 100)
     return { error: "weight_limit" };
-  let area = "bag",
-    index = next.bag.findIndex((row) => row?.itemId === itemId);
-  if (index < 0) {
-    index = next.hotbar.findIndex((row) => row?.itemId === itemId);
-    if (index >= 0) area = "hotbar";
-  }
-  if (index < 0) {
-    area = "bag";
-    index = next.bag.indexOf(null);
-  }
-  if (index < 0) {
-    area = "hotbar";
-    index = next.hotbar.indexOf(null);
-  }
-  if (index < 0) return { error: "no_free_slot" };
-  if (next[area][index]) next[area][index].quantity += quantity;
-  else next[area][index] = { itemId, quantity };
+  if (!addToSlots(next, itemId, quantity)) return { error: "no_free_slot" };
   next.version++;
   const operations = { ...store.operations, [opKey]: fingerprint };
   for (const key of Object.keys(operations).slice(0, -1000))
@@ -228,6 +303,84 @@ export function grantItems(actorId, accountId, characterId, raw) {
     replayed: false,
   };
 }
+/** Multi-recipient grants are one atomic, replay-safe transaction. */
+export function grantItemBatch(
+  actorId,
+  recipients,
+  rows,
+  comment,
+  operationId,
+) {
+  if (
+    typeof operationId !== "string" ||
+    !/^[a-zA-Z0-9-]{16,80}$/.test(operationId)
+  )
+    return { error: "invalid_operation" };
+  if (
+    !Array.isArray(recipients) ||
+    recipients.length < 1 ||
+    recipients.length > 20 ||
+    !Array.isArray(rows) ||
+    rows.length < 1 ||
+    rows.length > 20 ||
+    typeof comment !== "string" ||
+    comment.length > 200 ||
+    /[\u0000-\u001f]/.test(comment)
+  )
+    return { error: "invalid_request" };
+  if (
+    recipients.some(
+      (r) =>
+        !r ||
+        typeof r.accountId !== "string" ||
+        typeof r.characterId !== "string",
+    ) ||
+    rows.some((r) => !r || typeof r.itemId !== "string")
+  )
+    return { error: "invalid_request" };
+  if (
+    new Set(recipients.map((r) => keyOf(r.accountId, r.characterId))).size !==
+    recipients.length
+  )
+    return { error: "invalid_request" };
+  const fingerprint = JSON.stringify(["batch", recipients, rows, comment]),
+    opKey = `${actorId}:${operationId}`;
+  if (store.operations[opKey])
+    return store.operations[opKey] === fingerprint
+      ? { replayed: true }
+      : { error: "operation_conflict", status: 409 };
+  const inventories = { ...store.inventories };
+  for (const recipient of recipients) {
+    const key = keyOf(recipient.accountId, recipient.characterId),
+      inventory = copy(inventories[key] || empty());
+    for (const row of rows) {
+      const item = Object.hasOwn(store.items, row.itemId)
+        ? store.items[row.itemId]
+        : null;
+      if (!item || item.deletedAt) return { error: "item_not_found" };
+      if (
+        !Number.isSafeInteger(row.quantity) ||
+        row.quantity < 1 ||
+        row.quantity > 10000
+      )
+        return { error: "invalid_quantity" };
+      if (
+        weightUnits(inventory) + units(item.weight) * row.quantity >
+        MAX_WEIGHT * 100
+      )
+        return { error: "weight_limit" };
+      if (!addToSlots(inventory, row.itemId, row.quantity))
+        return { error: "no_free_slot" };
+    }
+    inventory.version++;
+    inventories[key] = inventory;
+  }
+  const operations = { ...store.operations, [opKey]: fingerprint };
+  for (const key of Object.keys(operations).slice(0, -1000))
+    delete operations[key];
+  commit({ ...store, inventories, operations });
+  return { replayed: false };
+}
 /** Account deletion removes private inventory rows and replay identifiers. */
 export function forgetInventories(accountId) {
   const inventories = { ...store.inventories },
@@ -235,7 +388,12 @@ export function forgetInventories(accountId) {
   for (const key of Object.keys(inventories))
     if (key.startsWith(accountId + ":")) delete inventories[key];
   for (const [key, value] of Object.entries(operations))
-    if (key.startsWith(accountId + ":") || JSON.parse(value)[0] === accountId)
+    if (
+      key.startsWith(accountId + ":") ||
+      JSON.parse(value)[0] === accountId ||
+      (JSON.parse(value)[0] === "batch" &&
+        JSON.parse(value)[1].some((r) => r.accountId === accountId))
+    )
       delete operations[key];
   commit({ ...store, inventories, operations });
 }
@@ -272,7 +430,11 @@ export function worldItemAction(accountId, characterId, room, raw) {
     if (!["bag", "hotbar"].includes(area)) return { error: "invalid_slot" };
     let index = raw.to?.index;
     if (index === undefined) {
-      index = inventory[area].findIndex((s) => s?.itemId === stack.itemId);
+      index = inventory[area].findIndex(
+        (s) =>
+          s?.itemId === stack.itemId &&
+          s.quantity < stackLimit(store.items[stack.itemId]),
+      );
       if (index < 0) index = inventory[area].indexOf(null);
     }
     if (
@@ -284,6 +446,8 @@ export function worldItemAction(accountId, characterId, room, raw) {
     const other = inventory[area][index];
     if (other && other.itemId !== stack.itemId)
       return { error: "slot_occupied" };
+    if (other && other.quantity >= stackLimit(store.items[stack.itemId]))
+      return { error: "stack_full" };
     inventory[area][index] = {
       itemId: stack.itemId,
       quantity: (other?.quantity || 0) + 1,
@@ -323,16 +487,13 @@ export function worldItemAction(accountId, characterId, room, raw) {
       if (inventory.mouth) return { error: "mouth_full" };
       inventory.mouth = { itemId: row.itemId, quantity: 1 };
     } else {
-      const item = store.items[row.itemId];
+      const item = Object.hasOwn(store.items, row.itemId)
+        ? store.items[row.itemId]
+        : null;
       if (weightUnits(inventory) + units(item.weight) > MAX_WEIGHT * 100)
         return { error: "weight_limit" };
-      let index = inventory.bag.findIndex(
-        (stack) => stack?.itemId === row.itemId,
-      );
-      if (index < 0) index = inventory.bag.indexOf(null);
-      if (index < 0) return { error: "no_free_slot" };
-      if (inventory.bag[index]) inventory.bag[index].quantity++;
-      else inventory.bag[index] = { itemId: row.itemId, quantity: 1 };
+      if (!addToSlots(inventory, row.itemId, 1, ["bag"]))
+        return { error: "no_free_slot" };
     }
     delete ground[row.id];
   } else return { error: "invalid_action" };

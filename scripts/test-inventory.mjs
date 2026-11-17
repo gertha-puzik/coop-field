@@ -433,6 +433,99 @@ try {
     "glow survives edits by old clients and restart",
   );
   assert.equal((await fetch(origin + sprite)).status, 200);
+  const c = await account("inventory_c"),
+    d = await account("inventory_d");
+  const model = {
+    id: "catalogue-test",
+    name: "Тест базы",
+    description: "Описание в игре",
+    category: "decor",
+    maxStack: 2,
+    weight: 0.1,
+    sprite,
+  };
+  assert.equal(
+    (await req("/cfg/items", admin.cookie, "POST", { ...model, create: true }))
+      .status,
+    200,
+  );
+  const bulk = {
+    recipients: [
+      { accountId: c.id, characterId: c.characterId },
+      { accountId: d.id, characterId: d.characterId },
+    ],
+    items: [{ itemId: model.id, quantity: 3 }],
+    comment: "Награда теста",
+    operationId: crypto.randomUUID(),
+  };
+  assert.equal(
+    (await req("/cfg/items/grant-batch", a.cookie, "POST", bulk)).status,
+    403,
+  );
+  assert.equal(
+    (
+      await req("/cfg/items/grant-batch", admin.cookie, "POST", bulk, {
+        origin: "https://evil.invalid",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await req("/cfg/items/grant-batch", admin.cookie, "POST", bulk)).status,
+    200,
+  );
+  assert.equal(
+    (await req("/cfg/items/grant-batch", admin.cookie, "POST", bulk)).row
+      .replayed,
+    true,
+  );
+  for (const target of [c, d]) {
+    const inv = (await req("/cfg/inventory", target.cookie)).row.inventory;
+    assert.deepEqual(
+      inv.bag.filter(Boolean).map((s) => s.quantity),
+      [2, 1],
+    );
+    assert.equal(
+      inv.items.find((i) => i.id === model.id).description,
+      model.description,
+    );
+  }
+  const changed = { ...model, description: "Обновлённое описание" };
+  assert.equal(
+    (await req("/cfg/items", admin.cookie, "POST", changed)).status,
+    200,
+  );
+  assert.equal(
+    (await req("/cfg/items/delete", a.cookie, "POST", { id: model.id })).status,
+    403,
+  );
+  assert.equal(
+    (await req("/cfg/items/delete", admin.cookie, "POST", { id: model.id }))
+      .status,
+    200,
+  );
+  assert(
+    !(await req("/cfg/items", admin.cookie)).row.items.some(
+      (i) => i.id === model.id,
+    ),
+  );
+  assert(
+    (await req("/cfg/inventory", c.cookie)).row.inventory.items.some(
+      (i) => i.id === model.id && i.description === changed.description,
+    ),
+  );
+  assert.equal(
+    (
+      await req("/cfg/items/grant-batch", admin.cookie, "POST", {
+        ...bulk,
+        operationId: crypto.randomUUID(),
+      })
+    ).row.reason,
+    "item_not_found",
+  );
+  const catalogueLog = (await req("/cfg/console", admin.cookie)).row.items;
+  assert(catalogueLog.some((r) => r.text.includes("Награда теста")));
+  assert(catalogueLog.some((r) => r.text.includes("Удалён из базы")));
   const log = (await req("/cfg/console", admin.cookie)).row.items;
   assert.ok(
     log.some((row) => row.group === "items" && row.text.includes("Выдано:")),

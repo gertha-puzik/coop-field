@@ -221,7 +221,7 @@ export function InventoryPanel({
           disabled={busy || !snapshot}
           title={
             item
-              ? `${item.name}\nВес одной штуки: ${item.weight}\nShift + щелчок — перенести`
+              ? `${item.name}${item.description ? `\n${item.description}` : ""}\nВес одной штуки: ${item.weight}\nShift + щелчок — перенести`
               : "Свободный слот"
           }
           onClick={(event) => {

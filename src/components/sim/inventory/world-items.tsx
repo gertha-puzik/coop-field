@@ -346,6 +346,7 @@ export function WorldItems({
           {near === row.id && !blocked ? (
             <div data-world-key={`prompt-${row.id}`} className={s.prompt}>
               <strong>{item(row.itemId)?.name}</strong>
+              {item(row.itemId)?.description ? <span>{item(row.itemId)?.description}</span> : null}
               <span>
                 Вес: {item(row.itemId)?.weight}
                 {item(row.itemId)?.glows ? " · Светится вечером и ночью" : ""}
