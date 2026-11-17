@@ -24,6 +24,7 @@ const DOT: Record<string, string> = {
 
 export function ProfileFriendsGrid({
   friends,
+  loading = false,
   count,
   mine,
   onOpen,
@@ -31,6 +32,7 @@ export function ProfileFriendsGrid({
   onFind,
 }: {
   friends: ProfileFriend[];
+  loading?: boolean;
   count: number;
   mine: boolean;
   onOpen: (id: string) => void;
@@ -40,14 +42,14 @@ export function ProfileFriendsGrid({
   const {labels}=useSiteDesign();
   const [armed, setArmed] = useState<string | null>(null);
   return (
-    <section className={styles.card} aria-labelledby="prof-friends">
+    <section className={styles.card} aria-labelledby="prof-friends" aria-busy={loading}>
       <header className={styles.cardHead}>
         <h2 className={styles.cardTitle} id="prof-friends">
           <Icon name="users" className={styles.cardIcon} />
           {labels.friends}{count ? ` · ${count}` : ''}
         </h2>
       </header>
-      {friends.length || mine ? (
+      {loading ? <p className={styles.muted} role="status">Загружаем друзей…</p> : friends.length || mine ? (
         <ul className={styles.friendGrid}>
           {friends.map((f) => {
             const pr = presenceLabel(f.presence, undefined);

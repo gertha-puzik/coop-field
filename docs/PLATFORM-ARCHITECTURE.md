@@ -499,3 +499,18 @@ the whole save; omitted fields preserve stored values for older clients.
 A smooth pulse varies between 60% and 100% of configured intensity; it never
 extinguishes the source. Gem sparkle adds a small periodic cross glint without
 modulating the base light. Both renderers use the same energy/timing model.
+
+Friend request notifications (2026-11-17): the friendship domain registers a
+pending-request predicate with notifications, avoiding circular imports. Both
+notification list/read responses and unreadCount expose only still-pending
+incoming requests. Accepted, declined, cancelled, reciprocal and legacy resolved
+rows remain private journal history and are filtered immediately. New payloads
+include requestId; legacy rows must be at least as recent as the current request,
+so a new request does not revive an earlier notification. Announcements and
+read/unread semantics for active requests are unchanged.
+Successful client friendship mutations emit friends:changed; the bell and open
+profile refresh immediately and ignore obsolete requests. Opening a catalogue
+profile fetches its full card immediately instead of waiting for the 20-second
+poll. Missing friends metadata displays «Загружаем друзей…» with role=status and
+aria-busy; an empty list is rendered only after data arrives. Own-profile friends
+come from the fresh full card, with /profiles/me as the initial fallback.

@@ -78,6 +78,7 @@ async function mutate(path: string, accountId: string): Promise<{ ok: boolean; r
     body: { accountId },
   });
   if (status === 200 && row?.ok === true) {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("friends:changed"));
     return { ok: true, status: asText(row.status) || asText(row.already) || "ok" };
   }
   return {

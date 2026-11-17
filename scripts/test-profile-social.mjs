@@ -14,7 +14,7 @@ import { randomFillSync } from "node:crypto";
 import { deflateSync, crc32 } from "node:zlib";
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -341,6 +341,18 @@ async function main() {
       body: { accountId: alice.accountId },
     });
     check(acc.status === 200 && acc.json?.status === "accepted", "friend accept (canon)");
+    const afterAccept = await httpJson("/cfg/notifications/me", {token: bob.token});
+    check(afterAccept.json?.items?.length === 0 && afterAccept.json?.unread === 0, "accepted request is absent without marking it read");
+    // Reproduce historical records without the new requestId, then restart.
+    await stopServer();
+    const notificationFile = path.join(DATA, "notifications.json");
+    const legacy = JSON.parse(readFileSync(notificationFile, "utf8"));
+    for (const row of legacy.byAccount[bob.accountId]) delete row.payload.requestId;
+    writeFileSync(notificationFile, JSON.stringify(legacy));
+    startServer();
+    await waitReady();
+    const afterRestart = await httpJson("/cfg/notifications/me", {token: bob.token});
+    check(afterRestart.json?.items?.length === 0 && afterRestart.json?.unread === 0, "legacy accepted notification stays hidden after restart");
     const friends = await httpJson(`/cfg/friends/${alice.accountId}`, { token: bob.token });
     check(
       friends.status === 200 &&
@@ -354,6 +366,21 @@ async function main() {
       body: { accountId: bob.accountId },
     });
     check(rem.status === 200, "friend remove via /cfg");
+
+    const friendAction = (actor, action, target) => httpJson(`/cfg/friends/${action}`, {method:"POST", token:actor.token, origin:ORIGIN, body:{accountId:target.accountId}});
+    const requestItems = async (user) => (await httpJson("/cfg/notifications/me", {token:user.token})).json;
+    await friendAction(alice, "request", bob);
+    const newPending = await requestItems(bob);
+    check(newPending?.items?.length === 1 && newPending?.unread === 1, "resending request does not resurrect historical notifications");
+    await friendAction(alice, "cancel", bob);
+    check((await requestItems(bob))?.items?.length === 0, "cancelled request disappears");
+    await friendAction(alice, "request", bob);
+    await friendAction(bob, "decline", alice);
+    check((await requestItems(bob))?.unread === 0, "declined request no longer counts as unread");
+    await friendAction(alice, "request", bob);
+    const reciprocal = await friendAction(bob, "request", alice);
+    check(reciprocal.json?.status === "accepted" && (await requestItems(bob))?.items?.length === 0, "reciprocal request resolves notification");
+    await friendAction(alice, "remove", bob);
 
     /* ---- announcements ---- */
     const an = await httpJson("/cfg/announcements", {

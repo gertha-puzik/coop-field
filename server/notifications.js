@@ -18,6 +18,14 @@ import { sessionFromRequest } from "./auth.js";
 import { json, setCors, readJson } from "./runtime-config.js";
 import { writeFileAtomic } from "./atomic-file.js";
 
+// Installed by the friendship domain: notifications cannot decide relationship state.
+let pendingFriendRequest = () => false;
+export function setPendingFriendRequestCheck(check) {
+  pendingFriendRequest = check;
+}
+function currentListOf(accountId) {
+  return listOf(accountId).filter(row => row.type !== "friend_request" || pendingFriendRequest(String(accountId), row));
+}
 const FILE = path.join(DATA_DIR, "notifications.json");
 const MAX_PER_ACCOUNT = 100;
 const TITLE_MAX = 80;
@@ -166,7 +174,7 @@ export async function handleNotificationsHttp(req, res) {
   const accountId = String(session.account?.id || "");
 
   if (req.method === "GET" && p === "/notifications/me") {
-    const items = listOf(accountId).map(publicItem).reverse();
+    const items = currentListOf(accountId).map(publicItem).reverse();
     const unread = items.reduce((n, it) => n + (it.read ? 0 : 1), 0);
     json(res, 200, { ok: true, items, unread });
     return true;
@@ -174,7 +182,7 @@ export async function handleNotificationsHttp(req, res) {
 
   if (req.method === "POST" && p === "/notifications/me/read") {
     const body = await readJson(req, 16 * 1024);
-    const list = listOf(accountId);
+    const list = currentListOf(accountId);
     let changed = 0;
     if (body && body.all === true) {
       for (const row of list) {
@@ -206,5 +214,5 @@ export async function handleNotificationsHttp(req, res) {
 }
 
 export function unreadCount(accountId) {
-  return listOf(accountId).reduce((n, it) => n + (it.read ? 0 : 1), 0);
+  return currentListOf(accountId).reduce((n, it) => n + (it.read ? 0 : 1), 0);
 }

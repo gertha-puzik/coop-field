@@ -598,3 +598,13 @@ caches a material binding. `itemGlowEnergy` shares intensity and optional slow
 pulse across source halos, surface lights and self-lit item tint. `sparkle` adds
 an independent gem glint. Tests exercise independent halo uniforms, cached-bind
 updates, validation, legacy writes and persisted settings.
+
+Friend notification/profile refresh (2026-11-17): friends.js installs
+setPendingFriendRequestCheck in notifications.js. List/read/unread DTOs filter
+resolved rows against live relationship state, including legacy journal rows;
+new requestId payloads isolate consecutive requests between the same accounts.
+http-friends emits friends:changed after successful mutations. NotifyBell and
+the focused catalogue card refetch immediately, with stale-response guards.
+ProfileFriendsGrid distinguishes absent friends metadata (loading) from []
+(loaded empty), and PlayerProfile supplies the freshest full-card friend data.
+Regression: test:profile-social covers lifecycle, legacy restart and resend.

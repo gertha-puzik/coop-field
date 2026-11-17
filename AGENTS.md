@@ -380,3 +380,11 @@ night-lights.itemGlowEnergy feeds both renderers. Mouth decals have an explicit
 post-actor pass (group1, ALWAYS depth); halos group2 with per-source materials,
 no depth writes. Surface lights upload on material bind, independent of
 cached material binds. See ARCHITECTURE and PLATFORM-ARCHITECTURE for contracts.
+
+Friendship refresh (2026-11-17): notifications filters friend requests through a
+friends-domain predicate for list/read/unreadCount, so resolved and old requests
+never remain actionable. Payload requestId distinguishes resends; legacy journal
+rows are reconciled at read time. Client mutations emit friends:changed; bell and
+focused profile refresh immediately. Profile friend grid shows loading before
+full metadata arrives instead of an empty state. See platform/architecture docs;
+regression test:profile-social includes legacy restart and request lifecycles.
