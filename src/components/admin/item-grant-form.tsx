@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Input, Dropdown } from "@/components/ui";
 import {
   inventoryRequest,
   inventoryError,
@@ -166,13 +166,28 @@ export function ItemGrantForm({
             </label>
             {!group ? (
               <>
-                <Select
+                <Dropdown
                   aria-label="Игрок"
-                  value={selection[0]?.accountId || ""}
-                  onChange={(e) => {
-                    const p = players.find(
-                      (p) => p.accountId === e.target.value,
-                    );
+                  disabled={busy}
+                  value={selection[0]?.accountId ?? null}
+                  placeholder="Выберите игрока"
+                  options={[
+                    { value: "", label: "Выберите игрока" },
+                    ...players
+                      .filter(
+                        (p) =>
+                          p.accountId === selection[0]?.accountId ||
+                          `${p.name} ${p.login}`
+                            .toLowerCase()
+                            .includes(search.toLowerCase()),
+                      )
+                      .map((p) => ({
+                        value: p.accountId,
+                        label: `${p.name} · ${p.login}`,
+                      })),
+                  ]}
+                  onChange={(value) => {
+                    const p = players.find((p) => p.accountId === value);
                     setRecipients(
                       p?.characters[0]
                         ? [
@@ -184,42 +199,29 @@ export function ItemGrantForm({
                         : [],
                     );
                   }}
-                >
-                  <option value="">Выберите игрока</option>
-                  {players
-                    .filter((p) =>
-                      p.accountId === selection[0]?.accountId || `${p.name} ${p.login}`
-                        .toLowerCase()
-                        .includes(search.toLowerCase()),
-                    )
-                    .map((p) => (
-                      <option key={p.accountId} value={p.accountId}>
-                        {p.name} · {p.login}
-                      </option>
-                    ))}
-                </Select>
-                <Select
+                />
+                <Dropdown
                   aria-label="Персонаж получателя"
-                  disabled={!selection[0]}
-                  value={selection[0]?.characterId || ""}
-                  onChange={(e) =>
-                    setRecipients([
-                      {
-                        accountId: selection[0].accountId,
-                        characterId: e.target.value,
-                      },
-                    ])
-                  }
-                >
-                  <option value="">Выберите персонажа</option>
-                  {players
-                    .find((p) => p.accountId === selection[0]?.accountId)
-                    ?.characters.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} · вес {c.weight}/30
-                      </option>
-                    ))}
-                </Select>
+                  disabled={busy || !selection[0]}
+                  value={selection[0]?.characterId ?? null}
+                  placeholder="Выберите персонажа"
+                  options={(
+                    players.find((p) => p.accountId === selection[0]?.accountId)
+                      ?.characters || []
+                  ).map((c) => ({
+                    value: c.id,
+                    label: `${c.name} · вес ${c.weight}/30`,
+                  }))}
+                  onChange={(value) => {
+                    if (selection[0])
+                      setRecipients([
+                        {
+                          accountId: selection[0].accountId,
+                          characterId: value,
+                        },
+                      ]);
+                  }}
+                />
               </>
             ) : (
               <div
@@ -274,26 +276,30 @@ export function ItemGrantForm({
                     ) : (
                       <ItemGlyph name="box" />
                     )}
-                    <Select
+                    <Dropdown
                       aria-label="Предмет для выдачи"
+                      disabled={busy}
                       value={row.itemId}
-                      onChange={(e) =>
+                      options={[
+                        ...(!item
+                          ? [
+                              {
+                                value: row.itemId,
+                                label: "Предмет удалён — выберите другой",
+                                disabled: true,
+                              },
+                            ]
+                          : []),
+                        ...items.map((i) => ({ value: i.id, label: i.name })),
+                      ]}
+                      onChange={(value) =>
                         setRows((r) =>
                           r.map((x) =>
-                            x.key === row.key
-                              ? { ...x, itemId: e.target.value }
-                              : x,
+                            x.key === row.key ? { ...x, itemId: value } : x,
                           ),
                         )
                       }
-                    >
-                      {!item ? <option value={row.itemId} disabled>Предмет удалён — выберите другой</option> : null}
-                      {items.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name}
-                        </option>
-                      ))}
-                    </Select>
+                    />
                     <ItemStepper
                       label={`Количество: ${item?.name || "предмет"}`}
                       value={row.quantity}

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Button, Input, Select, ConfirmDialog } from "@/components/ui";
+import { Button, Input, Dropdown, ConfirmDialog } from "@/components/ui";
 import {
   ITEM_CATEGORIES,
   inventoryRequest,
@@ -227,29 +227,27 @@ export function ItemGrantTab() {
               />
             </label>
             <div className={s.catalogueFilters}>
-              <Select
+              <Dropdown
                 aria-label="Категория предметов"
                 value={category}
-                onChange={(e) => {
-                  setCategory(e.target.value);
+                options={[
+                  { value: "", label: "Все категории" },
+                  ...ITEM_CATEGORIES.map((c) => ({ value: c[0], label: c[1] })),
+                ]}
+                onChange={(value) => {
+                  setCategory(value);
                   setPage(0);
                 }}
-              >
-                <option value="">Все категории</option>
-                {ITEM_CATEGORIES.map((c) => (
-                  <option key={c[0]} value={c[0]}>
-                    {c[1]}
-                  </option>
-                ))}
-              </Select>
-              <Select
+              />
+              <Dropdown
                 aria-label="Сортировка предметов"
                 value={sort}
-                onChange={(e) => setSort(e.target.value)}
-              >
-                <option value="name">По названию ↑</option>
-                <option value="weight">По весу ↑</option>
-              </Select>
+                options={[
+                  { value: "name", label: "По названию ↑" },
+                  { value: "weight", label: "По весу ↑" },
+                ]}
+                onChange={setSort}
+              />
             </div>
             <ul className={s.itemList}>
               {filtered.slice(currentPage * 8, currentPage * 8 + 8).map((i) => (
