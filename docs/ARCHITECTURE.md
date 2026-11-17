@@ -608,3 +608,10 @@ the focused catalogue card refetch immediately, with stale-response guards.
 ProfileFriendsGrid distinguishes absent friends metadata (loading) from []
 (loaded empty), and PlayerProfile supplies the freshest full-card friend data.
 Regression: test:profile-social covers lifecycle, legacy restart and resend.
+
+Elysiae entry presentation (2026-11-17): EntryScreen keeps profile/SP and
+autojoin hooks mounted, but /game/ renders only LoadingState while the account
+profile/socket is pending. The legacy skin/room picker is never shown there,
+even after GameBoot's entry grace period. Profile failures, missing character
+configuration or join/auth errors show retry/profile actions in that same view.
+The public grotto entry flow remains in its existing compile-time branch.

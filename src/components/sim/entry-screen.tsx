@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { LoadingState } from '@/components/ui/loading-state';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -351,6 +352,30 @@ export function EntryScreen({
       dragRef.current.moved = false;
     }
   };
+
+  // Keep the autojoin effects mounted, but never expose the legacy skin/room
+  // picker while the account profile or socket is still loading on /game/.
+  if (IS_ELYRIA && playMode === 'elision') {
+    const incomplete = !!meProfile && !profileComplete;
+    const failed = !!authMessage || (meFailed && !meProfile) || incomplete;
+    return (
+      <main className="flex min-h-full items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md space-y-4 text-center">
+          {failed ? (
+            <>
+              <p role="status" className="text-sm text-[var(--sim-text)]">
+                {authMessage || (incomplete ? 'Выберите активного персонажа в профиле.' : 'Не удалось загрузить профиль для входа в игру.')}
+              </p>
+              <div className="flex items-center justify-center gap-4">
+                <Button type="button" onClick={() => window.location.reload()}>Повторить</Button>
+                <a className="text-sm underline" href={whoami?.accountId ? `/players/?id=${encodeURIComponent(whoami.accountId)}#settings` : '/'}>Мой профиль</a>
+              </div>
+            </>
+          ) : <LoadingState label={meProfile ? 'Подключаемся к игровой комнате…' : 'Загружаем профиль…'} />}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">

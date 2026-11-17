@@ -388,3 +388,8 @@ rows are reconciled at read time. Client mutations emit friends:changed; bell an
 focused profile refresh immediately. Profile friend grid shows loading before
 full metadata arrives instead of an empty state. See platform/architecture docs;
 regression test:profile-social includes legacy restart and request lifecycles.
+
+Elysiae /game/ startup (2026-11-17): EntryScreen's autojoin/profile hooks remain
+active, while its elision presentation is loading status or retry/profile
+recovery. The legacy skin carousel cannot flash when GameBoot exposes entry
+before account/socket loading finishes. Public grotto entry is unaffected.
