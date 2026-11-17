@@ -536,3 +536,7 @@ ItemEditor supplies creation and database editing with live day/night preview;
 ItemGrantTab contains grants and the searchable/category-filtered paged database.
 Descriptions are also visible in world hover/slot tooltips. Tests: test:inventory,
 test:world-items and test-item-catalogue.mjs (part of test:unit).
+
+Item administration uses the UI-kit Dropdown for recipients, items, categories
+and sorting: portalled dark listboxes retain keyboard navigation and scrolling
+without platform-native white select popups.

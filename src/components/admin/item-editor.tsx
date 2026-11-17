@@ -1,6 +1,6 @@
 "use client";
 import { useId, useState, type CSSProperties, type ReactNode } from "react";
-import { Button, Input, Select, Dialog } from "@/components/ui";
+import { Button, Input, Dropdown, Dialog } from "@/components/ui";
 import {
   ITEM_CATEGORIES,
   inventoryRequest,
@@ -555,17 +555,16 @@ export function ItemEditor({
               <div>
                 <label>
                   Категория
-                  <Select
-                    value={draft.category}
+                  <Dropdown
+                    aria-label="Категория предмета"
+                    value={draft.category || "other"}
                     disabled={busy}
-                    onChange={(e) => set({ category: e.target.value })}
-                  >
-                    {ITEM_CATEGORIES.map((c) => (
-                      <option key={c[0]} value={c[0]}>
-                        {c[1]}
-                      </option>
-                    ))}
-                  </Select>
+                    options={ITEM_CATEGORIES.map((c) => ({
+                      value: c[0],
+                      label: c[1],
+                    }))}
+                    onChange={(value) => set({ category: value })}
+                  />
                 </label>
                 {extra}
               </div>
