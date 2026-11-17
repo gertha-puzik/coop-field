@@ -1,5 +1,18 @@
 import { httpOrigin } from "./coop";
+export const ITEM_CATEGORIES = [
+  ["food", "Еда", "♧"],
+  ["resources", "Ресурсы", "❧"],
+  ["materials", "Материалы", "⚒"],
+  ["consumables", "Расходуемые", "♜"],
+  ["special", "Особые", "★"],
+  ["decor", "Декор", "♣"],
+  ["other", "Другое", "•••"],
+] as const;
 export type ItemDefinition = {
+  description?: string;
+  category?: string;
+  maxStack?: number;
+  deletedAt?: number;
   glows?: boolean;
   glowIntensity?: number;
   glowPeriod?: number;
@@ -80,9 +93,16 @@ export function inventoryError(error: unknown) {
         auth_required: "Войдите в аккаунт.",
         forbidden: "Нет права «Предметы и выдача».",
         character_not_found: "Персонаж не найден. Обновите список.",
+        item_deleted:
+          "Этот ID принадлежит удалённому предмету. Используйте новый ID.",
+        item_exists: "Предмет с таким ID уже существует.",
+        stack_full: "Стопка уже заполнена.",
+        stack_limit_in_use:
+          "Не хватает свободных слотов у игроков для уменьшения стопки. Освободите слоты или увеличьте лимит.",
         item_not_found: "Предмет не найден.",
         invalid_quantity: "Укажите целое положительное количество.",
-        invalid_item: "Проверьте ID и название предмета.",
+        invalid_item:
+          "Проверьте ID, название, описание, категорию и параметры предмета.",
         invalid_weight:
           "Вес должен быть больше нуля и не больше 30 (до двух знаков после запятой).",
         invalid_sprite: "Загрузите PNG-спрайт предмета.",

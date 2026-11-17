@@ -38,8 +38,8 @@
 .hero > span { font-size:48px; color:#f6d7a2; }
 .nav,.subnav { display:flex; flex-wrap:wrap; gap:8px; padding:10px; margin:12px 0; border:1px solid #806b52; border-radius:18px; background:linear-gradient(130deg,#302743,#221c34); }
 .nav button { display:flex;align-items:center;justify-content:center;gap:10px; flex:1; min-width:140px; padding:15px 20px; font-size:17px; }
-.shell button:not([role='checkbox']):not([role='switch']) { border:1px solid #49415e; border-radius:10px; background:#1b1830; color:#eee5fa; padding:8px 12px; cursor:pointer; }
-.shell.shell button[aria-selected='true'],.shell.shell button[aria-pressed='true'] { border-color:#e4bd80; background:linear-gradient(120deg,#5a4635,#29213f); color:#f6d7a2; }
+.shell button:not([role='checkbox']):not([role='switch']):not(:where([data-item-workbench] button)) { border:1px solid #49415e; border-radius:10px; background:#1b1830; color:#eee5fa; padding:8px 12px; cursor:pointer; }
+.shell.shell button[aria-selected='true']:not(:where([data-item-workbench] button)),.shell.shell button[aria-pressed='true']:not(:where([data-item-workbench] button)) { border-color:#e4bd80; background:linear-gradient(120deg,#5a4635,#29213f); color:#f6d7a2; }
 .shell button:hover { border-color:#e4bd80; }
 .shell button:disabled { opacity:.45; cursor:default; }
 .shell button:focus-visible,.shell a:focus-visible { outline:2px solid #e4bd80; outline-offset:3px; }

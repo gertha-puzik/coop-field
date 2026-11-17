@@ -1,329 +1,128 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Button, Input } from "@/components/ui";
+import { useEffect, useRef, useState } from "react";
+import { Button, Input, Select, ConfirmDialog } from "@/components/ui";
 import {
+  ITEM_CATEGORIES,
   inventoryRequest,
   inventoryError,
-  uploadItemSprite,
   itemSprite,
   type ItemDefinition,
   type ItemRecipient,
 } from "@/lib/net/http-inventory";
-import s from "./admin-console.module.css";
+import { ItemEditor, ItemGlyph } from "./item-editor";
+import { ItemGrantForm } from "./item-grant-form";
+import s from "./items.module.css";
 export function ItemsTab() {
-  const [items, setItems] = useState<ItemDefinition[]>([]),
-    [draft, setDraft] = useState({
-      id: "",
-      name: "",
-      weight: 3,
-      sprite: "",
-      glows: false,
-      glowIntensity: 1,
-      glowPeriod: 0,
-      sparkle: false,
-    }),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
+  const [revision, setRevision] = useState(0),
     [note, setNote] = useState("");
-  const load = async () => {
-    try {
-      setItems(
-        (await inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"))
-          .items,
-      );
-    } catch (e) {
-      setError(inventoryError(e));
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, []);
-  const file = async (value?: File) => {
-    if (!value) return;
-    if (value.size > 2 * 1024 * 1024) {
-      setError("Максимум 2 МБ.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const sprite = await uploadItemSprite(value);
-      setDraft((old) => ({ ...old, sprite }));
-    } catch (e) {
-      setError(inventoryError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    setNote("");
-    try {
-      await inventoryRequest("/cfg/items", "POST", draft);
-      setNote(`Предмет «${draft.name}» сохранён.`);
-      await load();
-    } catch (e) {
-      setError(inventoryError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
-    <section className={s.panel}>
-      <h2>Создание предмета</h2>
-      <p className={s.muted}>
-        Спрайты сохраняются без изменения пикселей и прозрачности. Для
-        светящихся предметов эффект включается вечером и ночью.
-      </p>
-      <div className={s.actions}>
-        {items.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-pressed={draft.id === item.id}
-            onClick={() => {
-              setDraft({
-                ...item,
-                sprite: item.sprite || "",
-                glows: !!item.glows,
-                glowIntensity: item.glowIntensity ?? 1,
-                glowPeriod: item.glowPeriod ?? 0,
-                sparkle: !!item.sparkle,
-              });
-              setNote("");
-            }}
-          >
-            {item.sprite ? (
-              <img
-                src={itemSprite(item.sprite)}
-                width="32"
-                height="32"
-                alt=""
-                style={{ objectFit: "contain", imageRendering: "pixelated" }}
-              />
-            ) : null}
-            {item.name} · {item.weight}
-          </button>
-        ))}
-        <Button
-          variant="outline"
-          onClick={() =>
-            setDraft({
-              id: "",
-              name: "",
-              weight: 3,
-              sprite: "",
-              glows: false,
-              glowIntensity: 1,
-              glowPeriod: 0,
-              sparkle: false,
-            })
-          }
-        >
-          + Новый предмет
-        </Button>
+    <div className={s.workbench} data-item-workbench>
+      <div className={s.breadcrumb}>
+        Предметы <span>›</span> Создание предмета
       </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
+      <ItemEditor
+        key={revision}
+        onSaved={(i) => {
+          setNote(`Предмет «${i.name}» создан.`);
+          setRevision((n) => n + 1);
         }}
-      >
-        <div className={s.form}>
-          <label>
-            ID предмета
-            <Input
-              value={draft.id}
-              disabled={busy}
-              required
-              pattern="[a-z0-9][a-z0-9_-]{0,47}"
-              maxLength={48}
-              placeholder="nugget"
-              onChange={(e) => setDraft({ ...draft, id: e.target.value })}
-            />
-          </label>
-          <label>
-            Название
-            <Input
-              value={draft.name}
-              disabled={busy}
-              required
-              maxLength={64}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-          </label>
-          <label>
-            Вес одной штуки
-            <Input
-              type="number"
-              value={draft.weight}
-              disabled={busy}
-              required
-              min="0.01"
-              max="30"
-              step="0.01"
-              onChange={(e) =>
-                setDraft({ ...draft, weight: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.glows}
-              disabled={busy}
-              onChange={(e) => setDraft({ ...draft, glows: e.target.checked })}
-            />{" "}
-            Светится вечером и ночью
-          </label>
-          {draft.glows ? (
-            <>
-              <label>
-                Яркость свечения (0–3)
-                <Input
-                  type="number"
-                  min="0"
-                  max="3"
-                  step="0.1"
-                  value={draft.glowIntensity}
-                  disabled={busy}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      glowIntensity: Number(e.target.value),
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Период пульсации, секунды (0 — постоянный свет)
-                <Input
-                  type="number"
-                  min="0"
-                  max="60"
-                  step="0.5"
-                  value={draft.glowPeriod}
-                  disabled={busy}
-                  onChange={(e) =>
-                    setDraft({ ...draft, glowPeriod: Number(e.target.value) })
-                  }
-                />
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={draft.sparkle}
-                  disabled={busy}
-                  onChange={(e) =>
-                    setDraft({ ...draft, sparkle: e.target.checked })
-                  }
-                />{" "}
-                Мерцание драгоценного камня
-              </label>
-            </>
-          ) : null}
-          <label>
-            PNG-спрайт
-            <Input
-              type="file"
-              accept="image/png"
-              disabled={busy}
-              onChange={(e) => {
-                void file(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-          </label>
-        </div>
-        {draft.sprite ? (
-          <img
-            src={itemSprite(draft.sprite)}
-            alt="Предпросмотр предмета"
-            width="100"
-            height="100"
-            style={{
-              objectFit: "contain",
-              imageRendering: "pixelated",
-              margin: "12px 0",
-            }}
-          />
-        ) : (
-          <p className={s.muted}>Спрайт ещё не загружен.</p>
-        )}
-        <Button type="submit" disabled={busy || !draft.sprite}>
-          {busy ? "Подождите…" : "Сохранить предмет"}
-        </Button>
-      </form>
-      {error ? (
-        <p role="alert" className={s.error}>
-          {error}
+      />
+      {note ? (
+        <p className={s.success} role="status">
+          {note}
         </p>
       ) : null}
-      <p role="status">{note}</p>
-    </section>
+    </div>
   );
 }
 export function ItemGrantTab() {
-  const [players, setPlayers] = useState<ItemRecipient[]>([]),
-    [items, setItems] = useState<ItemDefinition[]>([]),
-    [accountId, setAccountId] = useState(""),
-    [characterId, setCharacterId] = useState(""),
-    [itemId, setItemId] = useState("nugget"),
-    [quantity, setQuantity] = useState(1),
-    [busy, setBusy] = useState(false),
+  const [items, setItems] = useState<ItemDefinition[]>([]),
+    [players, setPlayers] = useState<ItemRecipient[]>([]),
+    [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
+    [selected, setSelected] = useState(""),
+    [query, setQuery] = useState(""),
+    [category, setCategory] = useState(""),
+    [sort, setSort] = useState("name"),
+    [page, setPage] = useState(0),
+    [creating, setCreating] = useState(false),
+    [duplicate, setDuplicate] = useState<ItemDefinition | undefined>(),
+    [deleting, setDeleting] = useState(false),
+    [busy, setBusy] = useState(false),
     [note, setNote] = useState("");
-  const operation = useState(() => ({
-    id: crypto.randomUUID(),
-    fingerprint: "",
-  }))[0];
+  const grantRef = useRef<HTMLElement>(null),
+    dbRef = useRef<HTMLElement>(null);
   const load = async () => {
+    setError("");
     try {
-      const [p, i] = await Promise.all([
-        inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
+      const [i, p] = await Promise.all([
         inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"),
+        inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
       ]);
-      setPlayers(p.players);
       setItems(i.items);
+      setPlayers(p.players);
+      setSelected((old) =>
+        i.items.some((x) => x.id === old) ? old : i.items[0]?.id || "",
+      );
     } catch (e) {
       setError(inventoryError(e));
+    } finally {
+      setLoading(false);
     }
   };
   useEffect(() => {
-    void load();
+    let disposed = false;
+    void (async () => {
+      try {
+        const [i, p] = await Promise.all([
+          inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"),
+          inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
+        ]);
+        if (disposed) return;
+        setItems(i.items);
+        setPlayers(p.players);
+        setSelected(i.items[0]?.id || "");
+      } catch (e) {
+        if (!disposed) setError(inventoryError(e));
+      } finally {
+        if (!disposed) setLoading(false);
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
   }, []);
-  const player = players.find((row) => row.accountId === accountId),
-    character = player?.characters.find((row) => row.id === characterId),
-    item = items.find((row) => row.id === itemId);
-  const added = (item?.weight || 0) * quantity,
-    over = !!character && character.weight + added > 30 + 1e-7;
-  const grant = async () => {
-    const fingerprint = JSON.stringify([
-      accountId,
-      characterId,
-      itemId,
-      quantity,
-    ]);
-    if (operation.fingerprint !== fingerprint) {
-      operation.id = crypto.randomUUID();
-      operation.fingerprint = fingerprint;
-    }
+  const filtered = items
+      .filter(
+        (i) =>
+          (!category || (i.category || "other") === category) &&
+          `${i.name} ${i.id}`.toLowerCase().includes(query.toLowerCase()),
+      )
+      .sort((a, b) =>
+        sort === "weight"
+          ? a.weight - b.weight
+          : a.name.localeCompare(b.name, "ru"),
+      ),
+    pages = Math.max(1, Math.ceil(filtered.length / 8)),
+    currentPage = Math.min(page, pages - 1),
+    chosen = filtered.find((i) => i.id === selected) || filtered[0];
+  const saved = async (item: ItemDefinition) => {
+    await load();
+    setSelected(item.id);
+    setQuery("");
+    setCategory("");
+    setPage(0);
+    setCreating(false);
+    setDuplicate(undefined);
+  };
+  const remove = async () => {
+    if (!chosen) return;
     setBusy(true);
     setError("");
-    setNote("");
     try {
-      await inventoryRequest("/cfg/items/grant", "POST", {
-        accountId,
-        characterId,
-        itemId,
-        quantity,
-        operationId: operation.id,
-      });
-      operation.fingerprint = "";
-      setNote(
-        `Выдано ${item?.name} ×${quantity} персонажу «${character?.name}». Действие записано в журнал.`,
-      );
+      await inventoryRequest("/cfg/items/delete", "POST", { id: chosen.id });
+      setNote(`Предмет «${chosen.name}» удалён из базы.`);
+      setDeleting(false);
       await load();
     } catch (e) {
       setError(inventoryError(e));
@@ -331,111 +130,256 @@ export function ItemGrantTab() {
       setBusy(false);
     }
   };
-  return (
-    <section className={s.panel}>
-      <h2>Выдача предметов</h2>
-      <p className={s.muted}>
-        Выдача идёт выбранному персонажу. Общий вес инвентаря и хотбара не может
-        превышать 30.
-      </p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void grant();
-        }}
-      >
-        <div className={s.form}>
-          <label>
-            Игрок
-            <select
-              value={accountId}
-              disabled={busy}
-              required
-              onChange={(e) => {
-                setAccountId(e.target.value);
-                setCharacterId("");
-              }}
-            >
-              <option value="">Выберите игрока</option>
-              {players.map((p) => (
-                <option key={p.accountId} value={p.accountId}>
-                  {p.name} · {p.login}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Персонаж
-            <select
-              value={characterId}
-              disabled={busy || !player}
-              required
-              onChange={(e) => setCharacterId(e.target.value)}
-            >
-              <option value="">Выберите персонажа</option>
-              {player?.characters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} · вес {c.weight}/30
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Предмет
-            <select
-              value={itemId}
-              disabled={busy}
-              required
-              onChange={(e) => setItemId(e.target.value)}
-            >
-              {items.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name} · {i.weight}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Количество
-            <Input
-              type="number"
-              value={quantity}
-              disabled={busy}
-              min="1"
-              max="10000"
-              step="1"
-              required
-              onChange={(e) => setQuantity(Number(e.target.value))}
-            />
-          </label>
+  if (creating || duplicate)
+    return (
+      <div className={s.workbench} data-item-workbench>
+        <div className={s.breadcrumb}>
+          Предметы <span>›</span> Создание предмета
         </div>
-        <p>
-          Вес выдачи: {Number(added.toFixed(2))}. После выдачи:{" "}
-          {Number(((character?.weight || 0) + added).toFixed(2))}/30.
-        </p>
-        {over ? (
-          <p className={s.error}>Выдача превысит допустимый вес.</p>
-        ) : null}
-        <Button
-          type="submit"
-          disabled={
-            busy ||
-            !character ||
-            !item ||
-            over ||
-            !Number.isInteger(quantity) ||
-            quantity < 1
-          }
-        >
-          {busy ? "Выдаём…" : "Выдать предметы"}
-        </Button>
-      </form>
-      {error ? (
-        <p role="alert" className={s.error}>
-          {error}
+        <ItemEditor
+          key={duplicate?.id || "new"}
+          initial={duplicate}
+          onSaved={saved}
+          onCancel={() => {
+            setCreating(false);
+            setDuplicate(undefined);
+          }}
+        />
+      </div>
+    );
+  return (
+    <div className={s.workbench} data-item-workbench>
+      <header className={s.pageHeader}>
+        <ItemGlyph name="gift" />
+        <div>
+          <h2>Выдача предметов</h2>
+          <p>Выдайте предметы одному игроку или группе персонажей.</p>
+        </div>
+        <nav className={s.segment} aria-label="Разделы предметов">
+          <Button
+            className={s.quiet}
+            type="button"
+            onClick={() =>
+              grantRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              })
+            }
+          >
+            <ItemGlyph name="gift" />
+            Выдача
+          </Button>
+          <Button
+            className={s.quiet}
+            type="button"
+            onClick={() =>
+              dbRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              })
+            }
+          >
+            <ItemGlyph name="layers" />
+            База предметов
+          </Button>
+        </nav>
+      </header>
+      {loading ? (
+        <p role="status" className={s.muted}>
+          Загружаем предметы и игроков…
         </p>
       ) : null}
-      <p role="status">{note}</p>
-    </section>
+      {error ? (
+        <div className={s.error} role="alert">
+          {error}{" "}
+          <Button type="button" variant="ghost" onClick={() => void load()}>
+            Обновить
+          </Button>
+        </div>
+      ) : null}
+      <section ref={grantRef} className={s.anchor}>
+        <ItemGrantForm items={items} players={players} onGranted={load} />
+      </section>
+      <section ref={dbRef} className={`${s.database} ${s.anchor}`}>
+        <header className={s.pageHeader}>
+          <ItemGlyph name="layers" />
+          <div>
+            <h2>База предметов</h2>
+            <p>Все предметы игры с описаниями, параметрами и настройками.</p>
+          </div>
+          <Button className={s.primary} onClick={() => setCreating(true)}>
+            <ItemGlyph name="plus" />
+            Создать предмет
+          </Button>
+        </header>
+        <div className={s.databaseGrid}>
+          <aside className={s.catalogue}>
+            <label className={s.search}>
+              <ItemGlyph name="search" />
+              <Input
+                aria-label="Поиск предмета по названию или ID"
+                placeholder="Поиск по названию или ID…"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setPage(0);
+                }}
+              />
+            </label>
+            <div className={s.catalogueFilters}>
+              <Select
+                aria-label="Категория предметов"
+                value={category}
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  setPage(0);
+                }}
+              >
+                <option value="">Все категории</option>
+                {ITEM_CATEGORIES.map((c) => (
+                  <option key={c[0]} value={c[0]}>
+                    {c[1]}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label="Сортировка предметов"
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+              >
+                <option value="name">По названию ↑</option>
+                <option value="weight">По весу ↑</option>
+              </Select>
+            </div>
+            <ul className={s.itemList}>
+              {filtered.slice(currentPage * 8, currentPage * 8 + 8).map((i) => (
+                <li key={i.id}>
+                  <button
+                    type="button"
+                    aria-pressed={chosen?.id === i.id}
+                    onClick={() => {
+                      setSelected(i.id);
+                      setNote("");
+                    }}
+                  >
+                    {i.sprite ? (
+                      <img src={itemSprite(i.sprite)} alt="" />
+                    ) : (
+                      <ItemGlyph name="box" />
+                    )}
+                    <span>
+                      <strong>{i.name}</strong>
+                      <small>ID: {i.id}</small>
+                    </span>
+                    <span className={s.listWeight}>
+                      <ItemGlyph name="layers" />
+                      {i.weight}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {!filtered.length ? (
+              <p className={s.muted}>
+                {loading ? "Загрузка…" : "Предметы не найдены."}
+              </p>
+            ) : null}
+            <nav className={s.pagination} aria-label="Страницы базы предметов">
+              <button
+                type="button"
+                disabled={currentPage === 0}
+                onClick={() => setPage((p) => p - 1)}
+                aria-label="Предыдущая страница"
+              >
+                ‹
+              </button>
+              {Array.from({ length: pages }, (_, i) => i)
+                .filter(
+                  (i) =>
+                    i === 0 ||
+                    i === pages - 1 ||
+                    Math.abs(i - currentPage) <= 1,
+                )
+                .map((i, index, array) => (
+                  <span key={i}>
+                    {index > 0 && i - array[index - 1] > 1 ? (
+                      <span>…</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-current={currentPage === i ? "page" : undefined}
+                      onClick={() => setPage(i)}
+                    >
+                      {i + 1}
+                    </button>
+                  </span>
+                ))}
+              <button
+                type="button"
+                disabled={currentPage === pages - 1}
+                onClick={() => setPage((p) => p + 1)}
+                aria-label="Следующая страница"
+              >
+                ›
+              </button>
+            </nav>
+          </aside>
+          <div className={s.editorCard}>
+            {chosen ? (
+              <ItemEditor
+                key={chosen.id}
+                item={chosen}
+                onSaved={saved}
+                footer={
+                  <>
+                    <Button
+                      type="button"
+                      className={s.quiet}
+                      onClick={() =>
+                        setDuplicate({
+                          ...chosen,
+                          id: `${chosen.id.slice(0, 32)}_copy_${crypto.randomUUID().slice(0, 4)}`,
+                          name: `${chosen.name} — копия`.slice(0, 64),
+                        })
+                      }
+                    >
+                      Дублировать
+                    </Button>
+                    <Button
+                      type="button"
+                      className={s.danger}
+                      onClick={() => setDeleting(true)}
+                    >
+                      <ItemGlyph name="trash" />
+                      Удалить
+                    </Button>
+                  </>
+                }
+              />
+            ) : (
+              <div className={s.emptyDatabase}>
+                <ItemGlyph name="box" />
+                <p>Выберите предмет в базе или создайте новый.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+      {note ? (
+        <p className={s.success} role="status">
+          {note}
+        </p>
+      ) : null}
+      <ConfirmDialog
+        open={deleting}
+        title={`Удалить «${chosen?.name || "предмет"}»?`}
+        description="Предмет исчезнет из базы и выдачи. Уже выданные экземпляры останутся у игроков и на локациях."
+        danger
+        busy={busy}
+        confirmLabel="Удалить предмет"
+        onConfirm={() => void remove()}
+        onCancel={() => setDeleting(false)}
+      />
+    </div>
   );
 }

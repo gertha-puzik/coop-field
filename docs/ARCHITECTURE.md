@@ -615,3 +615,14 @@ profile/socket is pending. The legacy skin/room picker is never shown there,
 even after GameBoot's entry grace period. Profile failures, missing character
 configuration or join/auth errors show retry/profile actions in that same view.
 The public grotto entry flow remains in its existing compile-time branch.
+
+Admin item workbench (2026-11-17): items-tab.tsx owns the catalogue/grant data
+and database search/filter/pagination. item-editor.tsx reuses the UI kit for
+creation/editing, sprite uploads, bounded numeric controls and sprite preview;
+item-grant-form.tsx manages single/group character selections and batch replay
+IDs. items.module.css is scoped under data-item-workbench; generic admin button
+rules exclude that subtree so gold actions and compact controls keep their style.
+Server inventory-store owns stack planning and atomic cap changes, archive
+metadata and bulk grants. inventory-http validates character ownership/permission
+and writes audits. New fields/routes and deletion semantics are documented in
+PLATFORM-ARCHITECTURE. No category-specific gameplay behavior is added.
