@@ -18,6 +18,9 @@ export function ItemsTab() {
       weight: 3,
       sprite: "",
       glows: false,
+      glowIntensity: 1,
+      glowPeriod: 0,
+      sparkle: false,
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -84,6 +87,9 @@ export function ItemsTab() {
                 ...item,
                 sprite: item.sprite || "",
                 glows: !!item.glows,
+                glowIntensity: item.glowIntensity ?? 1,
+                glowPeriod: item.glowPeriod ?? 0,
+                sparkle: !!item.sparkle,
               });
               setNote("");
             }}
@@ -103,7 +109,16 @@ export function ItemsTab() {
         <Button
           variant="outline"
           onClick={() =>
-            setDraft({ id: "", name: "", weight: 3, sprite: "", glows: false })
+            setDraft({
+              id: "",
+              name: "",
+              weight: 3,
+              sprite: "",
+              glows: false,
+              glowIntensity: 1,
+              glowPeriod: 0,
+              sparkle: false,
+            })
           }
         >
           + Новый предмет
@@ -162,6 +177,52 @@ export function ItemsTab() {
             />{" "}
             Светится вечером и ночью
           </label>
+          {draft.glows ? (
+            <>
+              <label>
+                Яркость свечения (0–3)
+                <Input
+                  type="number"
+                  min="0"
+                  max="3"
+                  step="0.1"
+                  value={draft.glowIntensity}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      glowIntensity: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Период пульсации, секунды (0 — постоянный свет)
+                <Input
+                  type="number"
+                  min="0"
+                  max="60"
+                  step="0.5"
+                  value={draft.glowPeriod}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setDraft({ ...draft, glowPeriod: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.sparkle}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setDraft({ ...draft, sparkle: e.target.checked })
+                  }
+                />{" "}
+                Мерцание драгоценного камня
+              </label>
+            </>
+          ) : null}
           <label>
             PNG-спрайт
             <Input

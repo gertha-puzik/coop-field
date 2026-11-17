@@ -98,12 +98,30 @@ export function saveItem(raw) {
     return { error: "catalogue_full" };
   if (raw.glows !== undefined && typeof raw.glows !== "boolean")
     return { error: "invalid_item" };
+  for (const [key, min, max] of [
+    ["glowIntensity", 0, 3],
+    ["glowPeriod", 0, 60],
+  ]) {
+    if (
+      raw[key] !== undefined &&
+      (!Number.isFinite(raw[key]) ||
+        raw[key] < min ||
+        raw[key] > max ||
+        (key === "glowPeriod" && raw[key] > 0 && raw[key] < 0.5))
+    )
+      return { error: "invalid_item" };
+  }
+  if (raw.sparkle !== undefined && typeof raw.sparkle !== "boolean")
+    return { error: "invalid_item" };
   const item = {
       id,
       name,
       weight,
       sprite,
       glows: raw.glows ?? store.items[id]?.glows ?? false,
+      glowIntensity: raw.glowIntensity ?? store.items[id]?.glowIntensity ?? 1,
+      glowPeriod: raw.glowPeriod ?? store.items[id]?.glowPeriod ?? 0,
+      sparkle: raw.sparkle ?? store.items[id]?.sparkle ?? false,
     },
     items = { ...store.items, [id]: item };
   if (

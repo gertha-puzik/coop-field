@@ -10,7 +10,7 @@ import {
   supportLevelAt,
   TERRAIN_LIFT_PX,
 } from "./test-field";
-import { createNightLightModel, itemGlowAmount } from "./night-lights";
+import { createNightLightModel, itemGlowEnergy } from "./night-lights";
 const fallbackLights = createNightLightModel();
 export const ITEM_REACH_PX = 70;
 export const WORLD_ITEM_SIZE = 30;
@@ -75,6 +75,9 @@ export function appendWorldItems(frame: ElisionFrame) {
       lift: supportLevelAt(item.x, item.y) * TERRAIN_LIFT_PX,
       url: src,
       glows: !!items.find((i) => i.id === item.itemId)?.glows,
+      glowIntensity: items.find((i) => i.id === item.itemId)?.glowIntensity,
+      glowPeriod: items.find((i) => i.id === item.itemId)?.glowPeriod,
+      sparkle: items.find((i) => i.id === item.itemId)?.sparkle,
       mirror: false,
       rot: 0,
     });
@@ -98,6 +101,10 @@ export function appendWorldItems(frame: ElisionFrame) {
       lift: 0,
       url: src,
       glows: !!items.find((i) => i.id === player.mouth?.itemId)?.glows,
+      glowIntensity: items.find((i) => i.id === player.mouth?.itemId)
+        ?.glowIntensity,
+      glowPeriod: items.find((i) => i.id === player.mouth?.itemId)?.glowPeriod,
+      sparkle: items.find((i) => i.id === player.mouth?.itemId)?.sparkle,
       mirror: parent.mirror,
       rot: parent.rot + ((parent.pose?.rot ?? 0) * 180) / Math.PI,
       attachment: {
@@ -233,13 +240,18 @@ function drawFallback(
   out.globalCompositeOperation = "destination-in";
   out.drawImage(alphaCanvas, 0, 0);
   out.globalCompositeOperation = "source-over";
-  const glowAmount = frame.editor ? 0 : itemGlowAmount(frame.dayProgress);
-  if (glowAmount) {
-    out.globalAlpha = glowAmount * 0.65;
-    for (const item of items) if (item.glows) paintItem(item);
+  const now = performance.now();
+  if (!frame.editor) {
+    for (const item of items)
+      if (item.glows) {
+        out.globalAlpha = Math.min(
+          1,
+          itemGlowEnergy(item, frame.dayProgress, now) * 0.65,
+        );
+        paintItem(item);
+      }
     out.globalAlpha = 1;
   }
-  const now = performance.now();
   const sources = fallbackLights.update(
     frame,
     now,
@@ -268,6 +280,19 @@ function drawFallback(
     light.addColorStop(1, "rgba(255,223,112,0)");
     out.fillStyle = light;
     out.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+    if (source.sparkle) {
+      out.save();
+      out.globalAlpha = Math.min(
+        1,
+        source.energy * Math.max(0, Math.sin(now * 0.0014)) ** 12,
+      );
+      out.fillStyle = "#fff7cd";
+      const arm = 7 * frame.zoom,
+        thin = Math.max(0.6, frame.zoom);
+      out.fillRect(p.x - arm, p.y - thin / 2, arm * 2, thin);
+      out.fillRect(p.x - thin / 2, p.y - arm, thin, arm * 2);
+      out.restore();
+    }
     const r = (source.kind === "firefly" ? 9 : 45) * frame.zoom;
     const halo = out.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
     halo.addColorStop(

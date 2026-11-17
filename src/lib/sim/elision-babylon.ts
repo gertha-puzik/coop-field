@@ -7,7 +7,7 @@
  * Engine, не WebGPUEngine. Камера ортографическая и совпадает с
  * screenToWorld (формулы — elision-scene.ts), поэтому клики не переезжают.
  */
-import {createWorldGlow,itemGlowAmount} from './elision-glow';
+import {createWorldGlow,itemGlowEnergy} from './elision-glow';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
@@ -351,7 +351,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     return tex;
   };
 
-  const syncDecals = (frame: ElisionFrame) => {
+  const syncDecals = (frame: ElisionFrame, now: number) => {
     const list = frame.decals;
     const self = list.find((actor) => actor.id === frame.controlledId);
     const seen = new Set<string>();
@@ -408,7 +408,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const texture=textureFor(actor.url,actor.image);
       if(node.mat.diffuseTexture!==texture)node.mat.diffuseTexture=texture;
       node.sig = sig;
-      const e=actor.glows&&!frame.editor?itemGlowAmount(frame.dayProgress)*.8:0;
+      const e=frame.editor?0:Math.min(1,itemGlowEnergy(actor,frame.dayProgress,now)*.8);
       node.mat.emissiveColor.set(tint[0]+(1-tint[0])*e,tint[1]+(1-tint[1])*e,tint[2]+(1-tint[2])*e);
       const targetAlpha = actor.opacity ?? elisionObstacleAlpha(actor, self, frame.yaw);
       const alpha = Math.abs(node.mat.alpha - targetAlpha) < 0.001 ? targetAlpha
@@ -416,10 +416,13 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       node.mat.alpha = alpha;
       node.mat.alphaCutOff = 0.01;
       node.mat.transparencyMode = Material.MATERIAL_ALPHATESTANDBLEND;
+      // Explicit passes avoid depth-buffer precision and transparent centre-sort changes at distant zoom.
+      node.mesh.renderingGroupId = actor.attachment ? 1 : 0;
+      node.mat.depthFunction = actor.attachment ? Constants.ALWAYS : 0;
       const parent = actor.attachment ? decals.get(actor.attachment.parentId) : null;
       if(parent && actor.attachment){
         node.root.parent=parent.root;
-        node.root.position.set(actor.attachment.x,actor.attachment.y+0.3,0.3);
+        node.root.position.set(actor.attachment.x,actor.attachment.y,0);
         node.root.rotation.set(0,0,0);
         node.mat.zOffset=0;
       }else{
@@ -474,9 +477,10 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       fitCanvas();
       placeCamera(frame);
       syncGround(frame);
-      syncDecals(frame);
+      syncDecals(frame,now);
       glow.update(frame,now);
       scene.render();
+      {let el=document.getElementById("local-render-values");if(!el){el=document.createElement("pre");el.id="local-render-values";el.style.cssText="position:fixed;top:24px;left:0;z-index:99999;background:white;color:black";document.body.append(el);}el.textContent=JSON.stringify({error:(engine as any)._gl.getError(),tint,day:frame.dayProgress,meshes:scene.meshes.length});}
     },
     destroy() {
       if (dead) return;

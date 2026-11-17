@@ -179,16 +179,50 @@ try {
         weight: 3,
         sprite,
         glows: true,
+        glowIntensity: 1.8,
+        glowPeriod: 8,
+        sparkle: true,
       })
     ).status,
     200,
   );
+  for (const bad of [
+    { glowIntensity: -1 },
+    { glowIntensity: 4 },
+    { glowPeriod: 0.1 },
+    { glowPeriod: 61 },
+    { sparkle: "yes" },
+  ]) {
+    assert.equal(
+      (
+        await req("/cfg/items", admin.cookie, "POST", {
+          id: "nugget",
+          name: "Наггетс",
+          weight: 3,
+          sprite,
+          ...bad,
+        })
+      ).status,
+      400,
+    );
+  }
   assert.equal(
     (await req("/cfg/items", admin.cookie)).row.items.find(
       (i) => i.id === "nugget",
     ).glows,
     true,
   );
+  const restoredGlow = (await req("/cfg/items", admin.cookie)).row.items.find(
+    (i) => i.id === "nugget",
+  );
+  assert.equal(
+    restoredGlow.glowIntensity,
+    1.8,
+    "brightness survives legacy edits and restart",
+  );
+  assert.equal(restoredGlow.glowPeriod, 8);
+  assert.equal(restoredGlow.sparkle, true);
+
   assert.equal(
     (
       await req("/cfg/items", admin.cookie, "POST", {

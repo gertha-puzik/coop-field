@@ -15,6 +15,18 @@ export function fireflyAmount(progress: number) {
   const p = ((progress % 4) + 4) % 4;
   return smooth(3, 3.2, p) * (1 - smooth(3.75, 4, p));
 }
+/** Period is seconds; zero means steady. Never extinguish the base light during a pulse. */
+export function itemGlowEnergy(
+  actor: Pick<ElisionActor, "glows" | "glowIntensity" | "glowPeriod">,
+  progress: number,
+  now: number,
+) {
+  if (!actor.glows) return 0;
+  const period = actor.glowPeriod ?? 0;
+  const pulse =
+    period > 0 ? 0.8 + 0.2 * Math.cos((now * 0.001 * Math.PI * 2) / period) : 1;
+  return itemGlowAmount(progress) * (actor.glowIntensity ?? 1) * pulse;
+}
 export type NightLight = {
   id: string;
   kind: "firefly" | "item";
@@ -22,6 +34,7 @@ export type NightLight = {
   y: number;
   z: number;
   energy: number;
+  sparkle?: boolean;
 };
 type Flight = {
   from: { x: number; z: number };
@@ -42,7 +55,7 @@ export function actorLightPoint(actor: ElisionActor, frame: ElisionFrame) {
     (actor.attachment?.x || 0) +
     (pose?.sway || 0) +
     (Math.sin((actor.rot * Math.PI) / 180) * actor.h) / 2;
-  const front = parent ? 0.3 : 0;
+  const front = 0;
   return {
     x:
       base.x +
@@ -163,7 +176,8 @@ export function createNightLightModel(random: () => number = Math.random) {
             id: actor.id,
             kind: "item",
             ...actorLightPoint(actor, frame),
-            energy: glow,
+            energy: itemGlowEnergy(actor, frame.dayProgress, now),
+            sparkle: actor.sparkle,
           });
     return out;
   }
