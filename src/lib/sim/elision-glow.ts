@@ -1,4 +1,5 @@
 /** Cosmetic world-space lights: bounded shader work, smooth dusk/dawn and firefly flights. */
+import { Constants } from "@babylonjs/core/Engines/constants";
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { Material } from "@babylonjs/core/Materials/material";
@@ -18,7 +19,7 @@ import {
   TERRAIN_LIFT_PX,
 } from "./test-field";
 import { MAX_GLOW_LIGHTS, createNightLightModel } from "./night-lights";
-export { itemGlowAmount, fireflyAmount } from "./night-lights";
+export { itemGlowAmount, itemGlowEnergy, fireflyAmount } from "./night-lights";
 class WorldGlowPlugin extends MaterialPluginBase {
   constructor(
     material: StandardMaterial,
@@ -62,11 +63,16 @@ class WorldGlowPlugin extends MaterialPluginBase {
   }
 }
 export function createWorldGlow(scene: Scene) {
+  scene.setRenderingAutoClearDepthStencil(1, false);
+  scene.setRenderingAutoClearDepthStencil(2, false);
   const lights = Array(MAX_GLOW_LIGHTS * 4).fill(0) as number[];
   const pluginMaterials = new WeakSet<StandardMaterial>();
   const attach = (material: StandardMaterial) => {
     if (!pluginMaterials.has(material)) {
       new WorldGlowPlugin(material, lights);
+      material.onBindObservable.add(() =>
+        material.getEffect()?.setArray4("worldGlowLights", lights),
+      );
 
       pluginMaterials.add(material);
     }
@@ -75,32 +81,39 @@ export function createWorldGlow(scene: Scene) {
     attribute vec3 position;attribute vec2 uv;uniform mat4 worldViewProjection;
     varying vec2 vUV;void main(){vUV=uv;gl_Position=worldViewProjection*vec4(position,1.0);}`;
   Effect.ShadersStore.worldGlowHaloFragmentShader = `precision highp float;
-    varying vec2 vUV;uniform float glowTime;uniform float glowEnergy;uniform float glowCore;
+    varying vec2 vUV;uniform float glowTime;uniform float glowEnergy;uniform float glowCore;uniform float glowSparkle;
     void main(){vec2 p=vUV-vec2(0.5);float d=dot(p,p);
       float halo=exp(-d*25.0)*0.35;float core=exp(-d*950.0)*glowCore;
-      float alpha=(halo+core)*glowEnergy;if(alpha<0.002)discard;
+      float beat=pow(max(0.0,sin(glowTime*1.4)),12.0);
+      vec2 q=p-vec2(0.12*sin(glowTime*0.31),0.12*cos(glowTime*0.27));
+      float gem=(exp(-abs(q.x)*180.0-abs(q.y)*16.0)+exp(-abs(q.y)*180.0-abs(q.x)*16.0))*beat*glowSparkle;
+      float alpha=(halo+core+gem)*glowEnergy;if(alpha<0.002)discard;
       gl_FragColor=vec4(vec3(1.0,0.88,0.39)+vec3(core*0.7),alpha);}`;
-  const haloMaterial = new ShaderMaterial(
-    "world-glow-halo",
-    scene,
-    { vertex: "worldGlowHalo", fragment: "worldGlowHalo" },
-    {
-      attributes: ["position", "uv"],
-      uniforms: ["worldViewProjection", "glowTime", "glowEnergy", "glowCore"],
-      needAlphaBlending: true,
-    },
-  );
-  haloMaterial.backFaceCulling = false;
-  haloMaterial.disableDepthWrite = true;
-  haloMaterial.alphaMode = Material.MATERIAL_ALPHABLEND;
-  haloMaterial.onBindObservable.add((mesh) => {
-    const meta = mesh.metadata || {};
-    haloMaterial.setFloat("glowEnergy", meta.energy || 0);
-    haloMaterial.setFloat("glowCore", meta.core || 0);
-  });
   function halo(id: string, size: number) {
+    // Separate uniform state per source: shared onBind state was leaking between halos.
+    const material = new ShaderMaterial(
+      id + "-halo",
+      scene,
+      { vertex: "worldGlowHalo", fragment: "worldGlowHalo" },
+      {
+        attributes: ["position", "uv"],
+        uniforms: [
+          "worldViewProjection",
+          "glowTime",
+          "glowEnergy",
+          "glowCore",
+          "glowSparkle",
+        ],
+        needAlphaBlending: true,
+      },
+    );
+    material.backFaceCulling = false;
+    material.disableDepthWrite = true;
+    material.depthFunction = Constants.ALWAYS;
+    material.alphaMode = Material.MATERIAL_ALPHABLEND;
     const mesh = CreatePlane(id, { size: 1 }, scene);
-    mesh.material = haloMaterial;
+    mesh.material = material;
+    mesh.renderingGroupId = 2;
     mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
     mesh.scaling.set(size, size, size);
     mesh.isPickable = false;
@@ -127,15 +140,19 @@ export function createWorldGlow(scene: Scene) {
         halos.set(source.id, mesh);
       }
       mesh.position.set(source.x, source.y, source.z);
-      mesh.metadata = {
-        energy: source.energy * (source.kind === "firefly" ? 1 : 0.85),
-        core: source.kind === "firefly" ? 1 : 0,
-      };
+      const material = mesh.material as ShaderMaterial;
+      material.setFloat(
+        "glowEnergy",
+        source.energy * (source.kind === "firefly" ? 1 : 0.85),
+      );
+      material.setFloat("glowCore", source.kind === "firefly" ? 1 : 0);
+      material.setFloat("glowSparkle", source.sparkle ? 1 : 0);
+      material.setFloat("glowTime", now * 0.001);
       mesh.setEnabled(true);
     }
     for (const [id, mesh] of halos)
       if (!seen.has(id)) {
-        mesh.dispose();
+        mesh.dispose(false, true);
         halos.delete(id);
       }
     sources.sort(
@@ -151,12 +168,10 @@ export function createWorldGlow(scene: Scene) {
       lights[i * 4 + 2] = s.z;
       lights[i * 4 + 3] = s.energy * (s.kind === "firefly" ? 0.13 : 0.38);
     });
-    haloMaterial.setFloat("glowTime", now * 0.001);
   }
   function destroy() {
-    for (const mesh of halos.values()) mesh.dispose();
+    for (const mesh of halos.values()) mesh.dispose(false, true);
     halos.clear();
-    haloMaterial.dispose();
   }
   return { attach, update, destroy };
 }

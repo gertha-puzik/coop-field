@@ -21,6 +21,9 @@ export type ElisionActor = {
   id: string;
   isProp?: boolean;
   glows?: boolean;
+  glowIntensity?: number;
+  glowPeriod?: number;
+  sparkle?: boolean;
   attachment?: { parentId:string; x:number; y:number };
   opacity?: number;
   pose?: { scaleX: number; scaleY: number; rot: number; sway: number; lift: number };

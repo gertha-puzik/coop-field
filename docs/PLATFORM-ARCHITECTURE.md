@@ -491,3 +491,11 @@ Reachable UI requires both the rendered and the latest authoritative feet to be
 within 70px. Offers stay bound to their original sender/recipient actor IDs.
 Inventory errors render once (inside the inventory or beside the hotbar), and
 transient action errors clear after 4.5 seconds.
+
+Glow controls (2026-11-17): optional `glowIntensity` (0–3, default 1),
+`glowPeriod` (0 or 0.5–60 seconds, default 0 = steady), and boolean `sparkle`
+(default false) use the existing item-write permission. Invalid values reject
+the whole save; omitted fields preserve stored values for older clients.
+A smooth pulse varies between 60% and 100% of configured intensity; it never
+extinguishes the source. Gem sparkle adds a small periodic cross glint without
+modulating the base light. Both renderers use the same energy/timing model.

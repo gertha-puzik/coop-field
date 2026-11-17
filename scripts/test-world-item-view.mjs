@@ -24,6 +24,7 @@ vm.runInNewContext(code, {
       ? {
           createNightLightModel: () => ({ update: () => [] }),
           itemGlowAmount: () => 0,
+          itemGlowEnergy: () => 0,
         }
       : id.includes("test-field")
         ? { supportLevelAt: () => 2, TERRAIN_LIFT_PX: 26 }
@@ -126,6 +127,16 @@ console.log(
   "glow: PASS — day/evening/night transitions, fly visibility and item facing/metadata",
 );
 
+const steady = { glows: true, glowIntensity: 1.7, glowPeriod: 0 };
+assert.equal(glowApi.itemGlowEnergy(steady, 3.5, 0), 1.7);
+assert.equal(glowApi.itemGlowEnergy(steady, 3.5, 32100), 1.7);
+const pulsing = { ...steady, glowPeriod: 8 };
+assert.equal(
+  glowApi.itemGlowEnergy(pulsing, 3.5, 0),
+  glowApi.itemGlowEnergy(pulsing, 3.5, 8000),
+);
+assert(glowApi.itemGlowEnergy(pulsing, 3.5, 4000) > 0.99);
+assert.equal(glowApi.itemGlowEnergy(steady, 1, 0), 0);
 let randomState = 123;
 const model = glowApi.createNightLightModel(
   () =>
@@ -267,6 +278,63 @@ lightView.update(
   1000,
 );
 probeScene.render();
+const { Constants } = load("@babylonjs/core/Engines/constants");
+const lightingFrame = {
+  ...mirroredFrame,
+  cols: 12,
+  rows: 10,
+  camX: 0,
+  camY: 0,
+  yaw: 0,
+  dayProgress: 2.7,
+  decals: [
+    {
+      ...mirroredItems[0],
+      id: "bright",
+      glowIntensity: 2,
+      glowPeriod: 0,
+      sparkle: true,
+    },
+    {
+      ...mirroredItems[0],
+      id: "dim",
+      glowIntensity: 0.2,
+      glowPeriod: 0,
+      sparkle: false,
+    },
+  ],
+};
+let uploads = 0;
+const effect = probeMesh.subMeshes[0].effect;
+const setArray4 = effect.setArray4.bind(effect);
+effect.setArray4 = (...args) => {
+  if (args[0] === "worldGlowLights") uploads++;
+  return setArray4(...args);
+};
+for (const yaw of [0, 1.6, 3.14]) {
+  lightView.update({ ...lightingFrame, yaw }, 3000);
+  probeScene.render();
+}
+assert(
+  uploads >= 3,
+  "light arrays upload every draw, even with cached material bindings",
+);
+const brightHalo = probeScene.getMeshByName("bright"),
+  dimHalo = probeScene.getMeshByName("dim");
+assert.notEqual(
+  brightHalo.material,
+  dimHalo.material,
+  "sources never share mutable halo uniforms",
+);
+assert.equal(brightHalo.renderingGroupId, 2);
+assert.equal(
+  brightHalo.material.depthFunction,
+  Constants.ALWAYS,
+  "halos cannot be clipped by actor depth at any zoom/yaw",
+);
+assert.equal(brightHalo.material._floats.glowEnergy, 1.7);
+assert.equal(dimHalo.material._floats.glowEnergy, 0.17);
+assert.equal(brightHalo.material._floats.glowSparkle, 1);
 lightView.destroy();
 probeScene.dispose();
 probeEngine.dispose();

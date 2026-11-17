@@ -373,3 +373,10 @@ World-item actions/snapshots now carry the current owned `catId` (game tab),
 never another account's actor. Reach UI combines visual and authoritative feet;
 InventoryPanel is the sole inventory error surface. Two-tab regression is in
 `test:world-items`.
+
+Item glow stability (2026-11-17): catalogue fields glowIntensity (0–3, default1),
+glowPeriod (0 steady or 0.5–60 seconds), sparkle (boolean). Old writes retain them.
+night-lights.itemGlowEnergy feeds both renderers. Mouth decals have an explicit
+post-actor pass (group1, ALWAYS depth); halos group2 with per-source materials,
+no depth writes. Surface lights upload on material bind, independent of
+cached material binds. See ARCHITECTURE and PLATFORM-ARCHITECTURE for contracts.

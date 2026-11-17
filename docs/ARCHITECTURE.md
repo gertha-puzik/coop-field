@@ -587,3 +587,14 @@ rendered and polled authoritative feet for pickup availability. `test:world-item
 now covers two live tabs with different positions, explicit selection, release
 coordinates and foreign actor denial. One InventoryPanel alert replaces duplicate
 world/hotbar alerts.
+
+Stable item/glow passes (2026-11-17): mouth decals use rendering group 1 with
+ALWAYS depth test, after world actors; no tiny Z offset is relied on for visibility
+at distant zoom. Source halos use group 2, no depth writes and ALWAYS depth test;
+weather/UI remain later canvas layers. Each source owns its ShaderMaterial and
+uniform state, avoiding shared onBind energy leaking into another halo. Surface
+light arrays upload through the material's onBindObservable even when Babylon
+caches a material binding. `itemGlowEnergy` shares intensity and optional slow
+pulse across source halos, surface lights and self-lit item tint. `sparkle` adds
+an independent gem glint. Tests exercise independent halo uniforms, cached-bind
+updates, validation, legacy writes and persisted settings.

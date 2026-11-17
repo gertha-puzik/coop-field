@@ -1,6 +1,9 @@
 import { httpOrigin } from "./coop";
 export type ItemDefinition = {
   glows?: boolean;
+  glowIntensity?: number;
+  glowPeriod?: number;
+  sparkle?: boolean;
   id: string;
   name: string;
   weight: number;
