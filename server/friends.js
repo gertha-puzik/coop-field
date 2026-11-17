@@ -20,7 +20,7 @@ import { sessionFromRequest } from "./auth.js";
 import { json, setCors, readJson } from "./runtime-config.js";
 import { writeFileAtomic } from "./atomic-file.js";
 import { findById, publicProfile } from "./accounts.js";
-import { pushNotification } from "./notifications.js";
+import { pushNotification, setPendingFriendRequestCheck } from "./notifications.js";
 import { pushActivity, dropFriendActivity } from "./activity.js";
 import { presenceOf } from "./presence.js";
 
@@ -28,6 +28,15 @@ const FILE = path.join(DATA_DIR, "friends.json");
 
 /** @type {{ v:number, edges: Array<object> }} */
 let store = loadStore();
+// Applies to legacy notification rows too; resolved requests never count as unread.
+setPendingFriendRequestCheck((recipientId, row) => {
+  const fromId = row.payload?.fromId;
+  if (typeof fromId !== "string" || !hasPublic(findById(fromId))) return false;
+  const edge = edgeBetween(fromId, recipientId);
+  return edge?.status === "pending" && String(edge.fromId) === fromId &&
+    String(edge.toId) === recipientId &&
+    (row.payload?.requestId ? row.payload.requestId === edge.id : Number(row.createdAt) >= Number(edge.createdAt));
+});
 
 function emptyStore() {
   return { v: 1, edges: [] };
@@ -244,7 +253,7 @@ export async function handleFriendsHttp(req, res) {
         type: "friend_request",
         title: "Заявка в друзья",
         body: `${fromName} хочет добавить вас в друзья`,
-        payload: { fromId: meId, fromName },
+        payload: { fromId: meId, fromName, requestId: edgeBetween(meId, targetId).id },
       });
       json(res, 200, { ok: true, status: "pending" });
       return true;

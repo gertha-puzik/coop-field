@@ -13,7 +13,7 @@ import {
   httpNotificationsRead,
   type NotificationItem,
 } from '@/lib/net/http-notifications';
-import { httpFriendAccept, httpFriendDecline } from '@/lib/net/http-friends';
+import { httpFriendAccept, httpFriendDecline, humanFriendError } from '@/lib/net/http-friends';
 import { startPresenceBeat } from '@/lib/net/presence-beat';
 import styles from './site-header.module.css';
 
@@ -53,11 +53,16 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const reloadSequence = useRef(0);
+  const [acting, setActing] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
   const reload = useCallback(async () => {
     if (!inAccount || !IS_ELYRIA) return;
+    const sequence = ++reloadSequence.current;
     setLoading(true);
     const res = await httpNotificationsMe();
+    if (sequence !== reloadSequence.current) return;
     setLoading(false);
     if (!res) return;
     setItems(res.items);
@@ -71,8 +76,10 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
       return;
     }
     void reload();
-    const t = window.setInterval(() => void reload(), 45_000);
-    return () => window.clearInterval(t);
+    const refresh = () => void reload();
+    window.addEventListener('friends:changed', refresh);
+    const t = window.setInterval(refresh, 45_000);
+    return () => { ++reloadSequence.current; window.clearInterval(t); window.removeEventListener('friends:changed', refresh); };
   }, [inAccount, reload]);
 
   useEffect(() => {
@@ -95,6 +102,19 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
     const next = !open;
     setOpen(next);
     if (next) await reload();
+  };
+
+  const respondToFriend = async (id: string, accept: boolean) => {
+    if (acting) return;
+    setActing(id);
+    setActionError("");
+    try {
+      const res = await (accept ? httpFriendAccept(id) : httpFriendDecline(id));
+      if (res.ok || res.reason === "no_request") {
+        setItems(prev => prev.filter(it => it.type !== 'friend_request' || it.payload.fromId !== id));
+      } else setActionError(humanFriendError(res.reason, 'Не удалось ответить на заявку.'));
+      await reload();
+    } finally { setActing(null); }
   };
 
   const markAllRead = async () => {
@@ -156,6 +176,7 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
               </button>
             </div>
           </div>
+          {actionError ? <p role="status" className="px-3 py-2 text-sm text-[#ffb4b4]">{actionError}</p> : null}
           {items.length === 0 ? (
             <p className="px-3 py-4 text-center text-[12.5px] text-[#b9b3d9]">Пока тихо — новых уведомлений нет.</p>
           ) : (
@@ -184,26 +205,16 @@ function NotifyBell({ inAccount }: { inAccount: boolean }) {
                         <button
                           type="button"
                           className="rounded-md border border-[rgba(226,220,255,0.28)] px-2 py-1 text-[11px] text-[#efe7ff] hover:bg-[rgba(226,220,255,0.1)]"
-                          onClick={() => {
-                            void (async () => {
-                              await httpFriendAccept(fromId);
-                              await httpNotificationsRead({ ids: [it.id] });
-                              void reload();
-                            })();
-                          }}
+                          disabled={!!acting}
+                          onClick={() => void respondToFriend(fromId, true)}
                         >
                           Принять
                         </button>
                         <button
                           type="button"
                           className="rounded-md px-2 py-1 text-[11px] text-[#b9b3d9] hover:text-[#f4f0ff]"
-                          onClick={() => {
-                            void (async () => {
-                              await httpFriendDecline(fromId);
-                              await httpNotificationsRead({ ids: [it.id] });
-                              void reload();
-                            })();
-                          }}
+                          disabled={!!acting}
+                          onClick={() => void respondToFriend(fromId, false)}
                         >
                           Отклонить
                         </button>

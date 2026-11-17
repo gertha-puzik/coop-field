@@ -17,7 +17,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { httpOrigin } from '@/lib/net/coop';
 import { Button } from '@/components/ui/button';
-import type { ProfileCard, ProfileFriend, PublicProfile } from '@/lib/net/http-profiles';
+import type { ProfileCard, PublicProfile } from '@/lib/net/http-profiles';
 import {
   httpFriendAccept,
   httpFriendCancel,
@@ -150,7 +150,7 @@ export function ProfileCardView({
     typeof window !== 'undefined' && window.location.hash === '#settings' && mine ? 'settings' : 'profile',
   );
   const [relation, setRelation] = useState<FriendRelation>(card.friendRelation || (mine ? 'self' : 'none'));
-  const [friends, setFriends] = useState<ProfileFriend[]>(card.friends || []);
+  const friends = card.friends || [];
   const [friendBusy, setFriendBusy] = useState(false);
   const [friendNote, setFriendNote] = useState<string | null>(null);
   const [activityTick, setActivityTick] = useState(0);
@@ -158,7 +158,6 @@ export function ProfileCardView({
   // Poll каталога может обновить friendRelation/friends на card — синхронизируем.
   useEffect(() => {
     if (card.friendRelation) setRelation(card.friendRelation);
-    if (card.friends) setFriends(card.friends);
   }, [card.friendRelation, card.friends]);
 
   const name = shown.displayName || card.displayName || 'Безымянный кот';
@@ -209,14 +208,8 @@ export function ProfileCardView({
       if (action === 'request') setRelation('outgoing');
       else if (action === 'accept') {
         setRelation('friends');
-        setFriends((prev) =>
-          prev.some((f) => f.accountId === id)
-            ? prev
-            : [...prev, { accountId: id, displayName: name, avatar: null, presence: 'resting' }],
-        );
       } else if (action === 'decline' || action === 'cancel' || action === 'remove') {
         setRelation(action === 'remove' ? 'none' : 'none');
-        if (action === 'remove') setFriends((prev) => prev.filter((f) => f.accountId !== id));
       }
       onFriendsChanged?.();
     },
@@ -359,6 +352,7 @@ export function ProfileCardView({
           <div className={card2.col}>
             <ProfileFriendsGrid
               friends={friends}
+              loading={!Array.isArray(card.friends)}
               count={friendCount}
               mine={mine}
               onOpen={openFriend}

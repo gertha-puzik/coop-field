@@ -726,9 +726,11 @@ export default function PlayersCatalog() {
   useEffect(() => {
     if (!IS_ELYRIA || !focused?.accountId) return;
     const id = focused.accountId;
+    let disposed = false, sequence = 0;
     const tick = async () => {
+      const request = ++sequence;
       const one = await httpProfileById(id);
-      if (!one.ok || !one.card) return;
+      if (disposed || request !== sequence || !one.ok || !one.card) return;
       const fresh = one.card;
       setFocused((prev) => {
         if (!prev || prev.accountId !== id) return prev;
@@ -759,8 +761,11 @@ export default function PlayersCatalog() {
         );
       });
     };
-    const t = window.setInterval(() => void tick(), 20_000);
-    return () => window.clearInterval(t);
+    void tick();
+    const refresh = () => void tick();
+    window.addEventListener('friends:changed', refresh);
+    const t = window.setInterval(refresh, 20_000);
+    return () => { disposed = true; window.clearInterval(t); window.removeEventListener('friends:changed', refresh); };
   }, [focused?.accountId]);
 
   /** Производные строки: статусы фиксированы моментом загрузки (fetchedAt),

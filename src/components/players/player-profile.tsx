@@ -485,9 +485,9 @@ export default function PlayerProfile({
           ...card,
           ...myProfile,
           accountId: card.accountId,
-          friends: myProfile.friends ?? card.friends,
+          friends: card.friends ?? myProfile.friends,
           friendRelation: myProfile.friendRelation ?? card.friendRelation ?? 'self',
-          friendCount: myProfile.friendCount ?? card.friendCount,
+          friendCount: card.friendCount ?? myProfile.friendCount,
         }
       : card;
 
@@ -497,7 +497,7 @@ export default function PlayerProfile({
       <SiteHeader />
       <div className={`${styles.page} ${styles.profilePage}`}>
         <ProfileCardView
-          card={card}
+          card={shownCard}
           mine={mine}
           shown={shownCard}
           now={now}
