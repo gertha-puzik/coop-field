@@ -480,7 +480,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       syncDecals(frame,now);
       glow.update(frame,now);
       scene.render();
-      {let el=document.getElementById("local-render-values");if(!el){el=document.createElement("pre");el.id="local-render-values";el.style.cssText="position:fixed;top:24px;left:0;z-index:99999;background:white;color:black";document.body.append(el);}el.textContent=JSON.stringify({error:(engine as any)._gl.getError(),tint,day:frame.dayProgress,meshes:scene.meshes.length});}
     },
     destroy() {
       if (dead) return;
