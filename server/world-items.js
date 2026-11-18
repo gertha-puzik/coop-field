@@ -15,7 +15,7 @@ const range = 1.5;
 export const ITEM_REACH_PX = 70;
 const itemClose = (a, b) =>
   Math.hypot((a.x - b.x) * 100, (a.y - b.y) * 150) <= ITEM_REACH_PX;
-function live(accountId, characterId, catId) {
+export function liveWorldActor(accountId, characterId, catId) {
   for (const room of rooms.values()) {
     if (room.fmt !== "test") continue;
     for (const [ws, cat] of room.sockets)
@@ -47,12 +47,12 @@ const foot = (cat) => ({
 const close = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) <= range;
 const identity = (a) => `${a.accountId}:${a.characterId}`;
 function validOffer(offer) {
-  const a = live(
+  const a = liveWorldActor(
       offer.from.accountId,
       offer.from.characterId,
       offer.from.catId,
     ),
-    b = live(offer.to.accountId, offer.to.characterId, offer.to.catId);
+    b = liveWorldActor(offer.to.accountId, offer.to.characterId, offer.to.catId);
   if (
     !a ||
     !b ||
@@ -74,7 +74,7 @@ function prune() {
   for (const [id, offer] of offers) if (!validOffer(offer)) offers.delete(id);
 }
 export function worldItemsView(accountId, characterId, catId) {
-  const self = live(accountId, characterId, catId);
+  const self = liveWorldActor(accountId, characterId, catId);
   if (!self)
     return { room: null, selfId: null, ground: [], players: [], offers: [] };
   prune();
@@ -106,7 +106,7 @@ export function worldItemsView(accountId, characterId, catId) {
   };
 }
 export function actOnWorldItem(accountId, characterId, raw) {
-  const self = live(accountId, characterId, raw.catId);
+  const self = liveWorldActor(accountId, characterId, raw.catId);
   if (!self) return { error: "not_on_field" };
   prune();
   const state = worldItemState(accountId, characterId, self.room.code);

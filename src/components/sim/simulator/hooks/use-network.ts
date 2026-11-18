@@ -34,6 +34,7 @@ export interface SimNetDeps {
   onWorldField?: (map:TestMap,locations?:import('@/lib/sim/location-map').LocationPlace[])=>void;
   onWorldDisconnect?:()=>void;
   onWorldLocations?: (items:import('@/lib/sim/location-map').LocationPlace[])=>void;
+  onSprintBlocked?: () => void;
   onWorldInfo?: (text:string)=>void;
   loaded: boolean;
   netStarted: boolean;
@@ -586,6 +587,7 @@ export function useSimNet(deps: SimNetDeps) {
         engineRef.current.moveLockUntil = performance.now() + NET_ROLLBACK_LOCK_MS;
       },
       onRefuse: (refuse) => {
+        if (refuse?.code === "sprint_energy") deps.onSprintBlocked?.();
         if (refuse?.text) setNetStatus(refuse.text);
         // Основной путь — код отказа: редактура русских текстов на сервере
         // больше не ломает откат предикта. cliff — обрыв: шаг на клетку с перепадом

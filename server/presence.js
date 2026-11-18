@@ -141,6 +141,20 @@ export function presenceOf(accountId, now = Date.now()) {
   return "online";
 }
 
+/** Recovery is allowed outside the live and active portion of an interval. */
+export function recoveryRanges(accountId, from, now) {
+  if (from >= now) return [];
+  const row = live.get(accountId);
+  if (!row) return [[from, now]];
+  const activeEnd = Math.min(now, Math.max(row.siteUntil, row.gameUntil), row.lastActivityAt + AWAY_MS);
+  return activeEnd > from ? (activeEnd < now ? [[activeEnd, now]] : []) : [[from, now]];
+}
+
+let beforePresenceUpdate = () => {};
+export function bindStatsPresence(fn) {
+  beforePresenceUpdate = fn;
+}
+
 export function isAfk(accountId, now = Date.now()) {
   return presenceOf(accountId, now) === "away";
 }
@@ -195,13 +209,15 @@ export function presenceSlice(acc, now = Date.now()) {
 }
 
 /** Любая активность на сайте/в игре снимает AFK. */
-export function touchActivity(accountId) {
+export function touchActivity(accountId, onField = false) {
   const id = String(accountId || "");
   if (!id) return;
   const row = rowOf(id);
   if (!row) return;
   const now = Date.now();
   const was = isAfk(id, now);
+  if (was || (onField && !hasLiveTab(row, now))) beforePresenceUpdate(id, now, false);
+  if (onField) row.gameUntil = Math.max(row.gameUntil, now + HEARTBEAT_TTL_MS);
   row.lastActivityAt = now;
   emitAfk(id, was, now);
 }
@@ -264,6 +280,7 @@ export async function handlePresenceHttp(req, res) {
     const now = Date.now();
     const wasAfk = isAfk(id, now);
 
+    beforePresenceUpdate(id, now, true);
     if (where === "game") {
       // Лента: вход в игру — когда свежего game-heartbeat до этого не было.
       accruePlaytime(acc, row, now);
@@ -296,6 +313,7 @@ export function tickPresence() {
         const acc = findById(id);
         maybeFlushPlaytime(acc, row, true);
       }
+      beforePresenceUpdate(id, now, false);
       live.delete(id);
       continue;
     }

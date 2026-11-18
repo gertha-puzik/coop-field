@@ -87,6 +87,7 @@ import { TexturesTab } from './textures-tab';
 // вынесена в dash-shell.tsx; компакт-селект темы — site-компонент.
 import { ConsoleGeneral } from './console-general';
 import { ConsoleUsers } from './console-users';
+import { PlayerStatsTab } from './player-stats-tab';
 import { ConsoleWorld } from './console-world';
 import { ConsoleSubtabs } from './console-subtabs';
 import { PERMISSION_LABELS } from '@/lib/net/http-console';
@@ -101,7 +102,7 @@ type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
-const TAB_IDS = ['general', 'users', 'world', 'assets'] as const;
+const TAB_IDS = ['general', 'users', 'characteristics', 'world', 'assets'] as const;
 
 /* ================================ дашборд ================================ */
 
@@ -525,6 +526,7 @@ export default function CfgDashboard() {
   const tabs: DashTab[] = [
     {id:'general',title:'Общее',render:can('overview','invites','news','announcements')?()=> <ConsoleGeneral permissions={permissions}/>:null},
     {id:'users',title:'Игроки и администрация',render:can('players','roles','statuses')?()=> <ConsoleUsers permissions={permissions}/>:null},
+    {id:'characteristics',title:'Характеристики',render:can('config')?()=> <PlayerStatsTab/>:null},
     {id:'world',title:'Мир',render:can('world','config')?()=> <ConsoleWorld permissions={permissions} settings={renderCfg()} armor={armorPanel}/>:null},
     {id:'assets',title:'Ресурсы',render:can('sprites','textures','items')?()=> <ConsoleSubtabs tabs={[
       ...(can('items')?[{id:'items',label:'Создание предмета',content:<ItemsTab/>},{id:'item-grants',label:'Выдача предметов',content:<ItemGrantTab/>}]:[]),

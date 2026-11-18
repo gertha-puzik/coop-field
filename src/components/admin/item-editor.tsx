@@ -342,6 +342,24 @@ export function ItemEditor({
         onChange={(maxStack) => set({ maxStack })}
       />
       <ItemStepper
+        label="Восстанавливает энергию (п. п.)"
+        value={draft.energyRestore ?? 0}
+        min={0}
+        max={100}
+        step={0.5}
+        disabled={busy}
+        onChange={(energyRestore) => set({ energyRestore })}
+      />
+      <ItemStepper
+        label="Повышает комфорт (п. п.)"
+        value={draft.comfortRestore ?? 0}
+        min={0}
+        max={100}
+        step={0.5}
+        disabled={busy}
+        onChange={(comfortRestore) => set({ comfortRestore })}
+      />
+      <ItemStepper
         label="Яркость свечения (0–3)"
         value={draft.glowIntensity ?? 1}
         min={0}

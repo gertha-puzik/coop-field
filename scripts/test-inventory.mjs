@@ -561,6 +561,49 @@ try {
     30,
     "sprite migration preserves stacks",
   );
+  // A single consume commits the capped effects, history and slot version.
+  const statsUrl = "/cfg/inventory/stats?characterId=" + secondId;
+  const historyUrl = "/cfg/inventory/history?characterId=" + secondId;
+  const settingsUrl = "/cfg/console/characteristics";
+  assert.equal((await req(settingsUrl, a.cookie)).status, 403);
+  const { rules } = (await req(settingsUrl, admin.cookie)).row;
+  assert.equal(rules.startEnergy, 100);
+  const custom = { ...rules, startEnergy: 95, regenSeconds: 86400 };
+  assert.equal((await req(settingsUrl, admin.cookie, "POST", { ...custom, bonusStep: 0 })).status, 400);
+  assert.equal((await req(settingsUrl, admin.cookie, "POST", custom)).status, 200);
+  assert.equal((await req(statsUrl, admin.cookie)).status, 404);
+  assert.equal((await req(statsUrl, a.cookie)).row.stats.energy, 95);
+  const nugget = (await req("/cfg/items", admin.cookie)).row.items.find(i => i.id === "nugget");
+  assert.equal((await req("/cfg/items", admin.cookie, "POST", {
+    ...nugget, energyRestore: 10, comfortRestore: 20,
+  })).status, 200);
+  const second = (await req("/cfg/inventory?characterId=" + secondId, a.cookie)).row.inventory;
+  const consumableMoved = await req("/cfg/inventory/move", a.cookie, "POST", {
+    characterId: secondId, version: second.version,
+    from: { area: "bag", index: 0 }, to: { area: "hotbar", index: 0 },
+  });
+  assert.equal(consumableMoved.status, 200);
+  const consume = {
+    characterId: secondId, version: consumableMoved.row.inventory.version,
+    from: { area: "hotbar", index: 0 }, itemId: "nugget",
+  };
+  const results = await Promise.all([
+    req("/cfg/inventory/use", a.cookie, "POST", consume),
+    req("/cfg/inventory/use", a.cookie, "POST", consume),
+  ]);
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  assert.equal(results.find(result => result.status === 200).row.inventory.hotbar[0], null);
+  const stats = (await req(statsUrl, a.cookie)).row.stats;
+  assert.equal(stats.energy, 100);
+  assert.ok(stats.comfort > 59.99 && stats.comfort <= 60);
+  await stop();
+  await start();
+  const history = (await req(historyUrl, a.cookie)).row.entries;
+  assert.equal(history.length, 1);
+  assert.equal(history[0].name, "Наггетс");
+  assert.ok(history[0].energy > 4.99 && history[0].energy <= 5);
+  assert.equal(history[0].comfort, 20);
+  assert.deepEqual((await req(settingsUrl, admin.cookie)).row.rules, custom);
   console.log(
     "inventory: PASS — ownership, fifteen slots, stacks, shared weight, transactions, replay protection, sprites, logs and restart",
   );

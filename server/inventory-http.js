@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { DATA_DIR } from "./config.js";
 import { accountsStore, findById, activeCharacter } from "./accounts.js";
+import { touchActivity } from "./presence.js";
 import { sessionFromRequest } from "./auth.js";
 import { hasPermission } from "./access-roles.js";
 import { json, setCors } from "./runtime-config.js";
@@ -16,10 +17,14 @@ import {
   saveItem,
   deleteItem,
   moveStack,
+  useItem,
+  statsView,
+  itemUseHistory,
   grantItems,
   grantItemBatch,
 } from "./inventory-store.js";
-import { worldItemsView, actOnWorldItem } from "./world-items.js";
+import { sprintCredit } from "./sprint-energy.js";
+import { worldItemsView, actOnWorldItem, liveWorldActor } from "./world-items.js";
 const dir = path.join(DATA_DIR, "items");
 const fail = (res, out) =>
   json(res, out.status || 400, { ok: false, reason: out.error });
@@ -57,6 +62,23 @@ export async function handleInventoryHttp(req, res) {
     return json(res, 403, { ok: false, reason: "forbidden" });
   try {
     if (req.method === "GET") {
+      if (p === "/cfg/inventory/stats" || p === "/cfg/inventory/history") {
+        const character = characterOf(actor, url.searchParams.get("characterId"));
+        if (!character) return json(res, 404, { ok: false, reason: "character_not_found" });
+        if (p.endsWith("/history")) {
+          const offset = Number(url.searchParams.get("offset") || 0);
+          if (!Number.isSafeInteger(offset) || offset < 0)
+            return json(res, 400, { ok: false, reason: "invalid_request" });
+          return json(res, 200, { ok: true, ...itemUseHistory(actor.id, character.id, offset) });
+        }
+        const catId = Number(url.searchParams.get("catId"));
+        const live = liveWorldActor(actor.id, character.id, catId);
+        const stats = statsView(actor.id, character.id);
+        return json(res, 200, { ok: true, stats: {
+          ...stats,
+          canSprint: stats.energy >= stats.rules.sprintCost || sprintCredit(live?.cat),
+        } });
+      }
       if (p === "/cfg/inventory" || p === "/cfg/inventory/world") {
         const character = characterOf(
           actor,
@@ -119,6 +141,13 @@ export async function handleInventoryHttp(req, res) {
       const raw = JSON.parse((await readBody(req, 8192)).toString());
       if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return json(res, 400, { ok: false, reason: "invalid_request" });
+      if (p === "/cfg/inventory/use") {
+        const character = characterOf(actor, raw.characterId);
+        if (!character) return json(res, 404, { ok: false, reason: "character_not_found" });
+        touchActivity(actor.id);
+        const out = useItem(actor.id, character.id, raw);
+        return out.error ? fail(res, out) : json(res, 200, { ok: true, inventory: out.inventory });
+      }
       if (p === "/cfg/inventory/move" || p === "/cfg/inventory/world") {
         const character = characterOf(actor, raw.characterId);
         if (!character)

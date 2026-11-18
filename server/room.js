@@ -19,9 +19,11 @@ import { requiresAccount, RETIRED_ROOMS, modeOf } from "./modes.js";
 // НОВОЙ комнаты из effective-слоёв (нет overrides → null → прежняя ленивая
 // инициализация глобальным слоем, поведение неизменно).
 import { initialRoomAtmo } from "./room-config.js";
+import { hasPermission } from "./access-roles.js";
 import { activeCharacter, attachSprite } from "./accounts.js";
 import { statusLabelOf, defaultStatusId } from "./statuses.js";
-import { isAfk } from "./presence.js";
+import { isAfk, touchActivity } from "./presence.js";
+import { spendEnergy, statsRules } from "./inventory-store.js";
 import { hungerState } from "./hunger.js";
 import { atmoAnchor } from "./atmo.js";
 import { locationFromRoom, locationRoom, knownLocation, placeOf, locationCatalogue } from "./location-world.js";
@@ -348,6 +350,11 @@ function join(ws,payload={},options={}){
     }
   }
   const id=locationFromRoom(normalizeRoomCode(payload.room));
+  const from = locationFromRoom(ws.room?.code);
+  if (from && id && from !== id && !options.arrival && !hasPermission(ws.account, "world")) {
+    send(ws, EV.INFO, "Переход: воспользуйтесь проходом на карте.");
+    return;
+  }
   if(id&&!knownLocation(id)){send(ws,EV.NOPLACE,{room:payload.room,reason:'unknown_location'});return;}
   if(id&&!ws.account){send(ws,EV.REFUSE,{code:'auth_required',text:'Эта комната недоступна без входа.'});send(ws,EV.INFO,'Эта комната недоступна без входа.');send(ws,EV.NOPLACE,{room:normalizeRoomCode(payload.room),reason:'auth_required'});return;}
   try{return withTestLocation(id,()=>joinInWorld(ws,payload,options));}
@@ -360,7 +367,8 @@ function joinInWorld(ws, payload = {},options={}) {
     return;
   }
   ws.lastJoin = now;
-  if (ws.room) leave(ws);
+  const traveler = options.arrival && !options.adminTeleport ? ws.room?.sockets.get(ws) : null;
+  if (!traveler && ws.room) leave(ws);
   // S5b (аудит Z.AI 2026-11-08): потолок ЖИВЫХ комнат на процесс. Новую
   // комнату сверх ROOMS_MAX не создаём — отказ noplace 'rooms_full'
   // (не молчаливое создание). Существующая комната и вход по алиасу
@@ -384,11 +392,18 @@ function joinInWorld(ws, payload = {},options={}) {
     refuseJoin(ws, room, `В комнате уже ${MAX_PLAYERS} котов — мест нет. Смените ?room=.`);
     return;
   }
-  const cell = options.adminTeleport && options.arrival ? [options.arrival.x, options.arrival.y] : spawnCell(room);
+  const cell = options.arrival ? [options.arrival.x, options.arrival.y] : spawnCell(room);
   if (!cell) {
     // Двух котов в одну клетку не ставим: нет свободной клетки — отказ, не очередь.
     refuseJoin(ws, room, "На поле нет свободных клеток.");
     return;
+  }
+  if (traveler) {
+    if (!spendEnergy(traveler.accountId, traveler.characterId, statsRules().travelCost, now)) {
+      send(ws, EV.INFO, "Переход: не хватает энергии.");
+      return;
+    }
+    leave(ws);
   }
   const slot = room.cats.size;
   const fromAccount = ws.account ? activeCharacter(ws.account) : null;
@@ -405,6 +420,7 @@ function joinInWorld(ws, payload = {},options={}) {
   const size = Number.isFinite(sizeRaw) ? Math.min(100, Math.max(60, Math.round(sizeRaw))) : 100;
   const accountLogin = ws.account ? String(ws.account.login || "") : "";
   const accountId = ws.account ? String(ws.account.id || "") : "";
+  if (accountId && room.fmt === "test") touchActivity(accountId, true);
   const statusId =
     typeof ws.account?.profile?.statusId === "string" && ws.account.profile.statusId
       ? ws.account.profile.statusId
@@ -452,6 +468,7 @@ function joinInWorld(ws, payload = {},options={}) {
   send(ws, EV.FIELD, fieldPayload(room));
   const chatHistory=chatHistoryFor(room,ws);if(chatHistory.length)send(ws, EV.CHATLOG, chatHistory);
   broadcast(room, EV.MOVE, publicCat(cat, room), ws);
+  return true;
 }
 
 /**
