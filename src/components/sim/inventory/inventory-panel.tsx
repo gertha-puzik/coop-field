@@ -65,6 +65,7 @@ export function InventoryPanel({
   selected,
   onSelect,
   characterName,
+  blocked,
 }: {
   controller: InventoryController;
   open: boolean;
@@ -72,8 +73,11 @@ export function InventoryPanel({
   selected: number;
   onSelect: (index: number) => void;
   characterName: string;
+  blocked: boolean;
 }) {
   const { snapshot, busy, error, move } = controller;
+  const [touchUse, setTouchUse] = useState<string | null>(null);
+  useEffect(() => { setTouchUse(null); }, [open, blocked, snapshot?.characterId]);
   const finishFlight = useCallback(() => setFlight(null), []);
   const [flight, setFlight] = useState<Flight | null>(null),
     [landed, setLanded] = useState(""),
@@ -207,10 +211,11 @@ export function InventoryPanel({
     const stack = snapshot?.[area][index] || null,
       item = snapshot?.items.find((item) => item.id === stack?.itemId),
       key = `${area}:${index}`,
+      consumable = !!item && ((item.energyRestore ?? 0) > 0 || (item.comfortRestore ?? 0) > 0),
       isSelected =
         area === "hotbar" ? selected === index : selectedBag === index;
     return (
-      <div className={s.slotWrap} key={key}>
+      <div className={s.slotWrap} key={key} data-touch-use={touchUse === key ? "" : undefined}>
         {area === "hotbar" ? <kbd className={s.key}>{index + 1}</kbd> : null}
         <button
           type="button"
@@ -232,6 +237,11 @@ export function InventoryPanel({
             if (area === "hotbar") onSelect(index);
             else setSelectedBag(index);
             if (!stack || !item?.sprite) return;
+            if (!blocked && consumable && matchMedia("(hover: none)").matches && touchUse !== key) {
+              setTouchUse(key);
+              return;
+            }
+            setTouchUse(null);
             if (event.shiftKey) {
               void transfer({ area, index }, undefined, true);
               return;
@@ -268,6 +278,16 @@ export function InventoryPanel({
             </span>
           )}
         </button>
+        {!blocked && !carried && item && consumable ? (
+          <div className={s.usePopover}>
+            <strong>{item.name}</strong>
+            {item.energyRestore ? <small>Энергия +{item.energyRestore}</small> : null}
+            {item.comfortRestore ? <small>Комфорт +{item.comfortRestore}</small> : null}
+            <button type="button" disabled={busy} onClick={() => void controller.consume({ area, index }, item.id)}>
+              Использовать
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   }

@@ -1,3 +1,4 @@
+import { checkpointStats } from './inventory-store.js';
 import { handleInventoryHttp } from './inventory-http.js';
 import { handleSiteDesignHttp } from './site-design.js';
 import { handleAdminConsoleHttp } from "./admin-console.js";
@@ -68,7 +69,7 @@ import { handleMineSpritesHttp } from "./my-sprites.js";
 // безопасный метод без сессии, читается обоим сайтам).
 import { handleAvatarsHttp } from "./avatars.js";
 import { handleBannersHttp } from "./banners.js";
-import { handlePresenceHttp, bindPresenceRooms, bindPlaceResolver, touchActivity, onAfkChange } from "./presence.js";
+import { handlePresenceHttp, bindPresenceRooms, bindPlaceResolver, touchActivity, onAfkChange, bindStatsPresence } from "./presence.js";
 import { defaultPlace, knownLocation, locationCatalogue } from "./location-world.js";
 import { handleFriendsHttp } from "./friends.js";
 import { handleActivityHttp } from "./activity.js";
@@ -124,8 +125,8 @@ function dispatchMessage(ws, raw) {
   // Общий потолок block/space/atmo/atmoset/dummy/rab: молча, без нового события.
   if (isFrameLimited(event) && !allowBroadcastFrame(ws)) return;
   // Любой игровой кадр от сессии снимает AFK / обновляет активность.
-  if (ws?.account?.id) touchActivity(ws.account.id);
   const payload = Array.isArray(msg) ? msg[1] : msg;
+  if (ws?.account?.id) touchActivity(ws.account.id, ws.room?.fmt === "test");
   if (event === EV.JOIN){if(payload?.passageId)travel(ws,payload);else join(ws,payload||{});}
   else if (event === EV.MOVE) move(ws, payload || {});
   else if (event === EV.AIM) aim(ws, payload || {});
@@ -155,6 +156,7 @@ function dispatchMessage(ws, raw) {
   }
 }
 export function startServer() {
+  bindStatsPresence(checkpointStats);
   // Статусы на поле: сид Тестер/Глав. Админ после полной загрузки accounts.
   bootStatuses();
   // §5 fail-closed: первым делом — инстанс-класс и запрет выключенного CSRF

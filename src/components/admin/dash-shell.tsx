@@ -43,7 +43,7 @@ export function DashShell({
   children: ReactNode;
 }) {
   const [subnavTarget,setSubnavTarget]=useState<HTMLDivElement|null>(null);
-  const icons: Record<string,IconName> = {general:'chart',users:'users',world:'pin',assets:'gear'};
+  const icons: Record<string,IconName> = {general:'chart',users:'users',characteristics:'paw',world:'pin',assets:'gear'};
   const visible = tabs.filter((t) => t.render !== null);
   return (
     <main className={`${nightStyles.pageNight} relative min-h-screen`}>

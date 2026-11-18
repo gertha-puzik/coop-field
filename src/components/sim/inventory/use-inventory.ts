@@ -134,8 +134,34 @@ export function useInventory(
     },
     [characterId, catId, refresh],
   );
+  const consume = useCallback(async (from: InventorySlot, itemId: string) => {
+    const prior = snapshotRef.current;
+    if (!prior || !characterId || prior.characterId !== characterId || locked.current) return false;
+    locked.current = true;
+    setBusy(true);
+    setActionError("");
+    requestSeq.current++;
+    try {
+      const { inventory } = await inventoryRequest<{ inventory: InventorySnapshot }>(
+        "/cfg/inventory/use", "POST", { characterId, version: prior.version, from, itemId },
+      );
+      if (current.current !== characterId) return false;
+      setSnapshot(inventory);
+      return true;
+    } catch (error) {
+      if (current.current === characterId) setActionError(inventoryError(error));
+      return false;
+    } finally {
+      locked.current = false;
+      setBusy(false);
+      void refresh();
+      window.dispatchEvent(new Event("player-stats:refresh"));
+    }
+  }, [characterId, refresh]);
+
   return {
     worldAction,
+    consume,
     snapshot: snapshot?.characterId === characterId ? snapshot : null,
     busy,
     error: actionError || loadError,

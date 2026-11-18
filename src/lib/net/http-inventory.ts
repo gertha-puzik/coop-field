@@ -17,6 +17,8 @@ export type ItemDefinition = {
   glowIntensity?: number;
   glowPeriod?: number;
   sparkle?: boolean;
+  energyRestore?: number;
+  comfortRestore?: number;
   id: string;
   name: string;
   weight: number;
@@ -117,6 +119,9 @@ export function inventoryError(error: unknown) {
         stale_inventory:
           "Инвентарь изменился. Данные обновлены — повторите перемещение.",
         slot_occupied: "Этот слот занят другим предметом.",
+        empty_slot: "Предмета в этом слоте больше нет.",
+        stats_full: "Характеристики, которые повышает этот предмет, уже заполнены.",
+        not_consumable: "У этого предмета нет эффекта от использования.",
         invalid_slot: "Выберите другой слот.",
         operation_conflict: "Операция уже использована. Обновите страницу.",
         catalogue_full: "В каталоге уже 500 предметов.",

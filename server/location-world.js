@@ -305,8 +305,8 @@ export function travel(ws, payload) {
         const arrival = withTestLocation(passage.targetId, () => arrivalAt(target, locationFromRoom(source.code), passage, foot));
         if (arrival.error)
             return fail(arrival.error);
+        if (!join(ws, { room: target.code, login: cat.login, sprite: cat.sprite, size: cat.size }, { arrival })) return;
         ws.lastTravel = Date.now();
-        join(ws, { room: target.code, login: cat.login, sprite: cat.sprite, size: cat.size }, { arrival });
         pushActivity(ws.account.id, 'moved', { locationId: passage.targetId, label: locationLabelOf(ws.account) || '' });
     }
     catch (error) {

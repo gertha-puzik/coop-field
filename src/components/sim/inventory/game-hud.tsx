@@ -1,15 +1,19 @@
 "use client";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { CoopChatMessage } from "@/lib/net/coop";
 import { Icon } from "@/components/players/profile-icons";
 import { CONTROL_ROWS } from "../simulator/components/key-hint";
 import { GameChat } from "./game-chat";
 import { WorldItems } from "./world-items";
+import { usePlayerStats } from "./use-player-stats";
+import { PlayerStatsHud, PlayerStatsDetails } from "./player-stats";
+import statsStyle from "./player-stats.module.css";
 import { InventoryPanel } from "./inventory-panel";
 import { useInventory } from "./use-inventory";
 import s from "./game-hud.module.css";
 export type GameHudProps = {
   characterId?: string;
+  canSprintRef: RefObject<boolean>;
   characterName: string;
   editorOpen: boolean;
   lines: CoopChatMessage[];
@@ -63,12 +67,13 @@ function BookIcon() {
 }
 export function GameHud(props: GameHudProps) {
   const [panel, setPanel] = useState<
-      "inventory" | "settings" | "controls" | null
+      "inventory" | "settings" | "controls" | "stats" | null
     >(null),
     [settingsTab, setSettingsTab] = useState<"basic" | "advanced" | "log">(
       "basic",
     ),
     [selected, setSelected] = useState(0);
+  const stats = usePlayerStats(props.canSprintRef, props.characterId, props.meId);
   const inventory = useInventory(props.characterId, props.meId),
     close = () => setPanel(null),
     panelRef = useRef(panel),
@@ -229,8 +234,10 @@ export function GameHud(props: GameHudProps) {
         selected={selected}
         onSelect={setSelected}
         characterName={props.characterName}
+        blocked={!!panel && panel !== "inventory"}
       />
-      {panel === "settings" || panel === "controls" ? (
+      <PlayerStatsHud stats={stats} onOpen={() => setPanel("stats")} />
+      {panel === "settings" || panel === "controls" || panel === "stats" ? (
         <div
           className={s.modalBackdrop}
           onPointerDown={(event) => {
@@ -243,17 +250,17 @@ export function GameHud(props: GameHudProps) {
             aria-modal="true"
             aria-labelledby="game-dialog-title"
             data-game-dialog
-            className={s.dialog}
+            className={panel === "stats" ? `${s.dialog} ${statsStyle.details}` : s.dialog}
           >
             <header>
               <h2 id="game-dialog-title">
-                {panel === "settings" ? "Настройки" : "Управление"}
+                {panel === "settings" ? "Настройки" : panel === "stats" ? "Подробнее" : "Управление"}
               </h2>
               <button type="button" onClick={close} aria-label="Закрыть окно">
                 ×
               </button>
             </header>
-            {panel === "controls" ? (
+            {panel === "stats" ? <PlayerStatsDetails stats={stats} characterId={props.characterId} /> : panel === "controls" ? (
               <>
                 <p className={s.lead}>Всё необходимое для путешествия</p>
                 <dl className={s.keys}>

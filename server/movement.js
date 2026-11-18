@@ -15,6 +15,7 @@ import {
 import { WIDTH, HEIGHT } from "./config.js";
 import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
+import { acceptSprint } from "./sprint-energy.js";
 import { rememberCat } from "./persist.js";
 import { locationFromRoom } from "./location-world.js";
 import { withTestLocation, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
@@ -189,11 +190,18 @@ function freeMove(ws, payload = {}) {
     const after = terrainBodyOverlap(x1,y1,rx,ry,level,levelAt);
     if (after > Math.max(1e-7,before+1e-7)) return;
   }
+  const sprintRequested = !payload.stop && !jumping && (payload.sp === 1 || payload.sp === true);
+  const moving = nx !== cat.fx || ny !== cat.fy;
+  const sprinting = acceptSprint(cat, sprintRequested && moving, nowGuard);
+  if (sprintRequested && moving && !sprinting) {
+    send(ws, EV.REFUSE, { code: "sprint_energy", text: "Не хватает энергии для бега." });
+    return;
+  }
   cat.freeFoot = {dx:foot.dx,dy:foot.dy,rx,ry};
   cat.fm = 1;
   cat.fx = nx; // Не округляем угол спрайта: округление могло перенести лапы через край.
   cat.fy = ny;
-  cat.fsp = payload.stop ? 0 : payload.sp === 1 || payload.sp === true ? 1 : 0;
+  cat.fsp = Number(sprinting);
   cat.jp = payload.jp === 1 || payload.jp === true ? 1 : 0;
   const cell = nearestTestCell(cat.fx, cat.fy);
   if (cell) {

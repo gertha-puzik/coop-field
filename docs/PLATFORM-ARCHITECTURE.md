@@ -540,3 +540,25 @@ test:world-items and test-item-catalogue.mjs (part of test:unit).
 Item administration uses the UI-kit Dropdown for recipients, items, categories
 and sorting: portalled dark listboxes retain keyboard navigation and scrolling
 without platform-native white select popups.
+
+### Энергия и комфорт
+
+В Элизии характеристики и история использования предметов хранятся по персонажу
+в `inventories.json`. Правила для новых персонажей и расхода редактируются через
+`GET/POST /cfg/console/characteristics` с правом `config`. Текущие значения и история
+доступны владельцу через `GET /cfg/inventory/stats` и `GET /cfg/inventory/history`.
+Сервер рассчитывает восстановление по интервалам AFK и офлайна из presence.
+Комфорт снижается заданными шагами до порога, и интервалы восстановления
+считаются со скоростью, действовавшей в каждом диапазоне комфорта.
+
+Переход через проход списывает энергию после проверки точки назначения. Бег
+покупает интервал в начале и расходует его только за время движения. Сервер
+возвращает `refuse` с кодом `sprint_energy`, когда следующий интервал оплатить
+нельзя. Восстановление до 100% выбранному коту на поле проходит через
+`POST /cfg/console/refill-energy` с правом `world`.
+
+`POST /cfg/inventory/use` сверяет владельца, версию инвентаря и предмет в слоте.
+Списание одной штуки, изменение характеристик и запись фактических прибавок
+сохраняются в одной транзакции. Эффекты задаются полями `energyRestore` и
+`comfortRestore` в каталоге предметов. При заполнении всех затронутых
+характеристик предмет остаётся в слоте.

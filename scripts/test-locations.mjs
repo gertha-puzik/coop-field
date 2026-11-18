@@ -105,6 +105,15 @@ try {
     assert.equal(me.size, 67, 'passage retains saved height');
     // Лента «Последние действия»: успешный проход пишет ровно одно moved (провалы — нет).
     const meRow = await (await fetch(origin + '/profiles/me', { headers: { Origin: origin, Cookie: cookie } })).json();
+    const statsUrl = '/cfg/inventory/stats?characterId=' + encodeURIComponent(meRow.activeCharacterId ?? meRow.characters?.[0]?.id);
+    const getStats = async () => (await (await fetch(origin + statsUrl, {headers:{Cookie:cookie}})).json()).stats;
+    assert.equal((await getStats()).energy, 90, 'only a successful passage costs 10 energy');
+    const refill = await fetch(origin + '/cfg/console/refill-energy', {
+        method:'POST', headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},
+        body:JSON.stringify({accountId:meRow.accountId,catId:me.id}),
+    });
+    assert.equal(refill.status, 200);
+    assert.equal((await getStats()).energy, 100, 'admin refills the selected cat');
     const feed = await (await fetch(origin + '/activity/' + meRow.accountId)).json();
     const moves = feed.items.filter(it => it.type === 'moved');
     assert.equal(moves.length, 1, 'one successful passage → one moved activity');
@@ -128,6 +137,21 @@ try {
     await a.wait(f => f[0] === 'field' && f[1].room === 'test', n);
     a.send('freemove', { x: 2, y: 5, foot: { dx: .45, dy: .95 }, stop: true });
     await sleep(2100);
+    assert.equal((await getStats()).energy, 90);
+    const configUrl = origin + '/cfg/console/characteristics';
+    const settingsHeaders = {Origin:origin,Cookie:cookie,'Content-Type':'application/json'};
+    const {rules} = await (await fetch(configUrl,{headers:settingsHeaders})).json();
+    const changeRules = async body => assert.equal((await fetch(configUrl, {
+        method:'POST',headers:settingsHeaders,body:JSON.stringify(body),
+    })).status, 200);
+    await changeRules({...rules,travelCost:100});
+    n = a.frames.length;
+    a.send('join', { passageId: 'forest' });
+    await a.wait(f => f[0] === 'info' && String(f[1]).includes('не хватает энергии'), n);
+    assert.equal((await getStats()).energy, 90, 'refused passage leaves energy untouched');
+    assert(!a.frames.slice(n).some(f => f[0] === 'field'));
+    await changeRules(rules);
+    await sleep(1100);
     n = a.frames.length;
     a.send('join', { passageId: 'forest' });
     const back = await a.wait(f => f[0] === 'field' && f[1].room === 'test-loc-2', n);

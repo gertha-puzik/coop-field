@@ -583,6 +583,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const [peerCount, setPeerCount] = useState(1);
   const [netReady, setNetReady] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
+  const canSprintRef = useRef(false);
   /** Манекен «ПОЧУХАТЬ» включён в комнате (истина приходит с сервера, не из localStorage). */
   const [dummyOn, setDummyOn] = useState(false);
   /** Боевая мишень «РАБ» включена в комнате. */
@@ -1088,6 +1089,11 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   };
 
   useSimNet({
+    onSprintBlocked: () => {
+      if (!canSprintRef.current) return;
+      canSprintRef.current = false;
+      window.dispatchEvent(new Event('player-stats:refresh'));
+    },
     onWorldField:world.onField,onWorldInfo:world.onInfo,onWorldLocations:world.onCatalogue,onWorldDisconnect:world.onDisconnect,
     loaded,
     netStarted,
@@ -1990,7 +1996,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             }
           }
         }
-        const sprint = sprintRef.current;
+        const sprint = sprintRef.current && (!IS_ELYRIA || canSprintRef.current) && (vx !== 0 || vy !== 0);
         // Инерция мирной ходьбы: скорость приближается к желаемой — на разгоне
         // быстро (полсотни мс), на выбегании плавно: кот не встаёт как вкопанный,
         // а мягко докатывается. После спринта выбегание дольше — инерция заметнее.
@@ -4978,7 +4984,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       ) : null}
 
       {/* Настройки — выдвижная панель поверх поля: место экрана не отдаёт, открывается кнопкой в шапке */}
-      {IS_ELYRIA ? <GameHud characterId={whoami?.activeCharacterId} characterName={whoami?.characters?.find(character=>character.id===whoami.activeCharacterId)?.name || playerName || 'Персонаж'} editorOpen={editorOpen}
+      {IS_ELYRIA ? <GameHud canSprintRef={canSprintRef} characterId={whoami?.activeCharacterId} characterName={whoami?.characters?.find(character=>character.id===whoami.activeCharacterId)?.name || playerName || 'Персонаж'} editorOpen={editorOpen}
         lines={chatLines} meId={meId} canSend={netReady} onSend={sendChat} weather={weatherFxOn} day={dayTintOn} battle={settings.arrow.battleMode}
         onWeather={toggleWeatherFx} onDay={toggleDayTint} onBattle={toggleBattleMode} onEditor={openEditor} canEdit={whoami?.role==='admin' || !!whoami?.permissions?.includes('world')}
         advanced={advancedSettings} status={netStatus} peers={peerCount} credits={GAME_CREDITS}

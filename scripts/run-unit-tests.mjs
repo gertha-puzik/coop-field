@@ -28,6 +28,7 @@ const TESTS = [
   "scripts/test-elision-scene.mts",
   "scripts/test-world-item-view.mjs",
   "scripts/test-item-catalogue.mjs",
+  "scripts/test-player-stats.mjs",
   "scripts/test-sprite-aspect.mts",
   "scripts/test-path-field.mts",
   "scripts/test-paint-pressure.mts",

@@ -427,3 +427,43 @@
   image-rendering: pixelated;
   pointer-events: none;
 }
+
+.usePopover {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  z-index: 5;
+  min-width: 112px;
+  width: max-content;
+  max-width: 150px;
+  padding: 7px 9px;
+  border: 1px solid #bc9170;
+  border-radius: 10px;
+  background: #2c2031;
+  color: #f8e4c6;
+  box-shadow: 0 5px 18px #0008;
+  font-size: 12px;
+}
+.slotWrap:hover .usePopover,
+.slotWrap:focus-within .usePopover {
+  display: grid;
+  gap: 3px;
+}
+.usePopover button {
+  border: 1px solid #c79a74;
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: #fae8c8;
+  background: #513249;
+  cursor: pointer;
+}
+.usePopover button:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+@media (hover: none) {
+  .slotWrap:not([data-touch-use]) .usePopover { display: none; }
+  .slotWrap[data-touch-use] .usePopover { display: grid; gap: 3px; }
+}

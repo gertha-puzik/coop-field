@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "./config.js";
+import { DEFAULT_STATS_RULES, parseStatsRules, settleStats, comfortBonus } from "./player-stats.js";
+import { recoveryRanges, presenceOf } from "./presence.js";
 import { writeFileAtomic } from "./atomic-file.js";
 export const BAG_SLOTS = 10,
   HOTBAR_SLOTS = 5,
@@ -45,6 +47,75 @@ function commit(next) {
   writeFileAtomic(file, JSON.stringify(next));
   store = next;
 }
+export const statsRules = () => store.statsRules || DEFAULT_STATS_RULES;
+const persistedStats = (key, now, rules = statsRules()) => {
+  const old = store.playerStats?.[key];
+  const accountId = key.slice(0, key.indexOf(":"));
+  return settleStats(old, rules, now, old ? recoveryRanges(accountId, old.at, now) : []);
+};
+function setPlayerStats(key, stats) {
+  commit({ ...store, playerStats: { ...store.playerStats, [key]: stats } });
+}
+
+export function saveStatsRules(raw) {
+  const rules = parseStatsRules(raw);
+  if (!rules) return null;
+  const now = Date.now();
+  const previous = statsRules();
+  const decayChanged = rules.comfortMinutes !== previous.comfortMinutes ||
+    rules.comfortLoss !== previous.comfortLoss || rules.comfortFloor !== previous.comfortFloor;
+  const playerStats = Object.fromEntries(Object.keys(store.playerStats || {}).map(key => {
+    const stats = persistedStats(key, now);
+    return [key, decayChanged ? { ...stats, comfortTickAt: now } : stats];
+  }));
+  commit({ ...store, statsRules: rules, playerStats });
+  return rules;
+}
+
+export function checkpointStats(accountId, now, heartbeat) {
+  const row = store.playerStats;
+  const keys = Object.keys(row || {}).filter(key => key.startsWith(accountId + ":") &&
+    now > row[key].at && (!heartbeat || now - row[key].at >= 20_000 ||
+      ["away", "resting"].includes(presenceOf(accountId, now))));
+  if (!keys.length) return;
+  const playerStats = { ...row };
+  for (const key of keys) playerStats[key] = persistedStats(key, now);
+  commit({ ...store, playerStats });
+}
+
+export function statsView(accountId, characterId, now = Date.now()) {
+  const key = keyOf(accountId, characterId);
+  const rules = statsRules();
+  const stats = persistedStats(key, now, rules);
+  if (!store.playerStats?.[key]) setPlayerStats(key, stats);
+  return {
+    energy: stats.energy, comfort: stats.comfort,
+    bonus: comfortBonus(stats.comfort, rules),
+    recovering: ["away", "resting"].includes(presenceOf(accountId, now)),
+    rules,
+  };
+}
+
+export function itemUseHistory(accountId, characterId, offset) {
+  const history = store.playerStats?.[keyOf(accountId, characterId)]?.history || [];
+  const end = offset + 30;
+  return { entries: history.slice(offset, end), nextOffset: end < history.length ? end : null };
+}
+
+export function spendEnergy(accountId, characterId, cost, now = Date.now()) {
+  if (!accountId || !characterId || cost === 0) return true;
+  const key = keyOf(accountId, characterId);
+  const stats = persistedStats(key, now);
+  if (stats.energy < cost) return false;
+  setPlayerStats(key, { ...stats, energy: stats.energy - cost });
+  return true;
+}
+
+export function refillEnergy(accountId, characterId) {
+  const key = keyOf(accountId, characterId);
+  setPlayerStats(key, { ...persistedStats(key, Date.now()), energy: 100 });
+}
+
 export const ITEM_CATEGORIES = [
   "food",
   "resources",
@@ -177,7 +248,13 @@ export function saveItem(raw) {
   }
   if (raw.sparkle !== undefined && typeof raw.sparkle !== "boolean")
     return { error: "invalid_item" };
+  const energyRestore = raw.energyRestore ?? store.items[id]?.energyRestore ?? 0;
+  const comfortRestore = raw.comfortRestore ?? store.items[id]?.comfortRestore ?? 0;
+  if ([energyRestore, comfortRestore].some(value => !Number.isFinite(value) || value < 0 || value > 100))
+    return { error: "invalid_item" };
   const item = {
+      energyRestore,
+      comfortRestore,
       id,
       name,
       weight,
@@ -214,6 +291,40 @@ export function saveItem(raw) {
   commit({ ...store, items, inventories });
   return { item: copy(item) };
 }
+export function useItem(accountId, characterId, raw) {
+  const key = keyOf(accountId, characterId);
+  const old = store.inventories[key] || empty();
+  if (old.version !== raw.version) return { error: "stale_inventory", status: 409 };
+  const { area, index } = raw.from || {};
+  if (!["bag", "hotbar"].includes(area) || !Number.isInteger(index) || index < 0 || index >= old[area].length)
+    return { error: "invalid_slot" };
+  const stack = old[area][index];
+  if (!stack || stack.itemId !== raw.itemId) return { error: "empty_slot" };
+  const item = store.items[stack.itemId];
+  if (!item || !(item.energyRestore || item.comfortRestore)) return { error: "not_consumable" };
+  const now = Date.now();
+  const stats = persistedStats(key, now);
+  const energy = Math.min(item.energyRestore || 0, 100 - stats.energy);
+  const comfort = Math.min(item.comfortRestore || 0, 100 - stats.comfort);
+  if (!(energy || comfort)) return { error: "stats_full" };
+  const inventory = copy(old);
+  if (--inventory[area][index].quantity === 0) inventory[area][index] = null;
+  inventory.version++;
+  const next = {
+    ...stats,
+    energy: stats.energy + energy,
+    comfort: stats.comfort + comfort,
+    comfortTickAt: stats.comfort <= statsRules().comfortFloor ? now : (stats.comfortTickAt ?? now),
+    history: [{ id: randomUUID(), at: now, name: item.name, energy, comfort }, ...(stats.history || [])],
+  };
+  commit({
+    ...store,
+    inventories: { ...store.inventories, [key]: inventory },
+    playerStats: { ...store.playerStats, [key]: next },
+  });
+  return { inventory: inventoryView(accountId, characterId) };
+}
+
 export function moveStack(accountId, characterId, raw) {
   const key = keyOf(accountId, characterId),
     old = store.inventories[key] || empty();
@@ -395,7 +506,10 @@ export function forgetInventories(accountId) {
         JSON.parse(value)[1].some((r) => r.accountId === accountId))
     )
       delete operations[key];
-  commit({ ...store, inventories, operations });
+  const playerStats = { ...store.playerStats };
+  for (const key of Object.keys(playerStats))
+    if (key.startsWith(accountId + ":")) delete playerStats[key];
+  commit({ ...store, inventories, operations, playerStats });
 }
 
 /** One atomic ownership transaction: inventory, mouth and world never diverge. */
