@@ -111,3 +111,5 @@
 .tabContent:not(:empty) { animation:tabAppear .24s ease both; }
 @keyframes tabAppear { from { opacity:0;transform:translateY(7px); } to { opacity:1;transform:translateY(0); } }
 @media(prefers-reduced-motion:reduce) { .submenu,.chevron,.navigation .nav button { transition:none; } .tabContent:not(:empty) { animation:none; } }
+
+.statInput { width: 75px; }

@@ -7,7 +7,7 @@ import { auditItems, pushAdminAudit } from './admin-audit.js';
 import { presenceSlice } from './presence.js';
 import { adminLocations, teleportAccount } from './admin-world.js';
 import { adminOccupancy, rooms } from './room.js';
-import { statsRules, saveStatsRules, refillEnergy } from './inventory-store.js';
+import { statsRules, saveStatsRules, setCharacterStat } from './inventory-store.js';
 import { eraseAccount } from './account-delete.js';
 export const GAME_VERSION='0.6.7';
 const deletionAttempts=new Map();
@@ -25,7 +25,7 @@ export async function handleAdminConsoleHttp(req,res) {
     const p=new URL(req.url,'http://localhost').pathname.replace('/cfg/console','') || '/';
     const session=sessionFromRequest(req), actor=session?.account;
     if(!actor) return json(res,401,{ok:false,reason:'auth_required'});
-    const permission=p==='/characteristics'?'config':p==='/refill-energy'?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
+    const permission=p==='/characteristics'?'config':p==='/player-stat'?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
     if(!hasPermission(actor,permission) && !(p==='/users' && hasPermission(actor,'roles'))) return json(res,403,{ok:false,reason:'forbidden'});
     if(req.method==='GET') {
       if(p==='/') {
@@ -70,12 +70,14 @@ export async function handleAdminConsoleHttp(req,res) {
       for(const room of rooms.values()) for(const ws of room.sockets.keys()) if(ws.account?.id===target.id) ws.close(1000,'Account deleted');
       pushAdminAudit('players',`Удалён аккаунт ${login}`,actor.login); return json(res,200,{ok:true});
     }
-    if(p==='/refill-energy') {
+    if(p==='/player-stat') {
       const cat=[...rooms.values()].map(room=>room.cats.get(body.catId))
         .find(row=>row?.accountId===target.id && row.characterId && row.locationId);
       if(!cat) return json(res,404,{ok:false,reason:'not_on_field'});
-      refillEnergy(target.id,cat.characterId);
-      pushAdminAudit('location-updates',`Восполнена энергия игрока ${cat.login}`,actor.login);
+      const {stat,value}=body;
+      if(!setCharacterStat(target.id,cat.characterId,stat,value)) return json(res,400,{ok:false,reason:'invalid_stat'});
+      const label=stat==='energy'?'энергии':'комфорта';
+      pushAdminAudit('config',`Установлено ${value}% ${label} игроку ${cat.login}`,actor.login);
       return json(res,200,{ok:true});
     }
     if(p==='/teleport') {
