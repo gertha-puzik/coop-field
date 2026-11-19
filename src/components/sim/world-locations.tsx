@@ -310,14 +310,15 @@ export function useWorldLocations(options: Options) {
     return { place, places, view, near, destination, begin, onField, onInfo, onCatalogue, onDisconnect, switchEditor, tick };
 }
 export type WorldLocations = ReturnType<typeof useWorldLocations>;
-export function WorldLocationOverlay({ world, editorOpen }: {
+export function WorldLocationOverlay({ world, editorOpen, locationHud }: {
     world: WorldLocations;
     editorOpen: boolean;
+    locationHud?: ReactNode;
 }) {
     const { view, place, near, destination } = world;
     const busy = view.phase !== 'idle';
     return <>
-    {!editorOpen && <div className={styles.location} aria-label="Текущая локация">{place.zoneName.toLocaleUpperCase('ru-RU')} — {place.name}</div>}
+    {!editorOpen && (locationHud ?? <div className={styles.location} aria-label="Текущая локация">{place.zoneName.toLocaleUpperCase('ru-RU')} — {place.name}</div>)}
     {!editorOpen && !busy && near && <div className={styles.prompt} role="region" aria-label="Переход в локацию">
       <span className={styles.sign} aria-hidden>♧</span><strong>Путь в «{destination?.name ?? `Локация ${near.targetId}`}»</strong>
       <span>{destination?.zoneName ?? 'Неизвестная зона'}</span><button type="button" onClick={world.begin}><kbd>E</kbd> Перейти</button>

@@ -248,6 +248,7 @@ import {
 } from '@/lib/sim/settings';
 import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
 import { useBootSignal } from './simulator/hooks/use-boot-signal';
+import { WeatherHud } from './weather-hud';
 import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget, drawElisionNameplates } from './simulator/hud-canvas';
 import { drawNameplate } from '@/lib/sim/nameplate';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
@@ -4130,7 +4131,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const vh = cv.clientHeight || 0;
         if (vw > 0 && vh > 0) {
           const w2 = hudWxRef.current;
-          if(editorOpenRef.current){clearFieldHud(hud,vw,vh);}
+          if (IS_ELYRIA || editorOpenRef.current) clearFieldHud(hud, vw, vh);
           else drawFieldHud(hud, vw, vh, p4, w2.w, w2.prev, w2.at);
         }
       }
@@ -4833,7 +4834,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             (use-touch-controls.ts). Монтируется только вне редактора:
             редактор локации глушит и клавиши, и тач в одном стиле. */}
         <FieldStage
-        worldOverlay={testField?<WorldLocationOverlay world={world} editorOpen={editorOpen}/>:null}
+        worldOverlay={testField ? <WorldLocationOverlay world={world} editorOpen={editorOpen}
+          locationHud={IS_ELYRIA ? <WeatherHud phase={atmoState.dp} weather={atmoState.w}
+            location={`${world.place.zoneName} — ${world.place.name}`} /> : undefined} /> : null}
           fieldFrameRef={fieldFrameRef}
           testField={testField}
           fieldFit={fieldFit}
