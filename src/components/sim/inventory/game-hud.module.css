@@ -462,7 +462,7 @@
   }
 }
 @media (max-width: 420px) and (pointer: coarse) and (min-height: 560px) {
-  .chat[data-collapsed="true"] { --chat-bottom: 367px; }
+  .chat[data-collapsed="true"] { --chat-bottom: 394px; }
 }
 .chat header [role="tab"] {
   display: inline-flex;
