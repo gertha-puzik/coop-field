@@ -23,7 +23,7 @@ import path from "node:path";
 // используются). Исключение остаётся, чтобы локальный остаток public/catwar
 // не попал в статику ни одного сайта.
 const EXCLUDE = {
-  grotto: ["game", "elision", "players", "admin", "catwar"], // «Пивные гроты»: всё публичное
+  grotto: ["game", "elision", "players", "admin", "catwar", "ui/weather-hud"], // «Пивные гроты»: всё публичное
   elyria: ["combat", "hunger", "catwar"], // Элизия: ни гротов, ни заглушки Hunger Games, ни снятого пака
 };
 
