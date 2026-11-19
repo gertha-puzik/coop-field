@@ -5,9 +5,9 @@
   z-index: 54;
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 290px;
-  padding: 8px 12px;
+  gap: 14px;
+  width: 360px;
+  padding: 12px 15px;
   isolation: isolate;
   border: 2px solid #eac398;
   border-radius: 24px 18px 24px 18px;
@@ -38,23 +38,23 @@
 .energy {
   display: grid;
   justify-items: center;
-  gap: 6px;
+  gap: 9px;
   flex: 1;
   min-width: 0;
 }
 .energy > button {
   border: 1px solid #efc58e;
   border-radius: 30px;
-  padding: 3px 12px;
+  padding: 5px 15px;
   background: linear-gradient(#4e3247, #322333);
   color: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
   cursor: pointer;
 }
 .energy > button:hover { background: #68425a; }
 .energy > button:focus-visible { outline: 2px solid #ffe296; outline-offset: 2px; }
-.energyTitle { font-weight: 790; }
+.energyTitle { font-size: 19px; font-weight: 790; }
 .energyTitle span, .tiles h3 > span { color: #ffd053; font-size: 1.3em; }
 .energyLevel {
   width: 100%;
@@ -64,8 +64,8 @@
   background: #201728;
   border: 1px solid #694a5c;
   border-radius: 18px;
-  padding: 4px 7px;
-  font-size: 11px;
+  padding: 5px 9px;
+  font-size: 13px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -81,27 +81,27 @@
 .energyLevel meter::-webkit-meter-optimum-value { background: linear-gradient(#ffe480, #ffcc3b); border-radius: 10px; }
 .energyLevel meter::-moz-meter-bar { background: linear-gradient(#ffe480, #ffcc3b); border-radius: 10px; }
 .comfort {
-  flex: 0 0 70px;
+  flex: 0 0 84px;
   display: grid;
   justify-items: center;
   align-items: center;
-  padding: 5px 3px;
+  padding: 8px 5px;
   margin: -14px -4px;
   gap: 3px;
   background: linear-gradient(#452838, #2c2031);
   border: 2px solid #f1c99d;
   border-radius: 35px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 750;
   box-shadow: 0 2px 10px #1a101ba0;
 }
 .comfort > svg { color: #ffd49e; }
 .scale {
   position: relative;
-  width: 10px;
-  height: 46px;
+  width: 15px;
+  height: 85px;
   border-radius: 9px;
-  margin: 4px 0;
+  margin: 9px 0;
   background: linear-gradient(to top, #ff4355, #bd5fe2 50%, #2c9bff);
   box-shadow: 0 0 0 1px #171027, inset 0 0 2px #fff8;
 }
@@ -119,14 +119,14 @@
   display: grid;
   place-items: center;
   left: 50%;
-  width: 21px;
-  height: 21px;
+  width: 24px;
+  height: 24px;
   transform: translate(-50%, 50%);
   color: #fff0d1;
-  background: #834ab6;
+  background: transparent;
   border: 2px solid #ffe0a1;
   border-radius: 50%;
-  box-shadow: 0 2px 5px #190c22;
+  box-shadow: 0 0 4px #190c2288;
   z-index: 1;
 }
 .details {
@@ -167,13 +167,17 @@
 .history li div { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; }
 .history time { color: #dfbbc5; font-size: 11px; }
 
-@media (max-width: 1020px) {
-  .plate { bottom: 120px; width: 230px; }
+@media (max-width: 1160px) {
+  .plate { bottom: 122px; width: 290px; }
 }
 @media (max-width: 560px) {
-  .plate { width: 185px; right: 9px; bottom: 100px; padding: 6px; gap: 6px; }
-  .comfort { flex-basis: 55px; margin: -8px -2px -8px 0; }
-  .energyLevel { padding-inline: 4px; gap: 3px; }
+  .plate { width: 205px; right: 9px; bottom: 105px; padding: 7px; gap: 6px; }
+  .comfort { flex-basis: 63px; margin: -9px -2px -9px 0; padding: 5px 3px; font-size: 11px; }
+  .scale { height: 64px; width: 13px; }
+  .needle { width: 22px; height: 22px; }
+  .energyTitle { font-size: 15px; }
+  .energy > button { font-size: 12px; padding-inline: 8px; }
+  .energyLevel { padding-inline: 4px; gap: 3px; font-size: 11px; }
   .tiles { grid-template-columns: 1fr; }
 }
 

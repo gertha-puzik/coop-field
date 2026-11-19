@@ -108,12 +108,21 @@ try {
     const statsUrl = '/cfg/inventory/stats?characterId=' + encodeURIComponent(meRow.activeCharacterId ?? meRow.characters?.[0]?.id);
     const getStats = async () => (await (await fetch(origin + statsUrl, {headers:{Cookie:cookie}})).json()).stats;
     assert.equal((await getStats()).energy, 90, 'only a successful passage costs 10 energy');
-    const refill = await fetch(origin + '/cfg/console/refill-energy', {
+    const setStat = (stat, value, catId = me.id) => fetch(origin + '/cfg/console/player-stat', {
         method:'POST', headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},
-        body:JSON.stringify({accountId:meRow.accountId,catId:me.id}),
+        body:JSON.stringify({accountId:meRow.accountId,catId,stat,value}),
     });
-    assert.equal(refill.status, 200);
-    assert.equal((await getStats()).energy, 100, 'admin refills the selected cat');
+    assert.equal((await setStat('energy', 73.5)).status, 200);
+    assert.equal((await setStat('comfort', 62.5)).status, 200);
+    assert.equal((await setStat('energy', 101)).status, 400);
+    assert.equal((await setStat('comfort', -1)).status, 400);
+    assert.equal((await setStat('energy', 10, -1)).status, 404);
+    assert.equal((await getStats()).energy, 73.5);
+    assert.equal((await getStats()).comfort, 62.5);
+    assert.equal((await setStat('energy', 0)).status, 200);
+    assert.equal((await getStats()).energy, 0);
+    assert.equal((await setStat('energy', 100)).status, 200);
+    assert.equal((await getStats()).energy, 100);
     const feed = await (await fetch(origin + '/activity/' + meRow.accountId)).json();
     const moves = feed.items.filter(it => it.type === 'moved');
     assert.equal(moves.length, 1, 'one successful passage → one moved activity');

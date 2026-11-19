@@ -9,6 +9,6 @@ export async function consoleRequest<T>(path='',method='GET',body?:unknown):Prom
   return status>=200 && status<300 && row?.ok===true ? row as unknown as {ok:true}&T : {ok:false,reason:asText(row?.reason,'offline')};
 }
 export function consoleError(reason:string) {
-  const messages:Record<string,string>={forbidden:'Нет прав для этого действия.',auth_required:'Войдите в аккаунт.',protected:'Защищённый аккаунт или действие. Себя изменить нельзя.',bad_password:'Неверный специальный пароль.',rate:'Слишком много попыток — подождите минуту.',not_found:'Запись не найдена.',invalid:'Проверьте название и права роли.',invalid_spawn:'Выберите точку спавна.',spawn_unavailable:'Точка спавна занята или заблокирована.',not_on_field:'Игрок уже вышел с поля.',invalid_request:'Не удалось выполнить запрос.'};
+  const messages:Record<string,string>={forbidden:'Нет прав для этого действия.',auth_required:'Войдите в аккаунт.',protected:'Защищённый аккаунт или действие. Себя изменить нельзя.',bad_password:'Неверный специальный пароль.',rate:'Слишком много попыток — подождите минуту.',not_found:'Запись не найдена.',invalid:'Проверьте название и права роли.',invalid_spawn:'Выберите точку спавна.',spawn_unavailable:'Точка спавна занята или заблокирована.',not_on_field:'Игрок уже вышел с поля.',invalid_stat:'Укажите значение от 0 до 100%.',invalid_request:'Не удалось выполнить запрос.'};
   return messages[reason] || `Не удалось выполнить действие (${reason}).`;
 }

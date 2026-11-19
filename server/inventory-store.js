@@ -111,9 +111,18 @@ export function spendEnergy(accountId, characterId, cost, now = Date.now()) {
   return true;
 }
 
-export function refillEnergy(accountId, characterId) {
+export function setCharacterStat(accountId, characterId, stat, value) {
+  if ((stat !== "energy" && stat !== "comfort") || !Number.isFinite(value) || value < 0 || value > 100)
+    return false;
   const key = keyOf(accountId, characterId);
-  setPlayerStats(key, { ...persistedStats(key, Date.now()), energy: 100 });
+  const now = Date.now();
+  const stats = persistedStats(key, now);
+  setPlayerStats(key, {
+    ...stats,
+    [stat]: value,
+    ...(stat === "comfort" ? { comfortTickAt: now } : {}),
+  });
+  return true;
 }
 
 export const ITEM_CATEGORIES = [

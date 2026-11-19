@@ -1,8 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "@/components/players/profile-icons";
 import type { CoopChatMessage } from "@/lib/net/coop";
 import s from "./game-hud.module.css";
+type Size = { width: number; height: number };
+type Drag = Size & { x: number; y: number; pointer: number };
+
 export function GameChat({
   lines,
   characterId,
@@ -20,6 +23,9 @@ export function GameChat({
     [draft, setDraft] = useState(""),
     [collapsed, setCollapsed] = useState(false),
     [stuck, setStuck] = useState(true);
+  const [size, setSize] = useState<Size | null>(null);
+  const panel = useRef<HTMLElement>(null);
+  const drag = useRef<Drag | null>(null);
   const log = useRef<HTMLDivElement>(null),
     drafts = useRef({ global: "", near: "" });
   useEffect(() => {
@@ -49,6 +55,11 @@ export function GameChat({
   }
   return (
     <section
+      ref={panel}
+      style={size ? ({
+        "--chat-width": `${size.width}px`,
+        "--chat-height": `${size.height}px`,
+      } as CSSProperties) : undefined}
       data-world-drop-block
       className={s.chat}
       aria-label="Игровой чат"
@@ -85,26 +96,75 @@ export function GameChat({
             Рядом
           </button>
         </div>
-        <button
-          type="button"
-          aria-label={collapsed ? "Развернуть чат" : "Свернуть чат"}
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((value) => !value)}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            aria-hidden
+        <div className={s.chatActions}>
+          <button
+            type="button"
+            aria-label={collapsed ? "Развернуть чат" : "Свернуть чат"}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((value) => !value)}
           >
-            <path
-              d={collapsed ? "M5 19 19 5M8 5h11v11" : "M19 5 5 19M5 8v11h11"}
-            />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              aria-hidden
+            >
+              <path
+                d={collapsed ? "M5 19 19 5M8 5h11v11" : "M19 5 5 19M5 8v11h11"}
+              />
+            </svg>
+          </button>
+          {!collapsed && (
+            <button
+              type="button"
+              className={s.chatResize}
+              aria-label="Изменить размер чата"
+              title="Потяните за угол или используйте клавиши со стрелками"
+              onPointerDown={event => {
+                const bounds = panel.current?.getBoundingClientRect();
+                if (!bounds || !event.isPrimary || event.button !== 0) return;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                drag.current = {
+                  pointer: event.pointerId,
+                  x: event.clientX,
+                  y: event.clientY,
+                  width: bounds.width,
+                  height: bounds.height,
+                };
+              }}
+              onPointerMove={event => {
+                const start = drag.current;
+                if (!start || start.pointer !== event.pointerId) return;
+                setSize({
+                  width: start.width + event.clientX - start.x,
+                  height: start.height + start.y - event.clientY,
+                });
+              }}
+              onLostPointerCapture={() => { drag.current = null; }}
+              onKeyDown={event => {
+                const bounds = panel.current?.getBoundingClientRect();
+                if (!bounds) return;
+                const horizontal = event.key === "ArrowRight" ? 16 : event.key === "ArrowLeft" ? -16 : 0;
+                const vertical = event.key === "ArrowUp" ? 16 : event.key === "ArrowDown" ? -16 : 0;
+                if (!horizontal && !vertical) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setSize({ width: bounds.width + horizontal, height: bounds.height + vertical });
+              }}
+              onKeyUp={event => {
+                if (event.key.startsWith("Arrow")) event.stopPropagation();
+              }}
+            >
+              <svg viewBox="0 0 20 20" width="17" height="17" fill="none"
+                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+                <path d="M4 14 14 4m-7 0h7v7M9 15l6-6" />
+              </svg>
+            </button>
+          )}
+        </div>
       </header>
       <div
         id="game-chat-log"
