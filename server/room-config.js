@@ -330,13 +330,16 @@ function applyHintFor(key) {
     : "Вступает только в НОВОЙ комнате (политика new-rooms-only глобального слоя): уже открытая комната едет на своём цикле; живую комнату крутят игроки (кадры atmo/atmoset, если не выключены ключом ниже).";
 }
 
+const roomKeys = meta => meta.format === "test" ? ["atmo.allowPlayerAtmosphereControl"] : SUPPORTED_ROOM_KEYS;
+
 function roomState(id) {
   const meta = modeOf(id);
-  const ov = overridesOf(id);
+  const supported = roomKeys(meta);
+  const ov = Object.fromEntries(Object.entries(overridesOf(id)).filter(([key]) => supported.includes(key)));
   const glob = globalLayer().atmo;
   const eff = resolveRoomAtmo(glob, ov);
   const keys = {};
-  for (const key of SUPPORTED_ROOM_KEYS) {
+  for (const key of supported) {
     const overridden = Object.prototype.hasOwnProperty.call(ov, key);
     // «Глобально» для гейта = значение master-ключа atmo.playerControl
     // (мандат владелицы 2026-11-08); effective resolveRoomAtmo уже считает
@@ -362,22 +365,23 @@ function roomState(id) {
     hasOverrides: Object.keys(ov).length > 0,
     effective: eff,
     keys,
-    supportedKeys: [...SUPPORTED_ROOM_KEYS],
+    supportedKeys: [...supported],
   };
 }
 
 export function listRooms() {
   return MODE_ROOMS.map((r) => {
-    const ov = overridesOf(r.id);
+    const supported = roomKeys(r);
+    const count = Object.keys(overridesOf(r.id)).filter(key => supported.includes(key)).length;
     return {
       id: r.id,
       title: r.title,
       mode: r.mode,
       access: r.access,
       format: r.format,
-      hasOverrides: Object.keys(ov).length > 0,
-      overrideCount: Object.keys(ov).length,
-      supportedKeys: [...SUPPORTED_ROOM_KEYS],
+      hasOverrides: count > 0,
+      overrideCount: count,
+      supportedKeys: [...supported],
     };
   });
 }
@@ -394,30 +398,31 @@ export function updateRoom(rawId, values) {
   const guard = asRoomIdOrError(rawId);
   if (guard.error) return { error: guard.error };
   const id = guard.id;
+  const supported = roomKeys(modeOf(id));
   const unknown = [];
   const unsupported = [];
   const invalid = [];
   for (const [key, raw] of Object.entries(values || {})) {
     const why = classifyRoomKey(key);
     if (why === "unknown_key") unknown.push(key);
-    else if (why) unsupported.push(key);
+    else if (why || !supported.includes(key)) unsupported.push(key);
     else {
       const res = strictRoomValue(key, raw);
       if (res.error) invalid.push({ key, error: res.error });
     }
   }
-  if (unknown.length) return { error: { reason: "unknown_key", unknown, allowed: [...SUPPORTED_ROOM_KEYS] } };
+  if (unknown.length) return { error: { reason: "unknown_key", unknown, allowed: [...supported] } };
   if (unsupported.length) {
     return {
       error: {
         reason: "unsupported_combo",
         unsupported,
-        allowed: [...SUPPORTED_ROOM_KEYS],
-        note: "universes пер-room — v2, после интеграции боевого контекста комнаты",
+        allowed: [...supported],
+        note: modeOf(id).format === "test" ? "У локаций Элизии единая погода и время." : "universes пер-room — v2, после интеграции боевого контекста комнаты",
       },
     };
   }
-  if (invalid.length) return { error: { reason: "invalid", invalid, allowed: [...SUPPORTED_ROOM_KEYS] } };
+  if (invalid.length) return { error: { reason: "invalid", invalid, allowed: [...supported] } };
   const rooms = { ...state.rooms };
   const next = { ...(rooms[id] || {}) };
   for (const [key, raw] of Object.entries(values || {})) {

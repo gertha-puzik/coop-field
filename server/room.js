@@ -57,9 +57,10 @@ function roomOf(code) {
   // grot-1, а не тихо разворачивается в произвольную открытую grid-комнату.
   const key = RETIRED_ROOMS[raw] || raw;
   if (!rooms.has(key)) {
+    const isWorldLocation = knownLocation(locationFromRoom(key));
     rooms.set(key, {
       code: key,
-      fmt: knownLocation(locationFromRoom(key)) ? 'test' : 'grid',
+      fmt: isWorldLocation ? 'test' : 'grid',
       cats: new Map(),
       sockets: new Map(),
       chat: [],
@@ -68,11 +69,9 @@ function roomOf(code) {
       dummyLast: null,
       dummyGrab: null,
       rab: null,
-      // Атмосфера комнаты — общая для всех: непрерывный цикл суток + погода.
-      // Инициализируется лениво (atmoState): якорь уходит в снапшоте и событиями.
-      // F2: у комнаты с admin-override atmo.* стартовый якорь строится сразу
-      // из effective (движок ← глобал ← комната); без overrides — null.
-      atmo: initialRoomAtmo(key),
+      // Elysiae locations use the shared world anchor in atmo.js.
+      // Public rooms can start with per-room overrides.
+      atmo: isWorldLocation ? null : initialRoomAtmo(key),
     });
   }
   return rooms.get(key);

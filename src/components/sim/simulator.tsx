@@ -981,7 +981,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    * настройками — сами настройки (ползунки показывают общее значение комнаты).
    */
   const applyAtmoAnchor = useCallback((a: CoopAtmoAnchor) => {
-    atmoAnchorRef.current = { cs: a.cs, pl: a.pl, wl: a.wl, w: a.w, ws: a.ws, srv: true };
+    const clockOffset = IS_ELYRIA ? Date.now() - a.t : 0;
+    atmoAnchorRef.current = { cs: a.cs + clockOffset, pl: a.pl, wl: a.wl, w: a.w, ws: a.ws + clockOffset, srv: true };
     atmoStateRef.current = { dp: a.dp, w: a.w };
     setAtmoState({ dp: a.dp, w: a.w });
     atmoRef.current?.setWeather(a.w);
