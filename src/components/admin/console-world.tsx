@@ -2,6 +2,7 @@
 import { useCallback,useEffect,useState,type ReactNode } from 'react';
 import { consoleRequest,consoleError } from '@/lib/net/http-console';
 import { ConsoleSubtabs } from './console-subtabs';
+import { ResourceSpawnTab } from './resource-spawn-tab';
 import s from './admin-console.module.css';
 type Location={id:number;name:string;zoneName:string;spawns:{index:number;c:number;r:number;automatic?:boolean}[]};
 type Field={rooms:{room:string;title:string;cats:{id:number;accountId:string|null;accountLogin:string|null;login:string;x:number;y:number;locationLabel?:string}[]}[];locations:Location[]};
@@ -47,7 +48,7 @@ function FieldPlayers() {
 }
 export function ConsoleWorld({permissions,settings,armor}:{permissions:string[];settings:ReactNode;armor:ReactNode}) {
   return <ConsoleSubtabs tabs={[
-    ...(permissions.includes('world')?[{id:'field',label:'Игроки на поле',content:<FieldPlayers/>}]:[]),
+    ...(permissions.includes('world')?[{id:'field',label:'Игроки на поле',content:<FieldPlayers/>},{id:'resource-spawn',label:'Спавн предметов',content:<ResourceSpawnTab/>}]:[]),
     ...(permissions.includes('config')?[{id:'settings',label:'Настройки мира',content:<div className={s.stack}>{settings}{armor}</div>}]:[]),
   ]}/>;
 }

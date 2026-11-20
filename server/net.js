@@ -77,6 +77,7 @@ import { handleNotificationsHttp } from "./notifications.js";
 import { handleAnnouncementsHttp } from "./announcements.js";
 import { handleProfilesHttp } from "./profiles.js";
 import { handleTexturesHttp } from "./textures.js";
+import { tickResourceSpawn } from "./resource-spawn.js";
 
 bindPresenceRooms(() => rooms);
 bindPlaceResolver((id) => {
@@ -596,6 +597,17 @@ export function startServer() {
   // Each live atmosphere scope advances and broadcasts at most once per tick.
   const atmoTimer = setInterval(tickAtmosphere, 5000);
   atmoTimer.unref();
+  let spawnInitialized = false;
+  const spawnTick = () => {
+    try {
+      tickResourceSpawn(Date.now(), !spawnInitialized);
+      spawnInitialized = true;
+    } catch (error) {
+      console.warn("resource spawn tick failed:", error.message);
+    }
+  };
+  spawnTick();
+  setInterval(spawnTick, 5000).unref();
 
   /** Остановка: дожимаем книгу позиций и карту (если расходится с диском) в файлы. */
   function flushOnShutdown() {
