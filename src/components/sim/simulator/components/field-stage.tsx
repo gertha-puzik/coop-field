@@ -141,9 +141,9 @@ export function FieldStage(props: FieldStageProps) {
                   «прыжок» справа-снизу поверх HUD (z-50); события ловят
                   только круги, поля кругами не перехватываются. Слот пуст
                   на десктопе или при спрятанных контролах. */}
-              {worldOverlay}
               {touchControls}
             </div>
+            {worldOverlay}
             {battleHint ? (
               <div className="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-[var(--sim-line-strong)] bg-[var(--sim-panel)] px-3 py-1.5 text-xs text-[var(--sim-text)] shadow-lg">
                 {battleHint}
