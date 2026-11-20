@@ -18,6 +18,8 @@
   width: 100%;
   height: 100%;
   image-rendering: auto;
+  /* The PNG artwork contains high-frequency dithering at its native size. */
+  filter: blur(0.65px);
 }
 .location, .weather {
   position: absolute;
