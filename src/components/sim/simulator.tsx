@@ -249,7 +249,7 @@ import {
 import { ensureFieldSprite } from '@/lib/sim/sprite-catalog';
 import { useBootSignal } from './simulator/hooks/use-boot-signal';
 import { WeatherHud } from './weather-hud';
-import { clearFieldHud, drawFieldHud, drawElisionJumpHud, drawElisionJumpTarget, drawElisionNameplates } from './simulator/hud-canvas';
+import { clearFieldHud, drawFieldHud, drawWeatherDial, drawElisionJumpHud, drawElisionJumpTarget, drawElisionNameplates } from './simulator/hud-canvas';
 import { drawNameplate } from '@/lib/sim/nameplate';
 import { stepRemoteDraws, type AtmosphereLike, type AtmoClock, type Engine } from './simulator/sim-model';
 import { ColResize, LegacyChatDock, RoomSwitchOverlay, SettingsPanelOverlay, SimulatorHeader } from './simulator/components/chrome';
@@ -527,6 +527,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
   const pixiRef = useRef<HTMLDivElement | null>(null);
   /** HUD-канвас над слоем атмосферы: циферблат день/ночь + значок погоды. */
   const hudRef = useRef<HTMLCanvasElement | null>(null);
+  const weatherDialRef = useRef<HTMLCanvasElement | null>(null);
   const atmoRef = useRef<AtmosphereLike | null>(null);
   /** Прошлая позиция камеры — для сдвига теней облаков (лёгкий параллакс). */
   const camPrevRef = useRef<{ x: number; y: number } | null>(null);
@@ -4126,6 +4127,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         setAtmoState((p) => (p.dp === phase ? p : { ...p, dp: phase }));
       }
       // HUD поверх слоя атмосферы: сам не темнеет и не прячется под дождём.
+      if (weatherDialRef.current) drawWeatherDial(weatherDialRef.current, p4);
       const hud = hudRef.current;
       if (hud) {
         const vw = cv.clientWidth || 0;
@@ -4836,7 +4838,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             редактор локации глушит и клавиши, и тач в одном стиле. */}
         <FieldStage
         worldOverlay={testField ? <WorldLocationOverlay world={world} editorOpen={editorOpen}
-          locationHud={IS_ELYRIA ? <WeatherHud phase={atmoState.dp} weather={atmoState.w}
+          locationHud={IS_ELYRIA ? <WeatherHud dialRef={weatherDialRef} phase={atmoState.dp} weather={atmoState.w}
             location={`${world.place.zoneName} — ${world.place.name}`} /> : undefined} /> : null}
           fieldFrameRef={fieldFrameRef}
           testField={testField}
