@@ -19,7 +19,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { EV, MAX_PLAYERS, ATMO_PHASE_LIST } from "./protocol.js";
+import { EV, MAX_PLAYERS } from "./protocol.js";
 import { allowBroadcastFrame, isFrameLimited } from "./frame-limit.js";
 import {
   PUBLIC, HOST, PORT, MAX_PAYLOAD, FRAME_LIMIT, HEARTBEAT_MS,
@@ -31,7 +31,7 @@ import { move, freeMove, cellsync, jump } from "./movement.js";
 import { aim, strike, armor } from "./combat.js";
 import { chat } from "./sanitize.js";
 import { dummyToggle, dummyMove, dummyGrab, dummyDrop, rabToggle, rabHit } from "./dummy-rab.js";
-import { atmo, atmoset, atmoState, atmoBroadcast, atmoPhaseIdx } from "./atmo.js";
+import { atmo, atmoset, tickAtmosphere } from "./atmo.js";
 import { setMap, testMap, MAP_FILE, saveTestMap } from "./testmap.js";
 import { flushCatBook } from "./persist.js";
 import { handleAuthHttp, handleAuthFrame, handshake, flushAuth, COOKIE } from "./auth.js";
@@ -593,26 +593,8 @@ export function startServer() {
   const catFlushTimer = setInterval(() => flushCatBook(), 2000);
   catFlushTimer.unref();
 
-  /**
-   * Тикер атмосферы: доезжающая по интервалу смена погоды (лениво посчитанная в
-   * atmoState) уходит всем рассылкой якоря; заодно — смена части суток (клиенты
-   * едут сами, но якорь держит их синхронно с серверными часами). Раз в 5 секунд —
-   * с запасом к точности 7-минутных частей, нагрузка нулевая.
-   */
-  const atmoTimer = setInterval(() => {
-    const now = Date.now();
-    for (const room of rooms.values()) {
-      if (room.sockets.size === 0) continue;
-      // Снимаем «до» по значению: atmoState двигает погоду на месте, в том же объекте.
-      const a = room.atmo;
-      const dpBefore = a ? ATMO_PHASE_LIST[atmoPhaseIdx(a, now)] : null;
-      const wBefore = a ? a.w : null;
-      const st = atmoState(room, now); // лениво двигает погоду, если срок истёк
-      if (dpBefore !== ATMO_PHASE_LIST[atmoPhaseIdx(st, now)] || wBefore !== st.w) {
-        atmoBroadcast(room, now);
-      }
-    }
-  }, 5000);
+  // Each live atmosphere scope advances and broadcasts at most once per tick.
+  const atmoTimer = setInterval(tickAtmosphere, 5000);
   atmoTimer.unref();
 
   /** Остановка: дожимаем книгу позиций и карту (если расходится с диском) в файлы. */

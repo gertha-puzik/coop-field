@@ -69,6 +69,38 @@ try {
     guest.send('join', { room: 'test-loc-2' });
     await guest.wait(f => f[0] === 'noplace' && f[1].reason === 'auth_required');
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'test-map.json'), 'utf8')).elev, { '8,8': 2 }, 'opening another world never overwrites Valley');
+    const roomConfig = origin + '/cfg/rooms/test';
+    const roomSettings = await (await fetch(roomConfig, { headers:{Cookie:cookie} })).json();
+    assert.deepEqual(roomSettings.room.supportedKeys, ['atmo.allowPlayerAtmosphereControl']);
+    const localTempo = await fetch(roomConfig, {
+        method:'PUT', headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},
+        body:JSON.stringify({values:{'atmo.phaseMin':12}}),
+    });
+    assert.equal((await localTempo.json()).reason, 'unsupported_combo', 'locations cannot specify a separate clock');
+    const worldAnchor = ({ cs, pl, wl, w, ws }) => ({ cs, pl, wl, w, ws });
+    assert.deepEqual(worldAnchor(second.atmo), worldAnchor(first.atmo), 'new locations share the world anchor');
+    const grotto = await client();
+    grotto.send('join', { room: 'grot-1' });
+    const grottoField = await grotto.wait(f => f[0] === 'field');
+    const [aAtmoStart, bAtmoStart, grottoAtmoStart] = [a.frames.length, b.frames.length, grotto.frames.length];
+    a.send('atmo', { dp: 'night', w: 'rain' });
+    const [valleyRain, forestRain] = await Promise.all([
+        a.wait(f => f[0] === 'atmo' && f[1].w === 'rain', aAtmoStart),
+        b.wait(f => f[0] === 'atmo' && f[1].w === 'rain', bAtmoStart),
+    ]);
+    assert.deepEqual(forestRain, valleyRain, 'both locations receive the same server broadcast');
+    assert.equal(forestRain.dp, 'night');
+    const [aTempoStart, bTempoStart] = [a.frames.length, b.frames.length];
+    b.send('atmoset', { pl: 9 });
+    const [valleyTempo, forestTempo] = await Promise.all([
+        a.wait(f => f[0] === 'atmo' && f[1].pl === 540000, aTempoStart),
+        b.wait(f => f[0] === 'atmo' && f[1].pl === 540000, bTempoStart),
+    ]);
+    assert.deepEqual(valleyTempo, forestTempo, 'live clock rate changes apply across locations');
+    assert.equal(grottoField.atmo.w, 'sun');
+    assert(!grotto.frames.slice(grottoAtmoStart).some(([event, body]) =>
+        event === 'atmo' && body.cs === forestTempo.cs), 'world updates stay in Elysiae');
+    grotto.ws.close();
     // Client/server schema mirror, including malicious coordinates and identities.
     const js = ts.transpileModule(fs.readFileSync('src/lib/sim/location-map.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
     const clientModel = {};
@@ -101,6 +133,7 @@ try {
     a.send('join', { passageId: 'forest' });
     const arrived = await a.wait(f => f[0] === 'field' && f[1].room === 'test-loc-2', n);
     const me = arrived.cats.find(c => c.id === a.frames.slice(n).find(f => f[0] === 'you')[1].id);
+    assert.deepEqual(worldAnchor(arrived.atmo), worldAnchor(forestTempo), 'travel preserves world clock and weather');
     assert.equal(me.fm, 1);
     assert.equal(me.size, 67, 'passage retains saved height');
     // Лента «Последние действия»: успешный проход пишет ровно одно moved (провалы — нет).

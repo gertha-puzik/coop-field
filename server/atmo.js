@@ -1,8 +1,7 @@
 /**
- * Atmosphere domain (W4 carve, behavior-preserving): the shared per-room
- * day/night clock + weather — the «atmo» anchor {t, cs, pl, wl, w, ws, dp} the
- * whole room rides on. Weather rolls lazily on its own interval; the 5 s
- * ticker that resends the anchor on change lives in ./net.js. Phase and
+ * One day/night clock and weather for the Elysiae world, separate anchors
+ * for public rooms. Each uses the wire anchor {t, cs, pl, wl, w, ws, dp}.
+ * Weather advances on its own interval and net.js runs the 5 s ticker. Phase and
  * weather names, default lengths and clamp bounds are imported from
  * ./protocol.js (W3 canon, mirrored by src/lib/net/protocol.ts).
  */
@@ -10,7 +9,7 @@ import {
   EV, ATMO_PHASE_LIST, ATMO_WEATHER_LIST, ATMO_PHASE_MS_DEF, ATMO_WEATHER_MS_DEF,
   ATMO_PHASE_MS_MIN, ATMO_PHASE_MS_MAX, ATMO_WEATHER_MS_MIN, ATMO_WEATHER_MS_MAX,
 } from "./protocol.js";
-import { broadcast } from "./room.js";
+import { broadcast, rooms } from "./room.js";
 import { atmoLengths } from "./runtime-config.js";
 // F2 §3.4 + мандат владелицы 2026-11-08: гейт atmoset/atmo — ДВА слоя. Глобальный
 // master-ключ atmo.playerControl (runtime-слой) глушит игроков во ВСЕХ комнатах;
@@ -22,6 +21,8 @@ import { isPlayerAtmoControlAllowed } from "./room-config.js";
 
 const ATMO_DAYPARTS = new Set(ATMO_PHASE_LIST);
 const ATMO_WEATHERS = new Set(ATMO_WEATHER_LIST);
+let worldAtmosphere;
+const lastPublished = new WeakMap();
 
 /**
  * Стартовое состояние атмосферы новой комнаты: цикл открывается серединой «дня»,
@@ -48,7 +49,9 @@ const atmoPhaseIdx = (a, now) => Math.floor((((now - a.cs) / a.pl) % 4) + 4) % 4
  * Рассылку смен делает тикер (atmoTimer) и обработчики atmo/atmoset.
  */
 function atmoState(room, now = Date.now()) {
-  const a = room.atmo || (room.atmo = atmoDefaults(now));
+  const a = room.fmt === "test"
+    ? (worldAtmosphere ??= atmoDefaults(now))
+    : (room.atmo ??= atmoDefaults(now));
   if (now - a.ws >= a.wl) {
     const others = [...ATMO_WEATHERS].filter((x) => x !== a.w);
     a.w = others[Math.floor(Math.random() * others.length)];
@@ -59,12 +62,42 @@ function atmoState(room, now = Date.now()) {
 
 /** Якорь атмосферы для рассылки: часы цикла + погода + часть суток на момент now. */
 function atmoAnchor(room, now = Date.now()) {
-  const a = atmoState(room, now);
+  return anchorOf(atmoState(room, now), now);
+}
+
+function anchorOf(a, now) {
   return { t: now, cs: a.cs, pl: a.pl, wl: a.wl, w: a.w, ws: a.ws, dp: ATMO_PHASE_LIST[atmoPhaseIdx(a, now)] };
 }
 
 function atmoBroadcast(room, now = Date.now()) {
-  broadcast(room, EV.ATMO, atmoAnchor(room, now), null);
+  const state = atmoState(room, now);
+  publishAtmosphere(room, state, anchorOf(state, now));
+}
+
+function publishAtmosphere(room, state, anchor) {
+  lastPublished.set(state, anchor);
+  if (room.fmt !== "test") {
+    broadcast(room, EV.ATMO, anchor, null);
+    return;
+  }
+  for (const location of rooms.values()) {
+    if (location.fmt === "test") broadcast(location, EV.ATMO, anchor, null);
+  }
+}
+
+export function tickAtmosphere(now = Date.now()) {
+  const seen = new Set();
+  for (const room of rooms.values()) {
+    if (!room.sockets.size) continue;
+    const state = atmoState(room, now);
+    if (seen.has(state)) continue;
+    seen.add(state);
+    const previous = lastPublished.get(state);
+    const phase = ATMO_PHASE_LIST[atmoPhaseIdx(state, now)];
+    if (!previous || previous.dp !== phase || previous.ws !== state.ws || previous.w !== state.w) {
+      publishAtmosphere(room, state, anchorOf(state, now));
+    }
+  }
 }
 
 /**
@@ -72,8 +105,8 @@ function atmoBroadcast(room, now = Date.now()) {
  * (утро → день → вечер → ночь → утро), погода меняется по своему интервалу.
  * Клиент → ["atmo", { dp, w }] — перемотать цикл к середине части суток dp и
  * поставить погоду w (кнопки в панели). Сервер переприменяет значения и шлёт
- * ВСЕМ якорь (включая отправителя — эхо служит подтверждением). Новички получают
- * якорь в снапшоте field. Менять может любой игрок в комнате.
+ * ВСЕМ в области действия якоря (включая отправителя). При входе якорь
+ * приходит в field, право на управление проверяется по комнате отправителя.
  */
 function atmo(ws, payload = {}) {
   const room = ws.room;
@@ -94,8 +127,8 @@ function atmo(ws, payload = {}) {
 
 /**
  * Клиент → ["atmoset", { pl, wl }] — длительности части суток (pl) и интервала
- * погоды (wl) в минутах. Общие для комнаты: применяет тот, кто повернул ползунок,
- * остальные получают новый якорь рассылкой. Позиция суток при смене темпа
+ * погоды (wl) в минутах. Общие для мира Элизии или текущей комнаты гротов:
+ * игроки получают новый якорь рассылкой. Позиция суток при смене темпа
  * сохраняется (день не прыгает в ночь), отсчёт погоды начинается заново.
  */
 function atmoset(ws, payload = {}) {

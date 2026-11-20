@@ -281,7 +281,7 @@
 }
 
 .tableWrap {
-  --cols: 62px minmax(150px, 1.7fr) 128px 150px minmax(110px, 0.9fr) auto;
+  --cols: 62px minmax(150px, 1.7fr) 128px 150px minmax(110px, 0.9fr);
 }
 
 .thead {
@@ -289,7 +289,7 @@
   grid-template-columns: var(--cols);
   gap: 14px;
   align-items: center;
-  padding: 10px 12px 9px;
+  padding: 10px 17px 9px;
   margin: 0 2px;
   color: var(--muted);
   font-size: 11px;
@@ -1227,7 +1227,7 @@
 
 @media (max-width: 860px) {
   .tableWrap {
-    --cols: 60px minmax(0, 1fr) auto auto;
+    --cols: 60px minmax(0, 1fr) auto;
   }
 
   .cBorn,
@@ -1645,33 +1645,6 @@
 .friendActGhost:hover {
   color: #eab4b4;
   border-color: rgba(224, 122, 122, 0.45);
-}
-
-.friendBtn {
-  border: 1px solid rgba(246, 215, 162, 0.4);
-  background: rgba(246, 215, 162, 0.12);
-  color: var(--gold);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font: 600 11.5px/1.2 inherit;
-  white-space: nowrap;
-}
-
-.friendBtn:hover {
-  background: rgba(246, 215, 162, 0.22);
-}
-
-.friendBtnMuted {
-  border-color: var(--line-soft);
-  background: rgba(226, 220, 255, 0.05);
-  color: var(--muted);
-}
-
-.rowFriend {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
 }
 
 /* кому движение не нужно — ничего не мерцает и не пульсирует */

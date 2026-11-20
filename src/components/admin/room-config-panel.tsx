@@ -219,6 +219,12 @@ export function RoomConfigPanel({ registry }: { registry: Record<string, CfgFiel
         </p>
       ) : null}
 
+      {view?.mode === 'elision' && (
+        <p className="text-xs text-[var(--sim-text-soft)]">
+          Время и погода общие для всех локаций Элизии.
+        </p>
+      )}
+
       {view ? (
         <ul className="space-y-2">
           {view.supportedKeys.map((key) => {
