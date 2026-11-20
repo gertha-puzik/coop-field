@@ -51,10 +51,7 @@ export function clearFieldHud(cv:HTMLCanvasElement,vw:number,vh:number){
   g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,vw,vh);return g;
 }
 
-/** Fixed left needle reads the continuously rotating day disc. No rotation of the whole HUD. */
-export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,weather:WeatherKind,weatherPrev:WeatherKind,weatherAt:number) {
-  const g=clearFieldHud(cv,vw,vh);if(!g)return;
-  const r=43,cx=vw-80,cy=88,satX=cx+r-2;
+function drawDayDial(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, p4: number) {
   g.save();g.shadowColor='rgba(0,0,0,.42)';g.shadowBlur=9;g.shadowOffsetY=3;
   circle(g,cx,cy,r+2);g.fillStyle='#132343';g.fill();g.restore();
   g.save();circle(g,cx,cy,r-2);g.clip();g.translate(cx,cy);g.rotate(-p4*Math.PI/2);
@@ -78,6 +75,23 @@ export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,
   spark(g,cx,cy-r,8);spark(g,cx,cy+r,7);
   // The pointer is stationary; its tip reads the current quadrant at the left edge.
   g.beginPath();g.moveTo(cx-r-13,cy-8);g.lineTo(cx-r+7,cy);g.lineTo(cx-r-13,cy+8);g.closePath();g.fillStyle='#162846';g.fill();g.strokeStyle='#ffe6a2';g.lineWidth=3;g.lineJoin='round';g.stroke();
+}
+
+/** Draw the original dial in the small Elysiae HUD using the world clock. */
+export function drawWeatherDial(canvas: HTMLCanvasElement, progress: number) {
+  const size = canvas.clientWidth;
+  if (!size) return;
+  const context = clearFieldHud(canvas, size, size);
+  if (!context) return;
+  context.scale(size / 120, size / 120);
+  drawDayDial(context, 63, 60, 49, progress);
+}
+
+/** Fixed left needle reads the continuously rotating day disc. No rotation of the whole HUD. */
+export function drawFieldHud(cv:HTMLCanvasElement,vw:number,vh:number,p4:number,weather:WeatherKind,weatherPrev:WeatherKind,weatherAt:number) {
+  const g=clearFieldHud(cv,vw,vh);if(!g)return;
+  const r=43,cx=vw-80,cy=88,satX=cx+r-2;
+  drawDayDial(g,cx,cy,r,p4);
   circle(g,satX,cy,19);g.fillStyle='#16294f';g.fill();goldRing(g,satX,cy,19);
   const wt=weather===weatherPrev?1:Math.min(1,Math.max(0,(performance.now()-weatherAt)/900));
   g.save();circle(g,satX,cy,16);g.clip();
