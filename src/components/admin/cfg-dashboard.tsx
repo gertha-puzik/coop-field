@@ -526,7 +526,7 @@ export default function CfgDashboard() {
   const tabs: DashTab[] = [
     {id:'general',title:'Общее',render:can('overview','invites','news','announcements')?()=> <ConsoleGeneral permissions={permissions}/>:null},
     {id:'users',title:'Игроки и администрация',render:can('players','roles','statuses')?()=> <ConsoleUsers permissions={permissions}/>:null},
-    {id:'characteristics',title:'Характеристики',render:can('config')?()=> <PlayerStatsTab/>:null},
+    {id:'characteristics',title:'Характеристики',render:can('config')?()=> <PlayerStatsTab onClose={() => pickTab('characteristics')}/>:null},
     {id:'world',title:'Мир',render:can('world','config')?()=> <ConsoleWorld permissions={permissions} settings={renderCfg()} armor={armorPanel}/>:null},
     {id:'assets',title:'Ресурсы',render:can('sprites','textures','items')?()=> <ConsoleSubtabs tabs={[
       ...(can('items')?[{id:'items',label:'Создание предмета',content:<ItemsTab/>},{id:'item-grants',label:'Выдача предметов',content:<ItemGrantTab/>}]:[]),
