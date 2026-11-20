@@ -8,6 +8,7 @@ import { presenceSlice } from './presence.js';
 import { adminLocations, teleportAccount } from './admin-world.js';
 import { adminOccupancy, rooms } from './room.js';
 import { statsRules, saveStatsRules, setCharacterStat } from './inventory-store.js';
+import { spawnOverview, changeSpawnSettings } from './resource-spawn.js';
 import { eraseAccount } from './account-delete.js';
 export const GAME_VERSION='0.6.7';
 const deletionAttempts=new Map();
@@ -25,7 +26,7 @@ export async function handleAdminConsoleHttp(req,res) {
     const p=new URL(req.url,'http://localhost').pathname.replace('/cfg/console','') || '/';
     const session=sessionFromRequest(req), actor=session?.account;
     if(!actor) return json(res,401,{ok:false,reason:'auth_required'});
-    const permission=p==='/characteristics'?'config':p==='/player-stat'?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
+    const permission=p==='/characteristics'?'config':(p==='/player-stat' || p==='/resource-spawn')?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
     if(!hasPermission(actor,permission) && !(p==='/users' && hasPermission(actor,'roles'))) return json(res,403,{ok:false,reason:'forbidden'});
     if(req.method==='GET') {
       if(p==='/') {
@@ -35,6 +36,7 @@ export async function handleAdminConsoleHttp(req,res) {
       if(p==='/users') return json(res,200,{ok:true,users:liveAccounts().map(userView)});
       if(p==='/roles') return json(res,200,{ok:true,roles:accessRoles(),permissions:PERMISSIONS});
       if(p==='/characteristics') return json(res,200,{ok:true,rules:statsRules()});
+      if(p==='/resource-spawn') return json(res,200,{ok:true,...spawnOverview()});
       if(p==='/field') return json(res,200,{ok:true,rooms:adminOccupancy(),locations:adminLocations()});
     }
     if(req.method==='DELETE' && p.startsWith('/roles/')) {
@@ -43,7 +45,11 @@ export async function handleAdminConsoleHttp(req,res) {
       flushAccounts(true); pushAdminAudit('roles',`Удалена роль доступа ${id}`,actor.login); return json(res,200,{ok:true});
     }
     if(req.method!=='POST' && req.method!=='PATCH') return json(res,405,{ok:false,reason:'method_not_allowed'});
-    const body=await readJson(req);
+    const body=await readJson(req, p==='/resource-spawn' ? 32768 : undefined);
+    if(p==='/resource-spawn') {
+      const result=changeSpawnSettings(body);
+      return result.error ? json(res,400,{ok:false,reason:result.error}) : json(res,200,{ok:true,...spawnOverview()});
+    }
     if(p==='/characteristics') {
       const rules=saveStatsRules(body);
       if(!rules) return json(res,400,{ok:false,reason:'invalid_request'});

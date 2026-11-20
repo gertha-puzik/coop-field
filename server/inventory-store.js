@@ -651,3 +651,18 @@ export function transferMouth(sender, recipient, expected) {
   });
   return { ok: true };
 }
+
+// Spawn checkpoints, journal and ground items share the inventory transaction.
+export function readSpawnState() {
+  return copy(store.resourceSpawn ?? { rules: [], limits: {}, log: [] });
+}
+
+export function spawnGround(room) {
+  return Object.values(store.ground || {}).filter(row => row.room === room).map(copy);
+}
+
+export function commitSpawnState(resourceSpawn, added = []) {
+  const ground = { ...store.ground };
+  for (const row of added) ground[row.id] = row;
+  commit({ ...store, ground, resourceSpawn });
+}
