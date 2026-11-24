@@ -722,7 +722,20 @@ export function buildEditorOps(params: EditorOpsParams) {
       .then((paint) => {
         const perr = paint ? paintFormatError(paint) : null;
         if (perr) { setEditorSave(null); setEditorMsg(perr); return; }
-        setEditorSave({ phase: 'send', bytes: paint.length, t0 });
+        if (netRef.current !== net || !net.ready) {
+          setEditorSave(null);
+          setEditorMsg('Связь прервалась при подготовке карты. Черновик открыт. После подключения повторите сохранение.');
+          return;
+        }
+        const map = { ...snapshot, ...(paint ? { paint } : {}) };
+        const bytes = new TextEncoder().encode(JSON.stringify(['setmap', { map }])).byteLength;
+        // Keep in sync with MAX_PAYLOAD in server/config.js.
+        if (bytes > 4 * 1024 * 1024) {
+          setEditorSave(null);
+          setEditorMsg('Карта целиком превышает 4 МиБ. Уменьшите рисунок или число участков и сохраните снова.');
+          return;
+        }
+        setEditorSave({ phase: 'send', bytes, t0 });
         // Предгейт троттлинга сервера (setmap — раз в 10 с на сокет): кадр,
         // отправленный раньше срока, сервер молча отбрасывает — прогресс гас,
         // черновик оставался «не сохранён», и правка выглядела потерянной
@@ -734,9 +747,13 @@ export function buildEditorOps(params: EditorOpsParams) {
           setEditorMsg(`Сервер принимает сохранения не чаще раза в 10 секунд — подождите ${Math.ceil((SETMAP_MIN_GAP_MS - since) / 1000)} с и сохраните снова (правка осталась в черновике).`);
           return;
         }
+        if (net.emit('setmap', { map }) === false) {
+          setEditorSave(null);
+          setEditorMsg('Связь прервалась до отправки карты. После подключения повторите сохранение.');
+          return;
+        }
         d.lastSaveSentAt = nowMs;
-        setEditorSave({ phase: 'wait', bytes: paint.length, t0 });
-        net.emit('setmap', { map: { ...snapshot, ...(paint ? { paint } : {}) } });
+        setEditorSave({ phase: 'wait', bytes, t0 });
       })
       .catch(() => {
         setEditorSave(null);

@@ -669,7 +669,9 @@ export function useSimNet(deps: SimNetDeps) {
       onClose: (info) => {
         deps.onWorldDisconnect?.();
         clearEditorSave();
-        if(editorOpenRef.current)setEditorMsg('Связь прервалась. Подтверждение сохранения не получено; после подключения проверьте карту.');
+        if (editorOpenRef.current) setEditorMsg(info?.code === 1009
+          ? 'Сервер закрыл соединение из-за размера карты. Уменьшите рисунок или число участков и повторите сохранение.'
+          : 'Связь прервалась. Дождитесь переподключения. Если редактор не подтвердит сохранение, повторите его в этой вкладке.');
         setNetReady(false);
         // При обрыве клиент сам переподключается с backoff и повторным join:
         // движение в это время заблокировано (requestStep), состояние вернут you/field.

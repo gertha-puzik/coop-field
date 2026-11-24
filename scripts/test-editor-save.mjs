@@ -59,6 +59,25 @@ assert.deepEqual(sent[0][1].map.place,original.place,'location identity survives
 assert.deepEqual(sent[0][1].map.passages,original.passages,'passages survive save-after-close');
 console.log('editor elevation, location and passage save after close: OK');
 
+// Finishing PNG encoding during a disconnect must not consume the retry or send a frame.
+const retryDraft = { ...structuredClone(original), undo: [], dirty: true, pcv: null };
+editorRef.current = retryDraft;
+ops.saveEditorMap();
+params.netRef.current.ready = false;
+finish('');
+await new Promise(r=>setImmediate(r));
+assert.equal(sent.length, 1, 'no map frame is sent after disconnect during encoding');
+assert.equal(retryDraft.lastSaveSentAt, undefined, 'retry remains available after reconnect');
+
+params.netRef.current.ready = true;
+retryDraft.water = { ['1,1,'.repeat(1_100_000)]: 4 };
+ops.saveEditorMap();
+finish('');
+await new Promise(r=>setImmediate(r));
+assert.equal(sent.length, 1, 'an oversized complete frame is rejected before opening a send');
+assert.equal(retryDraft.lastSaveSentAt, undefined, 'oversize rejection does not start the save cooldown');
+delete retryDraft.water;
+
 // Load the real field helpers; DOM is not needed for terrain/support queries.
 const actualField=loadTs(new URL('../src/lib/sim/test-field.ts',import.meta.url));
 const actualMap=loadTs(new URL('../src/lib/sim/test-map.ts',import.meta.url));
