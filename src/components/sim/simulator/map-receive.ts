@@ -35,6 +35,7 @@ export function receiveEditorMap({ savedMapRef, editorRef, setEditorView, setEdi
             JSON.stringify(d.spawns.map((s) => [s.c, s.r])) ===
                 JSON.stringify((map.spawns ?? []).map((s) => [s.c, s.r])) &&
             JSON.stringify(d.elev) === JSON.stringify(map.elev ?? {}) &&
+            JSON.stringify(d.water ?? {}) === JSON.stringify(map.water ?? {}) &&
             (d.pcv ? d.ppaint ?? '' : '') === (map.paint ?? '');
         if (same) {
             for (const entry of [...d.undo, ...(d.redo ?? [])])
@@ -48,6 +49,7 @@ export function receiveEditorMap({ savedMapRef, editorRef, setEditorView, setEdi
             d.passages = map.passages?.map(p => ({ ...p }));
             d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
             d.elev = { ...(map.elev ?? {}) };
+            d.water = { ...map.water };
             setEditorView({ ...d, zones: d.zones.map((z) => ({ ...z })), objects: d.objects.map((o) => ({ ...o })), undo: [...d.undo] });
             return;
         }
@@ -74,6 +76,7 @@ export function receiveEditorMap({ savedMapRef, editorRef, setEditorView, setEdi
     d.passages = map.passages?.map(p => ({ ...p }));
     d.spawns = (map.spawns ?? []).map((s) => ({ ...s }));
     d.elev = { ...(map.elev ?? {}) };
+    d.water = { ...map.water };
     d.cols = map.cols;
     d.rows = map.rows;
     // Холст кисти переснимается из рисунка новой карты — те же вызовы, что

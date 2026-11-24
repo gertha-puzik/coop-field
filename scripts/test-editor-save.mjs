@@ -354,3 +354,24 @@ assert.equal(secondDraft.pcv,null,'stale source decode cannot enter destination 
 decodedCanvas={location:2};deferred.get(2).resolve(true);await new Promise(r=>setImmediate(r));
 assert.equal(secondDraft.pcv.location,2);assert.equal(paintOverrides.at(-1).location,2);
 console.log('async paint isolation between location drafts: OK');
+
+// An authoritative water-only change must reach the draft before another save.
+const savedWater = { '3,2,1,1': 4 };
+const wetMap = { ...firstMap, paint: undefined, water: savedWater };
+const wetDraft = {
+  ...firstDraft, place: wetMap.place, zones: wetMap.zones, objects: wetMap.objects,
+  spawns: wetMap.spawns, passages: wetMap.passages, elev: wetMap.elev,
+  water: {}, pcv: null, ppaint: null, dirty: false, undo: [],
+};
+const wetDeps = { ...receiveDeps, editorRef: { current: wetDraft } };
+receiver.receiveEditorMap(wetDeps, wetMap);
+assert.deepEqual(wetDraft.water, savedWater, 'incoming water is copied to the open draft');
+assert.notEqual(wetDraft.water, savedWater, 'editing the draft cannot mutate the saved map');
+wetDraft.dirty = true;
+wetDraft.undo.push({ dirty: false });
+receiver.receiveEditorMap(wetDeps, wetMap);
+assert.equal(wetDraft.dirty, false, 'matching water save clears the dirty flag');
+assert.equal(wetDraft.undo.length, 1, 'a matching save keeps the undo history');
+receiver.receiveEditorMap(wetDeps, { ...wetMap, water: undefined });
+assert.deepEqual(wetDraft.water, {}, 'a dry map clears the previous location water');
+console.log('authoritative water survives save, editor refresh and location changes: OK');
