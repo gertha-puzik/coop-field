@@ -43,7 +43,7 @@ import { rememberSpriteAspect } from './sprite-aspect';
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
 
-type DecalNode = { root: TransformNode; mesh: Mesh; mat: StandardMaterial; sig: string; poseSig?: string };
+type DecalNode = { root: TransformNode; mesh: Mesh; mat: StandardMaterial; url: string; submerged: boolean; poseSig?: string };
 
 export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const engine = new Engine(
@@ -365,7 +365,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const immersionKey = submerged ? `${fraction.toFixed(3)}|${actor.immersion?.opacity}` : '';
       const sig = `${actor.url}|${actor.w.toFixed(2)}|${actor.h.toFixed(2)}|${actor.mirror ? 1 : 0}|${actor.rot}|${submerged}`;
       let node = decals.get(actor.id);
-      if (!node || node.sig.split('|')[0] !== actor.url) {
+      if (!node || node.url !== actor.url || node.submerged !== submerged) {
         if (node) {
           node.mat.emissiveTexture = null;
           node.mat.dispose(false, false);
@@ -405,7 +405,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         mesh.isPickable = false;
         const root = new TransformNode(`sprite-foot-${actor.id}`, scene);
         mesh.parent = root;
-        node = { root, mesh, mat, sig };
+        node = { root, mesh, mat, url: actor.url, submerged };
         decals.set(actor.id, node);
       }
       // Обновляем только вершины: разворот не удаляет материал и не ждёт компиляции шейдера.
@@ -425,7 +425,6 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       // Switching GIF frames reuses the mesh/material and each uploaded texture.
       const texture=textureFor(actor.url,actor.image);
       if(node.mat.diffuseTexture!==texture)node.mat.diffuseTexture=texture;
-      node.sig = sig;
       const e=frame.editor?0:Math.min(1,itemGlowEnergy(actor,frame.dayProgress,now)*.8);
       node.mat.emissiveColor.set(tint[0]+(1-tint[0])*e,tint[1]+(1-tint[1])*e,tint[2]+(1-tint[2])*e);
       const targetAlpha = actor.opacity ?? elisionObstacleAlpha(actor, self, frame.yaw);

@@ -1,6 +1,5 @@
 import type { TestMap } from './test-map';
 import { cachedTerrainTiles, terrainAt } from './terrain-shape';
-import type { WaterRules } from './water-rules';
 
 const colors = ['#498e91', '#367880', '#286776', '#215467'];
 const textures = [
@@ -107,10 +106,6 @@ export function terrainWaterCanvas(map: TestMap, cellW: number, cellH: number) {
   drawWaterSurface(context,map,cellW,cellH);
   terrainWater = {map,cellW,cellH,revision,canvas};
   return canvas;
-}
-
-export function submergedPixels(rules: WaterRules, depth: number, height: number, jump = 0) {
-  return Math.max(0, Math.min(height*(.55 + .045*depth), depth*rules.sinkPx - jump));
 }
 
 export function drawSubmergedSprite(g: CanvasRenderingContext2D, image: HTMLImageElement | HTMLCanvasElement,

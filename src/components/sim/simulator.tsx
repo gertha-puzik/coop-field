@@ -3,8 +3,8 @@ import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
 import { currentWaterRules, refreshWaterRules } from '@/lib/sim/water-client';
-import { drawSubmergedSprite, drawWaterSurface, submergedPixels, terrainWaterCanvas } from '@/lib/sim/water-render';
-import { waterSpeed } from '@/lib/sim/water-rules';
+import { drawSubmergedSprite, drawWaterSurface, terrainWaterCanvas } from '@/lib/sim/water-render';
+import { submergedPixels, waterSpeed } from '@/lib/sim/water-rules';
 import { drawRectTerrain, terrainAt } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
 /**
