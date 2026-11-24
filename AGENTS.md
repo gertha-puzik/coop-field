@@ -394,8 +394,8 @@ active, while its elision presentation is loading status or retry/profile
 recovery. The legacy skin carousel cannot flash when GameBoot exposes entry
 before account/socket loading finishes. Public grotto entry is unaffected.
 
-Admin item workbench (2026-11-17): Resources → Creation uses item-editor;
-Resources → Item grants contains batch grants and the searchable item database.
+Admin item workbench: Resources → Items has separate tabs for the searchable
+item database, item creation and batch grants.
 items.module.css is scoped with data-item-workbench (excluded from generic admin
 button styling). Metadata: description ≤200, category enum, maxStack 1–10000.
 The server enforces caps on grants/moves/pickup/stash; cap edits split overflow
