@@ -424,6 +424,7 @@ export type TestMap = {
    *  читаются как «везде 0»): ключ «c,r» (0-based) → уровень 1..TERRAIN_MAX_LEVEL.
    *  Разреженная: клетки без записи — базовая земля. Редактор меняет кистями
    *  «Насыпать/Срыть/Ровно», сервер хранит и раздаёт вместе с конфигом. */
+  water?: Record<string, number>;
   elev?: Record<string, number>;
   /** Пиксельная отрисовка локации (необязательное поле — конфиги до кисти живут
    *  по-старому): PNG base64 размером с мир в пикселях, непрозрачность — земля.
@@ -744,6 +745,9 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     if(!clean)return {error: 'слишком много участков рельефа'};
     if (Object.keys(clean).length > 0) elev = clean;
   }
+  const water = src.water == null ? undefined : sanitizeTerrainElev(src.water, cols, rows, 4);
+  if (src.water != null && !water) return { error: 'карта глубин не распознана' };
+  if (water) for (const key of Object.keys(water)) water[key] = Math.round(water[key]);
   const location=sanitizeLocationFields(src,cols,rows);if(location.error)return {error:location.error};
   return {
     map: {
@@ -757,12 +761,11 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
       objects,
       spawns,
       ...(elev ? { elev } : {}),
+      ...(water && Object.keys(water).length ? { water } : {}),
       ...(paint ? { paint } : {}),
     },
   };
 }
-
-
 /** Пересечение круглого тела у лап с клетками, отделёнными непроходимым перепадом.
  * rx/ry — радиус в долях клетки; результат 0..1 — глубина проникновения.
  * Переданный level фиксирует текущую опору, чтобы граница не меняла сторону проверки. */

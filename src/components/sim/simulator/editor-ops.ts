@@ -98,6 +98,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     zones: d.zones.map((z) => ({ ...z })),
     objects: d.objects.map((o) => ({ ...o })),
     spawns: d.spawns.map((s) => ({ ...s })),
+    ...(Object.keys(d.water).length ? { water: { ...d.water } } : {}),
     ...(Object.keys(d.elev).length > 0 ? { elev: { ...d.elev } } : {}),
     // Кисть локации: холст черновика уходит в конфиг PNG base64. С рисунком
     // проталины/покрытия больше не нужны (запечены) — как в sanitize.
@@ -150,6 +151,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       objects: (m.objects ?? []).map((o) => ({ ...o })),
       spawns: (m.spawns ?? []).map((s) => ({ ...s })),
       elev: { ...(m.elev ?? {}) },
+      water: { ...m.water },
       elevBrush: { width: 1, depth: 1, level: 1 },
       pcv: copyPaintCanvas(),
       pmat: 'grass-1',
@@ -485,7 +487,9 @@ export function buildEditorOps(params: EditorOpsParams) {
       });
       d.spawns = d.spawns.filter((s) => !(s.c >= c0 && s.c <= c1 && s.r >= r0 && s.r <= r1));
       // и срезает рельеф: стёртый участок возвращается к базовой земле
-      if(stampTerrainRect(d.elev,{x:c0,y:r0,w:c1-c0+1,d:r1-r0+1,level:0},'height',0,new Set(),0,TERRAIN_MAX_LEVEL)) applyDraftPreview();
+      const area = {x:c0,y:r0,w:c1-c0+1,d:r1-r0+1,level:0};
+      stampTerrainRect(d.elev,area,'height',0,new Set(),0,TERRAIN_MAX_LEVEL);
+      if (Object.keys(d.water).length) stampTerrainRect(d.water,area,'height',0,new Set(),0,4);
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -565,8 +569,12 @@ export function buildEditorOps(params: EditorOpsParams) {
     const stroke = elevStrokeRef.current;
     if (!stroke) return false;
     const b = clampBrush(d.elevBrush,d.cols,d.rows);
-    const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(d.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows);
-    if (!stampTerrainRect(d.elev, rect, mode,b.level,stroke.touched,stroke.flat,TERRAIN_MAX_LEVEL)) return false;
+    const rect=mode!=='water'&&d.elevFree&&d.terrainCursor ? freeTerrainPlacement(d.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows);
+    const water = mode === 'water';
+    const updated = water
+      ? stampTerrainRect(d.water, rect, 'height', d.waterDepth ?? 1, stroke.touched, 0, 4)
+      : stampTerrainRect(d.elev, rect, mode, b.level, stroke.touched, stroke.flat, TERRAIN_MAX_LEVEL);
+    if (!updated) return false;
     d.dirty = true;
     applyDraftPreview();
     syncEditorView();
@@ -621,6 +629,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     d.place=m.place?{...m.place}:undefined;d.passages=m.passages?.map(p=>({...p}));
     d.spawns = (m.spawns ?? []).map((s) => ({ ...s }));
     d.elev = { ...(m.elev ?? {}) };
+    d.water = { ...m.water };
     d.seed=m.seed;d.margin=m.margin;
     d.cols = m.cols;
     d.rows = m.rows;
@@ -644,14 +653,14 @@ export function buildEditorOps(params: EditorOpsParams) {
     if(d.selFloat)dropEditorSelection();
     pushEditorUndo(true,label);
     Object.assign(d,{place:d.place?{...(m.place??d.place),id:d.place.id}:m.place,passages:m.passages?.map(p=>({...p}))??[],seed:m.seed,margin:m.margin,cols:m.cols,rows:m.rows,zones:m.zones.map(z=>({...z})),objects:(m.objects??[]).map(o=>({...o})),
-      spawns:(m.spawns??[]).map(o=>({...o})),elev:{...m.elev},sel:[],selRect:null,selFloat:null,
+      spawns:(m.spawns??[]).map(o=>({...o})),elev:{...m.elev},water:{...m.water},sel:[],selRect:null,selFloat:null,
       pcv:cv,ppaint:m.paint??null,pdirty:false,dirty:true,pan:{x:0,y:0,reset:true}});
     editorSelRef.current=null;setEditorPlace(null);editorPlaceRef.current=null;
     patchField({cols:d.cols,rows:d.rows});setTestMap(m);setPaintOverride(cv,true);applyDraftPreview();syncEditorView();
   };
   const clearEditorMap = () => {
     const d=editorRef.current;if(!d)return;
-    replaceEditorMap({...draftMap(d,false),zones:[],objects:[],spawns:[],passages:[],elev:{}},null,'Полная очистка локации');
+    replaceEditorMap({...draftMap(d,false),zones:[],objects:[],spawns:[],passages:[],elev:{},water:{}},null,'Полная очистка локации');
     setEditorMsg('Локация очищена в черновике. Можно отменить или сохранить.');
   };
   const exportEditorMap = async () => {

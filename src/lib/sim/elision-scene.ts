@@ -26,6 +26,7 @@ export type ElisionActor = {
   sparkle?: boolean;
   attachment?: { parentId:string; x:number; y:number };
   opacity?: number;
+  immersion?: { sink: number; opacity: number };
   pose?: { scaleX: number; scaleY: number; rot: number; sway: number; lift: number };
   x: number;
   y: number;
@@ -294,6 +295,18 @@ export function elisionSpriteVertices(w: number, h: number, rot: number, mirror:
     const x = px * (mirror ? -1 : 1);
     const rx = x*c - py*s, ry = x*s + py*c;
     return [rx, Math.max(0, ry), Math.max(0, -ry)];
+  });
+}
+
+/** Keep the world foot anchor. Push the submerged pixels along the projected
+ * ground plane so they remain visible through the water instead of clipping. */
+export function elisionWaterVertices(quad: number[], fraction: number, sink: number) {
+  const [left, right, topRight, topLeft] = [0,3,6,9].map(i => quad.slice(i,i+3));
+  const split = (bottom: number[], top: number[]) => bottom.map((v,i) => v + (top[i]-v)*fraction);
+  const lowerLeft = split(left,topLeft), lowerRight = split(right,topRight);
+  return [left,right,lowerRight,lowerLeft,lowerLeft,lowerRight,topRight,topLeft].flatMap(([x,y,z]) => {
+    const shifted = y - sink;
+    return [x, Math.max(0,shifted), z + Math.max(0,-shifted)];
   });
 }
 

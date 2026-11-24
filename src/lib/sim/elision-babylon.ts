@@ -28,6 +28,7 @@ import {
   elisionOrtho,
   elisionActorFoot,
   elisionSpriteVertices,
+  elisionWaterVertices,
   elisionObstacleAlpha,
   elisionDepthBias,
   elisionCameraPose,
@@ -358,7 +359,11 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     for (const actor of list) {
       if (!actor.url || actor.w < 1 || actor.h < 1) continue;
       seen.add(actor.id);
-      const sig = `${actor.url}|${actor.w.toFixed(2)}|${actor.h.toFixed(2)}|${actor.mirror ? 1 : 0}|${actor.rot}`;
+      const sink = actor.immersion?.sink ?? 0;
+      const submerged = sink > 0;
+      const fraction = sink / actor.h;
+      const immersionKey = submerged ? `${fraction.toFixed(3)}|${actor.immersion?.opacity}` : '';
+      const sig = `${actor.url}|${actor.w.toFixed(2)}|${actor.h.toFixed(2)}|${actor.mirror ? 1 : 0}|${actor.rot}|${submerged}`;
       let node = decals.get(actor.id);
       if (!node || node.sig.split('|')[0] !== actor.url) {
         if (node) {
@@ -383,10 +388,18 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
         mat.zOffset = elisionDepthBias(actor.id);
         const mesh = new Mesh(`decal-${actor.id}`, scene);
         const vertices = new VertexData();
-        vertices.positions = elisionSpriteVertices(actor.w, actor.h, actor.rot, actor.mirror);
+        const quad = elisionSpriteVertices(actor.w, actor.h, actor.rot, actor.mirror);
+        vertices.positions = submerged ? elisionWaterVertices(quad,fraction,sink) : quad;
         vertices.indices = [0,1,2, 0,2,3];
         vertices.normals = [0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1];
         vertices.uvs = [0,0, 1,0, 1,1, 0,1];
+        if (submerged) {
+          vertices.indices = [0,1,2,0,2,3,4,5,6,4,6,7];
+          vertices.normals = [...vertices.normals, ...vertices.normals];
+          vertices.uvs = [0,0,1,0,1,fraction,0,fraction,0,fraction,1,fraction,1,1,0,1];
+          vertices.colors = Array.from({length:8}, (_,i) => [1,1,1,i < 4 ? actor.immersion!.opacity : 1]).flat();
+          mesh.hasVertexAlpha = true;
+        }
         vertices.applyToMesh(mesh, true);
         mesh.material = mat;
         mesh.isPickable = false;
@@ -397,11 +410,16 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       }
       // Обновляем только вершины: разворот не удаляет материал и не ждёт компиляции шейдера.
       const pose = actor.pose;
-      const poseSig = `${sig}|${pose?.scaleX}|${pose?.scaleY}|${pose?.rot}`;
+      const poseSig = `${sig}|${pose?.scaleX}|${pose?.scaleY}|${pose?.rot}|${immersionKey}`;
       if (node.poseSig !== poseSig) {
-        node.mesh.updateVerticesData('position', elisionSpriteVertices(
+        const quad = elisionSpriteVertices(
           actor.w * (pose?.scaleX ?? 1), actor.h * (pose?.scaleY ?? 1),
-          actor.rot + (pose?.rot ?? 0) * 180/Math.PI, actor.mirror), true);
+          actor.rot + (pose?.rot ?? 0) * 180/Math.PI, actor.mirror);
+        node.mesh.updateVerticesData('position', submerged ? elisionWaterVertices(quad,fraction,sink) : quad, true);
+        if (submerged) {
+          node.mesh.updateVerticesData('uv', [0,0,1,0,1,fraction,0,fraction,0,fraction,1,fraction,1,1,0,1]);
+          node.mesh.updateVerticesData('color', Array.from({length:8}, (_,i) => [1,1,1,i < 4 ? actor.immersion!.opacity : 1]).flat());
+        }
         node.poseSig = poseSig;
       }
       // Switching GIF frames reuses the mesh/material and each uploaded texture.

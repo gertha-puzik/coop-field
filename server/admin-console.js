@@ -8,6 +8,7 @@ import { presenceSlice } from './presence.js';
 import { adminLocations, teleportAccount } from './admin-world.js';
 import { adminOccupancy, rooms } from './room.js';
 import { statsRules, saveStatsRules, setCharacterStat } from './inventory-store.js';
+import { waterRules, saveWaterRules } from './water.js';
 import { spawnOverview, changeSpawnSettings } from './resource-spawn.js';
 import { eraseAccount } from './account-delete.js';
 export const GAME_VERSION='0.6.7';
@@ -24,9 +25,10 @@ export async function handleAdminConsoleHttp(req,res) {
     setCors(req,res);
     if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
     const p=new URL(req.url,'http://localhost').pathname.replace('/cfg/console','') || '/';
+    if(req.method==='GET' && p==='/water') return json(res,200,{ok:true,rules:waterRules()});
     const session=sessionFromRequest(req), actor=session?.account;
     if(!actor) return json(res,401,{ok:false,reason:'auth_required'});
-    const permission=p==='/characteristics'?'config':(p==='/player-stat' || p==='/resource-spawn')?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
+    const permission=(p==='/characteristics' || p==='/water')?'config':(p==='/player-stat' || p==='/resource-spawn')?'world':p==='/'?'overview':p==='/users' || p==='/delete'?'players':p==='/field' || p==='/teleport'?'world':'roles';
     if(!hasPermission(actor,permission) && !(p==='/users' && hasPermission(actor,'roles'))) return json(res,403,{ok:false,reason:'forbidden'});
     if(req.method==='GET') {
       if(p==='/') {
@@ -49,6 +51,12 @@ export async function handleAdminConsoleHttp(req,res) {
     if(p==='/resource-spawn') {
       const result=changeSpawnSettings(body);
       return result.error ? json(res,400,{ok:false,reason:result.error}) : json(res,200,{ok:true,...spawnOverview()});
+    }
+    if(p==='/water') {
+      const rules=saveWaterRules(body);
+      if(!rules) return json(res,400,{ok:false,reason:'invalid_request'});
+      pushAdminAudit('config','Обновлены правила воды',actor.login);
+      return json(res,200,{ok:true,rules});
     }
     if(p==='/characteristics') {
       const rules=saveStatsRules(body);

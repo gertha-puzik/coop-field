@@ -26,7 +26,7 @@ process.env.DATA_DIR = data;
 try {
   const { touchActivity, recoveryRanges, bindStatsPresence } = await import("../server/presence.js");
   const { acceptSprint, sprintCredit } = await import("../server/sprint-energy.js");
-  const { statsView, spendEnergy, checkpointStats } = await import("../server/inventory-store.js");
+  const { statsView, spendEnergy, checkpointStats, setCharacterStat } = await import("../server/inventory-store.js");
   bindStatsPresence(checkpointStats);
   const cat = { accountId: "runner", characterId: "cat" };
   const { accountId, characterId } = cat;
@@ -63,7 +63,40 @@ try {
     touchActivity("active", true);
   }
   assert.deepEqual(recoveryRanges("active", old, time), []);
-  console.log("player stats: PASS — decay, comfort bonus, sprint threshold and offline recovery");
+  const { defaultTestMap, sanitizeTestMap, terrainAt } = await import("../server/testmap.js");
+  const { tickWaterEnergy, saveWaterRules, waterRules } = await import("../server/water.js");
+  const dry = defaultTestMap();
+  assert.equal(sanitizeTestMap(dry).map.water, undefined);
+  const water = sanitizeTestMap({ ...dry, water: {
+    "0,0": 4, "1,0,1,1": 3, "1.5,0,0.5,1": 0, "2,0": 1,
+  } }).map.water;
+  assert.equal(terrainAt(water, 1.7, .5), 0);
+  assert.equal(terrainAt(water, 1.2, .5), 3);
+  assert.equal(sanitizeTestMap({ ...dry, water: [] }).map, undefined);
+  touchActivity(accountId, true);
+  setCharacterStat(accountId, characterId, "energy", 7);
+  Object.assign(cat, { x: 1, y: 1 });
+  tickWaterEnergy(cat, time, water);
+  time += 2999;
+  tickWaterEnergy(cat, time, water);
+  assert.equal(view(), 7);
+  tickWaterEnergy(cat, ++time, water);
+  assert.equal(view(), 4);
+  cat.x = 2;
+  time += 1000;
+  tickWaterEnergy(cat, time, water);
+  cat.x = 3;
+  tickWaterEnergy(cat, time, water);
+  cat.x = 1;
+  time += 2600;
+  tickWaterEnergy(cat, time, water);
+  assert.equal(view(), 4);
+  time += 6000;
+  tickWaterEnergy(cat, time, water);
+  assert.equal(view(), 0);
+  assert.equal(saveWaterRules({ ...waterRules(), drainDepth: 5 }), null);
+  assert.equal(saveWaterRules({ ...waterRules(), drainSeconds: 5 }).drainSeconds, 5);
+  console.log("player stats: PASS — decay, comfort bonus, sprint threshold, offline recovery and deep-water depletion");
 } finally {
   Date.now = realNow;
   rmSync(data, { recursive: true, force: true });
