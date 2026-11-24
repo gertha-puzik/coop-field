@@ -43,7 +43,7 @@ ops.beginElevStroke('raise',2,2);
 ops.endElevStroke();
 assert.deepEqual(editorRef.current.elev,{'1,1':2,'2,2,1,1':1});
 editorRef.current.waterDepth=4;
-ops.beginElevStroke('water',3,2);
+ops.beginElevStroke('water',2,2);
 ops.endElevStroke();
 ops.saveEditorMap();
 ops.closeEditor();
@@ -53,7 +53,7 @@ assert.equal(sent.length,1,'closing editor must not silently cancel saving');
 assert.equal(sent[0][0],'setmap');
 assert(!('pass' in sent[0][1]),'client sends no editor password');
 assert.deepEqual(sent[0][1].map.elev,{'1,1':2,'2,2,1,1':1},'old and new elevations both survive');
-assert.deepEqual(sent[0][1].map.water,{'3,2,1,1':4},'water depth survives the editor save');
+assert.deepEqual(sent[0][1].map.water,{'2,2,1,1':4},'water depth survives the editor save');
 assert.deepEqual(original.elev,{'1,1':2},'preview does not mutate saved map');
 assert.deepEqual(sent[0][1].map.place,original.place,'location identity survives save-after-close');
 assert.deepEqual(sent[0][1].map.passages,original.passages,'passages survive save-after-close');
@@ -90,7 +90,7 @@ assert.deepEqual(actualField.effectiveElevRecord(stoneMap),{'2,2':2},'no generat
 actualField.setTestMap({...stoneMap,elev:{}});
 assert.equal(actualField.elevAny(),false,'stone on flat map does not render a plateau');
 const roundtrip=actualMap.sanitizeTestMap(sent[0][1].map).map;
-assert.deepEqual(roundtrip.water,{'3,2,1,1':4},'water roundtrips alongside elevation');
+assert.deepEqual(roundtrip.water,{'2,2,1,1':4},'water roundtrips alongside elevation');
 assert.deepEqual(roundtrip.elev,{'1,1':2,'2,2,1,1':1},'received map preserves both heights for reopening');
 console.log('stone support, terrain separation and elevation roundtrip: OK');
 
@@ -131,6 +131,14 @@ console.log('rectangular exact-height brush and terrain picking at five camera a
 
 // Exact dimensions must survive rendering, server sanitization and JSON storage.
 const shape=loadTs(new URL('../src/lib/sim/terrain-shape.ts',import.meta.url));
+const waterBitmap = {};
+const raisedDraws = [];
+shape.drawRectTerrain({
+  fillRect: () => {},
+  drawImage: (...args) => raisedDraws.push(args),
+}, {'2,2,1,1':1}, 6, 6, 100, 150, 26, 0, null, null, null, waterBitmap);
+assert.deepEqual(raisedDraws, [[waterBitmap,200,300,100,150,200,274,100,150]],
+  'canvas fallback projects saved water onto the raised tile');
 const precise={'1,1':2};
 const bounds=shape.terrainBrushBounds(2,2,.2,3.2,12,12);
 assert.equal(bounds.w,.2);assert.equal(bounds.d,3.2);

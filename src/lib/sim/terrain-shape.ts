@@ -325,7 +325,7 @@ export function terrainTopVisible(frame: ElisionFrame, c: number, r: number): bo
 export function drawRectTerrain(
   g:CanvasRenderingContext2D,elev:Record<string,number>,cols:number,rows:number,
   cw:number,ch:number,lift:number,yaw:number,grass:CanvasPattern|null,stone:CanvasPattern|null,
-  paint:HTMLCanvasElement|null,
+  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null,
 ):void {
   const sin=Math.sin(yaw),cos=Math.cos(yaw);
   const tiles=cachedTerrainTiles(elev,cols,rows).filter(b=>b.level>0).slice();
@@ -349,6 +349,7 @@ export function drawRectTerrain(
     }else{g.fillStyle=grass??'#526b35';g.fillRect(x,y,w+.1,h+.1);}
     g.fillStyle=`rgba(255,245,200,${Math.min(.5,b.level*.025)})`;
     g.fillRect(x,y,w+.1,h+.1);
+    if(water)g.drawImage(water,b.x*cw,b.y*ch,w,h,x,y,w,h);
   }
 }
 
