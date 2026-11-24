@@ -101,7 +101,7 @@
 .navigation { margin:12px 0 20px; padding:10px; border:1px solid #806b52; border-radius:18px; background:linear-gradient(130deg,#302743,#221c34); }
 .navigation .nav { padding:0; margin:0; border:0; background:none; }
 .navigation .nav button { position:relative; transition:background .2s,border-color .2s,color .2s; }
-.shell.shell .navigation button[aria-expanded='true'] { border-color:#e4bd80; background:linear-gradient(120deg,#5a4635,#29213f); color:#f6d7a2; }
+.shell.shell :is(.navigation,.subnav) button[aria-expanded='true'] { border-color:#e4bd80; background:linear-gradient(120deg,#5a4635,#29213f); color:#f6d7a2; }
 .chevron { margin-left:auto; font-size:18px; transition:transform .28s ease; }
 .nav button[aria-expanded='true'] .chevron { transform:rotate(180deg); }
 .submenu { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows .3s cubic-bezier(.2,.7,.2,1),opacity .22s ease; }

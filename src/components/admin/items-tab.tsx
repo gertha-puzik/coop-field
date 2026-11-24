@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button, Input, Dropdown, ConfirmDialog } from "@/components/ui";
 import {
   ITEM_CATEGORIES,
@@ -10,9 +10,18 @@ import {
   type ItemRecipient,
 } from "@/lib/net/http-inventory";
 import { ItemEditor, ItemGlyph } from "./item-editor";
+import { ConsoleSubtabs } from "./console-subtabs";
 import { ItemGrantForm } from "./item-grant-form";
 import s from "./items.module.css";
-export function ItemsTab() {
+export function ItemsWorkspace() {
+  return <ConsoleSubtabs inlineLabel="Разделы предметов" tabs={[
+    { id: "database", label: "База предметов", content: <ItemDatabaseTab /> },
+    { id: "create", label: "Создание предметов", content: <ItemsTab /> },
+    { id: "grant", label: "Выдача предметов", content: <ItemGrantTab /> },
+  ]} />;
+}
+
+function ItemsTab() {
   const [revision, setRevision] = useState(0),
     [note, setNote] = useState("");
   return (
@@ -35,9 +44,55 @@ export function ItemsTab() {
     </div>
   );
 }
-export function ItemGrantTab() {
+function ItemGrantTab() {
+  const [items, setItems] = useState<ItemDefinition[]>([]);
+  const [players, setPlayers] = useState<ItemRecipient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setError("");
+    try {
+      const [catalogue, recipients] = await Promise.all([
+        inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"),
+        inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
+      ]);
+      if (signal?.aborted) return;
+      setItems(catalogue.items);
+      setPlayers(recipients.players);
+    } catch (e) {
+      if (!signal?.aborted) setError(inventoryError(e));
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    const request = new AbortController();
+    void load(request.signal);
+    return () => request.abort();
+  }, [load]);
+
+  return (
+    <div className={s.workbench} data-item-workbench>
+      <header className={s.pageHeader}>
+        <ItemGlyph name="gift" />
+        <div>
+          <h2>Выдача предметов</h2>
+          <p>Выдайте предметы одному игроку или группе персонажей.</p>
+        </div>
+      </header>
+      {loading ? <p role="status" className={s.muted}>Загружаем предметы и игроков…</p> : null}
+      {error ? (
+        <div className={s.error} role="alert">
+          {error} <Button type="button" variant="ghost" onClick={() => void load()}>Обновить</Button>
+        </div>
+      ) : null}
+      {!loading && <ItemGrantForm items={items} players={players} onGranted={load} />}
+    </div>
+  );
+}
+
+function ItemDatabaseTab() {
   const [items, setItems] = useState<ItemDefinition[]>([]),
-    [players, setPlayers] = useState<ItemRecipient[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [selected, setSelected] = useState(""),
@@ -45,53 +100,30 @@ export function ItemGrantTab() {
     [category, setCategory] = useState(""),
     [sort, setSort] = useState("name"),
     [page, setPage] = useState(0),
-    [creating, setCreating] = useState(false),
     [duplicate, setDuplicate] = useState<ItemDefinition | undefined>(),
     [deleting, setDeleting] = useState(false),
     [busy, setBusy] = useState(false),
     [note, setNote] = useState("");
-  const grantRef = useRef<HTMLElement>(null),
-    dbRef = useRef<HTMLElement>(null);
-  const load = async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setError("");
     try {
-      const [i, p] = await Promise.all([
-        inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"),
-        inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
-      ]);
-      setItems(i.items);
-      setPlayers(p.players);
+      const catalogue = await inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items");
+      if (signal?.aborted) return;
+      setItems(catalogue.items);
       setSelected((old) =>
-        i.items.some((x) => x.id === old) ? old : i.items[0]?.id || "",
+        catalogue.items.some((item) => item.id === old) ? old : catalogue.items[0]?.id || "",
       );
     } catch (e) {
-      setError(inventoryError(e));
+      if (!signal?.aborted) setError(inventoryError(e));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
-  useEffect(() => {
-    let disposed = false;
-    void (async () => {
-      try {
-        const [i, p] = await Promise.all([
-          inventoryRequest<{ items: ItemDefinition[] }>("/cfg/items"),
-          inventoryRequest<{ players: ItemRecipient[] }>("/cfg/items/players"),
-        ]);
-        if (disposed) return;
-        setItems(i.items);
-        setPlayers(p.players);
-        setSelected(i.items[0]?.id || "");
-      } catch (e) {
-        if (!disposed) setError(inventoryError(e));
-      } finally {
-        if (!disposed) setLoading(false);
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
   }, []);
+  useEffect(() => {
+    const request = new AbortController();
+    void load(request.signal);
+    return () => request.abort();
+  }, [load]);
   const filtered = items
       .filter(
         (i) =>
@@ -112,7 +144,6 @@ export function ItemGrantTab() {
     setQuery("");
     setCategory("");
     setPage(0);
-    setCreating(false);
     setDuplicate(undefined);
   };
   const remove = async () => {
@@ -130,65 +161,22 @@ export function ItemGrantTab() {
       setBusy(false);
     }
   };
-  if (creating || duplicate)
+  if (duplicate)
     return (
       <div className={s.workbench} data-item-workbench>
         <div className={s.breadcrumb}>
           Предметы <span>›</span> Создание предмета
         </div>
         <ItemEditor
-          key={duplicate?.id || "new"}
+          key={duplicate.id}
           initial={duplicate}
           onSaved={saved}
-          onCancel={() => {
-            setCreating(false);
-            setDuplicate(undefined);
-          }}
+          onCancel={() => setDuplicate(undefined)}
         />
       </div>
     );
   return (
     <div className={s.workbench} data-item-workbench>
-      <header className={s.pageHeader}>
-        <ItemGlyph name="gift" />
-        <div>
-          <h2>Выдача предметов</h2>
-          <p>Выдайте предметы одному игроку или группе персонажей.</p>
-        </div>
-        <nav className={s.segment} aria-label="Разделы предметов">
-          <Button
-            className={s.quiet}
-            type="button"
-            onClick={() =>
-              grantRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              })
-            }
-          >
-            <ItemGlyph name="gift" />
-            Выдача
-          </Button>
-          <Button
-            className={s.quiet}
-            type="button"
-            onClick={() =>
-              dbRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              })
-            }
-          >
-            <ItemGlyph name="layers" />
-            База предметов
-          </Button>
-        </nav>
-      </header>
-      {loading ? (
-        <p role="status" className={s.muted}>
-          Загружаем предметы и игроков…
-        </p>
-      ) : null}
       {error ? (
         <div className={s.error} role="alert">
           {error}{" "}
@@ -197,20 +185,13 @@ export function ItemGrantTab() {
           </Button>
         </div>
       ) : null}
-      <section ref={grantRef} className={s.anchor}>
-        <ItemGrantForm items={items} players={players} onGranted={load} />
-      </section>
-      <section ref={dbRef} className={`${s.database} ${s.anchor}`}>
+      <section className={s.database}>
         <header className={s.pageHeader}>
           <ItemGlyph name="layers" />
           <div>
             <h2>База предметов</h2>
             <p>Все предметы игры с описаниями, параметрами и настройками.</p>
           </div>
-          <Button className={s.primary} onClick={() => setCreating(true)}>
-            <ItemGlyph name="plus" />
-            Создать предмет
-          </Button>
         </header>
         <div className={s.databaseGrid}>
           <aside className={s.catalogue}>
@@ -357,7 +338,7 @@ export function ItemGrantTab() {
             ) : (
               <div className={s.emptyDatabase}>
                 <ItemGlyph name="box" />
-                <p>Выберите предмет в базе или создайте новый.</p>
+                <p>Чтобы добавить предмет, откройте вкладку «Создание предметов».</p>
               </div>
             )}
           </div>
