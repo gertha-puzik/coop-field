@@ -3,7 +3,7 @@ import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
 import { currentWaterRules, refreshWaterRules } from '@/lib/sim/water-client';
-import { drawSubmergedSprite, drawWaterSurface, submergedPixels } from '@/lib/sim/water-render';
+import { drawSubmergedSprite, drawWaterSurface, submergedPixels, terrainWaterCanvas } from '@/lib/sim/water-render';
 import { waterSpeed } from '@/lib/sim/water-rules';
 import { drawRectTerrain, terrainAt } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
@@ -3286,8 +3286,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         // Лицо блока — ближайший прямой угол камеры. Один угол на кадр, чтобы
         // ключ сортировки стены и сама стена смотрели в одну сторону.
         const faceYaw = camYawRef.current;
+        const waterT = terrainWaterCanvas(currentTestMap(),cwT,chT);
         const exactTerrain=Object.keys(mapElev).some(key=>key.split(',').length===4);
-        if(exactTerrain)drawRectTerrain(ctx,mapElev,s.field.cols,s.field.rows,cwT,chT,TERRAIN_LIFT_PX,faceYaw,gpatT,stonePattern(ctx),pcvT);
+        if(exactTerrain)drawRectTerrain(ctx,mapElev,s.field.cols,s.field.rows,cwT,chT,TERRAIN_LIFT_PX,faceYaw,gpatT,stonePattern(ctx),pcvT,waterT);
         for (const key of exactTerrain?[]:Object.keys(mapElev)) {
           const lvT = mapElev[key];
           if (!lvT || lvT <= 0) continue;
@@ -3316,6 +3317,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               if (clipT) ctx.clip(clipT);
               // поднятая земля этой клетки
               drawTerrainTop(ctx, cwT, chT, cT, rT, gpatT, pcvT, faceYaw);
+              ctx.restore();
+              if (waterT) ctx.drawImage(waterT,cT*cwT,rT*chT,cwT,chT,cT*cwT+shiftT.dx,rT*chT+shiftT.dy,cwT,chT);
+              ctx.save();
+              if (clipT) ctx.clip(clipT);
               // разметка клетки поверх поднятой земли
               if (flatsT) {
                 for (const oT of flatsT) {

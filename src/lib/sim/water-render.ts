@@ -89,6 +89,26 @@ export function drawWaterSurface(g: CanvasRenderingContext2D, map: TestMap, cell
   g.restore();
 }
 
+// The 2D renderer samples this transparent layer at the same coordinates as
+// terrain paint, then projects each sample onto the top of its own plateau.
+let terrainWater: {
+  map: TestMap; cellW: number; cellH: number; revision: number; canvas: HTMLCanvasElement;
+} | undefined;
+
+export function terrainWaterCanvas(map: TestMap, cellW: number, cellH: number) {
+  if (!map.water) return null;
+  if (terrainWater?.map === map && terrainWater.cellW === cellW &&
+      terrainWater.cellH === cellH && terrainWater.revision === revision) return terrainWater.canvas;
+  const canvas = terrainWater?.canvas ?? document.createElement('canvas');
+  canvas.width = Math.round(map.cols * cellW);
+  canvas.height = Math.round(map.rows * cellH);
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  drawWaterSurface(context,map,cellW,cellH);
+  terrainWater = {map,cellW,cellH,revision,canvas};
+  return canvas;
+}
+
 export function submergedPixels(rules: WaterRules, depth: number, height: number, jump = 0) {
   return Math.max(0, Math.min(height*(.55 + .045*depth), depth*rules.sinkPx - jump));
 }
