@@ -1,9 +1,10 @@
+import { tickWaterEnergy } from "./water.js";
 import { checkpointStats } from './inventory-store.js';
 import { handleInventoryHttp } from './inventory-http.js';
 import { handleSiteDesignHttp } from './site-design.js';
 import { handleAdminConsoleHttp } from "./admin-console.js";
 import { observeAdminChanges } from "./admin-audit-http.js";
-import { withTestLocation } from "./testmap.js";
+import { locationWater, withTestLocation } from "./testmap.js";
 import { locationFromRoom, travel, handleLocationsHttp } from "./location-world.js";
 /**
  * Transport (W4 carve, behavior-preserving): the `[event, payload]` inbound
@@ -595,6 +596,15 @@ export function startServer() {
   catFlushTimer.unref();
 
   // Each live atmosphere scope advances and broadcasts at most once per tick.
+  setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      if (room.fmt !== 'test' || !room.sockets.size) continue;
+      const water = locationWater(locationFromRoom(room.code)) ?? null;
+      for (const cat of room.sockets.values()) tickWaterEnergy(cat, now, water);
+    }
+  }, 250).unref();
+
   const atmoTimer = setInterval(tickAtmosphere, 5000);
   atmoTimer.unref();
   let spawnInitialized = false;

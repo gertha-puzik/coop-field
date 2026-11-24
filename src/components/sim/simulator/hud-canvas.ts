@@ -169,7 +169,7 @@ export function drawElisionNameplates(
     const x = frame.viewW / 2 + (dx * Math.cos(frame.yaw) - dy * Math.sin(frame.yaw)) * frame.zoom;
     const footY =
       frame.viewH / 2 + (dx * Math.sin(frame.yaw) + dy * Math.cos(frame.yaw) - f.y) * frame.zoom;
-    const headY = footY - actor.h * frame.zoom - 6;
+    const headY = footY - (actor.h - (actor.immersion?.sink ?? 0)) * frame.zoom - 6;
     drawNameplate(g, x, headY, {
       charName: plate.name,
       accountLogin: plate.accountLogin,

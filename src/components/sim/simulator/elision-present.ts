@@ -1,5 +1,7 @@
+import { drawWaterSurface, submergedPixels, waterTextureRevision } from '@/lib/sim/water-render';
+import { currentWaterRules } from '@/lib/sim/water-client';
 import { paintRevision as paintLayerRevision } from '@/lib/sim/test-field';
-import { terrainTiles } from '@/lib/sim/terrain-shape';
+import { terrainAt, terrainTiles } from '@/lib/sim/terrain-shape';
 import type { EditorPlace } from '@/lib/sim/editor-model';
 /**
  * Кадр Элизии для WebGL-вида: собирает то, что 2D-цикл уже посчитал
@@ -132,7 +134,8 @@ function buildOverlay(
 ): HTMLCanvasElement | null {
   const w = Math.max(1, Math.round(cols * cellW));
   const h = Math.max(1, Math.round(rows * cellH));
-  const key = `${w}x${h}|${editor}|${grid}|${revision}|${pathSigOf(map)}|${hasPaint ? 1 : 0}|${Object.keys(map.elev ?? {}).length}|${map.zones.length}|${(map.objects ?? []).length}`;
+  const waterKey = JSON.stringify(map.water ?? null);
+  const key = `${waterKey}|${w}x${h}|${editor}|${grid}|${revision}|${pathSigOf(map)}|${hasPaint ? 1 : 0}|${Object.keys(map.elev ?? {}).length}|${map.zones.length}|${(map.objects ?? []).length}`;
   if (overlay && overlayKey === key && overlay.width === w && overlay.height === h) return overlay;
   if (!overlay) overlay = document.createElement('canvas');
   overlay.width = w;
@@ -165,6 +168,7 @@ function buildOverlay(
     g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
     g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
+  drawWaterSurface(g,map,cellW,cellH);
   const battle = new Set<string>();
   for (const zone of map.zones) {
     if (zone.kind !== 'cells') continue;
@@ -211,7 +215,7 @@ type FramePaintOut = {
 function framePaint(cols: number, rows: number, cellW: number, cellH: number, editor: boolean, grid=false): FramePaintOut {
   const map = currentTestMap();
   const real = paintCanvas();
-  const revision = packRevision(), layerRevision = paintLayerRevision();
+  const revision = packRevision()*3 + waterTextureRevision(), layerRevision = paintLayerRevision();
   const w = Math.max(1, Math.round(cols * cellW));
   const h = Math.max(1, Math.round(rows * cellH));
   if (!surface) surface = document.createElement('canvas');
@@ -299,7 +303,12 @@ function catActor(
     };
   }
   const size = spriteSizePx(input.cellH, scale, aspectOf(sprite, input.spriteImage(sprite)));
-  const image=input.walkFrame?.(id,sprite);
+  const rules = currentWaterRules();
+  const x = (topLeft.x + size.w/2)/input.cellW, y = (topLeft.y + size.h)/input.cellH;
+  const map = currentTestMap();
+  const depth = terrainAt(map.water,x,y);
+  const swimming = depth >= rules.swimDepth;
+  const image = swimming ? undefined : input.walkFrame?.(id,sprite);
   // Fit the authored frame without stretching it or moving the static foot anchor.
   const fit=image?Math.min(size.w/image.width,size.h/image.height):1;
   const w=image?image.width*fit:size.w,h=image?image.height*fit:size.h;
@@ -308,11 +317,16 @@ function catActor(
     x: topLeft.x+(size.w-w)/2,
     y: topLeft.y+size.h-h,
     w, h, image,
+    immersion: depth ? {
+      sink: submergedPixels(rules,depth,h,Math.max(0,lift - supportLevelAt(x,y)*TERRAIN_LIFT_PX)),
+      opacity: rules.submergedOpacity/100,
+    } : undefined,
     lift,
     url: spriteUrl(sprite),
     mirror,
     rot: 0,
-    pose: elisionSpritePose(input.now, input.jelly[id === input.controlled ? 'main' : id] ?? 0, size.h,
+    pose: swimming ? {scaleX:1,scaleY:1,rot:0,sway:0,lift:1.5 + Math.sin(input.now/200)*1.5}
+      : elisionSpritePose(input.now, input.jelly[id === input.controlled ? 'main' : id] ?? 0, size.h,
       id === input.controlled ? input.space : input.remoteSpace.get(id)),
   };
 }

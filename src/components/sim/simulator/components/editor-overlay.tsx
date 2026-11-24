@@ -78,6 +78,7 @@ const tools:{id:EditorTool;label:string;icon:string;category:Category;key?:strin
   {id:'path',label:'Тропинка',icon:'path',category:'surface'},
   {id:'dirt',label:'Земля',icon:'dirt',category:'surface'},
   {id:'ground',label:'Покрытие',icon:'ground',category:'surface'},
+  {id:'water',label:'Вода',icon:'down',category:'terrain'},
   {id:'height',label:'Блок',icon:'layers',category:'terrain'},
   {id:'raise',label:'Насыпать',icon:'up',category:'terrain'},
   {id:'lower',label:'Срыть',icon:'down',category:'terrain'},
@@ -217,6 +218,7 @@ export function EditorOverlay(p:EditorOverlayProps){
          <div className={styles.toolGrid}>{tools.filter(t=>t.category==='terrain').map(toolButton)}</div>
          <h3>Размер блока</h3>
          <div className={styles.two}>{([['width','Ширина блока',.1,d.cols],['depth','Длина блока',.1,d.rows],['level','Высота блока',0,TERRAIN_MAX_LEVEL]] as const).map(([key,label,min,max])=><NumberField key={key} label={label} min={min} max={max} step={.1} value={clampBrush(d.elevBrush,d.cols,d.rows)[key]} onChange={value=>update({elevBrush:{...clampBrush(d.elevBrush,d.cols,d.rows),[key]:value}})}/>)}</div>
+         {d.tool==='water' && <label className={styles.field}>Глубина воды<Dropdown aria-label="Глубина воды" value={String(d.waterDepth ?? 1)} onChange={value=>update({waterDepth:Number(value)})} options={[0,1,2,3,4].map(level=>({value:String(level),label:level ? String(level) : 'Убрать воду'}))}/></label>}
          <button type="button" className={styles.wide} aria-pressed={!!d.elevFree} onClick={()=>{choose('height');update({elevFree:!d.elevFree});}}>Свободная установка: {d.elevFree?'ВКЛ':'ВЫКЛ'}</button>
          {d.elevFree&&<label className={styles.field}>Привязка к блокам<Dropdown aria-label="Привязка к блокам" value={d.elevSnap??'level'} onChange={v=>update({elevSnap:v as 'off'|'level'|'all'})} className="w-auto" options={[{value:'off',label:'Без магнита'},{value:'level',label:'Такая же высота'},{value:'all',label:'Любая высота'}]}/></label>}
          <label className={styles.check}><input type="checkbox" checked={d.showGrid??false} onChange={e=>update({showGrid:e.target.checked})}/>Показывать сетку</label>

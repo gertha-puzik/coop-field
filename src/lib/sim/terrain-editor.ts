@@ -183,7 +183,15 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     const point=terrainScreenPoint(frame,cursor.x*frame.cellW,cursor.y*frame.cellH,hoveredLevel*frame.terrainLiftStep);
     label(g,point.x,point.y-38,`Высота: ${hoveredLevel}`);
   }
-  if (hover && isElevationTool(d.tool)) {
+  if (hover && d.tool === 'water') {
+    const brush = clampBrush(d.elevBrush,d.cols,d.rows);
+    const rect = terrainBrushBounds(hover.c,hover.r,brush.width,brush.depth,d.cols,d.rows);
+    const level = terrainAt(frame.elev,hover.c+.5,hover.r+.5);
+    g.strokeStyle='#9eeaff';g.lineWidth=2;
+    elevPrism(g,frame,rect.x,rect.y,level,rect.w,rect.d,'rgba(89,207,250,.25)','transparent');
+    const point=terrainScreenPoint(frame,(hover.c+.5)*frame.cellW,(hover.r+.5)*frame.cellH,level*frame.terrainLiftStep);
+    label(g,point.x,point.y-23,`Глубина: ${d.waterDepth ?? 1}`,'#9eeaff');
+  } else if (hover && isElevationTool(d.tool)) {
     const b = clampBrush(d.elevBrush,d.cols,d.rows);
     const rect=d.elevFree&&d.terrainCursor ? freeTerrainPlacement(frame.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : {...terrainBrushBounds(hover.c,hover.r,b.width,b.depth,d.cols,d.rows),snapped:false};
     const level=terrainAt(frame.elev,rect.x+rect.w/2,rect.y+rect.d/2);

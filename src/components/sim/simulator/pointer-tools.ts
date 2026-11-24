@@ -485,7 +485,7 @@ export function buildPointerTools(deps: PointerToolsDeps) {
         pushEditorUndo();
         dirtPaintingRef.current = true;
         beginElevStroke(ed.tool, c, r);
-        if(ed.elevFree){endElevStroke();dirtPaintingRef.current=false;}
+        if(ed.elevFree && ed.tool !== 'water'){endElevStroke();dirtPaintingRef.current=false;}
         ev.currentTarget.setPointerCapture(ev.pointerId);
         ev.currentTarget.style.cursor = 'var(--paw-cursor-aim), crosshair';
         ev.preventDefault();

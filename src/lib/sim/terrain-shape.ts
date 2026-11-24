@@ -240,14 +240,14 @@ export function terrainScreenPoint(frame: ElisionFrame, x: number, y: number, li
 }
 
 
-export type ElevationTool = 'raise' | 'lower' | 'flat' | 'height';
+export type ElevationTool = 'water' | 'raise' | 'lower' | 'flat' | 'height';
 export type ElevationBrush = { width: number; depth: number; level: number };
 export type CellRect = { c0: number; r0: number; c1: number; r1: number };
 
 export const DEFAULT_ELEVATION_BRUSH: ElevationBrush = { width: 1, depth: 1, level: 1 };
 
 export function isElevationTool(tool: EditorTool): tool is ElevationTool {
-  return tool === 'raise' || tool === 'lower' || tool === 'flat' || tool === 'height';
+  return tool === 'water' || tool === 'raise' || tool === 'lower' || tool === 'flat' || tool === 'height';
 }
 
 export function clampBrush(brush: ElevationBrush | undefined, cols: number, rows: number): ElevationBrush {

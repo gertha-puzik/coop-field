@@ -2,7 +2,10 @@
 import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
-import { drawRectTerrain } from '@/lib/sim/terrain-shape';
+import { currentWaterRules, refreshWaterRules } from '@/lib/sim/water-client';
+import { drawSubmergedSprite, drawWaterSurface, submergedPixels } from '@/lib/sim/water-render';
+import { waterSpeed } from '@/lib/sim/water-rules';
+import { drawRectTerrain, terrainAt } from '@/lib/sim/terrain-shape';
 import { drawTerrainEditorOverlay } from '@/lib/sim/terrain-editor';
 /**
  * Simulator — единственный компонент движка: канвас-сцена, сетевой контекст,
@@ -1315,6 +1318,13 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     }
   }, [fieldFormat, settings.arrow.battleMode]);
 
+  useEffect(() => {
+    if (!IS_ELYRIA) return;
+    void refreshWaterRules();
+    const interval = setInterval(() => void refreshWaterRules(), 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   function freeFoot() {
     const s = settingsRef.current;
     const hb = peaceHalfBox(s, spritesRef.current[s.character.sprite]);
@@ -1999,12 +2009,14 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             }
           }
         }
-        const sprint = sprintRef.current && (!IS_ELYRIA || canSprintRef.current) && (vx !== 0 || vy !== 0);
+        const foot = freeFoot();
+        const depth = IS_ELYRIA ? terrainAt(currentTestMap().water,e.fx+foot.dx,e.fy+foot.dy) : 0;
+        const sprint = !depth && sprintRef.current && (!IS_ELYRIA || canSprintRef.current) && (vx !== 0 || vy !== 0);
         // Инерция мирной ходьбы: скорость приближается к желаемой — на разгоне
         // быстро (полсотни мс), на выбегании плавно: кот не встаёт как вкопанный,
         // а мягко докатывается. После спринта выбегание дольше — инерция заметнее.
         const hasInput = vx !== 0 || vy !== 0;
-        const tSpd = PEACE_SPEED_DEFAULT * (sprint ? SPRINT_MULT : 1);
+        const tSpd = PEACE_SPEED_DEFAULT * (sprint ? SPRINT_MULT : 1) * waterSpeed(currentWaterRules(),depth);
         let tvx = 0;
         let tvy = 0;
         if (hasInput) {
@@ -2837,6 +2849,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             ctx.fill(geo.path);
           }
         }
+        if (!elisionViewRef.current) {
+          ctx.save();
+          ctx.clip(geo.path);
+          drawWaterSurface(ctx,currentTestMap(),s.field.cellW,s.field.cellH);
+          ctx.restore();
+        }
         // проталины «земли» — наземный декор на самой почве: под сеткой, декором
         // и котами; на ходьбу не влияет, режется клипом по кромке локации.
         // Клетки плато (рельеф) рисуются из глубинной очереди — на поднятой земле.
@@ -3382,6 +3400,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         /** Зеркалирование по горизонтали: 1 — как нарисован (влево), -1 — зеркально
          *  (вправо). Мирный режим разворачивает кота по направлению бега. */
         flip = 1,
+        depth = 0,
+        jumpHeight = 0,
       ) => {
         const th0 = (s.field.cellH - 10) * (scalePct / 100);
         const th = th0;
@@ -3443,14 +3463,16 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const jx = 1 + amp * 0.22 * wob;
         const jy = 1 - amp * 0.22 * wob;
         ctx.save();
-        ctx.translate(baseCx + swayX, baseY2 - lift);
+        const rules = currentWaterRules();
+        const swimBob = depth >= rules.swimDepth ? 1.5 + Math.sin(now/200)*1.5 : 0;
+        ctx.translate(baseCx + swayX, baseY2 - lift - swimBob);
         if (testMode) ctx.rotate(-camYawRef.current);
         ctx.rotate(amp * 0.08 * Math.cos(now * 0.045) + extraRot);
         ctx.scale(flip * sqX * jx, sqY * jy);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         glow(-twd / 2, -th);
-        ctx.drawImage(sprC, -twd / 2, -th, twd, th);
+        drawSubmergedSprite(ctx,sprC,twd,th,submergedPixels(rules,depth,th,jumpHeight),rules.submergedOpacity/100);
         ctx.restore();
       };
 
@@ -3572,7 +3594,12 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             const dMoving = isRemoteFree
               ? !!frD && Math.hypot(frD.tx - frD.x, frD.ty - frD.y) > 0.02
               : (remoteQueue?.queue.length ?? 0) > 0;
-            const sprDrawD = walkD && dMoving ? walkFrameAt(walkD, now, walkPhaseOf(d.id)) : sprT;
+            const remoteH = (s.field.cellH-10)*d.scale/100;
+            const remoteW = remoteH*sprT.width/sprT.height;
+            const remoteDepth = IS_ELYRIA && testMode ? terrainAt(currentTestMap().water,
+              (frD?.x ?? d.col) + remoteW/(2*s.field.cellW),
+              (frD?.y ?? d.row) + remoteH/s.field.cellH) : 0;
+            const sprDrawD = walkD && dMoving && remoteDepth < currentWaterRules().swimDepth ? walkFrameAt(walkD, now, walkPhaseOf(d.id)) : sprT;
             drawChar(
               sprDrawD,
               tp,
@@ -3582,6 +3609,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               whiteSpritesRef.current[d.sprite] ?? null,
               d.id === s.controlled,
               dFlip,
+              remoteDepth,
             );
           } else {
             // PNG ещё не пришёл или битый — кот всё равно стоит на клетке, не пропадает.
@@ -3631,7 +3659,10 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           const walkS = walkGifsRef.current[s.character.sprite];
           const selfMoving = selfId === 'main'
             && (selfFree ? freeSyncRef.current.moving : !!e.leap);
-          const sprDraw = walkS && selfMoving
+          const foot = freeFoot();
+          const selfDepth = IS_ELYRIA && testMode ? terrainAt(currentTestMap().water,
+            (selfFree ? e.fx : mainPos.col)+foot.dx,(selfFree ? e.fy : mainPos.row)+foot.dy) : 0;
+          const sprDraw = walkS && selfMoving && selfDepth < currentWaterRules().swimDepth
             ? walkFrameAt(walkS, now, walkPhaseOf(selfId))
             : spr;
           drawChar(
@@ -3643,6 +3674,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             whiteSpritesRef.current[s.character.sprite] ?? null,
             selfId === 'main',
             selfFree ? e.face : 1,
+            selfDepth,
+            e.leapZ,
           );
           {
             const plate = selfPlateRef.current;
@@ -3654,7 +3687,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               ctx.translate(nameX, cellY + th0s);
               if (testMode) ctx.rotate(-camYawRef.current);
               ctx.translate(-nameX, -(cellY + th0s));
-              drawNameplate(ctx, nameX, cellY - 4, {
+              drawNameplate(ctx, nameX, cellY + submergedPixels(currentWaterRules(),selfDepth,th0s,e.leapZ) - 4, {
                 charName: plate.name,
                 accountLogin: plate.accountLogin,
                 statusLabel: plate.statusLabel,

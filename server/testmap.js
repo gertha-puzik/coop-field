@@ -510,6 +510,9 @@ function sanitizeTestMap(raw) {
     if(!elev)return {error:"слишком много участков рельефа"};
     if (Object.keys(elev).length === 0) elev = undefined;
   }
+  const water = raw.water == null ? undefined : sanitizeTerrainElev(raw.water, cols, rows, 4);
+  if (raw.water != null && !water) return { error: 'карта глубин не распознана' };
+  if (water) for (const key of Object.keys(water)) water[key] = Math.round(water[key]);
   const location=sanitizeLocationFields(raw,cols,rows);if(location.error)return {error:location.error};
   return {
     map: {
@@ -523,6 +526,7 @@ function sanitizeTestMap(raw) {
       objects,
       spawns,
       ...(elev ? { elev } : {}),
+      ...(water && Object.keys(water).length ? { water } : {}),
       ...(paint ? { paint } : {}),
     },
   };
@@ -684,6 +688,9 @@ function setMap(ws, payload = {}) {
  * nested field/catalog calls. Never hold this scope across an await.
  */
 const locationWorlds=new Map();
+export function locationWater(id) {
+  return id === activeLocationId ? testMap.water : locationWorlds.get(id)?.testMap.water;
+}
 /** Снимок мира для кэша локаций. testMap — structuredClone (elev/zones/objects
  *  не делят ссылки между локациями); геометрия/paint — по ссылке: они
  *  пересобираются целиком в rebuildTestGeometry, а не мутируются in-place. */

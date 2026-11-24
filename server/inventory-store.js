@@ -111,6 +111,13 @@ export function spendEnergy(accountId, characterId, cost, now = Date.now()) {
   return true;
 }
 
+export function drainEnergy(accountId, characterId, cost, now) {
+  if (!cost) return;
+  const key = keyOf(accountId, characterId);
+  const stats = persistedStats(key, now);
+  if (stats.energy > 0) setPlayerStats(key, { ...stats, energy: Math.max(0, stats.energy - cost) });
+}
+
 export function setCharacterStat(accountId, characterId, stat, value) {
   if ((stat !== "energy" && stat !== "comfort") || !Number.isFinite(value) || value < 0 || value > 100)
     return false;

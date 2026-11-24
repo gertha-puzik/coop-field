@@ -17,6 +17,7 @@ import { send, broadcast, occupied, publicCat } from "./room.js";
 import { normalizeDeg, clearAimTimer } from "./combat.js";
 import { acceptSprint } from "./sprint-energy.js";
 import { rememberCat } from "./persist.js";
+import { tickWaterEnergy, waterDepthFor } from "./water.js";
 import { locationFromRoom } from "./location-world.js";
 import { withTestLocation, TEST_WIDTH, TEST_HEIGHT } from "./testmap.js";
 import { testWalkable, testEntryCell, cliffBetween, terrainLevelAt, terrainPointLevelAt, terrainBodyOverlap, elevJumpOk, testElev, nearestTestCell, testPointInIsland } from "./world.js";
@@ -190,7 +191,8 @@ function freeMove(ws, payload = {}) {
     const after = terrainBodyOverlap(x1,y1,rx,ry,level,levelAt);
     if (after > Math.max(1e-7,before+1e-7)) return;
   }
-  const sprintRequested = !payload.stop && !jumping && (payload.sp === 1 || payload.sp === true);
+  tickWaterEnergy(cat, nowGuard);
+  const sprintRequested = !waterDepthFor(cat) && !payload.stop && !jumping && (payload.sp === 1 || payload.sp === true);
   const moving = nx !== cat.fx || ny !== cat.fy;
   const sprinting = acceptSprint(cat, sprintRequested && moving, nowGuard);
   if (sprintRequested && moving && !sprinting) {
@@ -203,6 +205,7 @@ function freeMove(ws, payload = {}) {
   cat.fy = ny;
   cat.fsp = Number(sprinting);
   cat.jp = payload.jp === 1 || payload.jp === true ? 1 : 0;
+  tickWaterEnergy(cat, nowGuard);
   const cell = nearestTestCell(cat.fx, cat.fy);
   if (cell) {
     cat.x = cell.x;
