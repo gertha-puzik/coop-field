@@ -74,6 +74,7 @@ export function roomTitle(code: string): string {
 /** Информация о закрытии сокета: retrying = клиент сам переподключается. */
 export type CoopCloseInfo = {
   retrying: boolean;
+  code?: number;
   /** Порядковый номер следующей попытки (для подписи в статусе). */
   attempt: number;
 };
@@ -337,7 +338,9 @@ export function createCoopClient(handlers: CoopHandlers) {
   const emit = (event: string, payload?: unknown) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify([event, payload ?? {}]));
+      return true;
     }
+    return false;
   };
 
   const clearReconnect = () => {
@@ -551,9 +554,9 @@ export function createCoopClient(handlers: CoopHandlers) {
         handlers.onRooms?.(list);
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       ws = null;
-      handlers.onClose?.({ retrying: !manualClose && !!joinParams, attempt: attempt + 1 });
+      handlers.onClose?.({ retrying: !manualClose && !!joinParams, attempt: attempt + 1, code: event.code });
       scheduleReconnect();
     };
     ws.onerror = () => {
