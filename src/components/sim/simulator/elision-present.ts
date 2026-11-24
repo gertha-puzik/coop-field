@@ -1,4 +1,5 @@
-import { drawWaterSurface, submergedPixels, waterTextureRevision } from '@/lib/sim/water-render';
+import { submergedPixels } from '@/lib/sim/water-rules';
+import { drawWaterSurface, waterTextureRevision } from '@/lib/sim/water-render';
 import { currentWaterRules } from '@/lib/sim/water-client';
 import { paintRevision as paintLayerRevision } from '@/lib/sim/test-field';
 import { terrainAt, terrainTiles } from '@/lib/sim/terrain-shape';

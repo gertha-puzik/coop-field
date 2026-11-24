@@ -1,3 +1,4 @@
+import { DEFAULT_WATER_RULES, submergedPixels } from '../src/lib/sim/water-rules.ts';
 // @ts-nocheck
 // Вид Элизии: один перевод px мира в сцену и ортокамера, совпадающая с
 // screenToWorld. Настоящая камера Babylon в NullEngine проверяет проекцию
@@ -204,3 +205,8 @@ for(let i=0;i<preciseMesh.tops.positions.length;i+=12){
 assert(Math.abs(topArea-.2*1.2*100*150)<1e-6,'fractional mesh footprint remains exact');
 assert(preciseMesh.walls.positions.every(Number.isFinite),'fractional cliff vertices are finite');
 console.log('fractional terrain mesh dimensions and height ok');
+
+for (const [depth, percent] of [0, 10, 15, 35, 45].entries()) {
+  if (submergedPixels(DEFAULT_WATER_RULES,depth,200) !== 2*percent) throw new Error('wrong immersion percentage for depth '+depth);
+}
+if (submergedPixels(DEFAULT_WATER_RULES,4,200,100) !== 0) throw new Error('jump clears immersion');

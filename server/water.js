@@ -8,7 +8,8 @@ import { terrainAt, testMap } from './testmap.js';
 const file = path.join(DATA_DIR, 'water-rules.json');
 const limits = {
   slow1: [30, 0, 99], slow2: [45, 0, 99], slow3: [60, 0, 99], slow4: [80, 0, 99],
-  sinkPx: [60, 0, 300], submergedOpacity: [20, 0, 100], swimDepth: [4, 1, 4],
+  sink1: [10, 0, 99], sink2: [15, 0, 99], sink3: [35, 0, 99], sink4: [45, 0, 99],
+  submergedOpacity: [20, 0, 100], swimDepth: [4, 1, 4],
   drainDepth: [3, 1, 4], drainSeconds: [3, 1, 600], drainEnergy: [3, 0, 100],
 };
 
@@ -25,7 +26,8 @@ function validate(input) {
 
 let rules = Object.fromEntries(Object.entries(limits).map(([key, [value]]) => [key, value]));
 try {
-  rules = validate(JSON.parse(fs.readFileSync(file, 'utf8'))) ?? rules;
+  // Add percentage defaults to maps deployed before per-depth immersion existed.
+  rules = validate({ ...rules, ...JSON.parse(fs.readFileSync(file, 'utf8')) }) ?? rules;
 } catch (error) {
   if (error.code !== 'ENOENT') console.warn('Water rules:', error.message);
 }
