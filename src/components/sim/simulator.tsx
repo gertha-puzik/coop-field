@@ -2850,10 +2850,8 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           }
         }
         if (!elisionViewRef.current) {
-          ctx.save();
-          ctx.clip(geo.path);
+          // Water can deliberately cover transparent parts of the land layer.
           drawWaterSurface(ctx,currentTestMap(),s.field.cellW,s.field.cellH);
-          ctx.restore();
         }
         // проталины «земли» — наземный декор на самой почве: под сеткой, декором
         // и котами; на ходьбу не влияет, режется клипом по кромке локации.

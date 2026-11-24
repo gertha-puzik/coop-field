@@ -168,7 +168,11 @@ function buildOverlay(
     g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
     g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
+  // Water is its own surface. The land mask must not hide it in holes or at the shore.
+  g.restore();
   drawWaterSurface(g,map,cellW,cellH);
+  g.save();
+  if (!editor || !hasPaint) g.clip(geo.path);
   const battle = new Set<string>();
   for (const zone of map.zones) {
     if (zone.kind !== 'cells') continue;
