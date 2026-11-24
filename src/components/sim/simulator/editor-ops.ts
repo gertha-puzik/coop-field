@@ -98,7 +98,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     zones: d.zones.map((z) => ({ ...z })),
     objects: d.objects.map((o) => ({ ...o })),
     spawns: d.spawns.map((s) => ({ ...s })),
-    ...(Object.keys(d.water).length ? { water: { ...d.water } } : {}),
+    ...(d.water && Object.keys(d.water).length ? { water: { ...d.water } } : {}),
     ...(Object.keys(d.elev).length > 0 ? { elev: { ...d.elev } } : {}),
     // Кисть локации: холст черновика уходит в конфиг PNG base64. С рисунком
     // проталины/покрытия больше не нужны (запечены) — как в sanitize.
@@ -489,7 +489,7 @@ export function buildEditorOps(params: EditorOpsParams) {
       // и срезает рельеф: стёртый участок возвращается к базовой земле
       const area = {x:c0,y:r0,w:c1-c0+1,d:r1-r0+1,level:0};
       stampTerrainRect(d.elev,area,'height',0,new Set(),0,TERRAIN_MAX_LEVEL);
-      if (Object.keys(d.water).length) stampTerrainRect(d.water,area,'height',0,new Set(),0,4);
+      if (d.water && Object.keys(d.water).length) stampTerrainRect(d.water,area,'height',0,new Set(),0,4);
     } else {
       const kind: TestMapZoneKind = d.tool === 'green' ? 'green' : 'cells';
       const n = d.zones.filter((z) => z.kind === kind).length + 1;
@@ -572,7 +572,7 @@ export function buildEditorOps(params: EditorOpsParams) {
     const rect=mode!=='water'&&d.elevFree&&d.terrainCursor ? freeTerrainPlacement(d.elev,d.terrainCursor.x,d.terrainCursor.y,b.width,b.depth,b.level,d.cols,d.rows,d.elevSnap??'level',d.terrainSnapDistance) : terrainBrushBounds(c,r,b.width,b.depth,d.cols,d.rows);
     const water = mode === 'water';
     const updated = water
-      ? stampTerrainRect(d.water, rect, 'height', d.waterDepth ?? 1, stroke.touched, 0, 4)
+      ? stampTerrainRect(d.water ??= {}, rect, 'height', d.waterDepth ?? 1, stroke.touched, 0, 4)
       : stampTerrainRect(d.elev, rect, mode, b.level, stroke.touched, stroke.flat, TERRAIN_MAX_LEVEL);
     if (!updated) return false;
     d.dirty = true;

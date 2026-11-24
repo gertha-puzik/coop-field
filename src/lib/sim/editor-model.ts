@@ -82,7 +82,7 @@ export type EditorDraft = {
   spawns: TestMapSpawn[];
   /** Карта высот черновика: «c,r» → уровень 1..TERRAIN_MAX_LEVEL (разреженно). */
   elev: Record<string, number>;
-  water: Record<string, number>;
+  water?: Record<string, number>;
   waterDepth?: number;
   /** Размер прямоугольного штампа и точная высота: только настройки инструмента. */
   elevBrush?: { width: number; depth: number; level: number };
