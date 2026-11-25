@@ -1521,7 +1521,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
       const e = engineRef.current;
       const testMode = fieldFormatRef.current === 'test';
       const editorOn = editorState().on;
-      if (e.leap || e.blocking) return null;
+      if (e.leap || e.blocking || !canJumpHere()) return null;
       if (performance.now() < e.moveLockUntil) return null;
       if (!testMode || editorOn) return null; // вне «теста» и в редакторе — только желейный присед
       if (s.controlled !== 'main') return null; // прыгает только свой кот под управлением
@@ -4328,10 +4328,19 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
     publishAimRef.current(angle, force);
   }, []);
 
+  const canJumpHere = () => {
+    if (!IS_ELYRIA || fieldFormatRef.current !== 'test') return true;
+    const e = engineRef.current, s = settingsRef.current;
+    if (s.arrow.battleMode) return terrainAt(currentTestMap().water,e.col+.5,e.row+.5) <= 1;
+    const foot = freeFoot();
+    return terrainAt(currentTestMap().water,e.fx+foot.dx,e.fy+foot.dy) <= 1;
+  };
+
   /* ---------- клавиатура ---------- */
 
   const [atlasOpen, setAtlasOpen] = useState(false);
   useSimKeyboard({
+    canJumpHere,
     openAtlas: IS_ELYRIA ? () => setAtlasOpen(true) : undefined,
     sprintRef,
     enteredRef,
@@ -4915,6 +4924,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
           mapLoading={mode === 'elision' && !testField ? false : mapLoading}
           touchControls={editorOpen ? null : (
             <TouchControls
+              canJumpHere={canJumpHere}
               engineRef={engineRef}
               settingsRef={settingsRef}
               spaceHoldRef={spaceHoldRef}

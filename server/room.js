@@ -11,6 +11,7 @@ import { WebSocket } from "ws";
 import { EV, MAX_PLAYERS, JOIN_COOLDOWN_MS, RAB_CELL } from "./protocol.js";
 import { WIDTH, HEIGHT, SPAWNS, PALETTE, NAMES, SPRITES, TEST_ROOM, ROOMS_MAX } from "./config.js";
 import { clearMoveTimer } from "./movement.js";
+import { waterDepthFor } from "./water.js";
 import { clearAimTimer } from "./combat.js";
 import { rememberCat, flushCatBook, restoreCatPosition, forgetCat, lastLocationFor } from "./persist.js";
 import { sanitizeLogin, uniqueLogin, chatHistoryFor } from "./sanitize.js";
@@ -519,11 +520,13 @@ function space(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
   if (!room || !cat) return;
-  cat.spaceHold = !!payload.on;
+  const jumpBlocked = room.fmt === "test" && waterDepthFor(cat) > 1;
+  if (jumpBlocked && !cat.spaceHold) return;
+  cat.spaceHold = !!payload.on && !jumpBlocked;
   const msg = { id: cat.id, on: cat.spaceHold };
   if (!cat.spaceHold) {
     msg.hold = Math.max(0, Math.min(4000, Math.round(Number(payload.hold) || 0)));
-    msg.cancel = !!payload.cancel;
+    msg.cancel = !!payload.cancel || jumpBlocked;
   }
   broadcast(room, EV.SPACE, msg, ws);
 }

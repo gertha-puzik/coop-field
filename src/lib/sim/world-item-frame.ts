@@ -54,7 +54,7 @@ export function muzzle(a: ElisionActor) {
     angle = -((a.rot * Math.PI) / 180 + (pose?.rot ?? 0));
   return {
     x: x * Math.cos(angle) - y * Math.sin(angle),
-    y: x * Math.sin(angle) + y * Math.cos(angle),
+    y: x * Math.sin(angle) + y * Math.cos(angle) - (a.immersion?.sink ?? 0),
   };
 }
 /** Geometry lives in the same world as cats: tint, weather, depth and UI layering apply naturally. */

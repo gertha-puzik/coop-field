@@ -33,7 +33,7 @@ export function createElisionWaterfalls(scene: Scene) {
         clear();
         const batches = new Map<string,Geometry>();
         for (const quad of quads) {
-          const key = quad.flow ? `${quad.part}-${quad.flow}` : quad.part;
+          const key = `${quad.part}-${quad.flow}`;
           const batch = batches.get(key);
           if (batch) batch.push(quad);
           else batches.set(key,[quad]);

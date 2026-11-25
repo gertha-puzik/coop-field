@@ -441,7 +441,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       const parent = actor.attachment ? decals.get(actor.attachment.parentId) : null;
       if(parent && actor.attachment){
         node.root.parent=parent.root;
-        node.root.position.set(actor.attachment.x,actor.attachment.y,0);
+        node.root.position.set(actor.attachment.x,Math.max(0,actor.attachment.y),Math.max(0,-actor.attachment.y));
         node.root.rotation.set(0,0,0);
         node.mat.zOffset=0;
       }else{

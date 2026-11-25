@@ -41,6 +41,7 @@ export interface TouchControlsDeps {
   fieldFormatRef: RefObject<'grid' | 'test'>;
   startStepRef: RefObject<((dir: number) => void) | null>;
   leapRequestRef: RefObject<number | null>;
+  canJumpHere: () => boolean;
 }
 
 /** Палец относительно центра джойстика → один из 8 углов (шаг 45°,
@@ -78,6 +79,7 @@ export function useTouchControls(deps: TouchControlsDeps) {
     fieldFormatRef,
     startStepRef,
     leapRequestRef,
+    canJumpHere,
   } = deps;
 
   /** Рамка видимости: показывать виртуальные кнопки решает тип основного
@@ -142,7 +144,7 @@ export function useTouchControls(deps: TouchControlsDeps) {
    *  «свой кот и не в блоке»): начинается присед, комнате — emit space on:true.
    *  Возврат true — присед начат (кнопка светит заряд); false — гвард. */
   const spacePress = useCallback((): boolean => {
-    if (settingsRef.current.controlled !== 'main' || engineRef.current.blocking) return false;
+    if (settingsRef.current.controlled !== 'main' || engineRef.current.blocking || !canJumpHere()) return false;
     const sp = spaceHoldRef.current;
     if (!sp.holding) {
       sp.holding = true;
@@ -153,7 +155,7 @@ export function useTouchControls(deps: TouchControlsDeps) {
       netRef.current?.emit('space', { on: true });
     }
     return true;
-  }, [settingsRef, engineRef, spaceHoldRef, netRef]);
+  }, [settingsRef, engineRef, spaceHoldRef, netRef, canJumpHere]);
 
   /** Палец ушёл с «прыжка» — семантика keyup Space: заряд «выстрела» по
    *  времени удержания (тап — минимальный подпрыг 0.15, полные 4 с — ровно 1)
@@ -164,12 +166,16 @@ export function useTouchControls(deps: TouchControlsDeps) {
     const sp = spaceHoldRef.current;
     if (sp.holding) {
       sp.holding = false;
+      if (!canJumpHere()) {
+        netRef.current?.emit('space', { on: false, cancel: true });
+        return;
+      }
       sp.charge = 0.15 + 0.85 * Math.min(1, (performance.now() - sp.since) / 4000);
       sp.releaseAt = performance.now();
       leapRequestRef.current = sp.charge;
       netRef.current?.emit('space', { on: false, hold: Math.round(sp.releaseAt - sp.since) });
     }
-  }, [spaceHoldRef, leapRequestRef, netRef]);
+  }, [spaceHoldRef, leapRequestRef, netRef, canJumpHere]);
 
   // ---- Собственно тач: палец → события клавиатуры ----
 
