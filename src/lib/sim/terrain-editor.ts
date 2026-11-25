@@ -1,3 +1,4 @@
+import { closestTerrainEdge, triangleAt } from './terrain-forms';
 import { paintBrushSize } from './paint';
 import { terrainAt, terrainBrushBounds, terrainScreenPoint, freeTerrainPlacement, isElevationTool, clampBrush } from './terrain-shape';
 export { pickTerrainTop, terrainScreenPoint, terrainTopVisible, clampBrush, elevationBrushRect, stampElevation, isElevationTool } from './terrain-shape';
@@ -183,7 +184,24 @@ export function drawTerrainEditorOverlay(cv: HTMLCanvasElement | null, frame: El
     const point=terrainScreenPoint(frame,cursor.x*frame.cellW,cursor.y*frame.cellH,hoveredLevel*frame.terrainLiftStep);
     label(g,point.x,point.y-38,`Высота: ${hoveredLevel}`);
   }
-  if (hover && d.tool === 'water') {
+  if (cursor && d.tool === 'triangle') {
+    const b = clampBrush(d.elevBrush,d.cols,d.rows);
+    const points = triangleAt(d.elev,cursor.x,cursor.y,b.width,b.depth,d.triangleControls??[],d.triangleRotation??0,d.triangleMagnet!==false);
+    g.beginPath();
+    points.forEach((p,index)=>{
+      const screen=terrainScreenPoint(frame,p.x*frame.cellW,p.y*frame.cellH,b.level*frame.terrainLiftStep);
+      if(index===0)g.moveTo(screen.x,screen.y);else g.lineTo(screen.x,screen.y);
+    });
+    g.closePath();g.fillStyle='rgba(255,210,157,.26)';g.fill();g.strokeStyle='#ffe0a8';g.lineWidth=2;g.stroke();
+  } else if (cursor && d.tool === 'waterfall') {
+    const edge=closestTerrainEdge(d.elev,cursor.x,cursor.y,.8,true);
+    if(edge){
+      const dx=edge.axis==='y'?edge.normal:0,dy=edge.axis==='x'?edge.normal:0;
+      const top=terrainAt(d.elev,edge.x-dx*.004,edge.y-dy*.004);
+      const point=terrainScreenPoint(frame,edge.x*frame.cellW,edge.y*frame.cellH,top*frame.terrainLiftStep);
+      label(g,point.x,point.y-18,'Водопад','#9eeaff');
+    }
+  } else if (hover && d.tool === 'water') {
     const brush = clampBrush(d.elevBrush,d.cols,d.rows);
     const rect = terrainBrushBounds(hover.c,hover.r,brush.width,brush.depth,d.cols,d.rows);
     const level = terrainAt(frame.elev,hover.c+.5,hover.r+.5);

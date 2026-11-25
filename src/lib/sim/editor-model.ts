@@ -40,6 +40,8 @@ export type EditorTool =
   | 'raise'
   | 'lower'
   | 'flat'
+  | 'waterfall'
+  | 'triangle'
   | 'water'
   | 'height'
   | 'cursor'
@@ -84,6 +86,9 @@ export type EditorDraft = {
   elev: Record<string, number>;
   water?: Record<string, number>;
   waterDepth?: number;
+  triangleRotation?: number;
+  triangleMagnet?: boolean;
+  triangleControls?: import("./terrain-forms").TriangleControl[];
   /** Размер прямоугольного штампа и точная высота: только настройки инструмента. */
   elevBrush?: { width: number; depth: number; level: number };
   elevFree?: boolean;

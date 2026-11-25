@@ -15,9 +15,7 @@ import { terrainAt, sanitizeTerrainElev } from './terrain-shape.ts';
  * (sanitizeTestMap) на обеих сторонах — порт проверки для server.js держится
  * рядом с портом геометрии.
  */
-
 export type TestMapZoneKind = 'cells' | 'green';
-
 /** Объект локации. Камень и дерево — физические препятствия: через них нельзя
  *  пройти ни в мирном режиме, ни в боевом. Земля — наземный спрайт-декор
  *  (проталина на траве), покрытие — наземная плитка (цветы/каменная плитка/пол):
@@ -26,22 +24,18 @@ export type TestMapZoneKind = 'cells' | 'green';
  *  Спрайты рисуются от точки опоры вверх (земля/покрытие/заход — по всей клетке). */
 /** plant — свободно размещаемый декор; не создаёт коллизию или опору.
  *  path — тропинка: клетки протяжкой, рендер неровным контуром (не коллизия). */
-export type TestMapObjectKind = 'stone' | 'tree' | 'plant' | 'dirt' | 'entry' | 'ground' | 'battle' | 'path';
-
+export type TestMapObjectKind = 'waterfall' | 'stone' | 'tree' | 'plant' | 'dirt' | 'entry' | 'ground' | 'battle' | 'path';
 /** Направление клетки захода: куда игрока перенесёт шаг с неё в боевом режиме
  *  (та клетка и есть «последующая» — от неё рисуется градиент на заходе). */
 export type TestMapEntryDir = 'left' | 'right' | 'up' | 'down';
-
 /** Сдвиг клетки-назначения для направления захода (0-based клетки). */
 export function entryDirDelta(dir: TestMapEntryDir): { dx: number; dy: number } {
   return dir === 'left' ? { dx: -1, dy: 0 } : dir === 'right' ? { dx: 1, dy: 0 } : dir === 'up' ? { dx: 0, dy: -1 } : { dx: 0, dy: 1 };
 }
-
 /** Положение спрайта внутри его клетки: по центру (как раньше) или сдвинут к
  *  левому/правому краю, верху или низу — декоративная точность расстановки.
  *  Сдвиг — четверть клетки; коллизии (клетка-препятствие) не зависят от него. */
 export type TestMapObjectPos = 'center' | 'left' | 'right' | 'top' | 'bottom';
-
 /** Сдвиг точки опоры спрайта внутри клетки (доли клетки) для каждого положения. */
 const TEST_OBJECT_POS_OFFSET: Record<TestMapObjectPos, { dx: number; dy: number }> = {
   center: { dx: 0, dy: 0 },
@@ -50,7 +44,6 @@ const TEST_OBJECT_POS_OFFSET: Record<TestMapObjectPos, { dx: number; dy: number 
   top: { dx: 0, dy: -0.25 },
   bottom: { dx: 0, dy: 0.25 },
 };
-
 /** Сдвиг спрайта объекта внутри клетки (доли клетки): положение выбирается
  *  в редакторе при постановке; у старых конфигов без pos — центр. */
 export function objectPosOffset(o: TestMapObject): { dx: number; dy: number } {
@@ -552,6 +545,14 @@ export function sanitizeTestMap(raw: unknown): { map?: TestMap; error?: string }
     const taken = new Set<string>();
     for (let i = 0; i < src.objects.length; i++) {
       const o = src.objects[i] as Partial<TestMapObject>;
+      if (o?.kind === 'waterfall') {
+        const {x,y,s,dir} = o;
+        if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > cols || y > rows ||
+            typeof s !== 'number' || !Number.isFinite(s) || s <= 0 || s > 1.5 ||
+            (dir !== 'left' && dir !== 'right' && dir !== 'up' && dir !== 'down')) return { error: 'неверная привязка водопада' };
+        objects.push({id:`o${i+1}`,kind:'waterfall',x,y,s,dir,c:Math.min(cols-1,Math.floor(x)),r:Math.min(rows-1,Math.floor(y))});
+        continue;
+      }
       const kind =
         o.kind === 'plant' ? 'plant' : o.kind === 'stone'
           ? 'stone'
@@ -785,7 +786,6 @@ export function terrainBodyOverlap(
   }
   return overlap;
 }
-
 /** Доходим до касания, вместо остановки за целый шаг перед препятствием. */
 export function contactFraction(blocked:(fraction:number)=>boolean):number {
   if(!blocked(1)) return 1;

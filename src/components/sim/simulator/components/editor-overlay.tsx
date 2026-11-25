@@ -1,3 +1,4 @@
+import { TriangleControls } from './triangle-controls';
 /** Location workspace: tool rail, contextual inspector, canvas toolbar and
  * persistent save tray. Editing data remains in the existing draft/operations.
  */
@@ -78,6 +79,8 @@ const tools:{id:EditorTool;label:string;icon:string;category:Category;key?:strin
   {id:'path',label:'Тропинка',icon:'path',category:'surface'},
   {id:'dirt',label:'Земля',icon:'dirt',category:'surface'},
   {id:'ground',label:'Покрытие',icon:'ground',category:'surface'},
+  {id:'triangle',label:'Треугольный блок',icon:'triangle',category:'terrain'},
+  {id:'waterfall',label:'Водопад',icon:'down',category:'terrain'},
   {id:'water',label:'Вода',icon:'down',category:'terrain'},
   {id:'height',label:'Блок',icon:'layers',category:'terrain'},
   {id:'raise',label:'Насыпать',icon:'up',category:'terrain'},
@@ -104,6 +107,7 @@ const paths:Record<string,string>={
  up:'M12 21V3 M5 10l7-7 7 7',down:'M12 3v18 M5 14l7 7 7-7',flat:'M3 12h18',
  enter:'M10 3h11v18H10 M2 12h13 M10 7l5 5-5 5',pin:'M12 22S3 13 3 9a9 9 0 1118 0c0 4-9 13-9 13z M12 6v5',
  path:'M3 17c3-6 5-4 8-8s5-2 10-6 M4 19c4-5 6-3 9-7',dirt:'M4 16c2-6 6-10 8-10s6 4 8 10z M7 14h10',
+ triangle:'M4 4h16L4 20z',
  ground:'M3 18h18 M5 18V9l7-5 7 5v9 M9 18v-5h6v5',
 };
 function Icon({name}:{name:string}){return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={paths[name]??paths.zone}/></svg>;}
@@ -218,6 +222,12 @@ export function EditorOverlay(p:EditorOverlayProps){
          <div className={styles.toolGrid}>{tools.filter(t=>t.category==='terrain').map(toolButton)}</div>
          <h3>Размер блока</h3>
          <div className={styles.two}>{([['width','Ширина блока',.1,d.cols],['depth','Длина блока',.1,d.rows],['level','Высота блока',0,TERRAIN_MAX_LEVEL]] as const).map(([key,label,min,max])=><NumberField key={key} label={label} min={min} max={max} step={.1} value={clampBrush(d.elevBrush,d.cols,d.rows)[key]} onChange={value=>update({elevBrush:{...clampBrush(d.elevBrush,d.cols,d.rows),[key]:value}})}/>)}</div>
+         {d.tool==='triangle' && <>
+           <NumberField label="Поворот треугольника (°)" value={d.triangleRotation??0} min={0} max={359} onChange={triangleRotation=>update({triangleRotation})}/>
+           <label className={styles.check}><input type="checkbox" checked={d.triangleMagnet!==false} onChange={e=>update({triangleMagnet:e.target.checked})}/>Магнит к ближайшей грани</label>
+           <TriangleControls controls={d.triangleControls??[]} onChange={triangleControls=>update({triangleControls})}/>
+         </>}
+         {d.tool==='waterfall' && <p className={styles.hint}>ЛКМ у края перепада ставит водопад. ПКМ на краю удаляет его.</p>}
          {d.tool==='water' && <label className={styles.field}>Глубина воды<Dropdown aria-label="Глубина воды" value={String(d.waterDepth ?? 1)} onChange={value=>update({waterDepth:Number(value)})} options={[0,1,2,3,4].map(level=>({value:String(level),label:level ? String(level) : 'Убрать воду'}))}/></label>}
          <button type="button" className={styles.wide} aria-pressed={!!d.elevFree} onClick={()=>{choose('height');update({elevFree:!d.elevFree});}}>Свободная установка: {d.elevFree?'ВКЛ':'ВЫКЛ'}</button>
          {d.elevFree&&<label className={styles.field}>Привязка к блокам<Dropdown aria-label="Привязка к блокам" value={d.elevSnap??'level'} onChange={v=>update({elevSnap:v as 'off'|'level'|'all'})} className="w-auto" options={[{value:'off',label:'Без магнита'},{value:'level',label:'Такая же высота'},{value:'all',label:'Любая высота'}]}/></label>}

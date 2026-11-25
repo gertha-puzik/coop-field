@@ -1,4 +1,5 @@
 'use client';
+import { drawWaterfalls } from '@/lib/sim/waterfall-view';
 import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
@@ -4260,6 +4261,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             elision?.frame(frame);
             drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
               atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
+            drawWaterfalls(hudRef.current,frame,currentTestMap().objects??[]);
             drawElisionNameplates(hudRef.current, frame, liveRemotesRef.current, selfPlateRef.current);
             drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);
