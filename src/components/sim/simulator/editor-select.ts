@@ -170,6 +170,7 @@ export function buildEditorSelect({
         if (nc < 0 || nr < 0 || nc >= d.cols || nr >= d.rows) continue;
         no.c = nc;
         no.r = nr;
+        if (o.kind === 'waterfall') { no.x = (o.x ?? o.c) + dc; no.y = (o.y ?? o.r) + dr; }
       }
       d.objects.push(no);
     }

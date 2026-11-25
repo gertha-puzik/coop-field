@@ -276,6 +276,14 @@ function sanitizeTestMap(raw) {
     const taken = new Set();
     for (let i = 0; i < raw.objects.length; i++) {
       const o = raw.objects[i];
+      if (o?.kind === 'waterfall') {
+        const {x,y,s,dir} = o;
+        if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > cols || y > rows ||
+            typeof s !== 'number' || !Number.isFinite(s) || s <= 0 || s > 1.5 ||
+            (dir !== 'left' && dir !== 'right' && dir !== 'up' && dir !== 'down')) return { error: 'неверная привязка водопада' };
+        objects.push({id:`o${i+1}`,kind:'waterfall',x,y,s,dir,c:Math.min(cols-1,Math.floor(x)),r:Math.min(rows-1,Math.floor(y))});
+        continue;
+      }
       const kind =
         o &&
         (o.kind === 'plant' ? 'plant' : o.kind === 'stone'

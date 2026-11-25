@@ -1,3 +1,4 @@
+import { applyLandscapeTool } from './editor-landscape';
 import { newPassageId, passageContains } from '@/lib/sim/location-map';
 import { isElevationTool, type ElevationTool } from '@/lib/sim/terrain-editor';
 /**
@@ -411,6 +412,9 @@ export function buildPointerTools(deps: PointerToolsDeps) {
       const ground = groundPointAtWorld(mx, my, s.field.cellW, s.field.cellH, camYawRef.current);
       mx = ground.x; my = ground.y;
       ed.terrainCursor={x:mx/s.field.cellW,y:my/s.field.cellH};
+      if (applyLandscapeTool(ed,ev.button,pushEditorUndo)) {
+        refreshEditorPreview();syncEditorView();ev.preventDefault();return;
+      }
       if(ed.tool==='passage'&&(ev.button===0||ev.button===2)){
         const at=ed.terrainCursor,brush=ed.passageBrush??{w:1,h:1,targetId:(ed.place?.id??1)===1?2:1,link:'',direction:'right' as const};
         const hit=(ed.passages??[]).find(p=>passageContains(p,at.x,at.y));
