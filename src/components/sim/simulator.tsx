@@ -4261,7 +4261,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             elision?.frame(frame);
             drawGroundEffects(hudRef.current,frame,sprintPartsRef.current,groundEffectsRef.current,dt,
               atmoLayerOnRef.current&&weatherFxOnRef.current&&atmoStateRef.current.w==='rain');
-            drawWaterfalls(hudRef.current,frame,currentTestMap().objects??[]);
+            if (!elision) drawWaterfalls(hudRef.current,frame,currentTestMap().objects??[],now);
             drawElisionNameplates(hudRef.current, frame, liveRemotesRef.current, selfPlateRef.current);
             drawElisionJumpTarget(hudRef.current, frame, now);
             drawElisionJumpHud(hudRef.current, frame, spaceHoldRef.current, now);

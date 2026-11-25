@@ -1,3 +1,4 @@
+import { createElisionWaterfalls } from './elision-waterfalls';
 /**
  * WebGL-вид Элизии на Babylon.js. Грузится только динамическим import()
  * из use-elision-view, когда на поле открыта Элизия: в бандл пивных гротов
@@ -68,6 +69,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const webgl: ElisionView['webgl'] = version >= 2 ? 'webgl2' : 'webgl1';
 
   const scene = new Scene(engine);
+  const waterfalls = createElisionWaterfalls(scene);
   const glow=createWorldGlow(scene);
   // RH даёт экранный +X вправо без отражённой ортопроекции.
   scene.useRightHandedSystem = true;
@@ -495,6 +497,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       placeCamera(frame);
       syncGround(frame);
       syncDecals(frame,now);
+      waterfalls.sync(frame,now,tint);
       glow.update(frame,now);
       scene.render();
     },
@@ -508,6 +511,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       }
       decals.clear();
       glow.destroy();
+      waterfalls.destroy();
       for (const tex of textures.values()) tex.dispose();
       textures.clear();
       groundDyn?.dispose();

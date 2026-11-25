@@ -1,51 +1,115 @@
 import type { ElisionFrame } from './elision-scene';
 import type { TestMapObject } from './test-map';
-import { terrainAt, terrainScreenPoint } from './terrain-shape';
-import type { EdgePoint } from './terrain-forms';
+import { waterfallOcclusion } from './waterfall-occlusion';
+import { cachedTerrainTiles, terrainAt } from './terrain-shape';
 
-const textures = new Map<string, HTMLImageElement>();
+export const WATERFALL_PARTS = ['lip','curtain','pool'] as const;
+export const WATERFALL_FRAMES = 8;
+export const waterfallFrame = (now: number) => Math.floor(now/85)%WATERFALL_FRAMES;
+type Part = typeof WATERFALL_PARTS[number];
+type Point = { x: number; y: number; z: number };
+type Quad = { part: Part; a: Point; b: Point; c: Point; fraction: number };
+type TerrainFrame = Pick<ElisionFrame,'cols'|'rows'|'cellW'|'cellH'|'terrainLiftStep'|'elev'>;
 
-function fillTexture(g: CanvasRenderingContext2D, name: string, from: EdgePoint, right: EdgePoint, down: EdgePoint) {
-  let image = textures.get(name);
-  if (!image) {
-    image = new Image();
-    image.src = `/tex/waterfall/${name}.png`;
-    textures.set(name,image);
+export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[]) {
+  const quads: Quad[] = [];
+  const {cols,rows,cellW,cellH,elev,terrainLiftStep} = frame;
+  const height = (x: number,y: number) => terrainAt(elev,x,y);
+  for (const object of objects) {
+    if (object.kind!=='waterfall' || object.x==null || object.y==null) continue;
+    const {x,y} = object;
+    const vertical = object.dir==='left'||object.dir==='right';
+    const normal = object.dir==='left'||object.dir==='up'?-1:1;
+    const nx = vertical?normal:0, nz = vertical?0:normal;
+    const along = vertical?y:x, length = Math.min(object.s??1,1);
+    const limit = vertical?rows:cols;
+    const cell = Math.max(0,Math.min(limit-1,Math.floor(along)));
+    const start = Math.max(cell,along-length/2), end = Math.min(cell+1,along+length/2);
+    if (end<=start) continue;
+
+    const cuts = new Set([start,end]);
+    const cross = vertical?x:y;
+    const tiles = cachedTerrainTiles(elev,cols,rows);
+    for (const tile of tiles) {
+      const crossStart=vertical?tile.x:tile.y, crossEnd=crossStart+(vertical?tile.w:tile.d);
+      if (cross<crossStart-.0001 || cross>crossEnd+.0001) continue;
+      const from=vertical?tile.y:tile.x, to=from+(vertical?tile.d:tile.w);
+      if (from>start&&from<end) cuts.add(from);
+      if (to>start&&to<end) cuts.add(to);
+    }
+    const edges=[...cuts].sort((a,b)=>a-b);
+    const position=(a: number, d: number, h: number): Point => ({
+      x: ((vertical?x:a)+nx*d)*cellW, y: h, z: ((vertical?a:y)+nz*d)*cellH,
+    });
+    for(let i=0;i<edges.length-1;i++) {
+      const from=edges[i], to=edges[i+1], mid=(from+to)/2;
+      const point=position(mid,0,0);
+      const tx=point.x/cellW, ty=point.z/cellH;
+      const hi=height(tx-nx*.0001,ty-nz*.0001), lo=height(tx+nx*.0001,ty+nz*.0001);
+      if (hi<=lo) continue;
+      const top=hi*terrainLiftStep, bottom=lo*terrainLiftStep;
+      // Bound both flat strips to their cells and to their actual terrain tier.
+      const span=(side: number, level: number, maximum: number) => {
+        const at=cross+side*.0001*normal;
+        const cellBoundary=normal*side===1?Math.floor(at)+1:Math.floor(at);
+        let width=Math.min(maximum,Math.abs(cellBoundary-cross));
+        for (const tile of tiles) {
+          const a=vertical?tile.y:tile.x, b=a+(vertical?tile.d:tile.w);
+          if(mid<a||mid>=b||tile.level===level) continue;
+          const c=vertical?tile.x:tile.y, d=c+(vertical?tile.w:tile.d);
+          const gap=normal*side===1?c-cross:cross-d;
+          if(gap>=0)width=Math.min(width,gap);
+        }
+        const bound=vertical?cols:rows;
+        return at<0||at>=bound?0:width;
+      };
+      const lip=span(-1,hi,.17), pool=span(1,lo,.24);
+      if(lip>0)quads.push({part:'lip',a:position(from,-lip,top+.15),b:position(to,-lip,top+.15),c:position(from,0,top+.15),fraction:1});
+      for(let y=top;y>bottom;y-=48) {
+        const next=Math.max(bottom,y-48);
+        quads.push({part:'curtain',a:position(from,.001,y),b:position(to,.001,y),c:position(from,.001,next),fraction:(y-next)/48});
+      }
+      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1});
+    }
   }
-  g.save();
-  g.transform(right.x-from.x,right.y-from.y,down.x-from.x,down.y-from.y,from.x,from.y);
-  g.imageSmoothingEnabled = false;
-  if (image.complete && image.naturalWidth) g.drawImage(image,0,0,1,1);
-  else {
-    g.fillStyle = name==='curtain'?'#397c9e':'#62aecd';
-    g.fillRect(0,0,1,1);
-  }
-  g.restore();
+  return quads;
 }
 
-export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionFrame, objects: TestMapObject[]) {
-  if (!canvas) return;
-  const context = canvas.getContext('2d');
+let saved: { frame: TerrainFrame; objects: TestMapObject[]; quads: Quad[] } | undefined;
+export function cachedWaterfallGeometry(frame: TerrainFrame, objects: TestMapObject[]) {
+  if (saved?.objects===objects && saved.frame.elev===frame.elev && saved.frame.cellW===frame.cellW &&
+      saved.frame.cellH===frame.cellH && saved.frame.cols===frame.cols && saved.frame.rows===frame.rows &&
+      saved.frame.terrainLiftStep===frame.terrainLiftStep) return saved.quads;
+  const quads = waterfallGeometry(frame,objects);
+  saved={frame,objects,quads};
+  return quads;
+}
+
+const images = new Map<Part, HTMLImageElement>();
+export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionFrame, objects: TestMapObject[], now: number) {
+  const context = canvas?.getContext('2d');
   if (!context) return;
   const dpr = Math.min(2,window.devicePixelRatio||1);
-  context.save();
-  context.setTransform(dpr,0,0,dpr,0,0);
-  for (const object of objects) {
-    if (object.kind !== 'waterfall' || object.x == null || object.y == null) continue;
-    const verticalEdge = object.dir==='left'||object.dir==='right';
-    const direction = object.dir==='left'||object.dir==='up'?-1:1;
-    const dx = verticalEdge?direction:0, dy = verticalEdge?0:direction;
-    const x = object.x, y = object.y;
-    const high = terrainAt(frame.elev,x-dx*.004,y-dy*.004)*frame.terrainLiftStep;
-    const low = terrainAt(frame.elev,x+dx*.004,y+dy*.004)*frame.terrainLiftStep;
-    if (high <= low) continue;
-    const len = (object.s ?? 1)/2;
-    const point = (along: number, across: number, lift: number) => terrainScreenPoint(frame,
-      (x+(verticalEdge?0:along)+dx*across)*frame.cellW,
-      (y+(verticalEdge?along:0)+dy*across)*frame.cellH, lift);
-    fillTexture(context,'lip',point(-len,-.17,high),point(len,-.17,high),point(-len,0,high));
-    fillTexture(context,'curtain',point(-len,0,high),point(len,0,high),point(-len,0,low));
-    fillTexture(context,'pool',point(-len,0,low),point(len,0,low),point(-len,.24,low));
+  const quads = cachedWaterfallGeometry(frame,objects);
+  if (!quads.length) return;
+  const {project,clip} = waterfallOcclusion(frame);
+  for (const quad of quads) {
+    let image=images.get(quad.part);
+    if(!image) {
+      image=new Image();
+      image.src=`/tex/waterfall/${quad.part}.png`;
+      images.set(quad.part,image);
+    }
+    if(!image.complete||!image.naturalWidth)continue;
+    const a=project(quad.a),b=project(quad.b),c=project(quad.c);
+    const width=image.naturalWidth/WATERFALL_FRAMES;
+    context.save();
+    context.setTransform(dpr,0,0,dpr,0,0);
+    const d=project({x:quad.b.x+quad.c.x-quad.a.x,y:quad.b.y+quad.c.y-quad.a.y,z:quad.b.z+quad.c.z-quad.a.z});
+    if (!clip(context,[a,b,c,d])) {context.restore();continue;}
+    context.transform(b.x-a.x,b.y-a.y,c.x-a.x,c.y-a.y,a.x,a.y);
+    context.imageSmoothingEnabled=false;
+    context.drawImage(image,waterfallFrame(now)*width,0,width,image.naturalHeight*quad.fraction,0,0,1,1);
+    context.restore();
   }
-  context.restore();
 }

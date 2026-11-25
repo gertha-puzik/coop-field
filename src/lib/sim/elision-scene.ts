@@ -1,3 +1,4 @@
+import type { TestMapObject } from './test-map.ts';
 import { terrainTiles, terrainAt } from './terrain-shape.ts';
 /**
  * Чистая геометрия вида Элизии. Сюда не импортируется Babylon: юнит-тест и
@@ -64,6 +65,7 @@ export type ElisionFrame = {
   jumpTarget: { x: number; y: number; lift: number; ok: boolean } | null;
   /** Коты и камни/деревья. Редактор прячет вид: список может быть пустым. */
   decals: ElisionActor[];
+  waterfalls?: TestMapObject[];
   controlledId: string;
   /** Атлас поверхности: кисть/трава, покрытия, заходы и боевые клетки. */
   paint: HTMLCanvasElement | null;

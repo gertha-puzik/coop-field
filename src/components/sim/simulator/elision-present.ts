@@ -455,6 +455,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     dayProgress: input.dayProgress,
     jumpTarget: input.jumpTarget,
     decals,
+    waterfalls: input.objects,
     controlledId: input.controlled,
     paint: painted.paint,
     paintRev: painted.paintRev,
