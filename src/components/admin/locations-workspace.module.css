@@ -7,9 +7,13 @@
 .list ul{padding:0;margin:0;list-style:none;display:grid;gap:6px}
 .list button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left}
 .list small{color:#c7bad4;white-space:nowrap}
-.preview{min-height:9rem;background:#120f20;border:1px solid #594768;border-radius:10px;overflow:hidden;margin:10px 0;display:grid;place-items:center}
-.preview img{display:block;max-width:100%;height:12rem;object-fit:contain;image-rendering:pixelated}
-.preview p{padding:12px}
+.preview{margin:10px 0 14px}
+.previewViewport{position:relative;height:clamp(16rem,40vh,25rem);background:#120f20;border:1px solid #594768;border-radius:10px;overflow:hidden;touch-action:pan-y;cursor:grab}
+.previewViewport:active{cursor:grabbing}
+.previewViewport canvas{display:block;width:100%;height:100%}
+.previewViewport p{position:absolute;inset:0;display:grid;place-items:center;margin:0;padding:12px;text-align:center;pointer-events:none}
+.previewControls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.previewControls span{font-size:.8rem;color:#c7bad4}
 .form{display:grid;gap:12px}
 .editor{display:grid;gap:8px}
 .editor iframe{display:block;width:100%;height:85vh;min-height:560px;background:#171224;border:1px solid #594768;border-radius:12px}
