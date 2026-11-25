@@ -30,6 +30,7 @@ export interface SimKeyboardDeps {
   doStrikeRef: RefObject<(() => void) | null>;
   startStepRef: RefObject<((dir: number) => void) | null>;
   leapRequestRef: RefObject<number | null>;
+  canJumpHere: () => boolean;
   editorSizeStepRef: RefObject<((dir: 1 | -1) => void) | null>;
   /** Цель поворота обзора, радианы, кратно π/2. [ вычитает четверть, ] прибавляет. */
   camYawTargetRef: RefObject<number>;
@@ -54,6 +55,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     doStrikeRef,
     startStepRef,
     leapRequestRef,
+    canJumpHere,
     editorSizeStepRef,
     camYawTargetRef,
     closeEditor,
@@ -107,7 +109,7 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
       // Автоповтор ОС не перезапускает приседание — важен только первый нажатие.
       if (ev.code === 'Space' || ev.key === ' ') {
         ev.preventDefault();
-        if (!ev.repeat && settingsRef.current.controlled === 'main' && !engineRef.current.blocking) {
+        if (!ev.repeat && settingsRef.current.controlled === 'main' && !engineRef.current.blocking && canJumpHere()) {
           const sp = spaceHoldRef.current;
           if (!sp.holding) {
             sp.holding = true;
@@ -200,6 +202,10 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
         const sp = spaceHoldRef.current;
         if (sp.holding) {
           sp.holding = false;
+          if (!canJumpHere()) {
+            netRef.current?.emit('space', { on: false, cancel: true });
+            return;
+          }
           // Заряд «выстрела» по времени удержания: тап — минимальный подпрыг,
           // полные 4 с приседа — максимальный (нижняя планка 0.15, чтобы тап
           // не был нулевым, а верхняя ровно 1 — дальше заряд не растёт).

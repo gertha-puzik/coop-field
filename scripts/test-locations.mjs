@@ -13,7 +13,7 @@ import ts from 'typescript';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coop-locations-'));
 const getPort = () => new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const port = await getPort(), origin = `http://127.0.0.1:${port}`, sleep = ms => new Promise(r => setTimeout(r, ms));
-const fixture = { v: 2, cols: 12, rows: 11, margin: .5, seed: 'valley-fixture', place: { id: 1, name: 'Долина', zoneId: 1, zoneName: 'Средиземье' }, zones: [{ id: 'grass', kind: 'green', name: 'Трава', c0: 0, r0: 0, c1: 11, r1: 10 }, { id: 'battle', kind: 'cells', name: 'Бой', c0: 0, r0: 0, c1: 1, r1: 1 }], objects: [], spawns: [{ c: 2, r: 5 }], elev: { '8,8': 2 }, passages: [{ id: 'forest', x: 2, y: 4, w: 3, h: 3, targetId: 2, link: 'trail', direction: 'right' }] };
+const fixture = { v: 2, cols: 12, rows: 11, margin: .5, seed: 'valley-fixture', place: { id: 1, name: 'Долина', zoneId: 1, zoneName: 'Средиземье' }, zones: [{ id: 'grass', kind: 'green', name: 'Трава', c0: 0, r0: 0, c1: 11, r1: 10 }, { id: 'battle', kind: 'cells', name: 'Бой', c0: 0, r0: 0, c1: 1, r1: 1 }], objects: [], spawns: [{ c: 2, r: 5 }], elev: { '8,8': 2 }, water: { '6,5': 1, '7,5': 2 }, passages: [{ id: 'forest', x: 2, y: 4, w: 3, h: 3, targetId: 2, link: 'trail', direction: 'right' }] };
 fs.writeFileSync(path.join(dir, 'test-map.json'), JSON.stringify(fixture));
 const admin = spawnSync(process.execPath, ['scripts/make-admin.mjs', 'worldadmin', 'local-test-pass'], { env: { ...process.env, DATA_DIR: dir }, encoding: 'utf8' });
 assert.equal(admin.status, 0, admin.stderr);
@@ -239,6 +239,27 @@ try {
     assert(Math.abs(restored.fx - position.fx) < .02 && Math.abs(restored.fy - position.fy) < .02, 'reconnect restores this location position');
     const resume=await client(cookie);resume.send('join',{room:'test',resume:true});const resumed=await resume.wait(f=>f[0]==='field');assert.equal(resumed.room,'test-loc-2','fresh world entry resumes the latest location');
     const explicit=await client(cookie);explicit.send('join',{room:'test'});assert.equal((await explicit.wait(f=>f[0]==='field')).room,'test','explicit Valley room still opens Valley');
+    const waterObserver = await client(cookieTraveler);
+    waterObserver.send('join', {room:'test'});
+    await waterObserver.wait(f=>f[0]==='field');
+    const moveInValley = (x, jp) => {
+        const from = waterObserver.frames.length;
+        explicit.send('freemove', {x, y:5, foot:{dx:.25,dy:.5}, stop:true, jp});
+        return waterObserver.wait(f=>f[0]==='freemove' && f[1].x===x, from);
+    };
+    await moveInValley(6,0);
+    assert.equal((await moveInValley(6.3,1)).jp,1,'depth one permits takeoff');
+    assert.equal((await moveInValley(7,1)).jp,1,'a jump already in flight can cross deeper water');
+    await moveInValley(7.1,0);
+    const blockedJump = waterObserver.frames.length;
+    explicit.send('space',{on:true});
+    explicit.send('freemove',{x:7.3,y:5,foot:{dx:.25,dy:.5},stop:true,jp:1});
+    await moveInValley(7.5,0);
+    assert(!waterObserver.frames.slice(blockedJump).some(([event,data])=>
+        (event==='freemove' && data.x===7.3) || (event==='space' && data.on)),
+        'depth two prevents a new jump and crouch');
+    waterObserver.ws.close();
+    await once(waterObserver.ws,'close');
     // Cached world scopes must restore after nesting and after exceptions.
     // Elev objects of two locations must not alias: in-place mutate of Valley
     // must not leak into Редколесье (regression: cliff strips after reconnect).

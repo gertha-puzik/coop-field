@@ -176,9 +176,12 @@ function freeMove(ws, payload = {}) {
   const ry = Number.isFinite(foot.ry) ? Math.min(1,Math.max(0,foot.ry)) : 0;
   const previousFoot = cat.freeFoot || foot;
   const nowGuard = Date.now();
-  const jumping = payload.jp === 1 || payload.jp === true;
+  const jumpRequested = payload.jp === 1 || payload.jp === true;
+  const continuingJump = cat.jp && nowGuard < (cat.freeJumpUntil || 0);
+  if (jumpRequested && !continuingJump && waterDepthFor(cat) > 1) return;
+  const jumping = jumpRequested;
   if (jumping) {
-    cat.freeJumpUntil = nowGuard + 2000;
+    if (!continuingJump) cat.freeJumpUntil = nowGuard + 2000;
   } else if (nowGuard >= (cat.freeJumpUntil || 0)) {
     const fromX = Number.isFinite(cat.fx) ? cat.fx : cat.x - 1;
     const fromY = Number.isFinite(cat.fy) ? cat.fy : cat.y - 1;
@@ -204,7 +207,7 @@ function freeMove(ws, payload = {}) {
   cat.fx = nx; // Не округляем угол спрайта: округление могло перенести лапы через край.
   cat.fy = ny;
   cat.fsp = Number(sprinting);
-  cat.jp = payload.jp === 1 || payload.jp === true ? 1 : 0;
+  cat.jp = Number(jumping);
   tickWaterEnergy(cat, nowGuard);
   const cell = nearestTestCell(cat.fx, cat.fy);
   if (cell) {
@@ -283,7 +286,7 @@ function jumpFill(payload) {
 function jump(ws, payload = {}) {
   const room = ws.room;
   const cat = room && room.sockets.get(ws);
-  if (!room || !cat || room.fmt !== 'test') return;
+  if (!room || !cat || room.fmt !== 'test' || waterDepthFor(cat) > 1) return;
   const x = Math.round(Number(payload.x));
   const y = Math.round(Number(payload.y));
   if (!Number.isInteger(x) || !Number.isInteger(y)) return;

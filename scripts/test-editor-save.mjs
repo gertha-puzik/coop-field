@@ -440,8 +440,17 @@ assert(!falls.waterfallVisible(strips[0].flow,Math.PI/2),'edge-on strips hidden'
 assert(falls.waterfallVisible('right',Math.PI/2));
 assert(falls.waterfallVisible('up',Math.PI));
 assert(falls.waterfallVisible('left',-Math.PI/2));
-assert(falls.waterfallVisible(undefined,Math.PI),'crest and pool remain on the terrain');
+assert(meshes.every(quad=>!falls.waterfallVisible(quad.flow,Math.PI)), 'all three strips are hidden upstream');
 assert.equal(falls.waterfallFrame(0),0);
 assert.equal(falls.waterfallFrame(85),1);
 assert.equal(falls.waterfallFrame(680),0);
 console.log('waterfall bounds, height tiling and animation loop: OK');
+
+const mouth = loadTs(new URL('../src/lib/sim/world-item-frame.ts',import.meta.url)).muzzle;
+const cat = {w:110,h:100,mirror:false,rot:0};
+const dryMuzzle = mouth(cat);
+for (const sink of [10,15,35,45]) {
+    const wetMuzzle = mouth({...cat,immersion:{sink,opacity:.2}});
+    assert.deepEqual(wetMuzzle,{x:dryMuzzle.x,y:dryMuzzle.y-sink});
+}
+console.log('mouth attachments follow the submerged sprite at all four depths: OK');

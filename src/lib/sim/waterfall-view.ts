@@ -11,13 +11,12 @@ type Point = { x: number; y: number; z: number };
 type FlowDirection = NonNullable<TestMapObject['dir']>;
 type Quad = {
   part: Part; a: Point; b: Point; c: Point; fraction: number;
-  u0: number; u1: number; flow?: FlowDirection;
+  u0: number; u1: number; flow: FlowDirection;
 };
 
-/** The falling face is on the lower side of the cliff. At a grazing angle
- * it has no readable width and must not show through the terrain. */
-export function waterfallVisible(flow: FlowDirection | undefined, yaw: number) {
-  if (!flow) return true;
+/** The three waterfall strips depict one downstream face. Conceal the whole
+ * effect upstream or edge-on, where repeated crests on stepped banks look like shards. */
+export function waterfallVisible(flow: FlowDirection, yaw: number) {
   const facing = flow === 'left' || flow === 'right' ? Math.sin(yaw) : Math.cos(yaw);
   return facing * (flow === 'left' || flow === 'up' ? -1 : 1) > .015;
 }
@@ -82,12 +81,12 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
       const lip=span(-1,hi,.17), pool=span(1,lo,.24);
       // Extend the crest past the grass fringe and use the very same seam for the flow.
       const seam=.6/(vertical?cellW:cellH), crest=top+.2;
-      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1});
+      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1,flow});
       for(let y=crest;y>bottom;y-=48) {
         const next=Math.max(bottom,y-48);
         quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48,u0,u1,flow});
       }
-      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1,u0,u1});
+      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1,u0,u1,flow});
     }
   }
   return quads;
@@ -108,11 +107,10 @@ export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionF
   const context = canvas?.getContext('2d');
   if (!context) return;
   const dpr = Math.min(2,window.devicePixelRatio||1);
-  const quads = cachedWaterfallGeometry(frame,objects);
+  const quads = cachedWaterfallGeometry(frame,objects).filter(quad=>waterfallVisible(quad.flow,frame.yaw));
   if (!quads.length) return;
   const {project,clip} = waterfallOcclusion(frame);
   for (const quad of quads) {
-    if (!waterfallVisible(quad.flow,frame.yaw)) continue;
     let image=images.get(quad.part);
     if(!image) {
       image=new Image();
