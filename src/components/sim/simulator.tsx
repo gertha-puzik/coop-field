@@ -1,5 +1,5 @@
-import { drawWaterfalls } from '@/lib/sim/waterfall-view';
 'use client';
+import { drawWaterfalls } from '@/lib/sim/waterfall-view';
 import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
 import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
