@@ -108,6 +108,7 @@ export function WorldAtlas({place,places,close}: {place:LocationPlace;places:Loc
     onKeyDown={event=>{
       if(event.code==='KeyM' && !event.ctrlKey && !event.altKey && !event.metaKey) {
         event.preventDefault();
+        event.stopPropagation();
         if (!event.repeat) close();
       }
     }}>
