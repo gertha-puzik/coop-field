@@ -427,6 +427,7 @@ const meshes=falls.waterfallGeometry(cliff,[{...waterfall,s:1.5}]);
 assert.deepEqual([...new Set(meshes.map(quad=>quad.part))],['lip','curtain','pool']);
 assert(meshes.every(quad=>quad.a.x>=200&&quad.b.x<=300),'legacy wide falls are clipped to their anchor cell');
 assert(meshes.filter(quad=>quad.part==='curtain').every(quad=>quad.a.y-quad.c.y<=48),'flow tiles instead of stretching with cliff height');
+assert.deepEqual(meshes.find(quad=>quad.part==='lip').c,meshes.find(quad=>quad.part==='curtain').a,'lip and curtain share the same seam');
 assert.equal(falls.waterfallFrame(0),0);
 assert.equal(falls.waterfallFrame(85),1);
 assert.equal(falls.waterfallFrame(680),0);

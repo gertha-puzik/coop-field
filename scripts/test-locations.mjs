@@ -299,6 +299,22 @@ try {
     assert.equal(third.height, 10);
     assert.equal(third.map.place.name, 'Новый луг');
     assert.equal(third.locations.length, 3);
+    const list = await (await fetch(origin+'/cfg/locations')).json();
+    assert.deepEqual(list.regions,['Средиземье','Южный лес','Северный лес','Ферма','Шахты','Город']);
+    const configured = {name:'Тестовые шахты', id:42, zoneId:5};
+    const createWithDetails=()=>fetch(origin+'/cfg/locations',{method:'POST',headers:{
+      Origin:origin,Cookie:cookie,'Content-Type':'application/json',
+    },body:JSON.stringify(configured)});
+    const configuredResult=await createWithDetails();
+    const configuredBody=await configuredResult.json();
+    assert.equal(configuredResult.status,200,JSON.stringify(configuredBody));
+    assert.deepEqual(configuredBody.place,{id:42,name:'Тестовые шахты',zoneId:5,zoneName:'Шахты'});
+    assert.equal((await createWithDetails()).status,400,'requested ID cannot overwrite a location');
+    assert.equal((await fetch(origin+'/cfg/locations?preview=42')).status,401);
+    const preview=await fetch(origin+'/cfg/locations?preview=42',{headers:{Cookie:cookie}});
+    assert.equal(preview.status,200);
+    assert.equal(preview.headers.get('content-type'),'image/png');
+    assert.equal(Buffer.from(await preview.arrayBuffer()).subarray(0,8).toString('hex'),'89504e470d0a1a0a');
     console.log('PASS: location schema parity; distinct 12×11/10×10 maps, rooms, files and geometry; guest/forged/outside/battle denial; real passage travel, reverse arrival, reconnect/resume, nested scope restoration, corrupt-neighbor isolation and admin create ID 3');
 }
 finally {
