@@ -34,6 +34,7 @@ export interface SimKeyboardDeps {
   /** Цель поворота обзора, радианы, кратно π/2. [ вычитает четверть, ] прибавляет. */
   camYawTargetRef: RefObject<number>;
   closeEditor: () => void;
+  openAtlas?: () => void;
   /** Esc в редакторе: гасит «плавающий» кусок/выделение инструмента «Перенести»
    *  (true — обработано, редактор не закрывать); false — закрывать редактор. */
   editorEsc: () => boolean;
@@ -56,12 +57,13 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
     editorSizeStepRef,
     camYawTargetRef,
     closeEditor,
+    openAtlas,
     editorEsc,
   } = deps;
   useEffect(() => {
     const isForm = (t: EventTarget | null) => {
       const el = t as HTMLElement | null;
-      return !!el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+      return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
     };
     const down = (ev: KeyboardEvent) => {
       // Shift — спринт мирного режима (×1,5 к скорости + комочки из-под лап):
@@ -82,6 +84,12 @@ export function useSimKeyboard(deps: SimKeyboardDeps) {
           if (ev.altKey) editorSizeStepRef.current?.(ev.code === 'BracketRight' ? 1 : -1);
           else if (!ev.repeat) camYawTargetRef.current += ev.code === 'BracketRight' ? Math.PI/2 : -Math.PI/2;
         }
+        return;
+      }
+      if (openAtlas && fieldFormatRef.current === 'test' && ev.code === 'KeyM' &&
+          !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+        ev.preventDefault();
+        if (!ev.repeat) openAtlas();
         return;
       }
       // [ ] поворачивают обзор на 90°: [ против часовой, ] по часовой.
