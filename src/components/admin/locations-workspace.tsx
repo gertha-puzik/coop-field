@@ -107,11 +107,11 @@ export function LocationsWorkspace() {
     <section className={s.panel}>
       <h2>Локации</h2>
       <div className={styles.filters}>
-        <label>Регион<select value={filter} onChange={event=>selectRegion(event.target.value)}>
+        <label>Регион<select aria-label="Регион" value={filter} onChange={event=>selectRegion(event.target.value)}>
           <option value="">Все регионы</option>
           {groups.map(group=><option key={group}>{group}</option>)}
         </select></label>
-        <label>Сортировка<select value={sort} onChange={event=>setSort(event.target.value)}>
+        <label>Сортировка<select aria-label="Сортировка" value={sort} onChange={event=>setSort(event.target.value)}>
           <option value="name">По названию</option><option value="id">По ID</option>
         </select></label>
       </div>
@@ -145,7 +145,7 @@ export function LocationsWorkspace() {
           <div className={styles.filters}>
             <label>ID локации<input type="number" min={1} max={9999} step={1} placeholder={nextId?.toString()}
               value={id} onChange={event=>setId(event.target.value)}/></label>
-            <label>Регион новой локации<select value={region} onChange={event=>setRegion(event.target.value)}>
+            <label>Регион новой локации<select aria-label="Регион новой локации" value={region} onChange={event=>setRegion(event.target.value)}>
               {regions.map((label,index)=><option key={label} value={index+1}>{label}</option>)}
             </select></label>
           </div>
