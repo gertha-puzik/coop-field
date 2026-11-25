@@ -225,6 +225,41 @@ async function handleCreateLocationHttp(req, res) {
     json(res, 200, { ok: true, place: result.place, locations: result.locations, room: locationRoom(result.place.id) });
     return true;
 }
+// The atlas exposes the visible terrain only, without passages or spawn data.
+function serveLocationAtlas(req, res, params) {
+    if (!sessionFromRequest(req)) {
+        json(res, 401, {ok:false, reason:'auth_required'});
+        return;
+    }
+    const id = Number(params.get('atlas'));
+    if (!Number.isInteger(id) || !knownLocation(id)) {
+        json(res, 404, {ok:false, reason:'not_found'});
+        return;
+    }
+    let map;
+    try { map = withTestLocation(id, () => testMap); }
+    catch {
+        json(res, 404, {ok:false, reason:'unavailable'});
+        return;
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (params.get('layer') === 'paint') {
+        if (!map.paint) {
+            json(res, 404, {ok:false, reason:'no_preview'});
+            return;
+        }
+        res.writeHead(200, {'content-type':'image/png','x-content-type-options':'nosniff'});
+        res.end(Buffer.from(map.paint, 'base64'));
+        return;
+    }
+    const objects = map.objects
+        .filter(o => ['path', 'tree', 'stone', 'waterfall'].includes(o.kind))
+        .map(({kind,c,r,x,y}) => ({kind,c,r,x,y}));
+    json(res, 200, {
+        ok:true, cols:map.cols, rows:map.rows, painted:!!map.paint,
+        elev:map.elev ?? {}, water:map.water ?? {}, objects,
+    });
+}
 /** GET /locations|/cfg/locations + POST create (алиасы /admin/locations).
  *  /cfg/locations — обход без exact nginx location: прод уже проксирует весь /cfg. */
 export async function handleLocationsHttp(req, res) {
@@ -233,6 +268,10 @@ export async function handleLocationsHttp(req, res) {
     if (p === '/locations' || p === '/cfg/locations') {
         if (req.method === 'OPTIONS') return handleCreateLocationHttp(req, res);
         if (req.method === 'GET') {
+            if (url.searchParams.has('atlas')) {
+                serveLocationAtlas(req,res,url.searchParams);
+                return true;
+            }
             if (url.searchParams.has('preview')) {
                 if (!locationsAdminGate(req,res)) return true;
                 const id = Number(url.searchParams.get('preview'));

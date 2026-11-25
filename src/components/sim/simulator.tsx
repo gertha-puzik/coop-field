@@ -2,6 +2,7 @@
 import { drawWaterfalls } from '@/lib/sim/waterfall-view';
 import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
+import { WorldAtlas, AtlasButton } from './world-atlas';
 import { drawLocationPassages, locationRoom, type LocationPassage } from '@/lib/sim/location-map';
 import { currentWaterRules, refreshWaterRules } from '@/lib/sim/water-client';
 import { drawSubmergedSprite, drawWaterSurface, terrainWaterCanvas } from '@/lib/sim/water-render';
@@ -4329,7 +4330,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
 
   /* ---------- клавиатура ---------- */
 
+  const [atlasOpen, setAtlasOpen] = useState(false);
   useSimKeyboard({
+    openAtlas: IS_ELYRIA ? () => setAtlasOpen(true) : undefined,
     sprintRef,
     enteredRef,
     editorOpenRef,
@@ -4883,6 +4886,9 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             джойстик движения и кнопку «прыжок» с семантикой клавиатуры
             (use-touch-controls.ts). Монтируется только вне редактора:
             редактор локации глушит и клавиши, и тач в одном стиле. */}
+        {IS_ELYRIA && testField && !editorOpen && <AtlasButton open={() => setAtlasOpen(true)} />}
+        {IS_ELYRIA && testField && !editorOpen && atlasOpen &&
+          <WorldAtlas place={world.place} places={world.places} close={() => setAtlasOpen(false)} />}
         <FieldStage
         worldOverlay={testField ? <WorldLocationOverlay world={world} editorOpen={editorOpen}
           locationHud={IS_ELYRIA ? <WeatherHud dialRef={weatherDialRef} phase={atmoState.dp} weather={atmoState.w}

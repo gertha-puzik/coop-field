@@ -299,6 +299,12 @@ try {
     assert.equal(third.height, 10);
     assert.equal(third.map.place.name, 'Новый луг');
     assert.equal(third.locations.length, 3);
+    const atlas = origin+'/cfg/locations?atlas=1';
+    assert.equal((await fetch(atlas)).status,401);
+    const atlasMap = await (await fetch(atlas,{headers:{Cookie:cookie}})).json();
+    assert.deepEqual([atlasMap.cols,atlasMap.rows],[12,11]);
+    assert.deepEqual(atlasMap.elev,{'8,8':2});
+    assert(!('passages' in atlasMap) && !('spawns' in atlasMap));
     const list = await (await fetch(origin+'/cfg/locations')).json();
     assert.deepEqual(list.regions,['Средиземье','Южный лес','Северный лес','Ферма','Шахты','Город']);
     const configured = {name:'Тестовые шахты', id:42, zoneId:5};
@@ -318,6 +324,9 @@ try {
     assert.equal((await fetch(origin+'/cfg/locations?preview=42')).status,401);
     const preview=await fetch(origin+'/cfg/locations?preview=42',{headers:{Cookie:cookie}});
     assert.equal(preview.status,200);
+    const atlasPaint = await fetch(origin+'/cfg/locations?atlas=42&layer=paint',{headers:{Cookie:cookie}});
+    assert.equal(atlasPaint.headers.get('content-type'),'image/png');
+    assert.equal(Buffer.from(await atlasPaint.arrayBuffer()).subarray(0,8).toString('hex'),'89504e470d0a1a0a');
     assert.equal(preview.headers.get('content-type'),'image/png');
     assert.equal(Buffer.from(await preview.arrayBuffer()).subarray(0,8).toString('hex'),'89504e470d0a1a0a');
     console.log('PASS: location schema parity; distinct 12×11/10×10 maps, rooms, files and geometry; guest/forged/outside/battle denial; real passage travel, reverse arrival, reconnect/resume, nested scope restoration, corrupt-neighbor isolation and admin create ID 3');
