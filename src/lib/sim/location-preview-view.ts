@@ -1,3 +1,4 @@
+import { CAM_YAW_TAU_MS } from './engine-consts';
 import { drawWaterSurface, waterTextureRevision } from './water-render';
 import { buildPathLoops, pathCellsOf, pathLoopsToPath2D } from './path-field';
 import { drawRectTerrain } from './terrain-shape';
@@ -6,7 +7,7 @@ import { TERRAIN_LIFT_PX } from './test-field';
 import type { ElisionFrame, ElisionView } from './elision-scene';
 import type { TestMap } from './test-map';
 
-export const PREVIEW_YAW = Math.PI/5;
+export const PREVIEW_YAW = 0;
 const CELL_W = 100;
 const CELL_H = 150;
 type PreviewData = Pick<TestMap,'cols'|'rows'|'elev'|'water'|'objects'|'seed'> & {painted:boolean};
@@ -96,6 +97,7 @@ export function startLocationPreview(
     const diagonal=Math.hypot(worldW,worldH);
     const waterfalls=map.objects?.filter(object=>object.kind==='waterfall');
     let drawn='', textureRevision=-1, paintRev=0;
+    let angle=yaw.current, lastFrame=performance.now();
     status('ready');
     const render=(now:number)=>{
       const revision=waterTextureRevision();
@@ -104,11 +106,14 @@ export function startLocationPreview(
         textureRevision=revision;
         paintRev++;
       }
+      const dt=now-lastFrame;
+      lastFrame=now;
+      angle+=(yaw.current-angle)*(1-Math.exp(-dt/CAM_YAW_TAU_MS));
+      if (Math.abs(yaw.current-angle)<.004) angle=yaw.current;
       const viewW=target.clientWidth,viewH=target.clientHeight;
-      const key=`${viewW}/${viewH}/${yaw.current}/${paintRev}/${waterfalls?.length ? Math.floor(now/85) : 0}`;
+      const key=`${viewW}/${viewH}/${angle}/${paintRev}/${waterfalls?.length ? Math.floor(now/85) : 0}`;
       if (viewW>1 && viewH>1 && key!==drawn) {
         drawn=key;
-        const angle=yaw.current;
         const frame:ElisionFrame={
           camX:worldW/2-Math.sin(angle)*peak/2,camY:worldH/2-Math.cos(angle)*peak/2,
           zoom:.9*Math.min(viewW/diagonal,viewH/(diagonal+peak)),

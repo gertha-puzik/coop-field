@@ -12,6 +12,27 @@ export function LocationPreview({ location }: { location: LocationPlace }) {
   const drag = useRef<{ id: number; x: number } | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
+  function rotate(direction: -1 | 1) {
+    const quarter = Math.PI/2;
+    const step = yaw.current/quarter;
+    const next = direction===1 ? Math.floor(step+1e-6)+1 : Math.ceil(step-1e-6)-1;
+    yaw.current=next*quarter;
+  }
+
+  useEffect(() => {
+    if (status!=='ready') return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.code!=='BracketLeft' && event.code!=='BracketRight') return;
+      if (event.target instanceof HTMLElement &&
+          (event.target.isContentEditable || event.target.closest('input,textarea,select'))) return;
+      event.preventDefault();
+      if (!event.repeat) rotate(event.code==='BracketLeft'?-1:1);
+    };
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  },[status]);
+
   useEffect(() => {
     const target = stage.current;
     if (!target) return;
@@ -42,11 +63,11 @@ export function LocationPreview({ location }: { location: LocationPlace }) {
     </div>
     <div className={styles.previewControls} role="group" aria-label="Поворот предпросмотра">
       <button type="button" disabled={status!=='ready'} aria-label="Повернуть предпросмотр влево"
-        onClick={()=>{yaw.current-=Math.PI/2;}}>↶</button>
+        aria-keyshortcuts="[" onClick={()=>rotate(-1)}>↶ [</button>
       <button type="button" disabled={status!=='ready'} aria-label="Повернуть предпросмотр вправо"
-        onClick={()=>{yaw.current+=Math.PI/2;}}>↷</button>
+        aria-keyshortcuts="]" onClick={()=>rotate(1)}>↷ ]</button>
       <button type="button" disabled={status!=='ready'} onClick={()=>{yaw.current=PREVIEW_YAW;}}>Исходный ракурс</button>
-      <span>Перетащите карту, чтобы повернуть её</span>
+      <span>[ и ] меняют ракурс на 90°. Перетаскивание вращает карту свободно.</span>
     </div>
   </div>;
 }
