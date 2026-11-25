@@ -8,7 +8,19 @@ export const WATERFALL_FRAMES = 8;
 export const waterfallFrame = (now: number) => Math.floor(now/85)%WATERFALL_FRAMES;
 type Part = typeof WATERFALL_PARTS[number];
 type Point = { x: number; y: number; z: number };
-type Quad = { part: Part; a: Point; b: Point; c: Point; fraction: number };
+type FlowDirection = NonNullable<TestMapObject['dir']>;
+type Quad = {
+  part: Part; a: Point; b: Point; c: Point; fraction: number;
+  u0: number; u1: number; flow?: FlowDirection;
+};
+
+/** The falling face is on the lower side of the cliff. At a grazing angle
+ * it has no readable width and must not show through the terrain. */
+export function waterfallVisible(flow: FlowDirection | undefined, yaw: number) {
+  if (!flow) return true;
+  const facing = flow === 'left' || flow === 'right' ? Math.sin(yaw) : Math.cos(yaw);
+  return facing * (flow === 'left' || flow === 'up' ? -1 : 1) > .015;
+}
 type TerrainFrame = Pick<ElisionFrame,'cols'|'rows'|'cellW'|'cellH'|'terrainLiftStep'|'elev'>;
 
 export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[]) {
@@ -18,8 +30,9 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
   for (const object of objects) {
     if (object.kind!=='waterfall' || object.x==null || object.y==null) continue;
     const {x,y} = object;
-    const vertical = object.dir==='left'||object.dir==='right';
-    const normal = object.dir==='left'||object.dir==='up'?-1:1;
+    const flow = object.dir ?? 'down';
+    const vertical = flow==='left'||flow==='right';
+    const normal = flow==='left'||flow==='up'?-1:1;
     const nx = vertical?normal:0, nz = vertical?0:normal;
     const along = vertical?y:x, length = Math.min(object.s??1,1);
     const limit = vertical?rows:cols;
@@ -43,6 +56,9 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
     });
     for(let i=0;i<edges.length-1;i++) {
       const from=edges[i], to=edges[i+1], mid=(from+to)/2;
+      if (to-from<.00001) continue;
+      // Terrain subdivision must not restart the full texture in every sliver.
+      const u0=(from-start)/(end-start), u1=(to-start)/(end-start);
       const point=position(mid,0,0);
       const tx=point.x/cellW, ty=point.z/cellH;
       const hi=height(tx-nx*.0001,ty-nz*.0001), lo=height(tx+nx*.0001,ty+nz*.0001);
@@ -66,12 +82,12 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
       const lip=span(-1,hi,.17), pool=span(1,lo,.24);
       // Extend the crest past the grass fringe and use the very same seam for the flow.
       const seam=.6/(vertical?cellW:cellH), crest=top+.2;
-      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1});
+      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1});
       for(let y=crest;y>bottom;y-=48) {
         const next=Math.max(bottom,y-48);
-        quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48});
+        quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48,u0,u1,flow});
       }
-      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1});
+      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1,u0,u1});
     }
   }
   return quads;
@@ -96,6 +112,7 @@ export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionF
   if (!quads.length) return;
   const {project,clip} = waterfallOcclusion(frame);
   for (const quad of quads) {
+    if (!waterfallVisible(quad.flow,frame.yaw)) continue;
     let image=images.get(quad.part);
     if(!image) {
       image=new Image();
@@ -111,7 +128,8 @@ export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionF
     if (!clip(context,[a,b,c,d])) {context.restore();continue;}
     context.transform(b.x-a.x,b.y-a.y,c.x-a.x,c.y-a.y,a.x,a.y);
     context.imageSmoothingEnabled=false;
-    context.drawImage(image,waterfallFrame(now)*width,0,width,image.naturalHeight*quad.fraction,0,0,1,1);
+    context.drawImage(image,(waterfallFrame(now)+quad.u0)*width,0,(quad.u1-quad.u0)*width,
+      image.naturalHeight*quad.fraction,0,0,1,1);
     context.restore();
   }
 }
