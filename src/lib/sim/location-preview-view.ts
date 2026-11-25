@@ -1,7 +1,7 @@
 import { CAM_YAW_TAU_MS } from './engine-consts';
 import { drawWaterSurface, waterTextureRevision } from './water-render';
 import { buildPathLoops, pathCellsOf, pathLoopsToPath2D } from './path-field';
-import { drawRectTerrain } from './terrain-shape';
+import { cachedTerrainTiles, drawRectTerrain, terrainHeightTint } from './terrain-shape';
 import { drawWaterfalls } from './waterfall-view';
 import { TERRAIN_LIFT_PX } from './test-field';
 import type { ElisionFrame, ElisionView } from './elision-scene';
@@ -36,7 +36,7 @@ function drawPreviewFallback(canvas: HTMLCanvasElement, frame: ElisionFrame, now
   const worldW=frame.cols*frame.cellW, worldH=frame.rows*frame.cellH;
   g.drawImage(frame.paint,0,0,worldW,worldH);
   drawRectTerrain(g,frame.elev,frame.cols,frame.rows,frame.cellW,frame.cellH,
-    frame.terrainLiftStep,frame.yaw,null,null,frame.paint);
+    frame.terrainLiftStep,frame.yaw,null,null,frame.paint,null,true);
   if (frame.waterfalls?.length) drawWaterfalls(canvas,frame,frame.waterfalls,now);
 }
 
@@ -67,6 +67,8 @@ export function startLocationPreview(
     if (!g) {paint?.close();throw new Error('Canvas unavailable');}
     g.scale(atlas.width/worldW,atlas.height/worldH);
     const path=pathLoopsToPath2D(buildPathLoops(pathCellsOf(map.objects),map.cols,map.rows,map.seed??'preview'),CELL_W,CELL_H);
+    const elev=map.elev??{};
+    const raisedTiles=cachedTerrainTiles(elev,map.cols,map.rows).filter(tile=>tile.level>0);
     const compose=()=>{
       g.clearRect(0,0,worldW,worldH);
       if (paint) g.drawImage(paint,0,0,worldW,worldH);
@@ -76,6 +78,13 @@ export function startLocationPreview(
       }
       g.fillStyle='#886a47';
       g.fill(path,'evenodd');
+      g.save();
+      g.globalCompositeOperation='source-atop';
+      for (const {x,y,w,d,level} of raisedTiles) {
+        g.fillStyle=terrainHeightTint(level);
+        g.fillRect(x*CELL_W,y*CELL_H,w*CELL_W,d*CELL_H);
+      }
+      g.restore();
       drawWaterSurface(g,map,CELL_W,CELL_H);
     };
 
@@ -92,7 +101,6 @@ export function startLocationPreview(
     const fallback=view ? canvas : document.createElement('canvas');
     if (!view) canvas.replaceWith(fallback);
 
-    const elev=map.elev??{};
     const peak=Math.max(0,...Object.values(elev))*TERRAIN_LIFT_PX;
     const diagonal=Math.hypot(worldW,worldH);
     const waterfalls=map.objects?.filter(object=>object.kind==='waterfall');

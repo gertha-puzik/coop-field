@@ -318,6 +318,10 @@ export function terrainTopVisible(frame: ElisionFrame, c: number, r: number): bo
 }
 
 
+export function terrainHeightTint(level: number) {
+  return `rgba(255,245,200,${Math.min(.5,level*.025)})`;
+}
+
 /** Canvas fallback retains the exact rectangle extents when WebGL is unavailable.
  * The caller already applies the world/camera transform, so elevation is shifted
  * along the camera's world-space up direction just like the old cell painter.
@@ -325,7 +329,7 @@ export function terrainTopVisible(frame: ElisionFrame, c: number, r: number): bo
 export function drawRectTerrain(
   g:CanvasRenderingContext2D,elev:Record<string,number>,cols:number,rows:number,
   cw:number,ch:number,lift:number,yaw:number,grass:CanvasPattern|null,stone:CanvasPattern|null,
-  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null,
+  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null, paintIncludesHeightTint=false,
 ):void {
   const sin=Math.sin(yaw),cos=Math.cos(yaw);
   const tiles=cachedTerrainTiles(elev,cols,rows).filter(b=>b.level>0).slice();
@@ -347,8 +351,10 @@ export function drawRectTerrain(
       const sx=paint.width/cols,sy=paint.height/rows;
       g.drawImage(paint,b.x*sx,b.y*sy,b.w*sx,b.d*sy,x,y,w+.1,h+.1);
     }else{g.fillStyle=grass??'#526b35';g.fillRect(x,y,w+.1,h+.1);}
-    g.fillStyle=`rgba(255,245,200,${Math.min(.5,b.level*.025)})`;
-    g.fillRect(x,y,w+.1,h+.1);
+    if (!paintIncludesHeightTint) {
+      g.fillStyle=terrainHeightTint(b.level);
+      g.fillRect(x,y,w+.1,h+.1);
+    }
     if(water)g.drawImage(water,b.x*cw,b.y*ch,w,h,x,y,w,h);
   }
 }

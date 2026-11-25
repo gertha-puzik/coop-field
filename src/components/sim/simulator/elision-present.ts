@@ -2,7 +2,7 @@ import { submergedPixels } from '@/lib/sim/water-rules';
 import { drawWaterSurface, waterTextureRevision } from '@/lib/sim/water-render';
 import { currentWaterRules } from '@/lib/sim/water-client';
 import { paintRevision as paintLayerRevision } from '@/lib/sim/test-field';
-import { terrainAt, terrainTiles } from '@/lib/sim/terrain-shape';
+import { terrainAt, terrainHeightTint, terrainTiles } from '@/lib/sim/terrain-shape';
 import type { EditorPlace } from '@/lib/sim/editor-model';
 /**
  * Кадр Элизии для WebGL-вида: собирает то, что 2D-цикл уже посчитал
@@ -166,7 +166,7 @@ function buildOverlay(
     if (!b.level) continue;
     // Лёгкая подсветка плато: формула #151 (0.08+0.06·L) слишком высветляла
     // атлас земли в WebGL — возвращаем мягкий коэффициент до #151.
-    g.fillStyle = `rgba(255, 245, 200, ${Math.min(.5, b.level * .025)})`;
+    g.fillStyle = terrainHeightTint(b.level);
     g.fillRect(b.x * cellW, b.y * cellH, b.w * cellW, b.d * cellH);
   }
   // Water is its own surface. The land mask must not hide it in holes or at the shore.
