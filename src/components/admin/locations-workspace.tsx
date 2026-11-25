@@ -2,19 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { httpCreateLocation, httpLocations } from '@/lib/net/http-locations';
-import { httpOrigin } from '@/lib/net/coop';
+import { LocationPreview } from './location-preview';
 import { locationRoom, type LocationPlace } from '@/lib/sim/location-map';
 import s from './admin-console.module.css';
 import styles from './locations-workspace.module.css';
-
-function LocationPreview({location}: {location: LocationPlace}) {
-  const [missing,setMissing] = useState(false);
-  return <div className={styles.preview}>
-    {missing ? <p>У этой карты пока нет рисунка для предпросмотра.</p> :
-      <img alt={`Рисунок карты «${location.name}»`} src={`${httpOrigin()}/cfg/locations?preview=${location.id}`}
-        onError={()=>setMissing(true)} />}
-  </div>;
-}
 
 function editorAddress(id: number) {
   const params = new URLSearchParams({room:locationRoom(id), editLocation:String(id)});

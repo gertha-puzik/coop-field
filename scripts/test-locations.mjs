@@ -13,7 +13,7 @@ import ts from 'typescript';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coop-locations-'));
 const getPort = () => new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const port = await getPort(), origin = `http://127.0.0.1:${port}`, sleep = ms => new Promise(r => setTimeout(r, ms));
-const fixture = { v: 2, cols: 12, rows: 11, margin: .5, seed: 'valley-fixture', place: { id: 1, name: 'Долина', zoneId: 1, zoneName: 'Средиземье' }, zones: [{ id: 'grass', kind: 'green', name: 'Трава', c0: 0, r0: 0, c1: 11, r1: 10 }, { id: 'battle', kind: 'cells', name: 'Бой', c0: 0, r0: 0, c1: 1, r1: 1 }], objects: [], spawns: [{ c: 2, r: 5 }], elev: { '8,8': 2 }, water: { '6,5': 1, '7,5': 2 }, passages: [{ id: 'forest', x: 2, y: 4, w: 3, h: 3, targetId: 2, link: 'trail', direction: 'right' }] };
+const fixture = { v: 2, cols: 12, rows: 11, margin: .5, seed: 'valley-fixture', place: { id: 1, name: 'Долина', zoneId: 1, zoneName: 'Средиземье' }, zones: [{ id: 'grass', kind: 'green', name: 'Трава', c0: 0, r0: 0, c1: 11, r1: 10 }, { id: 'battle', kind: 'cells', name: 'Бой', c0: 0, r0: 0, c1: 1, r1: 1 }], objects: [{kind:'waterfall', x:9, y:8.5, c:9, r:8, dir:'right', s:.8}], spawns: [{ c: 2, r: 5 }], elev: { '8,8': 2 }, water: { '6,5': 1, '7,5': 2 }, passages: [{ id: 'forest', x: 2, y: 4, w: 3, h: 3, targetId: 2, link: 'trail', direction: 'right' }] };
 fs.writeFileSync(path.join(dir, 'test-map.json'), JSON.stringify(fixture));
 const admin = spawnSync(process.execPath, ['scripts/make-admin.mjs', 'worldadmin', 'local-test-pass'], { env: { ...process.env, DATA_DIR: dir }, encoding: 'utf8' });
 assert.equal(admin.status, 0, admin.stderr);
@@ -325,6 +325,9 @@ try {
     const atlasMap = await (await fetch(atlas,{headers:{Cookie:cookie}})).json();
     assert.deepEqual([atlasMap.cols,atlasMap.rows],[12,11]);
     assert.deepEqual(atlasMap.elev,{'8,8':2});
+    assert.deepEqual(atlasMap.water,fixture.water);
+    assert.equal(atlasMap.seed,fixture.seed);
+    assert.deepEqual(atlasMap.objects,fixture.objects);
     assert(!('passages' in atlasMap) && !('spawns' in atlasMap));
     const list = await (await fetch(origin+'/cfg/locations')).json();
     assert.deepEqual(list.regions,['Средиземье','Южный лес','Северный лес','Ферма','Шахты','Город']);

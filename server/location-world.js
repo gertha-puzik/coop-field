@@ -254,9 +254,9 @@ function serveLocationAtlas(req, res, params) {
     }
     const objects = map.objects
         .filter(o => ['path', 'tree', 'stone', 'waterfall'].includes(o.kind))
-        .map(({kind,c,r,x,y}) => ({kind,c,r,x,y}));
+        .map(({kind,c,r,x,y,dir,s}) => ({kind,c,r,x,y,...(kind==='waterfall' ? {dir,s} : {})}));
     json(res, 200, {
-        ok:true, cols:map.cols, rows:map.rows, painted:!!map.paint,
+        ok:true, cols:map.cols, rows:map.rows, painted:!!map.paint, seed:map.seed,
         elev:map.elev ?? {}, water:map.water ?? {}, objects,
     });
 }
