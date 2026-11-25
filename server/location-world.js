@@ -16,6 +16,7 @@ import { locationLabelOf } from './presence.js';
 
 const INDEX_FILE = path.join(DATA_DIR, 'locations-index.json');
 const MAX_LOCATIONS = 64;
+const REGIONS = ['Средиземье', 'Южный лес', 'Северный лес', 'Ферма', 'Шахты', 'Город'];
 /** Mutable registry: seed 1+2, then index file + location-N.json discovery. */
 function discoverLocationIds() {
     const ids = new Set([1, 2]);
@@ -148,13 +149,18 @@ export function broadcastLocationCatalogue() {
 export function createLocation(opts = {}) {
     if (LOCATION_IDS.length >= MAX_LOCATIONS)
         return { error: `локаций не больше ${MAX_LOCATIONS}` };
-    const id = LOCATION_IDS.reduce((max, value) => Math.max(max, value), 0) + 1;
-    if (id > 9999)
-        return { error: 'исчерпан диапазон ID локаций' };
+    const id = opts.id ?? LOCATION_IDS.reduce((max, value) => Math.max(max, value), 0) + 1;
+    if (!Number.isInteger(id) || id < 1 || id > 9999)
+        return { error: 'ID должен быть целым числом от 1 до 9999.' };
+    if (knownLocation(id))
+        return { error: `Локация с ID ${id} уже существует.` };
+    const zoneId = opts.zoneId ?? 1;
+    if (!Number.isInteger(zoneId) || !REGIONS[zoneId-1])
+        return { error: 'Выберите регион из списка.' };
     const file = locationFile(id);
     if (fs.existsSync(file))
         return { error: `файл локации ${id} уже существует` };
-    const place = { ...defaultPlace(id), name: name(opts.name, defaultPlace(id).name) };
+    const place = { id, name: name(opts.name, defaultPlace(id).name), zoneId, zoneName: REGIONS[zoneId-1] };
     const raw = {
         v: 2, cols: 10, rows: 10, margin: .5, seed: `location-${id}`, place,
         zones: [], objects: [], spawns: [{ c: 2, r: 5 }], passages: [], paint: grassPng(),
@@ -205,12 +211,13 @@ async function handleCreateLocationHttp(req, res) {
         json(res, 400, { ok: false, reason: 'json', message: 'Тело запроса не читается как JSON.' });
         return true;
     }
-    const extra = Object.keys(body).filter(k => k !== 'name');
+    const fields = ['name','id','zoneId'];
+    const extra = Object.keys(body).filter(k => !fields.includes(k));
     if (extra.length) {
-        json(res, 400, { ok: false, reason: 'unexpected_fields', unexpected: extra, expected: ['name'] });
+        json(res, 400, { ok: false, reason: 'unexpected_fields', unexpected: extra, expected: fields });
         return true;
     }
-    const result = createLocation({ name: body.name });
+    const result = createLocation(body);
     if (result.error) {
         json(res, 400, { ok: false, reason: 'invalid', message: result.error });
         return true;
@@ -224,9 +231,26 @@ export async function handleLocationsHttp(req, res) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const p = url.pathname;
     if (p === '/locations' || p === '/cfg/locations') {
-        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+        if (req.method === 'OPTIONS') return handleCreateLocationHttp(req, res);
         if (req.method === 'GET') {
-            json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms() });
+            if (url.searchParams.has('preview')) {
+                if (!locationsAdminGate(req,res)) return true;
+                const id = Number(url.searchParams.get('preview'));
+                if (!Number.isInteger(id) || !knownLocation(id)) {
+                    json(res,404,{ok:false,reason:'not_found'});
+                    return true;
+                }
+                let paint;
+                try { paint = withTestLocation(id,()=>testMap.paint); } catch {}
+                if (!paint) {
+                    json(res,404,{ok:false,reason:'no_preview'});
+                    return true;
+                }
+                res.writeHead(200,{'content-type':'image/png','cache-control':'no-store','x-content-type-options':'nosniff'});
+                res.end(Buffer.from(paint,'base64'));
+                return true;
+            }
+            json(res, 200, { ok: true, locations: locationCatalogue(), rooms: locationRooms(), regions: REGIONS });
             return true;
         }
         // Admin create without /admin/ in the client bundle (A1 grotto gate).

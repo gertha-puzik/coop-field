@@ -2,7 +2,7 @@
 import { drawWaterfalls } from '@/lib/sim/waterfall-view';
 import { receiveEditorMap } from './simulator/map-receive';
 import { useWorldLocations, WorldLocationOverlay, LocationEditorPanel, PassageEditorPanel, LocationLoadingCover } from './world-locations';
-import { drawLocationPassages, type LocationPassage } from '@/lib/sim/location-map';
+import { drawLocationPassages, locationRoom, type LocationPassage } from '@/lib/sim/location-map';
 import { currentWaterRules, refreshWaterRules } from '@/lib/sim/water-client';
 import { drawSubmergedSprite, drawWaterSurface, terrainWaterCanvas } from '@/lib/sim/water-render';
 import { submergedPixels, waterSpeed } from '@/lib/sim/water-rules';
@@ -1163,6 +1163,15 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
    *  скрыта в chrome.tsx (role === 'admin'), сервер вдобавок гейтит сам кадр
    *  setmap по роли WS-сессии (server/testmap.js). */
   const openEditor = whoami?.role === 'admin' || whoami?.permissions?.includes('world') ? openEditorBase : () => {};
+  const openedRequestedEditor = useRef(false);
+  useEffect(() => {
+    if (!IS_ELYRIA || !netReady || fieldFormat !== 'test' || openedRequestedEditor.current) return;
+    if (!whoami?.ok || (whoami.role !== 'admin' && !whoami.permissions?.includes('world'))) return;
+    const requested = new URLSearchParams(window.location.search).get('editLocation');
+    if (!requested || Number(requested) !== world.place.id || roomCode !== locationRoom(world.place.id)) return;
+    openedRequestedEditor.current = true;
+    openEditorBase();
+  }, [netReady, fieldFormat, whoami, world.place.id, roomCode, openEditorBase]);
 
   /** Обновление ?room=/&name= в адресной строке после выбора/смены комнаты: ссылкой
    *  можно вернуться прямо в тот же грот (и имя подставится в пикер персонажа). */

@@ -64,10 +64,12 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
         return at<0||at>=bound?0:width;
       };
       const lip=span(-1,hi,.17), pool=span(1,lo,.24);
-      if(lip>0)quads.push({part:'lip',a:position(from,-lip,top+.15),b:position(to,-lip,top+.15),c:position(from,0,top+.15),fraction:1});
-      for(let y=top;y>bottom;y-=48) {
+      // Extend the crest past the grass fringe and use the very same seam for the flow.
+      const seam=.6/(vertical?cellW:cellH), crest=top+.2;
+      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1});
+      for(let y=crest;y>bottom;y-=48) {
         const next=Math.max(bottom,y-48);
-        quads.push({part:'curtain',a:position(from,.001,y),b:position(to,.001,y),c:position(from,.001,next),fraction:(y-next)/48});
+        quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48});
       }
       if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1});
     }

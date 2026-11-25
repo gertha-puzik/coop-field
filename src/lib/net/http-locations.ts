@@ -7,7 +7,7 @@ import type { LocationPlace } from "@/lib/sim/location-map";
 
 export type LocationsError = { ok: false; reason: string; message?: string };
 export type LocationsListAction =
-  | { ok: true; locations: LocationPlace[]; rooms: string[] }
+  | { ok: true; locations: LocationPlace[]; rooms: string[]; regions: string[] }
   | LocationsError;
 
 export function asLocationPlace(row: ApiRow | null | undefined): LocationPlace | null {
@@ -60,7 +60,7 @@ export function locationsErrorOf(row: ApiRow | null, status: number, fallback: s
 export async function httpLocations(): Promise<LocationsListAction> {
   const { status, row } = await apiFetch("/cfg/locations");
   if (status === 200 && row?.ok === true) {
-    return { ok: true, locations: parseLocationPlaces(row.locations), rooms: parseRooms(row.rooms) };
+    return { ok: true, locations: parseLocationPlaces(row.locations), rooms: parseRooms(row.rooms), regions: parseRooms(row.regions) };
   }
   return locationsErrorOf(row, status, "error");
 }
@@ -70,8 +70,8 @@ export type LocationCreateAction =
   | LocationsError;
 
 /** Создать локацию (POST /cfg/locations, admin). Без литерала /admin/ — безопасно для grotto-бандла. */
-export async function httpCreateLocation(name?: string): Promise<LocationCreateAction> {
-  const body = name && name.trim() ? { name: name.trim() } : {};
+export async function httpCreateLocation(name?: string, options?: {id: number; zoneId: number}): Promise<LocationCreateAction> {
+  const body = { ...(name?.trim() ? { name: name.trim() } : {}), ...options };
   const { status, row } = await apiFetch("/cfg/locations", { method: "POST", body });
   if (status === 200 && row?.ok === true) {
     const place = asLocationPlace(row.place && typeof row.place === "object" ? (row.place as ApiRow) : null);

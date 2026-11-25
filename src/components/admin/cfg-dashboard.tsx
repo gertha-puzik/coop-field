@@ -88,6 +88,7 @@ import { TexturesTab } from './textures-tab';
 import { ConsoleGeneral } from './console-general';
 import { ConsoleUsers } from './console-users';
 import { PlayerStatsTab } from './player-stats-tab';
+import { LocationsWorkspace } from './locations-workspace';
 import { ConsoleWorld } from './console-world';
 import { ConsoleSubtabs } from './console-subtabs';
 import { PERMISSION_LABELS } from '@/lib/net/http-console';
@@ -102,7 +103,7 @@ type FieldDiff = ReturnType<typeof buildDiff>[number];
 
 type Status = { kind: 'ok' | 'err'; text: string; details?: string } | null;
 
-const TAB_IDS = ['general', 'users', 'characteristics', 'world', 'assets'] as const;
+const TAB_IDS = ['general', 'users', 'characteristics', 'world', 'locations', 'assets'] as const;
 
 /* ================================ дашборд ================================ */
 
@@ -528,6 +529,7 @@ export default function CfgDashboard() {
     {id:'users',title:'Игроки и администрация',render:can('players','roles','statuses')?()=> <ConsoleUsers permissions={permissions}/>:null},
     {id:'characteristics',title:'Характеристики',render:can('config')?()=> <PlayerStatsTab onClose={() => pickTab('characteristics')}/>:null},
     {id:'world',title:'Мир',render:can('world','config')?()=> <ConsoleWorld permissions={permissions} settings={renderCfg()} armor={armorPanel}/>:null},
+    {id:'locations',title:'Редактор локаций',render:can('world')?()=> <LocationsWorkspace/>:null},
     {id:'assets',title:'Ресурсы',render:can('sprites','textures','items')?()=> <ConsoleSubtabs tabs={[
       ...(can('items')?[{id:'items',label:'Предметы',content:<ItemsWorkspace/>}]:[]),
       ...(can('sprites')?[{id:'sprites',label:'Спрайты',content:<SpritesTab/>}]:[]),
