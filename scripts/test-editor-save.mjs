@@ -420,3 +420,14 @@ const server=serverMap.sanitizeTestMap(client).map;
 assert.deepEqual(server.elev,client.elev);
 assert.deepEqual(server.objects,client.objects);
 console.log('waterfall ledge anchoring and triangle geometry roundtrip: OK');
+
+const falls=loadTs(new URL('../src/lib/sim/waterfall-view.ts',import.meta.url));
+const cliff={cols:6,rows:6,cellW:100,cellH:150,elev:{'2,2,1,1':5},terrainLiftStep:26};
+const meshes=falls.waterfallGeometry(cliff,[{...waterfall,s:1.5}]);
+assert.deepEqual([...new Set(meshes.map(quad=>quad.part))],['lip','curtain','pool']);
+assert(meshes.every(quad=>quad.a.x>=200&&quad.b.x<=300),'legacy wide falls are clipped to their anchor cell');
+assert(meshes.filter(quad=>quad.part==='curtain').every(quad=>quad.a.y-quad.c.y<=48),'flow tiles instead of stretching with cliff height');
+assert.equal(falls.waterfallFrame(0),0);
+assert.equal(falls.waterfallFrame(85),1);
+assert.equal(falls.waterfallFrame(680),0);
+console.log('waterfall bounds, height tiling and animation loop: OK');

@@ -14,7 +14,7 @@ export function closestTerrainEdge(elev: Record<string,number>, x: number, y: nu
       ['x',block.y,block.x,block.w], ['x',block.y+block.d,block.x,block.w],
       ['y',block.x,block.y,block.d], ['y',block.x+block.w,block.y,block.d],
     ] as const) {
-      const width = Math.min(length,1.5);
+      const width = Math.min(length,1);
       const inset = waterfall ? width/2 : 0;
       const along = Math.max(start+inset, Math.min(start+length-inset, axis==='x'?x:y));
       const edgeX = axis==='x'?along:position, edgeY = axis==='x'?position:along;
