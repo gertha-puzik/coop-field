@@ -231,7 +231,7 @@ export async function handleLocationsHttp(req, res) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const p = url.pathname;
     if (p === '/locations' || p === '/cfg/locations') {
-        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+        if (req.method === 'OPTIONS') return handleCreateLocationHttp(req, res);
         if (req.method === 'GET') {
             if (url.searchParams.has('preview')) {
                 if (!locationsAdminGate(req,res)) return true;

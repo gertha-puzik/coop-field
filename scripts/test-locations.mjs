@@ -302,6 +302,11 @@ try {
     const list = await (await fetch(origin+'/cfg/locations')).json();
     assert.deepEqual(list.regions,['Средиземье','Южный лес','Северный лес','Ферма','Шахты','Город']);
     const configured = {name:'Тестовые шахты', id:42, zoneId:5};
+    const preflight = await fetch(origin+'/cfg/locations',{method:'OPTIONS',headers:{
+        Origin:origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type',
+    }});
+    assert.equal(preflight.status,204);
+    assert.equal(preflight.headers.get('access-control-allow-headers'),'content-type');
     const createWithDetails=()=>fetch(origin+'/cfg/locations',{method:'POST',headers:{
       Origin:origin,Cookie:cookie,'Content-Type':'application/json',
     },body:JSON.stringify(configured)});
