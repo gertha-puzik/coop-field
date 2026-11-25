@@ -97,7 +97,7 @@ export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionF
     let image=images.get(quad.part);
     if(!image) {
       image=new Image();
-      image.src=`/tex/waterfall/${quad.part}.png`;
+      image.src=`/tex/waterfall/${quad.part}-frames.png`;
       images.set(quad.part,image);
     }
     if(!image.complete||!image.naturalWidth)continue;

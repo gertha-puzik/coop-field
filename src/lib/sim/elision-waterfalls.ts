@@ -48,7 +48,7 @@ export function createElisionWaterfalls(scene: Scene) {
           const normals:number[]=[];
           VertexData.ComputeNormals(positions,indices,normals);
           data.normals=normals;data.applyToMesh(mesh);
-          const texture=new Texture(`/tex/waterfall/${name}.png`,scene,true,true,Texture.NEAREST_SAMPLINGMODE);
+          const texture=new Texture(`/tex/waterfall/${name}-frames.png`,scene,true,true,Texture.NEAREST_SAMPLINGMODE);
           texture.hasAlpha=true;
           texture.wrapU=texture.wrapV=Texture.CLAMP_ADDRESSMODE;
           const material=new StandardMaterial(`waterfall-${name}`,scene);
