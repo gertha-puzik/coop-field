@@ -11,14 +11,17 @@ type Point = { x: number; y: number; z: number };
 type FlowDirection = NonNullable<TestMapObject['dir']>;
 type Quad = {
   part: Part; a: Point; b: Point; c: Point; fraction: number;
-  u0: number; u1: number; flow: FlowDirection;
+  u0: number; u1: number; flow: FlowDirection; width: number;
 };
 
 /** The three waterfall strips depict one downstream face. Conceal the whole
  * effect upstream or edge-on, where repeated crests on stepped banks look like shards. */
-export function waterfallVisible(flow: FlowDirection, yaw: number) {
+export function waterfallVisible(flow: FlowDirection, yaw: number, width = Infinity, zoom = 1) {
   const facing = flow === 'left' || flow === 'right' ? Math.sin(yaw) : Math.cos(yaw);
-  return facing * (flow === 'left' || flow === 'up' ? -1 : 1) > .015;
+  const downstream = facing * (flow === 'left' || flow === 'up' ? -1 : 1);
+  // Keep ordinary waterfalls visible in a zoomed-out overview. Only narrow
+  // cliff fragments need enough projected width to show the sprite detail.
+  return downstream > .1 && (width >= 20 || width * zoom * downstream >= 8);
 }
 type TerrainFrame = Pick<ElisionFrame,'cols'|'rows'|'cellW'|'cellH'|'terrainLiftStep'|'elev'>;
 
@@ -53,6 +56,7 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
     const position=(a: number, d: number, h: number): Point => ({
       x: ((vertical?x:a)+nx*d)*cellW, y: h, z: ((vertical?a:y)+nz*d)*cellH,
     });
+    const runs: { from: number; to: number; first: number }[] = [];
     for(let i=0;i<edges.length-1;i++) {
       const from=edges[i], to=edges[i+1], mid=(from+to)/2;
       if (to-from<.00001) continue;
@@ -62,6 +66,9 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
       const tx=point.x/cellW, ty=point.z/cellH;
       const hi=height(tx-nx*.0001,ty-nz*.0001), lo=height(tx+nx*.0001,ty+nz*.0001);
       if (hi<=lo) continue;
+      const last = runs.at(-1);
+      if (last && last.to === from) last.to = to;
+      else runs.push({from,to,first:quads.length});
       const top=hi*terrainLiftStep, bottom=lo*terrainLiftStep;
       // Bound both flat strips to their cells and to their actual terrain tier.
       const span=(side: number, level: number, maximum: number) => {
@@ -80,13 +87,18 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
       };
       const lip=span(-1,hi,.17), pool=span(1,lo,.24);
       // Extend the crest past the grass fringe and use the very same seam for the flow.
-      const seam=.6/(vertical?cellW:cellH), crest=top+.2;
-      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1,flow});
+      const seam=span(1,lo,.6/(vertical?cellW:cellH)), crest=top+.2;
+      if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1,flow,width:0});
       for(let y=crest;y>bottom;y-=48) {
         const next=Math.max(bottom,y-48);
-        quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48,u0,u1,flow});
+        quads.push({part:'curtain',a:position(from,seam,y),b:position(to,seam,y),c:position(from,seam,next),fraction:(y-next)/48,u0,u1,flow,width:0});
       }
-      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1,u0,u1,flow});
+      if(pool>0)quads.push({part:'pool',a:position(from,0,bottom+.15),b:position(to,0,bottom+.15),c:position(from,pool,bottom+.15),fraction:1,u0,u1,flow,width:0});
+    }
+    for (const [i,run] of runs.entries()) {
+      const end = runs[i+1]?.first ?? quads.length;
+      const width = (run.to-run.from) * (vertical ? cellH : cellW);
+      for (let j=run.first;j<end;j++) quads[j].width=width;
     }
   }
   return quads;
@@ -107,7 +119,7 @@ export function drawWaterfalls(canvas: HTMLCanvasElement | null, frame: ElisionF
   const context = canvas?.getContext('2d');
   if (!context) return;
   const dpr = Math.min(2,window.devicePixelRatio||1);
-  const quads = cachedWaterfallGeometry(frame,objects).filter(quad=>waterfallVisible(quad.flow,frame.yaw));
+  const quads = cachedWaterfallGeometry(frame,objects).filter(quad=>waterfallVisible(quad.flow,frame.yaw,quad.width,frame.zoom));
   if (!quads.length) return;
   const {project,clip} = waterfallOcclusion(frame);
   for (const quad of quads) {

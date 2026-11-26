@@ -135,6 +135,7 @@ const waterBitmap = {};
 const raisedDraws = [];
 shape.drawRectTerrain({
   fillRect: () => {},
+  beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {},
   drawImage: (...args) => raisedDraws.push(args),
 }, {'2,2,1,1':1}, 6, 6, 100, 150, 26, 0, null, null, null, waterBitmap);
 assert.deepEqual(raisedDraws, [[waterBitmap,200,300,100,150,200,274,100,150]],
@@ -437,6 +438,10 @@ assert.equal(strips[1].u1,1);
 assert(falls.waterfallVisible(strips[0].flow,0),'fall visible from the lower side');
 assert(!falls.waterfallVisible(strips[0].flow,Math.PI),'fall hidden from behind');
 assert(!falls.waterfallVisible(strips[0].flow,Math.PI/2),'edge-on strips hidden');
+assert(!falls.waterfallVisible('down',87*Math.PI/180),'near-edge-on strips hidden during rotation');
+assert(!falls.waterfallVisible('down',0,6,1),'a short isolated curtain is hidden even face-on');
+assert(strips.every(quad=>quad.width===100 && falls.waterfallVisible(quad.flow,0,quad.width,.1)),
+  'a continuous curtain retains its full visible width across terrain subdivisions');
 assert(falls.waterfallVisible('right',Math.PI/2));
 assert(falls.waterfallVisible('up',Math.PI));
 assert(falls.waterfallVisible('left',-Math.PI/2));

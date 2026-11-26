@@ -40,6 +40,7 @@ import {
   type ElisionFrame,
   type ElisionView,
 } from './elision-scene';
+import { WATER_COLORS } from './terrain-shape';
 import { rememberSpriteAspect } from './sprite-aspect';
 
 const GRASS = new Color3(0.11, 0.24, 0.1);
@@ -99,6 +100,14 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   let groundAtlas: HTMLCanvasElement | null = null;
   let terrainTop: Mesh | null = null;
   let terrainWalls: Mesh | null = null;
+  let wetWalls: (Mesh | null)[] = [];
+  const waterMaterials = WATER_COLORS.map((hex, index) => {
+    const material = new StandardMaterial(`elision-water-cliff-${index+1}`, scene);
+    material.disableLighting = true;
+    material.backFaceCulling = false;
+    glow.attach(material);
+    return {material,color:Color3.FromHexString(hex)};
+  });
   let terrainFringe: Mesh | null = null;
   const wallMat = new StandardMaterial('elision-cliff', scene);
   wallMat.disableLighting = true;
@@ -139,6 +148,9 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const applyTint = (textured: boolean) => {
     const [r, g, b] = tint;
     wallMat.emissiveColor.set(r, g, b);
+    for (const {material,color} of waterMaterials) {
+      material.emissiveColor.set(color.r*r,color.g*g,color.b*b);
+    }
     if (textured) groundMat.emissiveColor.set(r, g, b);
     else groundMat.emissiveColor.set(GRASS.r * r, GRASS.g * g, GRASS.b * b);
   };
@@ -155,11 +167,12 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const syncTerrain = (frame: ElisionFrame) => {
     terrainTop?.dispose(false, false);
     terrainWalls?.dispose(false, false);
+    for (const mesh of wetWalls) mesh?.dispose();
     terrainFringe?.dispose(false, false);
     terrainTop = null;
     terrainWalls = null;
     terrainFringe = null;
-    const geo = elisionTerrainGeometry(frame.cols, frame.rows, frame.cellW, frame.cellH, frame.elev, frame.terrainLiftStep);
+    const geo = elisionTerrainGeometry(frame.cols, frame.rows, frame.cellW, frame.cellH, frame.elev, frame.terrainLiftStep, frame.water);
     const make = (name: string, part: typeof geo.tops, material: StandardMaterial) => {
       if (!part.positions.length) return null;
       const mesh = new Mesh(name, scene);
@@ -178,6 +191,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     };
     terrainTop = make('elision-plateau-tops', geo.tops, groundMat);
     terrainWalls = make('elision-cliff-walls', geo.walls, wallMat);
+    wetWalls = geo.wetWalls.map((part,i)=>make(`elision-water-cliffs-${i+1}`,part,waterMaterials[i].material));
     terrainFringe = make('elision-grass-fringe', geo.fringe, groundMat);
     wallMat.opacityTexture = groundDyn;
   };
@@ -189,9 +203,11 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     return keys.map((k) => `${k}=${elev![k]}`).join(',');
   };
 
+  let terrainWater: ElisionFrame['water'];
   const syncTerrainIfNeeded = (frame: ElisionFrame) => {
     const next = `${frame.cols}x${frame.rows}:${frame.terrainLiftStep}:${elevSig(frame.elev)}`;
-    if (next === terrainKey) return;
+    if (next === terrainKey && frame.water === terrainWater) return;
+    terrainWater = frame.water;
     terrainKey = next;
     syncTerrain(frame);
   };

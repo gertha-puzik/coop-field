@@ -36,7 +36,7 @@ function drawPreviewFallback(canvas: HTMLCanvasElement, frame: ElisionFrame, now
   const worldW=frame.cols*frame.cellW, worldH=frame.rows*frame.cellH;
   g.drawImage(frame.paint,0,0,worldW,worldH);
   drawRectTerrain(g,frame.elev,frame.cols,frame.rows,frame.cellW,frame.cellH,
-    frame.terrainLiftStep,frame.yaw,null,null,frame.paint,null,true);
+    frame.terrainLiftStep,frame.yaw,null,null,frame.paint,null,true,frame.water);
   if (frame.waterfalls?.length) drawWaterfalls(canvas,frame,frame.waterfalls,now);
 }
 
@@ -126,7 +126,7 @@ export function startLocationPreview(
           camX:worldW/2-Math.sin(angle)*peak/2,camY:worldH/2-Math.cos(angle)*peak/2,
           zoom:.9*Math.min(viewW/diagonal,viewH/(diagonal+peak)),
           yaw:angle,viewW,viewH,cols:map.cols,rows:map.rows,cellW:CELL_W,cellH:CELL_H,
-          editor:true,elev,terrainLiftStep:TERRAIN_LIFT_PX,day:'day',dayProgress:.5,
+          editor:true,elev,water:map.water,terrainLiftStep:TERRAIN_LIFT_PX,day:'day',dayProgress:.5,
           jumpTarget:null,decals:[],waterfalls,controlledId:'',paint:atlas,paintRev,
         };
         if (view) view.frame(frame);

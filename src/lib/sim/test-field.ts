@@ -1,4 +1,4 @@
-import { terrainAt, terrainBodyContact } from './terrain-shape';
+import { drawTerrainEdge, terrainAt, terrainBodyContact } from './terrain-shape';
 import { pickTerrainTop } from './terrain-editor';
 /**
  * Поле комнаты «тест» — другой формат играбельной площади вместо жёсткой сетки 10×6.
@@ -1167,6 +1167,14 @@ export function drawTerrainWall(
     else if (face === 'n') ctx.fillRect(x+t,y+h-tooth,Math.min(7,length-t),tooth);
     else if (face === 'e') ctx.fillRect(x,y+t,tooth,Math.min(7,length-t));
     else ctx.fillRect(x+w-tooth,y+t,tooth,Math.min(7,length-t));
+  }
+  const water = currentTestMap().water;
+  if (water) {
+    const {dc,dr} = FACE_STEP[face];
+    const ax = c+Math.max(0,dc), ay = r+Math.max(0,dr);
+    const lower = elevNeighborForWall(c+dc,r+dr);
+    drawTerrainEdge(ctx,water,{ax,ay,bx:ax+Math.abs(dr),by:ay+Math.abs(dc),nx:dc,ny:dr},
+      cellW,cellH,e*TERRAIN_LIFT_PX,lower*TERRAIN_LIFT_PX,yaw);
   }
 }
 

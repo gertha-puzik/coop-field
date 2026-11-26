@@ -210,3 +210,13 @@ for (const [depth, percent] of [0, 10, 15, 35, 45].entries()) {
   if (submergedPixels(DEFAULT_WATER_RULES,depth,200) !== 2*percent) throw new Error('wrong immersion percentage for depth '+depth);
 }
 if (submergedPixels(DEFAULT_WATER_RULES,4,200,100) !== 0) throw new Error('jump clears immersion');
+
+const wetCliff = elisionTerrainGeometry(2, 2, 100, 150,
+  { '0,0': 2, '1,0,0.4,1': 2, '0,1': 1 }, 26,
+  { '0,0': 3, '0,1,0.5,1': 4, '1,0': 2, '1,1': 2 });
+const wetFace = wetCliff.wetWalls[2].positions;
+assert(wetFace.length === 12, 'only the shared wet half of the cliff becomes a water face');
+assert(wetFace.every((n,i) => i%3===0 ? n>=0 && n<=50 : i%3===1 ? n===26 || n===52 : n===150),
+  'water joins the two terrain heights and stops at the saved water boundary');
+assert(wetCliff.wetWalls[1].positions.length > 0, 'fractional terrain also receives wet cliff faces');
+assert(wetCliff.walls.positions.length > 0, 'dry cliffs keep their rock faces');
