@@ -4,8 +4,8 @@ import { waterfallOcclusion } from './waterfall-occlusion';
 import { cachedTerrainTiles, terrainAt } from './terrain-shape';
 
 export const WATERFALL_PARTS = ['lip','curtain','pool'] as const;
-export const WATERFALL_FRAMES = 8;
-export const waterfallFrame = (now: number) => Math.floor(now/85)%WATERFALL_FRAMES;
+import { waterfallFrame, WATERFALL_FRAMES } from './waterfall-texture';
+export { waterfallFrame, WATERFALL_FRAMES };
 type Part = typeof WATERFALL_PARTS[number];
 type Point = { x: number; y: number; z: number };
 type FlowDirection = NonNullable<TestMapObject['dir']>;

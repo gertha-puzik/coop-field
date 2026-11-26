@@ -3299,7 +3299,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
         const faceYaw = camYawRef.current;
         const waterT = terrainWaterCanvas(currentTestMap(),cwT,chT);
         const exactTerrain=Object.keys(mapElev).some(key=>key.split(',').length===4);
-        if(exactTerrain)drawRectTerrain(ctx,mapElev,s.field.cols,s.field.rows,cwT,chT,TERRAIN_LIFT_PX,faceYaw,gpatT,stonePattern(ctx),pcvT,waterT,false,currentTestMap().water);
+        if(exactTerrain)drawRectTerrain(ctx,mapElev,s.field.cols,s.field.rows,cwT,chT,TERRAIN_LIFT_PX,faceYaw,gpatT,stonePattern(ctx),pcvT,waterT,false,currentTestMap().water,now);
         for (const key of exactTerrain?[]:Object.keys(mapElev)) {
           const lvT = mapElev[key];
           if (!lvT || lvT <= 0) continue;
@@ -3375,7 +3375,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
             },
           };
           if (editorOn) terrainPasses.push({c:cT,r:rT,draw:()=> {
-            drawTerrainWall(ctx,cwT,chT,cT,rT,faceYaw);
+            drawTerrainWall(ctx,cwT,chT,cT,rT,faceYaw,now);
             topBill.fn();
           }});
           else bills.push(topBill);
@@ -3390,7 +3390,7 @@ export default function Simulator({ mode = 'hub' }: { mode?: PlayMode } = {}) {
               fn: () => {
                 ctx.save();
                 if (clipT) ctx.clip(clipT);
-                drawTerrainWall(ctx, cwT, chT, cT, rT, faceYaw);
+                drawTerrainWall(ctx, cwT, chT, cT, rT, faceYaw, now);
                 ctx.restore();
               },
             });

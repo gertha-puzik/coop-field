@@ -1,3 +1,4 @@
+import { waterfallFrame, waterfallTile } from './waterfall-texture.ts';
 import type { EditorTool } from './editor-model';
 import { TERRAIN_MAX_LEVEL } from './test-map.ts';
 import type { ElisionFrame } from './elision-scene';
@@ -351,10 +352,12 @@ export function terrainEdgeWater(water: Record<string, number> | undefined, edge
   });
 }
 
+const waterPatterns = new WeakMap<CanvasRenderingContext2D,WeakMap<HTMLCanvasElement,CanvasPattern>>();
+
 export function drawTerrainEdge(
   g: CanvasRenderingContext2D, water: Record<string, number> | undefined, edge: TerrainEdge,
   cw: number, ch: number, top: number, bottom: number, yaw: number,
-  dry?: CanvasPattern | string,
+  dry?: CanvasPattern | string, now = 0,
 ) {
   if (top <= bottom || (!water && !dry)) return;
   const sin = Math.sin(yaw), cos = Math.cos(yaw);
@@ -364,6 +367,28 @@ export function drawTerrainEdge(
     if (!fill) continue;
     const x0 = (ax+(bx-ax)*from)*cw, x1 = (ax+(bx-ax)*to)*cw;
     const y0 = (ay+(by-ay)*from)*ch, y1 = (ay+(by-ay)*to)*ch;
+    const tile = depth ? waterfallTile(WATER_COLORS[depth-1],waterfallFrame(now)) : null;
+    if (tile) {
+      let cache = waterPatterns.get(g);
+      if (!cache) {
+        cache = new WeakMap();
+        waterPatterns.set(g,cache);
+      }
+      const pattern = cache.get(tile) ?? g.createPattern(tile,'repeat');
+      if (pattern) {
+        cache.set(tile,pattern);
+        const alongX = ax !== bx;
+        // Paint in world position and height so adjoining mesh pieces share the same phase.
+        g.save();
+        g.transform(alongX ? 1 : 0,alongX ? 0 : 1,sin,cos,alongX ? 0 : x0,alongX ? y0 : 0);
+        g.fillStyle = pattern;
+        g.imageSmoothingEnabled = false;
+        const start = alongX ? Math.min(x0,x1) : Math.min(y0,y1);
+        g.fillRect(start,-top,alongX ? Math.abs(x1-x0) : Math.abs(y1-y0),top-bottom);
+        g.restore();
+        continue;
+      }
+    }
     g.fillStyle = fill;
     g.beginPath();
     g.moveTo(x0-sin*top,y0-cos*top);
@@ -386,7 +411,7 @@ export function terrainHeightTint(level: number) {
 export function drawRectTerrain(
   g:CanvasRenderingContext2D,elev:Record<string,number>,cols:number,rows:number,
   cw:number,ch:number,lift:number,yaw:number,grass:CanvasPattern|null,stone:CanvasPattern|null,
-  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null, paintIncludesHeightTint=false, waterDepth?: Record<string,number>,
+  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null, paintIncludesHeightTint=false, waterDepth?: Record<string,number>, now=0,
 ):void {
   const sin=Math.sin(yaw),cos=Math.cos(yaw);
   const tiles=cachedTerrainTiles(elev,cols,rows).filter(b=>b.level>0).slice();
@@ -403,7 +428,7 @@ export function drawRectTerrain(
     for (const edge of edges) {
       if (edge.nx*sin+edge.ny*cos < eps) continue;
       const low = terrainAt(elev,(edge.ax+edge.bx)/2+edge.nx*eps,(edge.ay+edge.by)/2+edge.ny*eps);
-      drawTerrainEdge(g,waterDepth,edge,cw,ch,b.level*lift,low*lift,yaw,stone??'#878a80');
+      drawTerrainEdge(g,waterDepth,edge,cw,ch,b.level*lift,low*lift,yaw,stone??'#878a80',now);
     }
     if(paint){
       const sx=paint.width/cols,sy=paint.height/rows;

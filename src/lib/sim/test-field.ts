@@ -1152,6 +1152,7 @@ export function drawTerrainWall(
   c: number,
   r: number,
   yaw = 0,
+  now = 0,
 ): void {
   const g = faceWallRect(c, r, cellW, cellH, terrainFaceOf(yaw), yaw);
   if (!g) return;
@@ -1174,7 +1175,7 @@ export function drawTerrainWall(
     const ax = c+Math.max(0,dc), ay = r+Math.max(0,dr);
     const lower = elevNeighborForWall(c+dc,r+dr);
     drawTerrainEdge(ctx,water,{ax,ay,bx:ax+Math.abs(dr),by:ay+Math.abs(dc),nx:dc,ny:dr},
-      cellW,cellH,e*TERRAIN_LIFT_PX,lower*TERRAIN_LIFT_PX,yaw);
+      cellW,cellH,e*TERRAIN_LIFT_PX,lower*TERRAIN_LIFT_PX,yaw,undefined,now);
   }
 }
 
