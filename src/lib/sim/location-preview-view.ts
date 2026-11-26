@@ -2,6 +2,7 @@ import { CAM_YAW_TAU_MS } from './engine-consts';
 import { drawWaterSurface, waterTextureRevision } from './water-render';
 import { buildPathLoops, pathCellsOf, pathLoopsToPath2D } from './path-field';
 import { cachedTerrainTiles, drawRectTerrain, terrainHeightTint } from './terrain-shape';
+import { WATERFALL_FRAME_MS } from './waterfall-texture';
 import { drawWaterfalls } from './waterfall-view';
 import { TERRAIN_LIFT_PX } from './test-field';
 import type { ElisionFrame, ElisionView } from './elision-scene';
@@ -36,7 +37,7 @@ function drawPreviewFallback(canvas: HTMLCanvasElement, frame: ElisionFrame, now
   const worldW=frame.cols*frame.cellW, worldH=frame.rows*frame.cellH;
   g.drawImage(frame.paint,0,0,worldW,worldH);
   drawRectTerrain(g,frame.elev,frame.cols,frame.rows,frame.cellW,frame.cellH,
-    frame.terrainLiftStep,frame.yaw,null,null,frame.paint,null,true,frame.water);
+    frame.terrainLiftStep,frame.yaw,null,null,frame.paint,null,true,frame.water,now);
   if (frame.waterfalls?.length) drawWaterfalls(canvas,frame,frame.waterfalls,now);
 }
 
@@ -104,6 +105,7 @@ export function startLocationPreview(
     const peak=Math.max(0,...Object.values(elev))*TERRAIN_LIFT_PX;
     const diagonal=Math.hypot(worldW,worldH);
     const waterfalls=map.objects?.filter(object=>object.kind==='waterfall');
+    const animatedWater = waterfalls?.length || (raisedTiles.length && Object.keys(map.water??{}).length);
     let drawn='', textureRevision=-1, paintRev=0;
     let angle=yaw.current, lastFrame=performance.now();
     status('ready');
@@ -119,7 +121,7 @@ export function startLocationPreview(
       angle+=(yaw.current-angle)*(1-Math.exp(-dt/CAM_YAW_TAU_MS));
       if (Math.abs(yaw.current-angle)<.004) angle=yaw.current;
       const viewW=target.clientWidth,viewH=target.clientHeight;
-      const key=`${viewW}/${viewH}/${angle}/${paintRev}/${waterfalls?.length ? Math.floor(now/85) : 0}`;
+      const key=`${viewW}/${viewH}/${angle}/${paintRev}/${animatedWater ? Math.floor(now/WATERFALL_FRAME_MS) : 0}`;
       if (viewW>1 && viewH>1 && key!==drawn) {
         drawn=key;
         const frame:ElisionFrame={

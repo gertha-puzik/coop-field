@@ -1,3 +1,4 @@
+import { WATERFALL_TILE_SIZE } from './waterfall-texture.ts';
 import type { TestMapObject } from './test-map.ts';
 import { terrainTiles, terrainAt, terrainEdgeWater, WATER_COLORS } from './terrain-shape.ts';
 /**
@@ -241,7 +242,10 @@ export function elisionTerrainGeometry(
           const points = [[ax,bottom,az], [bx,bottom,bz], [bx,y,bz], [ax,y,az]];
           const wallUV = [...uv,uv[2],uv[3],uv[0],uv[1]];
           if (depth) {
-            quad(wetWalls[depth-1],points,wallUV);
+            const uA = (edge.dc ? az : ax) / WATERFALL_TILE_SIZE;
+            const uB = (edge.dc ? bz : bx) / WATERFALL_TILE_SIZE;
+            const vTop = -y / WATERFALL_TILE_SIZE, vBottom = -bottom / WATERFALL_TILE_SIZE;
+            quad(wetWalls[depth-1],points,[uA,vBottom,uB,vBottom,uB,vTop,uA,vTop]);
             continue;
           }
           quad(walls, points, wallUV);

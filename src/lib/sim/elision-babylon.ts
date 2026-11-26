@@ -40,6 +40,7 @@ import {
   type ElisionFrame,
   type ElisionView,
 } from './elision-scene';
+import { waterfallFrame, waterfallTile } from './waterfall-texture';
 import { WATER_COLORS } from './terrain-shape';
 import { rememberSpriteAspect } from './sprite-aspect';
 
@@ -106,7 +107,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
     material.disableLighting = true;
     material.backFaceCulling = false;
     glow.attach(material);
-    return {material,color:Color3.FromHexString(hex)};
+    return {material,color:Color3.FromHexString(hex), texture: null as DynamicTexture | null, frame: -1};
   });
   let terrainFringe: Mesh | null = null;
   const wallMat = new StandardMaterial('elision-cliff', scene);
@@ -148,11 +149,36 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
   const applyTint = (textured: boolean) => {
     const [r, g, b] = tint;
     wallMat.emissiveColor.set(r, g, b);
-    for (const {material,color} of waterMaterials) {
-      material.emissiveColor.set(color.r*r,color.g*g,color.b*b);
-    }
     if (textured) groundMat.emissiveColor.set(r, g, b);
     else groundMat.emissiveColor.set(GRASS.r * r, GRASS.g * g, GRASS.b * b);
+  };
+
+  const syncWetWalls = (now: number) => {
+    const frame = waterfallFrame(now);
+    for (const [i, water] of waterMaterials.entries()) {
+      if (!wetWalls[i]) continue;
+      if (water.frame !== frame) {
+        const tile = waterfallTile(WATER_COLORS[i],frame);
+        if (tile) {
+          if (!water.texture) {
+            // Repeating textures need power-of-two dimensions in WebGL 1.
+            water.texture = new DynamicTexture('water-cliff-flow',64,scene,false,
+              Texture.NEAREST_SAMPLINGMODE);
+            water.texture.wrapU = water.texture.wrapV = Texture.WRAP_ADDRESSMODE;
+            water.material.diffuseTexture = water.texture;
+          }
+          const size = water.texture.getSize().width;
+          const g = water.texture.getContext();
+          if ('imageSmoothingEnabled' in g) g.imageSmoothingEnabled = false;
+          g.drawImage(tile,0,0,size,size);
+          water.texture.update(false);
+          water.frame = frame;
+        }
+      }
+      const {r,g,b} = water.color;
+      water.material.emissiveColor.set(tint[0]*(water.texture ? 1 : r),
+        tint[1]*(water.texture ? 1 : g),tint[2]*(water.texture ? 1 : b));
+    }
   };
 
   const placeGround = (worldW: number, worldH: number) => {
@@ -512,6 +538,7 @@ export function createElisionView(canvas: HTMLCanvasElement): ElisionView {
       fitCanvas();
       placeCamera(frame);
       syncGround(frame);
+      syncWetWalls(now);
       syncDecals(frame,now);
       waterfalls.sync(frame,now,tint);
       glow.update(frame,now);
