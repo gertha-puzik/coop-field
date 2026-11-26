@@ -318,6 +318,63 @@ export function terrainTopVisible(frame: ElisionFrame, c: number, r: number): bo
 }
 
 
+export const WATER_COLORS = ['#498e91', '#367880', '#286776', '#215467'] as const;
+
+type TerrainEdge = { ax: number; ay: number; bx: number; by: number; nx: number; ny: number };
+
+/** Split a cliff edge wherever saved water starts, ends or changes depth. */
+export function terrainEdgeWater(water: Record<string, number> | undefined, edge: TerrainEdge) {
+  const { ax, ay, bx, by, nx, ny } = edge;
+  if (!water) return [{ from: 0, to: 1, depth: 0 }];
+  const dx = bx-ax, dy = by-ay;
+  const mx = (ax+bx)/2, my = (ay+by)/2;
+  const index = terrainIndex(water).cells;
+  const cuts = new Set([0, 1]);
+  for (const side of [-1, 1]) {
+    const c = Math.floor(mx + side*nx*eps), r = Math.floor(my + side*ny*eps);
+    for (const rect of index.get(`${c},${r}`) ?? []) {
+      const start = dx ? rect.x : rect.y;
+      const end = start + (dx ? rect.w : rect.d);
+      for (const boundary of [start,end]) {
+        const t = dx ? (boundary-ax)/dx : (boundary-ay)/dy;
+        if (t>eps && t<1-eps) cuts.add(t);
+      }
+    }
+  }
+  const boundaries = [...cuts].sort((a,b)=>a-b);
+  return boundaries.slice(1).map((to,i)=>{
+    const from = boundaries[i], mid = (from+to)/2;
+    const x = ax+mid*dx, y = ay+mid*dy;
+    const upper = terrainAt(water,x-nx*eps,y-ny*eps);
+    const lower = terrainAt(water,x+nx*eps,y+ny*eps);
+    return {from,to,depth:lower ? upper : 0};
+  });
+}
+
+export function drawTerrainEdge(
+  g: CanvasRenderingContext2D, water: Record<string, number> | undefined, edge: TerrainEdge,
+  cw: number, ch: number, top: number, bottom: number, yaw: number,
+  dry?: CanvasPattern | string,
+) {
+  if (top <= bottom || (!water && !dry)) return;
+  const sin = Math.sin(yaw), cos = Math.cos(yaw);
+  const { ax, ay, bx, by } = edge;
+  for (const {from,to,depth} of terrainEdgeWater(water,edge)) {
+    const fill = depth ? WATER_COLORS[depth-1] : dry;
+    if (!fill) continue;
+    const x0 = (ax+(bx-ax)*from)*cw, x1 = (ax+(bx-ax)*to)*cw;
+    const y0 = (ay+(by-ay)*from)*ch, y1 = (ay+(by-ay)*to)*ch;
+    g.fillStyle = fill;
+    g.beginPath();
+    g.moveTo(x0-sin*top,y0-cos*top);
+    g.lineTo(x1-sin*top,y1-cos*top);
+    g.lineTo(x1-sin*bottom,y1-cos*bottom);
+    g.lineTo(x0-sin*bottom,y0-cos*bottom);
+    g.closePath();
+    g.fill();
+  }
+}
+
 export function terrainHeightTint(level: number) {
   return `rgba(255,245,200,${Math.min(.5,level*.025)})`;
 }
@@ -329,24 +386,25 @@ export function terrainHeightTint(level: number) {
 export function drawRectTerrain(
   g:CanvasRenderingContext2D,elev:Record<string,number>,cols:number,rows:number,
   cw:number,ch:number,lift:number,yaw:number,grass:CanvasPattern|null,stone:CanvasPattern|null,
-  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null, paintIncludesHeightTint=false,
+  paint:HTMLCanvasElement|null, water?:HTMLCanvasElement|null, paintIncludesHeightTint=false, waterDepth?: Record<string,number>,
 ):void {
   const sin=Math.sin(yaw),cos=Math.cos(yaw);
   const tiles=cachedTerrainTiles(elev,cols,rows).filter(b=>b.level>0).slice();
   tiles.sort((a,b)=>(a.x+a.w/2)*cw*sin+(a.y+a.d/2)*ch*cos-(b.x+b.w/2)*cw*sin-(b.y+b.d/2)*ch*cos);
-  const face=((Math.round(yaw/(Math.PI/2))%4)+4)%4;
   for(const b of tiles){
     const dx=-sin*b.level*lift,dy=-cos*b.level*lift;
     const x=b.x*cw+dx,y=b.y*ch+dy,w=b.w*cw,h=b.d*ch;
-    const nx=face===1?b.x+b.w+1e-6:face===3?b.x-1e-6:b.x+b.w/2;
-    const ny=face===0?b.y+b.d+1e-6:face===2?b.y-1e-6:b.y+b.d/2;
-    const neighbor=nx<0||ny<0||nx>=cols||ny>=rows?0:terrainAt(elev,nx,ny);
-    const drop=Math.max(0,b.level-neighbor)*lift;
-    g.fillStyle=stone??'#878a80';
-    if(face===0)g.fillRect(x,y+h,w,drop);
-    else if(face===2)g.fillRect(x,y-drop,w,drop);
-    else if(face===1)g.fillRect(x+w,y,drop,h);
-    else g.fillRect(x-drop,y,drop,h);
+    const edges = [
+      {ax:b.x,ay:b.y+b.d,bx:b.x+b.w,by:b.y+b.d,nx:0,ny:1},
+      {ax:b.x+b.w,ay:b.y,bx:b.x+b.w,by:b.y+b.d,nx:1,ny:0},
+      {ax:b.x,ay:b.y,bx:b.x+b.w,by:b.y,nx:0,ny:-1},
+      {ax:b.x,ay:b.y,bx:b.x,by:b.y+b.d,nx:-1,ny:0},
+    ];
+    for (const edge of edges) {
+      if (edge.nx*sin+edge.ny*cos < eps) continue;
+      const low = terrainAt(elev,(edge.ax+edge.bx)/2+edge.nx*eps,(edge.ay+edge.by)/2+edge.ny*eps);
+      drawTerrainEdge(g,waterDepth,edge,cw,ch,b.level*lift,low*lift,yaw,stone??'#878a80');
+    }
     if(paint){
       const sx=paint.width/cols,sy=paint.height/rows;
       g.drawImage(paint,b.x*sx,b.y*sy,b.w*sx,b.d*sy,x,y,w+.1,h+.1);

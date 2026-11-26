@@ -18,7 +18,7 @@ type Quad = {
  * effect upstream or edge-on, where repeated crests on stepped banks look like shards. */
 export function waterfallVisible(flow: FlowDirection, yaw: number) {
   const facing = flow === 'left' || flow === 'right' ? Math.sin(yaw) : Math.cos(yaw);
-  return facing * (flow === 'left' || flow === 'up' ? -1 : 1) > .015;
+  return facing * (flow === 'left' || flow === 'up' ? -1 : 1) > .1;
 }
 type TerrainFrame = Pick<ElisionFrame,'cols'|'rows'|'cellW'|'cellH'|'terrainLiftStep'|'elev'>;
 
@@ -80,7 +80,7 @@ export function waterfallGeometry(frame: TerrainFrame, objects: TestMapObject[])
       };
       const lip=span(-1,hi,.17), pool=span(1,lo,.24);
       // Extend the crest past the grass fringe and use the very same seam for the flow.
-      const seam=.6/(vertical?cellW:cellH), crest=top+.2;
+      const seam=span(1,lo,.6/(vertical?cellW:cellH)), crest=top+.2;
       if(lip>0)quads.push({part:'lip',a:position(from,-lip,crest),b:position(to,-lip,crest),c:position(from,seam,crest),fraction:1,u0,u1,flow});
       for(let y=crest;y>bottom;y-=48) {
         const next=Math.max(bottom,y-48);

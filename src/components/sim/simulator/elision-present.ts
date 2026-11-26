@@ -450,6 +450,7 @@ export function collectElisionFrame(input: ElisionPresentInput): ElisionFrame {
     rows: input.rows,
     editor: input.editor,
     elev: effectiveElevRecord(currentTestMap()),
+    water: currentTestMap().water,
     terrainLiftStep: TERRAIN_LIFT_PX,
     day: input.day,
     dayProgress: input.dayProgress,

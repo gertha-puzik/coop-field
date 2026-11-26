@@ -1,5 +1,5 @@
 import type { TestMapObject } from './test-map.ts';
-import { terrainTiles, terrainAt } from './terrain-shape.ts';
+import { terrainTiles, terrainAt, terrainEdgeWater, WATER_COLORS } from './terrain-shape.ts';
 /**
  * Чистая геометрия вида Элизии. Сюда не импортируется Babylon: юнит-тест и
  * сборщик кадра живут без WebGL, а сам движок подгружается отдельно
@@ -60,6 +60,7 @@ export type ElisionFrame = {
   /** Высоты клеток из той же карты, что использует ходьба. */
   elev: Record<string, number>;
   terrainLiftStep: number;
+  water?: Record<string, number>;
   day: ElisionDay;
   dayProgress: number;
   jumpTarget: { x: number; y: number; lift: number; ok: boolean } | null;
@@ -194,12 +195,13 @@ type TerrainPart = { positions: number[]; indices: number[]; uvs: number[]; uvs2
 /** Геометрия поднятых верхов и только открытых перепадов; UV берутся из общего атласа карты. */
 export function elisionTerrainGeometry(
   cols: number, rows: number, cellW: number, cellH: number,
-  elev: Record<string, number>, liftStep: number,
-): { tops: TerrainPart; walls: TerrainPart; fringe: TerrainPart } {
+  elev: Record<string, number>, liftStep: number, water?: Record<string, number>,
+): { tops: TerrainPart; walls: TerrainPart; fringe: TerrainPart; wetWalls: TerrainPart[] } {
   const part = (): TerrainPart => ({ positions: [], indices: [], uvs: [], uvs2: [] });
   const tops = part();
   const walls = part();
   const fringe = part();
+  const wetWalls = WATER_COLORS.map(part);
   const level = (x: number, y: number) =>
     x < 0 || y < 0 || x >= cols || y >= rows ? 0 : terrainAt(elev,x,y);
   const quad = (out: TerrainPart, points: number[][], uv: number[]) => {
@@ -227,31 +229,45 @@ export function elisionTerrainGeometry(
         const nb = level((edge.a[0]+edge.b[0])/2/cellW+edge.dc*1e-6, (edge.a[1]+edge.b[1])/2/cellH+edge.dr*1e-6);
         if (nb >= lv) continue;
         const bottom = nb * liftStep;
-        const [ax,az] = edge.a, [bx,bz] = edge.b;
-        quad(walls, [[ax,bottom,az], [bx,bottom,bz], [bx,y,bz], [ax,y,az]],
-          [...edge.uv, edge.uv[2],edge.uv[3], edge.uv[0],edge.uv[1]]);
-        // UV2 repeats the stone texture at a fixed world scale, independent
-        // of the elevation delta. Neighboring levels no longer stretch it.
-        const length = Math.hypot(bx-ax,bz-az), height = y-bottom;
-        walls.uvs2.splice(-8,8,(ax+az)/64,bottom/64,(bx+bz)/64,bottom/64,(bx+bz)/64,y/64,(ax+az)/64,y/64);
-        // Hanging grass follows only exposed edges; same-level neighbors
-        // have no seam. Small teeth are visual only and keep collision exact.
-        const segments = Math.max(2, Math.ceil(length / 7));
-        const tooth = (n: number) => Math.min(height, 2 + ((Math.round(c*17+r*31)+n*13) % 6));
-        for (let i=0;i<segments;i++) {
-          const t0=i/segments,t1=(i+1)/segments;
-          const x0=ax+(bx-ax)*t0+edge.dc*.4,z0=az+(bz-az)*t0+edge.dr*.4;
-          const x1=ax+(bx-ax)*t1+edge.dc*.4,z1=az+(bz-az)*t1+edge.dr*.4;
-          const uA=edge.uv[0]+(edge.uv[2]-edge.uv[0])*t0;
-          const vA=edge.uv[1]+(edge.uv[3]-edge.uv[1])*t0;
-          const uB=edge.uv[0]+(edge.uv[2]-edge.uv[0])*t1;
-          const vB=edge.uv[1]+(edge.uv[3]-edge.uv[1])*t1;
-          quad(fringe,[[x0,y+.15,z0],[x1,y+.15,z1],[x1,y-tooth(i+1),z1],[x0,y-tooth(i),z0]],
-            [uA,vA,uB,vB,uB,vB,uA,vA]);
+        const [startX,startZ] = edge.a, [endX,endZ] = edge.b;
+        for (const {from,to,depth} of terrainEdgeWater(water,{
+          ax:startX/cellW, ay:startZ/cellH, bx:endX/cellW, by:endZ/cellH, nx:edge.dc, ny:edge.dr,
+        })) {
+          const ax=startX+(endX-startX)*from, az=startZ+(endZ-startZ)*from;
+          const bx=startX+(endX-startX)*to, bz=startZ+(endZ-startZ)*to;
+          const lerp = (a:number,b:number,t:number) => a+(b-a)*t;
+          const uv = [lerp(edge.uv[0],edge.uv[2],from),lerp(edge.uv[1],edge.uv[3],from),
+            lerp(edge.uv[0],edge.uv[2],to),lerp(edge.uv[1],edge.uv[3],to)];
+          const points = [[ax,bottom,az], [bx,bottom,bz], [bx,y,bz], [ax,y,az]];
+          const wallUV = [...uv,uv[2],uv[3],uv[0],uv[1]];
+          if (depth) {
+            quad(wetWalls[depth-1],points,wallUV);
+            continue;
+          }
+          quad(walls, points, wallUV);
+          // UV2 repeats the stone texture at a fixed world scale, independent
+          // of the elevation delta. Neighboring levels no longer stretch it.
+          const length = Math.hypot(bx-ax,bz-az), height = y-bottom;
+          walls.uvs2.splice(-8,8,(ax+az)/64,bottom/64,(bx+bz)/64,bottom/64,(bx+bz)/64,y/64,(ax+az)/64,y/64);
+          // Hanging grass follows only exposed edges; same-level neighbors
+          // have no seam. Small teeth are visual only and keep collision exact.
+          const segments = Math.max(2, Math.ceil(length / 7));
+          const tooth = (n: number) => Math.min(height, 2 + ((Math.round(c*17+r*31)+n*13) % 6));
+          for (let i=0;i<segments;i++) {
+            const t0=i/segments,t1=(i+1)/segments;
+            const x0=ax+(bx-ax)*t0+edge.dc*.4,z0=az+(bz-az)*t0+edge.dr*.4;
+            const x1=ax+(bx-ax)*t1+edge.dc*.4,z1=az+(bz-az)*t1+edge.dr*.4;
+            const uA=uv[0]+(uv[2]-uv[0])*t0;
+            const vA=uv[1]+(uv[3]-uv[1])*t0;
+            const uB=uv[0]+(uv[2]-uv[0])*t1;
+            const vB=uv[1]+(uv[3]-uv[1])*t1;
+            quad(fringe,[[x0,y+.15,z0],[x1,y+.15,z1],[x1,y-tooth(i+1),z1],[x0,y-tooth(i),z0]],
+              [uA,vA,uB,vB,uB,vB,uA,vA]);
+          }
         }
       }
   }
-  return { tops, walls, fringe };
+  return { tops, walls, fringe, wetWalls };
 }
 
 

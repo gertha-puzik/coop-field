@@ -1,7 +1,5 @@
 import type { TestMap } from './test-map';
-import { cachedTerrainTiles, terrainAt } from './terrain-shape';
-
-const colors = ['#498e91', '#367880', '#286776', '#215467'];
+import { cachedTerrainTiles, terrainAt, WATER_COLORS as colors } from './terrain-shape';
 const textures = [
   { src: 'river', crop: [0, 26, 96, 44] as const, tile: undefined as HTMLCanvasElement | undefined },
   { src: 'pool', crop: [74, 24, 116, 46] as const, tile: undefined as HTMLCanvasElement | undefined },
