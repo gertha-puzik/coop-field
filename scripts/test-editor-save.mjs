@@ -439,6 +439,9 @@ assert(falls.waterfallVisible(strips[0].flow,0),'fall visible from the lower sid
 assert(!falls.waterfallVisible(strips[0].flow,Math.PI),'fall hidden from behind');
 assert(!falls.waterfallVisible(strips[0].flow,Math.PI/2),'edge-on strips hidden');
 assert(!falls.waterfallVisible('down',87*Math.PI/180),'near-edge-on strips hidden during rotation');
+assert(!falls.waterfallVisible('down',0,6,1),'a short isolated curtain is hidden even face-on');
+assert(strips.every(quad=>quad.width===100 && falls.waterfallVisible(quad.flow,0,quad.width,.1)),
+  'a continuous curtain retains its full visible width across terrain subdivisions');
 assert(falls.waterfallVisible('right',Math.PI/2));
 assert(falls.waterfallVisible('up',Math.PI));
 assert(falls.waterfallVisible('left',-Math.PI/2));

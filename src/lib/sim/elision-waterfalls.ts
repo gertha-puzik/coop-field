@@ -9,15 +9,17 @@ import { cachedWaterfallGeometry, waterfallFrame, waterfallVisible, WATERFALL_FR
 
 export function createElisionWaterfalls(scene: Scene) {
   type Geometry = ReturnType<typeof cachedWaterfallGeometry>;
-  type WaterfallMesh = {mesh: Mesh; material: StandardMaterial; texture: Texture; flow: Geometry[number]['flow']};
-  const parts: WaterfallMesh[] = [];
+  type Quad = Geometry[number];
+  const materials = new Map<Quad['part'],{material: StandardMaterial; texture: Texture}>();
+  const parts: {mesh: Mesh; flow: Quad['flow']; width: number}[] = [];
   let current: Geometry | undefined;
   const clear = () => {
-    for (const {mesh,material,texture} of parts) {
-      mesh.dispose();
+    for (const {mesh} of parts) mesh.dispose();
+    for (const {material,texture} of materials.values()) {
       material.dispose();
       texture.dispose();
     }
+    materials.clear();
     parts.length=0;
     current = undefined;
   };
@@ -33,13 +35,13 @@ export function createElisionWaterfalls(scene: Scene) {
         clear();
         const batches = new Map<string,Geometry>();
         for (const quad of quads) {
-          const key = `${quad.part}-${quad.flow}`;
+          const key = `${quad.part}-${quad.flow}-${quad.width}`;
           const batch = batches.get(key);
           if (batch) batch.push(quad);
           else batches.set(key,[quad]);
         }
         for (const [key,batch] of batches) {
-          const {part:name,flow} = batch[0];
+          const {part:name,flow,width} = batch[0];
           const positions: number[] = [], indices: number[] = [], uvs: number[] = [];
           for (const {a,b,c,fraction,u0,u1} of batch) {
             const offset=positions.length/3;
@@ -58,23 +60,29 @@ export function createElisionWaterfalls(scene: Scene) {
           const normals:number[]=[];
           VertexData.ComputeNormals(positions,indices,normals);
           data.normals=normals;data.applyToMesh(mesh);
-          const texture=new Texture(`/tex/waterfall/${name}-frames.png`,scene,true,true,Texture.NEAREST_SAMPLINGMODE);
-          texture.hasAlpha=true;
-          texture.wrapU=texture.wrapV=Texture.CLAMP_ADDRESSMODE;
-          const material=new StandardMaterial(`waterfall-${key}`,scene);
-          material.diffuseTexture=texture;
-          material.useAlphaFromDiffuseTexture=true;
-          material.disableLighting=true;
-          material.backFaceCulling=false;
-          material.transparencyMode=Material.MATERIAL_ALPHATEST;
-          material.alphaCutOff=.15;
-          mesh.material=material;mesh.isPickable=false;
-          parts.push({mesh,material,texture,flow});
+          let surface = materials.get(name);
+          if (!surface) {
+            const texture=new Texture(`/tex/waterfall/${name}-frames.png`,scene,true,true,Texture.NEAREST_SAMPLINGMODE);
+            texture.hasAlpha=true;
+            texture.wrapU=texture.wrapV=Texture.CLAMP_ADDRESSMODE;
+            const material=new StandardMaterial(`waterfall-${name}`,scene);
+            material.diffuseTexture=texture;
+            material.useAlphaFromDiffuseTexture=true;
+            material.disableLighting=true;
+            material.backFaceCulling=false;
+            material.transparencyMode=Material.MATERIAL_ALPHATEST;
+            material.alphaCutOff=.15;
+            surface = {material,texture};
+            materials.set(name,surface);
+          }
+          mesh.material=surface.material;
+          mesh.isPickable=false;
+          parts.push({mesh,flow,width});
         }
         current=quads;
       }
-      for (const {mesh,material,texture,flow} of parts) {
-        mesh.isVisible=waterfallVisible(flow,frame.yaw);
+      for (const {mesh,flow,width} of parts) mesh.isVisible=waterfallVisible(flow,frame.yaw,width,frame.zoom);
+      for (const {material,texture} of materials.values()) {
         texture.uOffset=waterfallFrame(now)/WATERFALL_FRAMES;
         material.emissiveColor.set(...tint);
       }
