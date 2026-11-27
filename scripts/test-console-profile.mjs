@@ -44,7 +44,7 @@ try{
  assert.equal((await req('/cfg/site-design',admin.cookie,'POST',defaults,{origin:'https://evil.example'})).status,403);
  assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,frame:'https://evil.example/frame.svg'})).status,400);
  assert.equal((await req('/cfg/site-design',admin.cookie,'POST',{...defaults,textSize:999})).status,400);
- const palette={'button-idle':'#123abc','button-active':'#987654','button-disabled':'#304050',header:'#e5a244',cards:'#224466',dialog:'#abcdef'};
+ const palette={'button-idle':'#123abc','button-active':'#987654','button-disabled':'#304050',header:'#e5a244',cards:'#224466',dialog:'#abcdef','form-field':'#343541'};
  const customDesign={...defaults,palette,textSize:17,frame:uploaded.url,labels:{...defaults.labels,userInfo:'Об игроке'}};
  assert.equal((await req('/cfg/site-design',admin.cookie,'POST',customDesign)).status,200);
  assert.deepEqual((await req('/cfg/site-design',null)).row.settings.palette,palette);

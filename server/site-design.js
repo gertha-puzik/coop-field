@@ -16,7 +16,7 @@ const ranges={textSize:[10,24],headingSize:[14,36],titleSize:[20,56],frameSlice:
 const colors=['textColor','mutedColor','accentColor','panelColor','backgroundColor'];
 const paletteKeys=[
  'button-idle','button-idle-text','button-active','button-active-text','button-disabled','button-disabled-text',
- 'header','navigation','cards','inset','dialog','scrim','field','game',
+ 'header','navigation','cards','inset','dialog','scrim','form-field','game',
 ];
 const hexColor = /^#[a-f0-9]{6}$/i;
 const assetRe=/^\/cfg\/site-design\/files\/[a-f0-9]{64}\.(png|jpg|webp|gif|woff2)$/;

@@ -21,7 +21,7 @@ const BUTTON_COLORS = {
 const BLOCK_COLORS = {
  header:'Шапка сайта', navigation:'Панели навигации', cards:'Карточки и строки списков',
  inset:'Вложенные блоки', dialog:'Окна и всплывающие меню', scrim:'Затемнение за окнами',
- field:'Поля ввода и списки выбора', game:'Игровые панели и чат',
+ 'form-field':'Поля ввода и списки выбора', game:'Игровые панели и чат',
 } as const;
 const LABELS={userInfo:'Информация о пользователе',character:'Персонаж',statistics:'Статистика',friends:'Друзья',activity:'Последние действия'} as const;
 const errorText=(error:unknown)=>{const code=error instanceof Error?error.message:'';return ({auth_required:'Войдите в аккаунт.',forbidden:'Нет права «Текстуры и оформление сайта».',invalid_settings:'Проверьте значения настроек.',invalid_file:'Файл не подходит. Для изображений используйте PNG, JPEG, WebP или GIF, для шрифта — WOFF2.',too_large:'Размер файла превышает 2 МБ.'} as Record<string,string>)[code] || 'Не удалось выполнить действие. Проверьте соединение и попробуйте снова.';};

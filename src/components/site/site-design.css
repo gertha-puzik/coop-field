@@ -37,8 +37,8 @@ html[data-site-palette~='button-disabled-text'] :is(button, [data-slot='button']
   color:var(--site-color-button-disabled-text) !important;
 }
 
-html[data-site-palette~='field'] :is(input:not([type='color'],[type='checkbox'],[type='radio'],[type='range'],[type='file'],[type='submit'],[type='button']),select,textarea,[role='combobox']) {
-  background:var(--site-color-field) !important;
+html[data-site-palette~='form-field'] :is(input:not([type='color'],[type='checkbox'],[type='radio'],[type='range'],[type='file'],[type='submit'],[type='button']),select,textarea,[role='combobox']) {
+  background:var(--site-color-form-field) !important;
 }
 html[data-site-palette~='dialog'] :is(dialog,[role='dialog'],[role='listbox'],[role='menu']):not([data-site-scrim]) {
   background:var(--site-color-dialog) !important;
@@ -49,7 +49,7 @@ html[data-site-palette~='scrim'] dialog::backdrop {
 html[data-site-design] {
   --sim-panel:var(--site-color-panel, rgba(25,28,33,.84));
   --sim-frame:var(--site-color-panel, rgba(32,36,42,.84));
-  --sim-input-bg:var(--site-color-field,#18181b);
+  --sim-input-bg:var(--site-color-form-field,#18181b);
   --sim-inset:var(--site-color-inset,rgba(24,24,27,.6));
   --sim-inset-soft:var(--site-color-inset,rgba(24,24,27,.4));
   --sim-inset-strong:var(--site-color-inset,rgba(39,39,42,.7));

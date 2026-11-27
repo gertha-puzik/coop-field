@@ -11,7 +11,7 @@ export const SITE_PALETTE_DEFAULTS = {
   inset: '#17142a',
   dialog: '#1e1831',
   scrim: '#080713',
-  field: '#181529',
+  'form-field': '#181529',
   game: '#2a2033',
 } as const;
 
