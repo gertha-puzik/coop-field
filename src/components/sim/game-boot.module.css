@@ -80,3 +80,5 @@
     animation: none;
   }
 }
+
+:global(html[data-site-panel-color]) .panel { background:var(--site-color-panel); }

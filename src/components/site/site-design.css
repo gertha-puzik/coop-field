@@ -10,10 +10,68 @@ html[data-site-design] body {
 html[data-site-design] :is(h1) { font-size:var(--site-title-size) !important; }
 html[data-site-design] :is(h2,h3) { font-size:var(--site-heading-size) !important; }
 html[data-site-design] :is(button,input,select,textarea) { font-family:var(--site-font); }
-html[data-site-button='true'] button { background-image:var(--site-button); background-position:center; background-size:cover; }
+html[data-site-button='true'] button:not([data-site-no-button-color]) { background-image:var(--site-button); background-position:center; background-size:cover; }
 html[data-site-custom-divider] hr { border:0; height:var(--site-divider-height); background:var(--site-divider) center / contain no-repeat; }
 
 html[data-site-design] :where(h1) { font-size:var(--site-title-size) !important; }
 html[data-site-design] :where(h2,h3) { font-size:var(--site-heading-size) !important; }
-html[data-site-button='true'] button { background-image:var(--site-button); background-position:center; background-size:cover; }
 html[data-site-design] :where(p,li,label,td,th,summary,input,select,textarea) { font-size:var(--site-text-size); }
+
+/* Keep the transparent board hotspot, switches and selection fields out of the button palette. */
+html[data-site-palette~='button-idle'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):not(:is(:active,[aria-pressed='true'],[aria-selected='true'],[aria-expanded='true'],[data-state='active'],[data-state='on'],[data-active='true'],[aria-current]:not([aria-current='false'])),:is(:disabled,[aria-disabled='true'],[data-disabled])) {
+  background-color:var(--site-color-button-idle) !important; background-image:var(--site-button,none) !important;
+}
+html[data-site-palette~='button-idle-text'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):not(:is(:active,[aria-pressed='true'],[aria-selected='true'],[aria-expanded='true'],[data-state='active'],[data-state='on'],[data-active='true'],[aria-current]:not([aria-current='false'])),:is(:disabled,[aria-disabled='true'],[data-disabled])) {
+  color:var(--site-color-button-idle-text) !important;
+}
+html[data-site-palette~='button-active'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):is(:active,[aria-pressed='true'],[aria-selected='true'],[aria-expanded='true'],[data-state='active'],[data-state='on'],[data-active='true'],[aria-current]:not([aria-current='false'])):not(:is(:disabled,[aria-disabled='true'],[data-disabled])) {
+  background-color:var(--site-color-button-active) !important; background-image:var(--site-button,none) !important;
+}
+html[data-site-palette~='button-active-text'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):is(:active,[aria-pressed='true'],[aria-selected='true'],[aria-expanded='true'],[data-state='active'],[data-state='on'],[data-active='true'],[aria-current]:not([aria-current='false'])):not(:is(:disabled,[aria-disabled='true'],[data-disabled])) {
+  color:var(--site-color-button-active-text) !important;
+}
+html[data-site-palette~='button-disabled'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):is(:disabled,[aria-disabled='true'],[data-disabled]) {
+  background-color:var(--site-color-button-disabled) !important; background-image:var(--site-button,none) !important; opacity:1;
+}
+html[data-site-palette~='button-disabled-text'] :is(button, [data-slot='button'], [role='button'], input[type='button'], input[type='submit']):not(:where(.wander-board-hotspot,[role='switch'],[role='checkbox'],[role='combobox'],[data-site-no-button-color])):is(:disabled,[aria-disabled='true'],[data-disabled]) {
+  color:var(--site-color-button-disabled-text) !important;
+}
+
+html[data-site-palette~='field'] :is(input:not([type='color'],[type='checkbox'],[type='radio'],[type='range'],[type='file'],[type='submit'],[type='button']),select,textarea,[role='combobox']) {
+  background:var(--site-color-field) !important;
+}
+html[data-site-palette~='dialog'] :is(dialog,[role='dialog'],[role='listbox'],[role='menu']):not([data-site-scrim]) {
+  background:var(--site-color-dialog) !important;
+}
+html[data-site-palette~='scrim'] dialog::backdrop {
+  background:color-mix(in srgb,var(--site-color-scrim) 65%,transparent);
+}
+html[data-site-design] {
+  --sim-panel:var(--site-color-panel, rgba(25,28,33,.84));
+  --sim-frame:var(--site-color-panel, rgba(32,36,42,.84));
+  --sim-input-bg:var(--site-color-field,#18181b);
+  --sim-inset:var(--site-color-inset,rgba(24,24,27,.6));
+  --sim-inset-soft:var(--site-color-inset,rgba(24,24,27,.4));
+  --sim-inset-strong:var(--site-color-inset,rgba(39,39,42,.7));
+}
+html[data-site-palette~='scrim'] { --uk-scrim:color-mix(in srgb,var(--site-color-scrim) 65%,transparent); }
+html[data-site-page-color] :is(.app-bg,.wander-sky) {
+  background:var(--site-background-color) var(--site-background) center / cover fixed;
+}
+html[data-site-palette~='navigation'] .wander-home-nav {
+  background:var(--site-color-navigation);
+}
+html[data-site-panel-color] .wander-window {
+  background:var(--site-color-panel);
+}
+html[data-site-palette~='dialog'] .wander-news-modal {
+  background:var(--site-color-dialog);
+}
+html[data-site-palette~='cards'] .wander-news-card {
+  background:var(--site-color-cards);
+  color:var(--site-text-color);
+}
+html[data-site-palette~='cards'] .wander-news-card :is(strong,.wander-news-body) { color:inherit; }
+html[data-site-palette~='scrim'] .wander-news-scrim {
+  background:var(--uk-scrim);
+}

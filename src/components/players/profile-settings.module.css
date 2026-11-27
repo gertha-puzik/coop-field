@@ -82,3 +82,13 @@
 @media(max-width:600px) { .socialFields {grid-template-columns:minmax(0,1fr);} }
 
 :global(html[data-site-custom-divider]) .group { border-bottom:0; padding-bottom:var(--site-divider-height); background:var(--site-divider) bottom center / 100% var(--site-divider-height) no-repeat; }
+
+:global(html[data-site-palette~='navigation']) :is(.subtabs) {
+  background: var(--site-color-navigation);
+}
+:global(html[data-site-palette~='inset']) :is(.appearance,.parameter,.skinLibrary,.uploadSkin) {
+  background: var(--site-color-inset);
+}
+:global(html[data-site-palette~='cards']) :is(.skinTile) {
+  background: var(--site-color-cards);
+}

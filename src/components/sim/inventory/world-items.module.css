@@ -71,3 +71,7 @@
 .layer [hidden] {
   display: none;
 }
+
+:global(html[data-site-palette~='game']) :is(.prompt) {
+  background: var(--site-color-game);
+}

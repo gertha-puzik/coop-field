@@ -485,3 +485,16 @@
   display: grid;
   place-items: center;
 }
+
+:global(html[data-site-palette~='game']) :is(.chat,.rail) {
+  background: var(--site-color-game);
+}
+:global(html[data-site-palette~='navigation']) :is(.settingsTabs) {
+  background: var(--site-color-navigation);
+}
+:global(html[data-site-palette~='dialog']) :is(.dialog) {
+  background: var(--site-color-dialog);
+}
+:global(html[data-site-palette~='scrim']) :is(.modalBackdrop) {
+  background: color-mix(in srgb,var(--site-color-scrim) 65%,transparent);
+}

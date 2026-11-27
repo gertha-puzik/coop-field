@@ -53,3 +53,7 @@
   border-color: rgba(246, 215, 162, 0.38);
   font-weight: 700;
 }
+
+:global(html[data-site-palette~='navigation']) .dashSide {
+  background: var(--site-color-navigation);
+}

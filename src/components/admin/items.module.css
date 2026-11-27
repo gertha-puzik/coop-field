@@ -35,3 +35,11 @@
 @media(max-width:900px){.createTop{grid-template-columns:minmax(0,1.5fr) minmax(220px,1fr)}.basic{gap:12px}.spriteThumb{width:85px;height:100px}.spriteThumb>img{width:70px;height:80px}.twoFields{gap:10px}.categories{gap:4px}.categories button{font-size:9px}.databaseGrid{grid-template-columns:230px minmax(0,1fr)}.editParams{grid-template-columns:1fr}.editParams>div+div{padding:14px 0 0;border-left:0;border-top:1px solid #564062}.grantTop{grid-template-columns:1fr 1.4fr}.pageHeader h2{font-size:20px}}
 @media(max-width:680px){.workbench{padding:0 0 18px}.pageHeader{flex-wrap:wrap;gap:10px}.pageHeader>svg{width:29px;height:29px}.pageHeader>nav,.pageHeader .formActions{width:100%}.pageHeader .primary{margin-left:auto}.createTop,.createBottom,.databaseGrid,.grantTop,.editVisual{grid-template-columns:1fr}.createTop .previewPanel{max-width:100%}.createInfo{gap:12px}.createBottom{gap:12px}.categories{grid-template-columns:repeat(4,1fr)}.categories button{font-size:11px}.twoFields{grid-template-columns:1fr}.basic{gap:10px}.basic .spriteThumb{width:76px;height:91px}.previewScene{height:240px}.previewSprite{height:135px;width:150px}.editorFooter{flex-wrap:wrap}.editorFooter>.primary{margin-left:auto}.itemList{grid-template-columns:1fr 1fr}.itemList button{padding:7px 6px;gap:6px}.itemList img{width:27px}.catalogue .listWeight{display:none}.grantRow{gap:4px}.grantRow>img{width:26px;height:26px}.grantRow .stepper button{width:23px}.grantRow .stepper input{width:30px}.formActions{flex-wrap:wrap}.pageHeader>nav button{flex:1}.previewLarge .previewScene{height:300px}}
 @media(prefers-reduced-motion:reduce){.itemAura,.gemGlint{animation:none}.gemGlint{opacity:.7}}
+
+:global(html[data-site-panel-color]) .panel { background:var(--site-color-panel); }
+:global(html[data-site-palette~='inset']) :is(.editBasic,.grantForm,.grantRows > div,.segment,.spriteThumb) {
+  background: var(--site-color-inset);
+}
+:global(html[data-site-palette~='cards']) :is(.catalogue) {
+  background: var(--site-color-cards);
+}

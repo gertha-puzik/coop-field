@@ -9,3 +9,10 @@
 .rules, .log { display: grid; gap: 8px; list-style: none; padding: 4px 0; }
 .rules li, .log li { border: 1px solid #70536b; border-radius: 10px; padding: 8px; }
 .rules li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+
+:global(html[data-site-palette~='cards']) :is(.rules,.log) li {
+  background:var(--site-color-cards);
+}
+:global(html[data-site-palette~='inset']) .choices {
+  background:var(--site-color-inset);
+}
