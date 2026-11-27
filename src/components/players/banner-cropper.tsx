@@ -170,7 +170,7 @@ export function BannerCropper({
   };
 
   return createPortal(
-    <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label={`Кадрирование: ${title}`}>
+    <div className={styles.modalBack} data-site-scrim role="dialog" aria-modal="true" aria-label={`Кадрирование: ${title}`}>
       <div className={styles.modal}>
         <header className={styles.modalHead}>
           <h2 className={styles.modalTitle}>{title}</h2>

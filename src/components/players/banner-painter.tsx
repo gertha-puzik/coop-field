@@ -204,7 +204,7 @@ export function BannerPainter({
   const hex = toHex(color);
 
   return createPortal(
-    <div className={styles.modalBack} role="dialog" aria-modal="true" aria-label={title}>
+    <div className={styles.modalBack} data-site-scrim role="dialog" aria-modal="true" aria-label={title}>
       <div className={styles.modal}>
         <header className={styles.modalHead}>
           <h2 className={styles.modalTitle}>{title}</h2>

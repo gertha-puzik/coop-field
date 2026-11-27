@@ -151,3 +151,10 @@
   .stepper { right: 5px; }
   .page.page .stepper.stepper button { width: 16px; }
 }
+
+:global(html[data-site-panel-color]) .page {
+  background:var(--site-color-panel) padding-box,var(--gold-frame) border-box;
+}
+:global(html[data-site-palette~='inset']) .group {
+  background:var(--site-color-inset) padding-box,var(--gold-frame) border-box;
+}

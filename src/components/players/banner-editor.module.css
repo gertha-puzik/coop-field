@@ -218,3 +218,10 @@
   background-size: 24px 24px;
   background-position: 0 0, 12px 12px;
 }
+
+:global(html[data-site-palette~='dialog']) :is(.modal) {
+  background: var(--site-color-dialog);
+}
+:global(html[data-site-palette~='scrim']) :is(.modalBack) {
+  background: color-mix(in srgb,var(--site-color-scrim) 65%,transparent);
+}

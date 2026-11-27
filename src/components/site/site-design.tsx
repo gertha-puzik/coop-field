@@ -17,10 +17,14 @@ export function SiteDesignProvider({children}:{children:ReactNode}){
  useEffect(()=>{
   const root=document.documentElement;root.dataset.siteDesign='true';if(settings.button)root.dataset.siteButton='true';else delete root.dataset.siteButton;
   root.toggleAttribute('data-site-custom-frame',settings.frame!==DEFAULT_SITE_DESIGN.frame);root.toggleAttribute('data-site-custom-divider',settings.divider!==DEFAULT_SITE_DESIGN.divider);
-  const vars=designVariables(settings);for(const [key,value] of Object.entries(vars))root.style.setProperty(key,value);
+  const vars=designVariables(settings);
+  root.dataset.sitePalette=Object.keys(vars).filter(key=>key.startsWith('--site-color-')).map(key=>key.slice(13)).join(' ');
+  root.toggleAttribute('data-site-panel-color',!!vars['--site-color-panel']);
+  root.toggleAttribute('data-site-page-color',!!settings.background || settings.backgroundColor!==DEFAULT_SITE_DESIGN.backgroundColor);
+  for(const [key,value] of Object.entries(vars))root.style.setProperty(key,value);
   let font:FontFace|null=null;
   if(settings.fontFile){font=new FontFace('SiteCustom',`url("${siteAsset(settings.fontFile)}")`);void font.load().then(loaded=>{if(font)document.fonts.add(loaded);}).catch(()=>{});}
-  return()=>{for(const key of Object.keys(vars))root.style.removeProperty(key);root.removeAttribute('data-site-custom-frame');root.removeAttribute('data-site-custom-divider');delete root.dataset.siteDesign;delete root.dataset.siteButton;if(font){document.fonts.delete(font);font=null;}};
+  return()=>{for(const key of Object.keys(vars))root.style.removeProperty(key);root.removeAttribute('data-site-custom-frame');root.removeAttribute('data-site-custom-divider');delete root.dataset.siteDesign;delete root.dataset.siteButton;delete root.dataset.sitePalette;root.removeAttribute('data-site-panel-color');root.removeAttribute('data-site-page-color');if(font){document.fonts.delete(font);font=null;}};
  },[settings]);
  return <DesignContext.Provider value={settings}>{children}</DesignContext.Provider>;
 }

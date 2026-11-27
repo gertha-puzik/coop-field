@@ -208,3 +208,13 @@
 @media (pointer: coarse) {
   .plate { bottom: 225px; }
 }
+
+:global(html[data-site-palette~='game']) :is(.plate,.energy,.comfort) {
+  background: var(--site-color-game);
+}
+:global(html[data-site-palette~='dialog']) :is(.details) {
+  background: var(--site-color-dialog);
+}
+:global(html[data-site-palette~='inset']) :is(.tiles section,.history) {
+  background: var(--site-color-inset);
+}

@@ -107,3 +107,10 @@
   .trigger { inset: 7px auto auto 7px; }
 }
 .header h2:focus { outline: none; }
+
+:global(html[data-site-palette~='dialog']) :is(.dialog) {
+  background: var(--site-color-dialog);
+}
+:global(html[data-site-palette~='cards']) :is(.card) {
+  background: var(--site-color-cards);
+}

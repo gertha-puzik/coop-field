@@ -1675,3 +1675,12 @@
 
 :global(html[data-site-custom-divider]) :is(.badges,.panelFoot) { border-top:0; padding-top:calc(var(--site-divider-height) + 12px); background:var(--site-divider) top center / 100% var(--site-divider-height) no-repeat; }
 :global(html[data-site-custom-divider]) :is(.thead,.profileTabs) { border-bottom:0; padding-bottom:calc(var(--site-divider-height) + 8px); background:var(--site-divider) bottom center / 100% var(--site-divider-height) no-repeat; }
+
+:global(html[data-site-panel-color]) .sky { --panel:var(--site-color-panel); }
+:global(html[data-site-panel-color]) :is(.panelFallback,.edBox) { background:var(--site-color-panel); }
+:global(html[data-site-palette~='cards']) :is(.row,.rowOpen) {
+  background: var(--site-color-cards);
+}
+:global(html[data-site-palette~='navigation']) :is(.profileTabs) {
+  background: var(--site-color-navigation);
+}

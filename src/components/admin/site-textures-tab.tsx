@@ -2,6 +2,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Button, Input } from '@/components/ui';
 import { DEFAULT_SITE_DESIGN, designRequest, designVariables, siteAsset, uploadDesignAsset, type DesignSlot, type SiteDesign } from '@/lib/site-design';
+import { resolveSitePalette, SITE_PALETTE_DEFAULTS, type SitePaletteKey } from '@/lib/site-palette';
 import s from './site-textures.module.css';
 const ASSETS:{key:DesignSlot;label:string;hint:string}[]=[
  {key:'frame',label:'Внешняя рамка',hint:'PNG с прозрачным центром. Углы сохраняются, края растягиваются. Настройте отступ среза ниже.'},
@@ -12,6 +13,16 @@ const ASSETS:{key:DesignSlot;label:string;hint:string}[]=[
 ];
 const RANGES={textSize:['Основной текст',10,24],headingSize:['Заголовки блоков',14,36],titleSize:['Крупные заголовки',20,56],frameSlice:['Срез рамки (пиксели исходника)',4,150],frameWidth:['Толщина рамки',8,60],dividerHeight:['Высота разделителя',1,80],panelOpacity:['Непрозрачность блоков (%)',30,100]} as const;
 const COLORS={textColor:'Основной текст',mutedColor:'Второстепенный текст',accentColor:'Акценты',panelColor:'Подложка блоков',backgroundColor:'Фон страницы'} as const;
+const BUTTON_COLORS = {
+ 'button-idle':'Фон обычной кнопки', 'button-idle-text':'Текст обычной кнопки',
+ 'button-active':'Фон активной кнопки', 'button-active-text':'Текст активной кнопки',
+ 'button-disabled':'Фон недоступной кнопки', 'button-disabled-text':'Текст недоступной кнопки',
+} as const;
+const BLOCK_COLORS = {
+ header:'Шапка сайта', navigation:'Панели навигации', cards:'Карточки и строки списков',
+ inset:'Вложенные блоки', dialog:'Окна и всплывающие меню', scrim:'Затемнение за окнами',
+ 'form-field':'Поля ввода и списки выбора', game:'Игровые панели и чат',
+} as const;
 const LABELS={userInfo:'Информация о пользователе',character:'Персонаж',statistics:'Статистика',friends:'Друзья',activity:'Последние действия'} as const;
 const errorText=(error:unknown)=>{const code=error instanceof Error?error.message:'';return ({auth_required:'Войдите в аккаунт.',forbidden:'Нет права «Текстуры и оформление сайта».',invalid_settings:'Проверьте значения настроек.',invalid_file:'Файл не подходит. Для изображений используйте PNG, JPEG, WebP или GIF, для шрифта — WOFF2.',too_large:'Размер файла превышает 2 МБ.'} as Record<string,string>)[code] || 'Не удалось выполнить действие. Проверьте соединение и попробуйте снова.';};
 export function SiteTexturesTab(){
@@ -25,8 +36,26 @@ export function SiteTexturesTab(){
   void font.load().then(value=>{if(active)document.fonts.add(value);}).catch(()=>setError('Не удалось прочитать шрифт. Выберите корректный WOFF2.'));
   return()=>{active=false;document.fonts.delete(font);};
  },[draft?.fontFile]);
+ const samplePalette=Object.fromEntries(Object.entries({...SITE_PALETTE_DEFAULTS,...resolveSitePalette(draft?.palette ?? {})}).map(([key,value])=>[`--sample-${key}`,value]));
  const dirty=JSON.stringify(draft)!==JSON.stringify(saved);
  function update<K extends keyof SiteDesign>(key:K,value:SiteDesign[K]){setDraft(old=>old?{...old,[key]:value}:old);setNote('');}
+ function changeColor(key:SitePaletteKey,color?:string){
+  const palette={...draft?.palette};
+  if(color)palette[key]=color;
+  else delete palette[key];
+  update('palette',palette);
+ }
+ function paletteFields(fields:Partial<Record<SitePaletteKey,string>>){
+  return <div className={s.fields}>{(Object.keys(fields) as SitePaletteKey[]).map(key=>
+   <div className={s.colorField} key={key}>
+    <label className={s.field}>{fields[key]}<Input type="color" value={draft?.palette[key] ?? SITE_PALETTE_DEFAULTS[key]} disabled={busy} onChange={event=>changeColor(key,event.target.value)}/></label>
+    <Button type="button" variant="outline" size="sm" disabled={busy}
+     aria-label={`${draft?.palette[key]?'Сбросить цвет':'Применить образец'}: ${fields[key]}`}
+     onClick={()=>changeColor(key,draft?.palette[key]?undefined:SITE_PALETTE_DEFAULTS[key])}>
+     {draft?.palette[key]?'Сбросить':'Применить'}
+    </Button>
+   </div>)}</div>;
+ }
  async function upload(slot:DesignSlot,file?:File){if(!file)return;if(file.size>2*1024*1024){setError('Размер файла превышает 2 МБ.');return;}setBusy(true);setError('');try{const url=await uploadDesignAsset(slot,file);update(slot,url);setNote('Файл загружен. Нажмите «Сохранить оформление», чтобы применить его на сайте.');}catch(e){setError(errorText(e));}finally{setBusy(false);}}
  async function save(){if(!draft)return;setBusy(true);setError('');try{const value=await designRequest('POST',draft);setDraft(value);setSaved(value);setPreview(false);window.dispatchEvent(new CustomEvent('site-design-saved',{detail:value}));setNote('Оформление сохранено. Оно применится у посетителей при открытии страницы или в течение минуты.');}catch(e){setError(errorText(e));}finally{setBusy(false);}}
  if(!draft)return <section className={s.panel}><p role="status">{busy?'Загружаем оформление…':error}</p>{!busy?<Button onClick={()=>void load()}>Повторить</Button>:null}</section>;
@@ -44,14 +73,18 @@ export function SiteTexturesTab(){
     {draft.fontFile?<p>Используется загруженный шрифт. Верните исходный ресурс, чтобы выбрать системный.</p>:null}
     <div className={s.fields}>{(Object.keys(RANGES) as (keyof typeof RANGES)[]).map(key=>{const [label,min,max]=RANGES[key];return <label className={s.field} key={key}>{label}<Input type="number" min={min} max={max} step={1} required value={draft[key]} disabled={busy} onChange={event=>update(key,Number(event.target.value))}/></label>;})}</div>
    </section>
-   <section className={s.panel}><h2>Цвета</h2><div className={s.fields}>{(Object.keys(COLORS) as (keyof typeof COLORS)[]).map(key=><label className={s.field} key={key}>{COLORS[key]}<Input type="color" value={draft[key]} disabled={busy} onChange={event=>update(key,event.target.value)}/></label>)}</div></section>
+   <section className={s.panel}><h2>Общие цвета</h2><div className={s.fields}>{(Object.keys(COLORS) as (keyof typeof COLORS)[]).map(key=><label className={s.field} key={key}>{COLORS[key]}<Input type="color" value={draft[key]} disabled={busy} onChange={event=>update(key,event.target.value)}/></label>)}</div></section>
+   <section className={s.panel}><h2>Цвета кнопок</h2>{paletteFields(BUTTON_COLORS)}</section>
+   <section className={s.panel}><h2>Цвета фоновых блоков</h2>{paletteFields(BLOCK_COLORS)}</section>
    <section className={s.panel}><h2>Заголовки профиля</h2><div className={s.fields}>{(Object.keys(LABELS) as (keyof typeof LABELS)[]).map(key=><label className={s.field} key={key}>{LABELS[key]}<Input required maxLength={64} value={draft.labels[key]} disabled={busy} onChange={event=>update('labels',{...draft.labels,[key]:event.target.value})}/></label>)}</div></section>
    <div className={s.actions}><Button type="submit" disabled={busy || !dirty}>{busy?'Подождите…':'Сохранить оформление'}</Button><Button type="button" variant="outline" disabled={busy || !dirty} onClick={()=>{setDraft(saved);setPreview(false);setNote('');setError('');}}>Отменить изменения</Button><Button type="button" variant="outline" disabled={busy} onClick={()=>{setDraft(structuredClone(DEFAULT_SITE_DESIGN));setNote('Исходное оформление выбрано. Для применения нажмите «Сохранить оформление».');}}>Сбросить всё к исходному</Button></div>
    <p role="status">{note || (dirty?'Есть несохранённые изменения.':'Все изменения сохранены.')}</p>{error?<p role="alert" className={s.error}>{error}</p>:null}
   </form>
-  <aside className={s.preview} style={{...designVariables(draft),...(draft.fontFile?{'--site-font':'SiteDraft, sans-serif'}:{})} as CSSProperties}>
+  <aside className={s.preview} style={{...designVariables(draft),...samplePalette,...(draft.fontFile?{'--site-font':'SiteDraft, sans-serif'}:{})} as CSSProperties}>
    <h2>Предпросмотр</h2><label className={s.toggle}><input type="checkbox" checked={preview} onChange={event=>setPreview(event.target.checked)}/>Показать на текущей странице</label><p>Посетители увидят изменения после сохранения.</p>
-   <div className={s.sample}><h1>Элизия</h1><h2>{draft.labels.userInfo}</h2><div className={s.divider}/><p>Так выглядит основной текст сайта.</p><small>Второстепенная подпись · 7 сентября</small><div className={s.divider}/><button type="button">Пример кнопки</button></div>
+   <div className={s.sample}><h1>Элизия</h1><h2>{draft.labels.userInfo}</h2><div className={s.divider}/><p>Так выглядит основной текст сайта.</p><small>Второстепенная подпись · 7 сентября</small><div className={s.divider}/><div className={s.buttonSamples}><button data-site-no-button-color type="button">Обычная</button><button data-site-no-button-color type="button" aria-pressed="true">Активная</button><button data-site-no-button-color type="button" disabled>Недоступная</button></div>
+    <div className={s.blockSamples}><div className={`${s.paletteSample} ${s.panelSample}`}>Подложка блоков</div>{(Object.keys(BLOCK_COLORS) as (keyof typeof BLOCK_COLORS)[]).map(key=><div key={key} className={s.paletteSample} style={{'--sample-surface':`var(--sample-${key})`} as CSSProperties}>{BLOCK_COLORS[key]}</div>)}</div>
+   </div>
   </aside>
  </div>;
 }

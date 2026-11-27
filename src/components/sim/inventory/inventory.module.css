@@ -467,3 +467,16 @@
   .slotWrap:not([data-touch-use]) .usePopover { display: none; }
   .slotWrap[data-touch-use] .usePopover { display: grid; gap: 3px; }
 }
+
+:global(html[data-site-palette~='game']) :is(.hotbar) {
+  background: var(--site-color-game);
+}
+:global(html[data-site-palette~='dialog']) :is(.window,.usePopover) {
+  background: var(--site-color-dialog);
+}
+:global(html[data-site-palette~='inset']) :is(.bag,.capacity,.mouthSlot) {
+  background: var(--site-color-inset);
+}
+:global(html[data-site-palette~='scrim']) :is(.backdrop) {
+  background: color-mix(in srgb,var(--site-color-scrim) 65%,transparent);
+}
